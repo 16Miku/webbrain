@@ -160,17 +160,25 @@ export function createNewtabHandoff({
       });
     };
     try {
+      const accept = (record) =>
+        normalizeNewtabHandoff(record, now(), NEWTAB_HANDOFF_MAX_AGE_MS + allowance);
       let stored = (await storage.get(primaryKey))?.[primaryKey];
-      if (stored == null && sameTab()) {
+      let handoff = stored == null ? null : accept(stored);
+      // A stale or malformed primary record is left where it is: the new tab replaces it once
+      // its own lock has run out, and deleting the key from an earlier read could take a task
+      // written in between (storage has no compare-and-delete). Look in the retry slot instead.
+      if (!handoff && sameTab()) {
         stored = asList((await storage.get(retryKey))?.[retryKey])[0];
         key = retryKey;
+        handoff = stored == null ? null : accept(stored);
       }
       if (stored == null || !sameTab()) return false;
-      const handoff = normalizeNewtabHandoff(stored, now(), NEWTAB_HANDOFF_MAX_AGE_MS + allowance);
       if (!handoff) {
-        await removeClaimed(stored);
-        // Dropping a stale primary raises no event this panel acts on; a live retry may be behind it.
-        if (key === primaryKey) claimedOne = await retryWaiting();
+        // Only the panel writes the retry slot, so dropping an expired entry is safe.
+        if (key === retryKey) {
+          await removeClaimed(stored);
+          claimedOne = true; // others may be waiting behind it
+        }
         return false;
       }
       if (handoff.tabId !== Number(tabId) || handled.has(handoff.id)) return false;

@@ -30,7 +30,7 @@ export async function getBackgroundData() {
     if (fav.type === 'random_colour' || fav.type === 'random_gradient') {
       return { type: 'colour', style: `background:${fav.url}` };
     }
-    return { url: fav.url, photoInfo: { ...fav, url: fav.url } };
+    return { url: fav.url, video: videoCheck(fav.url), photoInfo: { ...fav, url: fav.url } };
   }
 
   const type = localStorage.getItem('backgroundType');

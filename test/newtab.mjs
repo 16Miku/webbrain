@@ -611,7 +611,7 @@ for (const browser of ['chrome', 'firefox']) {
     await handoff.start();
     for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
     assert.equal(input.value, 'task A');
-    assert.deepEqual(Object.keys(store), []);
+    assert.deepEqual(Object.keys(store), [key3], 'only the stale primary is left behind, untouched');
   });
 
   test(`${browser}: a failed claim leaves the task deliverable on the next attempt`, async () => {
@@ -665,7 +665,7 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(h.input.value, 'book a table');
   });
 
-  test(`${browser}: a record for another tab is left alone; a stale one is dropped`, async () => {
+  test(`${browser}: a record for another tab is left alone; a stale one is ignored and left in place`, async () => {
     const other = await harness({ record: rec({ tabId: 99 }) });
     assert.equal(await other.handoff.consume(), false);
     assert.equal(newtabHandoffKey(99) in other.store, true);
@@ -678,7 +678,9 @@ for (const browser of ['chrome', 'firefox']) {
     const stale = await harness({ record: rec({ createdAt: 1 }), start: false });
     await stale.handoff.start();
     assert.equal(await stale.handoff.consume(), false);
-    assert.equal(KEY in stale.store, false);
+    assert.equal(stale.log.sent.length, 0, 'a stale task is never applied');
+    // not deleted from an earlier read: the new tab replaces it once its own lock has run out
+    assert.equal(KEY in stale.store, true);
   });
 
   test(`${browser}: Ask during an active run is queued behind it, not dropped`, async () => {
@@ -725,7 +727,7 @@ for (const browser of ['chrome', 'firefox']) {
     const h = await harness({ record: rec({ createdAt: 99_000 }), start: false, clock: 100_000 });
     h.state.time = 100_000 + 10 * 60_000; // ten minutes of startup
     assert.equal(await h.handoff.start(), false); // allowance capped at 2 min, record far older
-    assert.equal(KEY in h.store, false);
+    assert.equal(h.log.sent.length, 0);
   });
 
   test(`${browser}: submissions for different tabs never overwrite each other`, async () => {
@@ -1778,4 +1780,9 @@ test('round-48: dialog close controls work from the keyboard', () => {
   }
   assert.match(read('components/Elements/MainModal/components/ReminderInfo.jsx'), /<button\s+type="button"\s+className="closeModal"/);
   assert.match(read('utils/keyboard.js'), /event\.key === 'Enter' \|\| event\.key === ' '/);
+});
+
+test('round-52: a video favourite is flagged so it renders as a video', () => {
+  const loader = readFileSync(nt('features/background/api/backgroundLoader.js'), 'utf8');
+  assert.match(loader, /video: videoCheck\(fav\.url\)/);
 });
