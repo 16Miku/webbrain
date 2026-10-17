@@ -701,6 +701,7 @@ const {
   INLINE_ANSWER_MAX_CHARS: INLINE_ANSWER_MAX_CHARS_CH,
   SELECTION_TOO_LONG_FOR_CONTEXT: SELECTION_TOO_LONG_FOR_CONTEXT_CH,
   SIDE_PANEL_SELECTION_SYSTEM_TOKENS: SIDE_PANEL_SELECTION_SYSTEM_TOKENS_CH,
+  estimateInlinePromptTokens: estimateInlinePromptTokensCh,
   buildContinuationSelectionPrompt: buildContinuationSelectionPromptCh,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS: INLINE_CONTINUE_PARTIAL_MAX_CHARS_CH,
   buildFollowUpSelectionText: buildFollowUpSelectionTextCh,
@@ -731,6 +732,7 @@ const {
   INLINE_ANSWER_MAX_CHARS: INLINE_ANSWER_MAX_CHARS_FX,
   SELECTION_TOO_LONG_FOR_CONTEXT: SELECTION_TOO_LONG_FOR_CONTEXT_FX,
   SIDE_PANEL_SELECTION_SYSTEM_TOKENS: SIDE_PANEL_SELECTION_SYSTEM_TOKENS_FX,
+  estimateInlinePromptTokens: estimateInlinePromptTokensFx,
   buildContinuationSelectionPrompt: buildContinuationSelectionPromptFx,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS: INLINE_CONTINUE_PARTIAL_MAX_CHARS_FX,
   buildFollowUpSelectionText: buildFollowUpSelectionTextFx,
@@ -52264,7 +52266,7 @@ test('a cut-off card answer is resumed in the side panel, not run again', () => 
     ['firefox', 'src/firefox/src/background.js'],
   ]) {
     const background = fs.readFileSync(path.join(ROOT, bgPath), 'utf8');
-    assert.match(background, /const resumesCutOffAnswer = selectionAction !== 'custom'\s*&& typeof msg\.continueFrom === 'string' && msg\.continueFrom\.trim\(\) !== '';\s*const text = resumesCutOffAnswer\s*\? buildContinuationSelectionPrompt\(\s*msg\.selectionText,\s*selectionAction,\s*msg\.continueFrom\.slice\(-INLINE_CONTINUE_PARTIAL_MAX_CHARS\),\s*msg\.language,\s*(?:\/\/[^\n]*\n\s*)*\{ contextWindow: providerManager\.providers\.size > 0 \? providerManager\.getActive\(\)\?\.contextWindow : undefined \},?\s*\)/,
+    assert.match(background, /const resumesCutOffAnswer = selectionAction !== 'custom'\s*&& typeof msg\.continueFrom === 'string' && msg\.continueFrom\.trim\(\) !== '';\s*const text = resumesCutOffAnswer\s*\? buildContinuationSelectionPrompt\(\s*msg\.selectionText,\s*selectionAction,\s*msg\.continueFrom\.slice\(-INLINE_CONTINUE_PARTIAL_MAX_CHARS\),\s*msg\.language,\s*(?:\/\/[^\n]*\n\s*)*\{ contextWindow \},?\s*\)/,
       `${prefix}: the background resumes a cut-off answer for the card actions and bounds what it accepts`);
     const content = fs.readFileSync(path.join(ROOT, `src/${prefix}/src/content/selection-shortcut.js`), 'utf8');
     assert.match(content, /\.\.\.\(action !== 'custom' && extra\.continueFrom \? \{ continueFrom: extra\.continueFrom \} : \{\}\)/,
@@ -52279,9 +52281,9 @@ const normalizeCtx = (prompt) => prompt.replace(/ctx-\d+-[a-z0-9]+/g, 'ctx-N');
 test('a long unfinished answer is trimmed to what the model window leaves, so Continue stays possible', () => {
   const wellFormed = (text) => /^(?:[^\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$/.test(text);
   const block = (prompt) => prompt.slice(prompt.indexOf('<untrusted_page_content id="'));
-  for (const [label, buildContinuation, fit, reserve] of [
-    ['chrome', buildContinuationSelectionPromptCh, fitAnswerToContextCh, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_CH],
-    ['firefox', buildContinuationSelectionPromptFx, fitAnswerToContextFx, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_FX],
+  for (const [label, buildContinuation, fit, reserve, estimate] of [
+    ['chrome', buildContinuationSelectionPromptCh, fitAnswerToContextCh, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_CH, estimateInlinePromptTokensCh],
+    ['firefox', buildContinuationSelectionPromptFx, fitAnswerToContextFx, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_FX, estimateInlinePromptTokensFx],
   ]) {
     // What the side panel sends: its own system prompt and scope note (about 2,500 characters) and the prompt.
     const sidePanelRoom = (prompt, contextWindow) => fit({
@@ -52294,7 +52296,7 @@ test('a long unfinished answer is trimmed to what the model window leaves, so Co
     const cjk = `开头-${'汉'.repeat(15_000)}-结尾`;
     const emoji = `🙂${'😀'.repeat(20_000)}🙃`;
 
-    for (const contextWindow of [8192, 16_384, 32_768]) {
+    for (const contextWindow of [4096, 8192, 16_384, 32_768]) {
       for (const [kind, partial, tail] of [['ASCII', ascii, '-TAIL'], ['CJK', cjk, '-结尾'], ['emoji', emoji, '🙃']]) {
         const whole = buildContinuation(selection, 'explain', partial, 'en');
         assert.equal(sidePanelRoom(whole, contextWindow), 0, `${label}: a ${kind} answer sent whole into a ${contextWindow}-token window leaves no room (the bug)`);
@@ -52318,7 +52320,7 @@ test('a long unfinished answer is trimmed to what the model window leaves, so Co
       assert.ok(block(trimmedEmoji).includes('🙃'), `${label}: and still ends where the answer ended`);
     }
     // A selection that takes most of a tight window leaves only the least a reply needs, and the answer is still resumable.
-    const bulky = 'word '.repeat(600);
+    const bulky = 'word '.repeat(800);
     const tight = buildContinuation(bulky, 'explain', ascii, 'en', { contextWindow: 8192 });
     assert.ok(sidePanelRoom(tight, 8192) >= 256 && sidePanelRoom(tight, 8192) < 1024, `${label}: a bulky selection keeps a short tail and the least reply room: ${sidePanelRoom(tight, 8192)}`);
     assert.ok(block(tight).includes('-TAIL') && block(tight).includes('…'), `${label}: and it is still the end of the answer`);
@@ -52327,7 +52329,7 @@ test('a long unfinished answer is trimmed to what the model window leaves, so Co
     const large = buildContinuation(selection, 'translate', ascii, 'de', { contextWindow: 32_768 });
     assert.ok(large.length > small.length * 2, `${label}: the room follows the window`);
     // The reserve really is what the side panel adds, and the reply room is never more than a quarter of the window.
-    assert.ok(reserve >= 2600, `${label}: the reserve covers the side panel's own prompt`);
+    assert.ok(estimate([{ role: 'system', content: 's'.repeat(2600) }]) - estimate([]) <= reserve, `${label}: the reserve covers the side panel's own prompt`);
 
     // Nothing to trim, or nothing known to trim against: the whole text goes, exactly as before.
     const plain = buildContinuation(selection, 'explain', ascii, 'en');
@@ -52344,14 +52346,93 @@ test('a long unfinished answer is trimmed to what the model window leaves, so Co
     const refused = buildContinuation(huge, 'explain', ascii, 'en', { contextWindow: 8192 });
     assert.equal(normalizeCtx(refused), normalizeCtx(buildContinuation(huge, 'explain', ascii, 'en')), `${label}: a window the selection already fills trims nothing`);
     assert.equal(sidePanelRoom(refused, 8192), 0, `${label}: and is refused when it runs`);
-    // So is a 4k window, which the side panel's own prompt nearly fills before any selection is added.
-    const tiny = buildContinuation('Hi.', 'explain', ascii, 'en', { contextWindow: 4096 });
+    // So is a window the side panel's own prompt and the request's wording already fill.
+    const tiny = buildContinuation('Hi.', 'explain', ascii, 'en', { contextWindow: 2048 });
     assert.equal(normalizeCtx(tiny), normalizeCtx(buildContinuation('Hi.', 'explain', ascii, 'en')), `${label}: nothing is trimmed when not even the least reply fits`);
-    assert.equal(sidePanelRoom(tiny, 4096), 0, `${label}: and the run says why instead of calling the model`);
+    assert.equal(sidePanelRoom(tiny, 2048), 0, `${label}: and the run says why instead of calling the model`);
+    // A 4k local model, the usual llama.cpp default, can still resume a moderately long answer from a short selection.
+    for (const length of [1000, 1500, 3000]) {
+      const modest = buildContinuation('A short selection.', 'explain', `FIRST-${'m'.repeat(length)}-LAST`, 'en', { contextWindow: 4096 });
+      assert.ok(sidePanelRoom(modest, 4096) >= 256, `${label}: a ${length}-character answer is resumable in a 4k window: ${sidePanelRoom(modest, 4096)}`);
+      assert.ok(block(modest).includes('-LAST'), `${label}: and still ends where the answer ended`);
+    }
   }
   assert.equal(
     normalizeCtx(buildContinuationSelectionPromptCh('Same.', 'proofread', 'p'.repeat(40_000), 'en', { contextWindow: 8192 })),
     normalizeCtx(buildContinuationSelectionPromptFx('Same.', 'proofread', 'p'.repeat(40_000), 'en', { contextWindow: 8192 })),
+    'Chrome and Firefox must trim the same way',
+  );
+});
+
+test('a card follow-up sends the model as much of the earlier answer as its window leaves', () => {
+  const wellFormed = (text) => /^(?:[^\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$/.test(text);
+  for (const [label, buildFollowUp, buildPrompt, grounding, fit] of [
+    ['chrome', buildFollowUpSelectionTextCh, buildSelectionPromptCh, SELECTION_CONTEXT_SOURCE_GROUNDING_CH, fitAnswerToContextCh],
+    ['firefox', buildFollowUpSelectionTextFx, buildSelectionPromptFx, SELECTION_CONTEXT_SOURCE_GROUNDING_FX, fitAnswerToContextFx],
+  ]) {
+    const selection = 'The quick brown fox jumps over the lazy dog. '.repeat(10);
+    const question = 'Why does the fox jump?';
+    // What the side panel sends for a follow-up: its own system prompt and the full request.
+    const sent = (text, contextWindow) => fit({
+      contextWindow,
+      messages: [
+        { role: 'system', content: 's'.repeat(2600) },
+        { role: 'user', content: buildPrompt(text, 'custom', question, 'en', grounding) },
+      ],
+      wanted: 8192,
+    });
+    const options = (contextWindow) => ({ contextWindow, question, language: 'en' });
+    for (const contextWindow of [4096, 8192, 32_768]) {
+      for (const [kind, answer, start] of [
+        ['ASCII', `FIRST-${'a'.repeat(60_000)}-LAST`, 'FIRST-'],
+        ['CJK', `开头-${'汉'.repeat(12_000)}-结尾`, '开头-'],
+        ['emoji', `🙂${'😀'.repeat(15_000)}🙃`, '🙂'],
+      ]) {
+        assert.equal(sent(buildFollowUp(selection, 'explain', answer), contextWindow), 0, `${label}: a ${kind} answer sent whole into a ${contextWindow}-token window leaves no room (the bug)`);
+        const text = buildFollowUp(selection, 'explain', answer, options(contextWindow));
+        assert.ok(sent(text, contextWindow) >= 256, `${label}: a ${kind} answer trimmed for a ${contextWindow}-token window leaves room to reply: ${sent(text, contextWindow)}`);
+        assert.ok(text.includes(selection), `${label}: the selection is kept whole`);
+        assert.ok(text.includes(start), `${label}: the start of the ${kind} answer is kept`);
+        assert.match(text, /\n\[The rest of the answer is left out to fit the model's context window\.\]$/, `${label}: ${kind} says that the rest was left out`);
+        assert.ok(wellFormed(text), `${label}: ${kind} is trimmed on a character boundary`);
+        assert.ok(text.length > selection.length + (kind === 'ASCII' ? 300 : 60), `${label}: ${kind} still carries a useful part of the answer (${text.length})`);
+      }
+    }
+    // A 4k local model asked about a moderately long answer from a short selection, which used to be refused.
+    for (const length of [1500, 2500]) {
+      const text = buildFollowUp('A short selection.', 'translate', `FIRST-${'m'.repeat(length)}-LAST`, options(4096));
+      assert.ok(sent(text, 4096) >= 256, `${label}: a ${length}-character answer can be asked about in a 4k window: ${sent(text, 4096)}`);
+    }
+    // Every bit of room the window leaves is used, and the room follows the question.
+    const small = buildFollowUp(selection, 'explain', 'a'.repeat(30_000), options(8192));
+    const large = buildFollowUp(selection, 'explain', 'a'.repeat(30_000), options(32_768));
+    assert.ok(large.length > small.length * 2, `${label}: the room follows the window`);
+    const longQuestion = buildFollowUp(selection, 'explain', 'a'.repeat(30_000), { contextWindow: 8192, question: 'q'.repeat(1500), language: 'en' });
+    assert.ok(longQuestion.length < small.length - 1000, `${label}: a long question leaves less of the answer`);
+
+    // Nothing to trim, or nothing known to trim against: the whole answer goes, exactly as before.
+    const plain = buildFollowUp(selection, 'explain', 'a'.repeat(30_000));
+    for (const contextWindow of [undefined, null, 0, -5, NaN, 'abc', 1_000_000]) {
+      assert.equal(buildFollowUp(selection, 'explain', 'a'.repeat(30_000), options(contextWindow)), plain, `${label}: ${String(contextWindow)} is not a window to trim for`);
+    }
+    assert.equal(buildFollowUp(selection, 'explain', 'a'.repeat(30_000), {}), plain);
+    const short = buildFollowUp('A short selection.', 'explain', 'A short answer.', options(4096));
+    assert.ok(short.endsWith('\nA short answer.'), `${label}: an answer that fits is not changed`);
+    assert.doesNotMatch(short, /left out/, `${label}: and says nothing about leaving anything out`);
+    // The page-wide limit still applies underneath.
+    const capped = buildFollowUp(selection, 'explain', 'a'.repeat(70_000));
+    assert.match(capped, /\[The answer continues beyond this point\.\]$/, `${label}: an answer past the card limit keeps its own note`);
+    // A window the prompt already fills is not made worse: the whole answer goes and the run refuses it with the reason.
+    const refused = buildFollowUp('A short selection.', 'explain', 'a'.repeat(3000), options(2048));
+    assert.equal(refused, buildFollowUp('A short selection.', 'explain', 'a'.repeat(3000)), `${label}: nothing is trimmed when the window cannot take the rest of the prompt`);
+    assert.equal(sent(refused, 2048), 0, `${label}: and the run says why instead of calling the model`);
+    // No earlier answer, or an unknown action: the selection is returned untouched.
+    assert.equal(buildFollowUp(selection, 'explain', '', options(4096)), selection);
+    assert.equal(buildFollowUp(selection, 'bogus', 'An answer', options(4096)), selection);
+  }
+  assert.equal(
+    buildFollowUpSelectionTextCh('Same.', 'explain', 'p'.repeat(40_000), { contextWindow: 8192, question: 'Why?', language: 'en' }),
+    buildFollowUpSelectionTextFx('Same.', 'explain', 'p'.repeat(40_000), { contextWindow: 8192, question: 'Why?', language: 'en' }),
     'Chrome and Firefox must trim the same way',
   );
 });
@@ -52443,7 +52524,7 @@ test('inline card answers are one tool-less, bounded model call behind validated
     assert.match(content, /function submitFollowUp\(\) \{\s*const value = cardParts\?\.followUp\.value\.trim\(\);\s*if \(!value \|\| cardState\?\.status !== 'ready'\) return;[\s\S]*?submitSelection\('custom', value, '', \{\s*priorAction: cardState\.kind,\s*priorAnswer: cardState\.text,/, `${prefix}: a follow-up is only sent once the card has an answer to continue from`);
     assert.match(content, /cardParts\.send\.disabled = !\(cardParts\.followUp\.value\.trim\(\) && cardState\?\.status === 'ready'\);/, `${prefix}: the send button waits for an answer`);
     assert.match(content, /cardParts\.followUp\.addEventListener\('input', syncFollowUpSend\);[\s\S]*?syncFollowUpSend\(\);\s*positionCard\(\);/, `${prefix}: the send button follows the card's state`);
-    assert.match(background, /const selectionText = selectionAction === 'custom'\s*\? buildFollowUpSelectionText\(msg\.selectionText, msg\.priorAction, msg\.priorAnswer\)\s*: msg\.selectionText;/, `${prefix}: the background adds the earlier answer inside the selection, for custom questions only`);
+    assert.match(background, /const contextWindow = providerManager\.providers\.size > 0 \? providerManager\.getActive\(\)\?\.contextWindow : undefined;\s*const selectionText = selectionAction === 'custom'\s*\? buildFollowUpSelectionText\(\s*msg\.selectionText,\s*msg\.priorAction,\s*msg\.priorAnswer,\s*(?:\/\/[^\n]*\n\s*)*includePageContext \? \{\} : \{ contextWindow, question: msg\.question, language: msg\.language \},?\s*\)\s*: msg\.selectionText;/, `${prefix}: the background adds the earlier answer inside the selection, for custom questions only`);
 
     assert.match(background, /if \(msg\?\.type !== 'WB_SELECTION_SHORTCUT_INLINE'\) return;\s*answerInlineSelection\(msg\)\.then\(sendResponse\);\s*return true;/, `${prefix}: the inline listener should answer asynchronously`);
     const start = background.indexOf('async function answerInlineSelection(msg) {');
@@ -52642,7 +52723,7 @@ test('inline card token budget follows the selection and never exceeds the provi
     assert.equal(budget('x'.repeat(6000), 'translate', 'junk'), 4096, `${label}: a non-numeric ceiling is ignored`);
 
     // The prompt shares the context window with the answer.
-    const prompt = (chars) => [{ role: 'system', content: 'x'.repeat(500) }, { role: 'user', content: 'x'.repeat(chars) }];
+    const prompt = (chars) => [{ role: 'user', content: 'x'.repeat(500) }, { role: 'user', content: 'x'.repeat(chars) }];
     const longText = 'x'.repeat(3000);
     assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 4096, messages: prompt(2500) }), 4096 - 3000 - 128,
       `${label}: a 4k window leaves the answer only what the prompt does not use`);
@@ -52666,8 +52747,12 @@ test('inline card token budget follows the selection and never exceeds the provi
     assert.equal(budget('short', 'translate', 100, { contextWindow: 2048, messages: prompt(3500) }), 0,
       `${label}: but not when the prompt itself cannot fit`);
 
+    // WebBrain's own system prompt is prose it wrote, not page text, so it is counted at the pace of prose.
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 4096, messages: [{ role: 'system', content: 'x'.repeat(3000) }, { role: 'user', content: 'x'.repeat(1000) }] }), 4096 - 128 - 1000 - 1000,
+      `${label}: a 3,000-character system prompt takes a third of that many tokens; the selection is still counted a token per character`);
+
     // CJK text costs about a token per character or more, not half of one.
-    const cjk = (chars) => [{ role: 'system', content: 'x'.repeat(500) }, { role: 'user', content: '漢'.repeat(chars) }];
+    const cjk = (chars) => [{ role: 'user', content: 'x'.repeat(500) }, { role: 'user', content: '漢'.repeat(chars) }];
     assert.equal(budget('漢'.repeat(4000), 'translate', 16_000, { contextWindow: 4096, messages: cjk(4000) }), 0,
       `${label}: a 4,000-character CJK selection does not fit a 4k window and is handed off`);
     assert.equal(budget('漢'.repeat(500), 'translate', 16_000, { contextWindow: 4096, messages: cjk(500) }), 4096 - 128 - 500 - 2000,
@@ -54536,9 +54621,9 @@ test('an OpenAI Responses call that ends at the output limit is still metered', 
 });
 
 test('a side-panel selection reply is sized to the room the context window leaves', async () => {
-  for (const [label, AgentClass, grounding, fit, tooLong, SIDE_PANEL_SELECTION_SYSTEM_TOKENS] of [
-    ['chrome', AgentCh, SELECTION_ONLY_SOURCE_GROUNDING_CH, fitAnswerToContextCh, SELECTION_TOO_LONG_FOR_CONTEXT_CH, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_CH],
-    ['firefox', AgentFx, SELECTION_ONLY_SOURCE_GROUNDING_FX, fitAnswerToContextFx, SELECTION_TOO_LONG_FOR_CONTEXT_FX, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_FX],
+  for (const [label, AgentClass, grounding, fit, tooLong, SIDE_PANEL_SELECTION_SYSTEM_TOKENS, estimate] of [
+    ['chrome', AgentCh, SELECTION_ONLY_SOURCE_GROUNDING_CH, fitAnswerToContextCh, SELECTION_TOO_LONG_FOR_CONTEXT_CH, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_CH, estimateInlinePromptTokensCh],
+    ['firefox', AgentFx, SELECTION_ONLY_SOURCE_GROUNDING_FX, fitAnswerToContextFx, SELECTION_TOO_LONG_FOR_CONTEXT_FX, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_FX, estimateInlinePromptTokensFx],
   ]) {
     // The helper: an unknown window changes nothing, a roomy one allows the ceiling, a tight one is clamped, none refuses.
     const prompt = (chars) => [{ role: 'user', content: 'x'.repeat(chars) }];
@@ -54586,11 +54671,11 @@ test('a side-panel selection reply is sized to the room the context window leave
     assert.equal(result.requested[0], 8192, `${label}: only the reply itself is clamped, not a recovery phase`);
 
     // What the side panel adds before the prompt is what a trimmed continuation leaves room for.
-    const worstCaseTokens = (text) => [...text].reduce((sum, ch) => sum + (ch.codePointAt(0) < 0x80 ? 1 : 4), 0);
     const selectionSystem = systems[0];
+    const systemTokens = estimate([selectionSystem]) - estimate([]);
     assert.equal(selectionSystem.role, 'system', `${label}: the side panel puts its own system prompt first`);
-    assert.ok(worstCaseTokens(selectionSystem.content) <= SIDE_PANEL_SELECTION_SYSTEM_TOKENS, `${label}: the side-panel prompt and scope note (${worstCaseTokens(selectionSystem.content)}) fit the room the trimming reserves for them`);
-    assert.ok(worstCaseTokens(selectionSystem.content) > SIDE_PANEL_SELECTION_SYSTEM_TOKENS / 2, `${label}: and the reserve is not wildly larger than what they take`);
+    assert.ok(systemTokens <= SIDE_PANEL_SELECTION_SYSTEM_TOKENS, `${label}: the side-panel prompt and scope note (${systemTokens}) fit the room the trimming reserves for them`);
+    assert.ok(systemTokens > SIDE_PANEL_SELECTION_SYSTEM_TOKENS / 2, `${label}: and the reserve is not wildly larger than what they take`);
   }
 });
 

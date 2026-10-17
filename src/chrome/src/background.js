@@ -1857,8 +1857,18 @@ function queueSelectionShortcutPrompt(msg, tab, sendResponse, { panelOpened = fa
       ? SELECTION_CONTEXT_SOURCE_GROUNDING
       : SELECTION_ONLY_SOURCE_GROUNDING;
   // A follow-up typed in a page card carries that card's answer as context.
+  // The model's context window is known only once the providers have loaded; until then the
+  // run's own check decides.
+  const contextWindow = providerManager.providers.size > 0 ? providerManager.getActive()?.contextWindow : undefined;
   const selectionText = selectionAction === 'custom'
-    ? buildFollowUpSelectionText(msg.selectionText, msg.priorAction, msg.priorAnswer)
+    ? buildFollowUpSelectionText(
+      msg.selectionText,
+      msg.priorAction,
+      msg.priorAnswer,
+      // With the page as context the run manages its own context, so only a selection-only
+      // follow-up is sized to the window.
+      includePageContext ? {} : { contextWindow, question: msg.question, language: msg.language },
+    )
     : msg.selectionText;
   // A cut-off card answer resumes where it stopped instead of running the action again,
   // which would meet the same output limit.
@@ -1870,8 +1880,7 @@ function queueSelectionShortcutPrompt(msg, tab, sendResponse, { panelOpened = fa
       selectionAction,
       msg.continueFrom.slice(-INLINE_CONTINUE_PARTIAL_MAX_CHARS),
       msg.language,
-      // Known only once the providers have loaded; until then the run's own check decides.
-      { contextWindow: providerManager.providers.size > 0 ? providerManager.getActive()?.contextWindow : undefined },
+      { contextWindow },
     )
     : includePageContext
     ? buildFullContextSelectionPrompt(selectionText, msg.question)

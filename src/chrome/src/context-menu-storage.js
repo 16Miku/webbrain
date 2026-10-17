@@ -291,12 +291,20 @@ const INLINE_ASCII_TOKENS_PER_CHAR = 1;
 const INLINE_OTHER_TOKENS_PER_CHAR = 4;
 const INLINE_ASCII_RANGE_END = 0x80;
 const INLINE_PROMPT_TOKEN_RESERVE = 128;
+const INLINE_SYSTEM_CHARS_PER_TOKEN = 3;
 const INLINE_MIN_ANSWER_TOKENS = 256;
 
-function estimateInlinePromptTokens(messages) {
+export function estimateInlinePromptTokens(messages) {
   let tokens = INLINE_PROMPT_TOKEN_RESERVE;
   for (const message of Array.isArray(messages) ? messages : []) {
     if (typeof message?.content !== 'string') continue;
+    // A system message is WebBrain's own prose, never page text, so it is counted at the pace
+    // of prose with room to spare instead of as a worst case; without that the side panel's
+    // own prompt alone fills a 4k window.
+    if (message.role === 'system') {
+      tokens += message.content.length / INLINE_SYSTEM_CHARS_PER_TOKEN;
+      continue;
+    }
     for (const char of message.content) {
       tokens += char.codePointAt(0) < INLINE_ASCII_RANGE_END
         ? INLINE_ASCII_TOKENS_PER_CHAR
@@ -382,6 +390,8 @@ const INLINE_FOLLOW_UP_LABELS = Object.freeze({
 export const INLINE_ANSWER_MAX_CHARS = 64000;
 const INLINE_CARD_ANSWER_MAX_CHARS = INLINE_ANSWER_MAX_CHARS;
 export const INLINE_FOLLOW_UP_ANSWER_MAX_CHARS = INLINE_CARD_ANSWER_MAX_CHARS;
+const INLINE_FOLLOW_UP_OMITTED_NOTE = "\n[The rest of the answer is left out to fit the model's context window.]";
+const INLINE_FOLLOW_UP_OMITTED_TOKENS = INLINE_FOLLOW_UP_OMITTED_NOTE.length;
 
 export function capInlineAnswer(text) {
   const full = String(text || '');
@@ -395,16 +405,26 @@ export function capInlineAnswer(text) {
 // A follow-up typed in a card continues in the side panel. The card's earlier
 // answer is model output derived from untrusted page text, so it travels inside
 // the selection's untrusted block, never in the trusted instruction before it.
-export function buildFollowUpSelectionText(selectionText, priorAction, priorAnswer) {
+export function buildFollowUpSelectionText(selectionText, priorAction, priorAnswer, { contextWindow, question = '', language = '' } = {}) {
   const selection = String(selectionText || '');
   const label = INLINE_FOLLOW_UP_LABELS[String(priorAction || '').trim()];
   const full = String(priorAnswer || '').trim();
   if (!label || !full) return selection;
   // A longer answer than a card can produce is shortened, and says so.
-  const answer = full.length > INLINE_FOLLOW_UP_ANSWER_MAX_CHARS
+  let answer = full.length > INLINE_FOLLOW_UP_ANSWER_MAX_CHARS
     ? `${full.slice(0, INLINE_FOLLOW_UP_ANSWER_MAX_CHARS)}\n[The answer continues beyond this point.]`
     : full;
-  return `${selection}\n\n[Earlier ${label} of the text above, shown to the user in WebBrain's page card. It may contain mistakes.]\n${answer}`;
+  const head = `${selection}\n\n[Earlier ${label} of the text above, shown to the user in WebBrain's page card. It may contain mistakes.]\n`;
+  // The card shows the whole answer, but a small context window cannot take all of it back beside
+  // the selection and the question and still leave room to reply, so the model is sent its start.
+  // A window that cannot take even the selection and the question keeps the whole answer and is
+  // refused, with a reason, when it runs.
+  const room = priorAnswerRoom(contextWindow, buildSelectionPrompt(head, 'custom', question, language, SELECTION_CONTEXT_SOURCE_GROUNDING));
+  if (room > INLINE_FOLLOW_UP_OMITTED_TOKENS) {
+    const start = sliceWithinTokens(answer, room - INLINE_FOLLOW_UP_OMITTED_TOKENS, false);
+    if (start.length < answer.length) answer = `${start}${INLINE_FOLLOW_UP_OMITTED_NOTE}`;
+  }
+  return `${head}${answer}`;
 }
 
 // A card answer that hit the output limit is finished in the side panel by
@@ -425,27 +445,38 @@ const INLINE_CONTINUATION_INSTRUCTIONS = Object.freeze({
 });
 
 // What the side panel adds to a selection run before the prompt: its own system prompt and
-// scope note (about 2,500 characters, counted at a token each like everything else). Kept
-// above the real length, and checked against it in the tests, so a continuation that is
-// trimmed to fit here is never refused by the side panel's own context check.
-export const SIDE_PANEL_SELECTION_SYSTEM_TOKENS = 3000;
-// The room left for the rest of the answer when an unfinished one is trimmed to fit.
+// scope note (about 2,500 characters, counted as a system message). Kept above the real
+// estimate, and checked against it in the tests, so an earlier answer that is trimmed to fit
+// here is never refused by the side panel's own context check.
+export const SIDE_PANEL_SELECTION_SYSTEM_TOKENS = 1100;
+// The room left for the reply when an earlier answer is trimmed to fit.
 const INLINE_CONTINUATION_REPLY_TOKENS = 2048;
 
-// The end of `text` that fits `budget` tokens under the same worst-case estimate.
-function tailWithinTokens(text, budget) {
+// The tokens an earlier answer may take in a side-panel prompt whose other text is `frameText`:
+// what the window leaves after that text, the side panel's own prompt and a reply (a generous one,
+// or only the least a reply needs when the window is tight). Null when the window is not known.
+function priorAnswerRoom(contextWindow, frameText) {
+  const windowTokens = Math.floor(Number(contextWindow));
+  if (!(windowTokens > 0)) return null;
+  const fixedTokens = estimateInlinePromptTokens([{ role: 'user', content: frameText }]) + SIDE_PANEL_SELECTION_SYSTEM_TOKENS;
+  const generous = windowTokens - fixedTokens - Math.min(INLINE_CONTINUATION_REPLY_TOKENS, Math.floor(windowTokens / 4));
+  return generous >= INLINE_MIN_ANSWER_TOKENS ? generous : windowTokens - fixedTokens - INLINE_MIN_ANSWER_TOKENS;
+}
+
+// The end (or, with `fromEnd` false, the start) of `text` that fits `budget` tokens under the
+// same worst-case estimate, cut on a character boundary.
+function sliceWithinTokens(text, budget, fromEnd) {
   const chars = Array.from(text);
   let used = 0;
-  let start = chars.length;
-  while (start > 0) {
-    const cost = chars[start - 1].codePointAt(0) < INLINE_ASCII_RANGE_END
-      ? INLINE_ASCII_TOKENS_PER_CHAR
-      : INLINE_OTHER_TOKENS_PER_CHAR;
+  let count = 0;
+  while (count < chars.length) {
+    const char = chars[fromEnd ? chars.length - 1 - count : count];
+    const cost = char.codePointAt(0) < INLINE_ASCII_RANGE_END ? INLINE_ASCII_TOKENS_PER_CHAR : INLINE_OTHER_TOKENS_PER_CHAR;
     if (used + cost > budget) break;
     used += cost;
-    start -= 1;
+    count += 1;
   }
-  return chars.slice(start).join('');
+  return fromEnd ? chars.slice(chars.length - count).join('') : chars.slice(0, count).join('');
 }
 
 export function buildContinuationSelectionPrompt(selectionText, action, partialAnswer, language = '', { contextWindow } = {}) {
@@ -467,19 +498,12 @@ export function buildContinuationSelectionPrompt(selectionText, action, partialA
   // all of it back beside the selection and still leave room to write the rest. It resumes from
   // the end, so only the end is sent, trimmed to what the window leaves. A window that cannot
   // even take the selection keeps the whole text and is refused, with a reason, when it runs.
-  const windowTokens = Math.floor(Number(contextWindow));
-  if (windowTokens > 0) {
-    const frame = wrapSelectedPageText(head, trusted, SELECTION_ONLY_SOURCE_GROUNDING);
-    const fixedTokens = estimateInlinePromptTokens([{ content: frame }]) + SIDE_PANEL_SELECTION_SYSTEM_TOKENS;
-    // Room for a generous reply first; a tight window gives up all but the least a reply needs.
-    let room = windowTokens - fixedTokens - Math.min(INLINE_CONTINUATION_REPLY_TOKENS, Math.floor(windowTokens / 4));
-    if (room < INLINE_MIN_ANSWER_TOKENS) room = windowTokens - fixedTokens - INLINE_MIN_ANSWER_TOKENS;
-    if (room > 0) {
-      const tail = tailWithinTokens(body, room);
-      if (tail.length < body.length) {
-        body = tail;
-        trimmed = true;
-      }
+  const room = priorAnswerRoom(contextWindow, wrapSelectedPageText(head, trusted, SELECTION_ONLY_SOURCE_GROUNDING));
+  if (room > 0) {
+    const tail = sliceWithinTokens(body, room, true);
+    if (tail.length < body.length) {
+      body = tail;
+      trimmed = true;
     }
   }
   return wrapSelectedPageText(`${head}${trimmed ? '…' : ''}${body}`, trusted, SELECTION_ONLY_SOURCE_GROUNDING);
