@@ -1301,7 +1301,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     mod.db.rows = [{ id: 1, url: 'data:keep' }];
     for (const bad of [
       { customEvents: 'not-json' }, { messages: '{"a":1}' }, { applinks: '' }, { order: 'null' },
-      { favourite: '[1]' }, { favourite: '{}' }, { favourite: '{"url":"  "}' }, { favourite: '{"url":5}' }, { favourite: '{"url":"not-a-url"}' }, { favourite: '{"type":"photo","url":"data:text/plain,x"}' }, { theme: { nested: true } },
+      { timezone: 'Not/AZone' }, { timezone: '' }, { favourite: '[1]' }, { favourite: '{}' }, { favourite: '{"url":"  "}' }, { favourite: '{"url":5}' }, { favourite: '{"url":"not-a-url"}' }, { favourite: '{"type":"photo","url":"data:text/plain,x"}' }, { theme: { nested: true } },
     ]) {
       assert.equal(await mod.importSettings(JSON.stringify({ ...bad, [K]: [{ url: 'data:image/png;base64,OTHER' }] })), false, JSON.stringify(bad));
     }
@@ -1319,7 +1319,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: 'nope' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: '' }] })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: '   ' }] })), false);
-    for (const url of ['not-a-url', 'data:text/plain,x', 'javascript:alert(1)', 'ftp://a.test/x.png']) {
+    for (const url of ['data:image/png;', 'data:video/mp4,', 'data:image/png;base64,', 'not-a-url', 'data:text/plain,x', 'javascript:alert(1)', 'ftp://a.test/x.png']) {
       assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url }] })), false, url);
     }
     mod.db.rows = [{ id: 1, url: 'data:keep' }];
@@ -1332,12 +1332,15 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // delete / drag-and-drop identify links by key: it must be present and unique
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"a","url":"https://a.test"}]' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ applinks: '[{"name":"a","url":"u","key":"k"},{"name":"b","url":"u","key":"k"}]' })), false);
-    assert.equal(globalThis.__toasts.length, 39);
+    assert.equal(globalThis.__toasts.length, 44);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({
       customEvents: '[]', messages: '["hi"]', applinks: '[{"name":"a","url":"https://a.test","key":"k1"}]', order: '["time"]', todo: '[]', favourite: 'null',
     })), true);
+    for (const tz of ['auto', 'Europe/Istanbul', 'UTC']) {
+      assert.equal(await mod.importSettings(JSON.stringify({ timezone: tz })), true, tz);
+    }
     for (const ok of ['{"type":"random_colour","url":"#ff00aa"}', '{"url":"https://img.test/a.jpg"}', '{"url":"data:image/png;base64,AA"}']) {
       assert.equal(await mod.importSettings(JSON.stringify({ favourite: ok })), true, ok);
     }

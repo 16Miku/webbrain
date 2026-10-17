@@ -139,6 +139,14 @@ export function validateSettings(content) {
       return `${key} has entries that share a key`;
     }
   }
+  // The date widget hands this to Intl, which throws on a name it doesn't know.
+  if ('timezone' in content && content.timezone !== 'auto') {
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: content.timezone });
+    } catch {
+      return 'timezone is not a known time zone';
+    }
+  }
   if ('favourite' in content && content.favourite !== 'null') {
     try {
       const favourite = JSON.parse(content.favourite);
@@ -161,7 +169,8 @@ export function validateSettings(content) {
 // What the loader can show: an uploaded image / video (a data URL) or a remote http(s) address.
 const isBackgroundUrl = (url) => {
   if (typeof url !== 'string') return false;
-  if (/^data:(image|video)\/[^;,]+[;,]/i.test(url)) return true;
+  // header, a comma, then a non-empty payload
+  if (/^data:(image|video)\/[^;,]+(?:;[^,]*)?,[\s\S]+$/i.test(url)) return true;
   try {
     return /^https?:$/.test(new URL(url).protocol);
   } catch {
