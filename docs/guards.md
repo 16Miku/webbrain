@@ -32,8 +32,8 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
   - A completion accepted over a guard that knows the claim is wrong (the
     completion judge's "not done", an unauthorized mutation, missing, failed
     or unfinished progress rows, unread pages of a whole thread the user
-    asked for, text that went into a formatting toolbar) ends the run as
-    `partial`, not `success`, whether it ended with `done`, a structured
+    asked for, text that went into a formatting toolbar, an exact table that
+    can no longer be delivered) ends the run as `partial`, not `success`, whether it ended with `done`, a structured
     Cloud run's `done_json` or a plain answer. Missing evidence alone keeps
     the model's outcome.
   - A write that went out but could not be read back exactly (GitHub's

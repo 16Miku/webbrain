@@ -718,6 +718,24 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: an Ask answer accepted over unread pages of a requested whole read ends as partial`, async () => {
+    // An Ask done has no outcome of its own; it claims the answer is complete.
+    const h = batchAgent(Agent, { mode: 'ask', task: 'Summarize this whole conversation.' });
+    h.agent._currentUrl = async () => 'https://outlook.live.com/mail/0/inbox/id/AQMkADAwATM0MDAAMS1i';
+    await h.agent._beginReadCompleteness(h.tab, 'Summarize this whole conversation.', {});
+    h.agent._armReadCompletenessFromPlan(h.tab, { request_kind: 'execute', read_scope: 'complete_thread' });
+    h.agent._recordReadCompleteness(h.tab, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
+      pageContent: 'main\n listitem "First message"', page: 1, totalChars: 9000, hasMore: true, truncated: false, nextPage: 2 });
+    const done = ['done', { summary: 'The thread settles the launch date.' }];
+    assert.equal((await h.batch([done])).action, 'continue', `${build}: the first answer gets its coverage note`);
+    const updates = [];
+    const accepted = await h.batch([done], updates);
+    assert.equal(accepted.action, 'return', `${build}: the second answer is accepted`);
+    assert.equal(accepted.endStatus, 'partial', `${build}: the run must end as partial`);
+    const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
+    assert.equal(doneResult?.outcome, 'partial', `${build}: an answer over unread pages was not downgraded`);
+  });
+
   // ── Exact table export ─────────────────────────────────────────────────
   test(`${build}: table JSON without an exact extract, and an expired table reference, are advised once`, async () => {
     const json = JSON.stringify({ rowCount: 2, rows: [{ id: 'A' }, { id: 'B' }] });
@@ -731,6 +749,40 @@ for (const build of ['chrome', 'firefox']) {
       prepare: h => h.agent.readCompletenessStates.set(h.tab, { runToken: 'owned-run', tablePageObserved: true }),
     }, { summary: 'Full inventory.', data_ref: 'table_expired' },
     'The table reference had expired, so the exact table could not be delivered.', `${build} table ref`);
+  });
+
+  test(`${build}: a done whose exact table can no longer be delivered ends as partial`, async () => {
+    // The reference expired: the accepted done delivers only the model's
+    // summary, never the promised rows, and WebBrain knows it.
+    const askSchemas = new Map(getToolsForMode('ask', { tier: 'full' }).map(tool => [tool.function.name, tool.function.parameters]));
+    const h = batchAgent(Agent, { mode: 'ask', realDone: true, schemas: askSchemas });
+    h.agent.readCompletenessStates.set(h.tab, { runToken: 'owned-run', tablePageObserved: true });
+    // An Ask answer's done has no outcome of its own; it claims the answer.
+    const done = ['done', { summary: 'Full inventory.', data_ref: 'table_expired' }];
+    assert.equal((await h.batch([done])).action, 'continue', `${build}: the expired reference is refused once`);
+    const updates = [];
+    const accepted = await h.batch([done], updates);
+    assert.equal(accepted.action, 'return', `${build}: the second completion is accepted`);
+    assert.equal(accepted.endStatus, 'partial', `${build}: the run must end as partial`);
+    const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
+    assert.equal(doneResult?.outcome, 'partial', `${build}: an undelivered table was reported as a success`);
+    // A stale snapshot that is still delivered keeps the model's outcome; one
+    // that Strict secret mode withholds does not.
+    for (const strictSecretMode of [false, true]) {
+      const s = batchAgent(Agent, { mode: 'ask' });
+      s.agent.strictSecretMode = strictSecretMode;
+      const owner = { runToken: 'owned-run', current: () => true };
+      const record = { dataRef: 'table_owned', runToken: 'owned-run', owner, args: { columns: ['id'] }, summary: '[{"id":"A"}]' };
+      s.agent.readCompletenessStates.set(s.tab, { runToken: 'owned-run', exactTableExports: new Map([['table_owned', record]]) });
+      s.agent._exactTableOwner = () => owner;
+      s.agent.executeTool = async () => ({ success: false, error: 'The source table changed.' });
+      const args = () => ({ summary: 'Full inventory.', data_ref: 'table_owned' });
+      s.agent._beginCompletionGuardAttempt(s.tab);
+      assert.equal((await s.agent._resolveExactTableDone(s.tab, args()))?.blockedDone, true);
+      s.agent._beginCompletionGuardAttempt(s.tab);
+      assert.equal(await s.agent._resolveExactTableDone(s.tab, args()), null);
+      assert.equal(s.agent._completionOutcomeDowngraded(s.tab), strictSecretMode, `${build}: strictSecretMode=${strictSecretMode}`);
+    }
   });
 
   test(`${build}: an unverifiable table snapshot is delivered over advice, but not under Strict secret mode`, async () => {

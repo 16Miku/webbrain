@@ -345,6 +345,8 @@ function selectionScopedResponseLanguagePolicy(locale) {
 //   done-summary-meta-only, plan-done-summary-shape: the summary's wording.
 //   pure-calculation-done-checks: how the summary writes the result.
 //   exact-table-done: a rowCount that disagrees with rows that may be complete.
+//     A done whose table can no longer be delivered is downgraded where it
+//     is accepted (_resolveExactTableDone).
 //   plain-final-done-protocol, plan-plain-final-protocol: how the answer
 //     ended, not the task.
 //   incomplete-task-redirect: it only sees partial or failed endings.
@@ -1043,13 +1045,16 @@ export class Agent extends LoopDetector {
     const record = state?.exactTableExports?.get(args.data_ref);
     const owner = this._exactTableOwner(tabId);
     if (!record || !record.owner.current() || !owner?.current() || record.runToken !== owner.runToken) {
+      if (this._guardRefusesOnce(tabId, 'exact-table-done', { decided: false,
+        caveat: 'The table reference had expired, so the exact table could not be delivered.' })) {
+        return { success: false, blockedDone: true, exactTableUnverified: true,
+          error: 'Unknown, expired, or superseded table data_ref. Extract the table in this current task first.' };
+      }
       // Accepted, it delivers only the model's own summary, never rows
-      // another task or run extracted.
-      return this._guardRefusesOnce(tabId, 'exact-table-done', { decided: false,
-        caveat: 'The table reference had expired, so the exact table could not be delivered.' })
-        ? { success: false, blockedDone: true, exactTableUnverified: true,
-          error: 'Unknown, expired, or superseded table data_ref. Extract the table in this current task first.' }
-        : null;
+      // another task or run extracted. The table the task promised is then
+      // known not to be delivered, so the run ends as partial.
+      this._downgradeCompletionOutcome(tabId, 'exact-table-done');
+      return null;
     }
     onUpdate?.('tool_call', { name: 'extract_data', args: record.args, verification: true });
     const verified = await this.executeTool(tabId, 'extract_data', record.args, onUpdate,
@@ -1063,8 +1068,10 @@ export class Agent extends LoopDetector {
       }
       // Accepted: the stored snapshot is delivered while its task still owns
       // it, unless Strict secret mode now applies (the snapshot predates it,
-      // and its re-projection may be what failed).
+      // and its re-projection may be what failed). A table that is not
+      // delivered ends the run as partial.
       if (owner.current() && this.strictSecretMode !== true) args.summary = record.summary;
+      else this._downgradeCompletionOutcome(tabId, 'exact-table-done');
       return null;
     }
     args.summary = record.summary;
@@ -4873,6 +4880,14 @@ export class Agent extends LoopDetector {
   // its run reports partial (trace status, run_status, onRunFinished).
   _completionOutcomeDowngraded(tabId) {
     return (this._guardRunState(tabId).outcomeDowngrades?.size || 0) > 0;
+  }
+
+  // A completion accepted although WebBrain knows its result is incomplete,
+  // where the guard's other cases only lack evidence (exact-table-done: a
+  // table that can no longer be delivered). It ends the run as partial, as
+  // one accepted over an OUTCOME_DOWNGRADING_GUARDS check does.
+  _downgradeCompletionOutcome(tabId, id) {
+    (this._guardRunState(tabId).outcomeDowngrades ||= new Set()).add(id);
   }
 
   // native-chat-receipt-not-durable for a plain final. A plain final in an
@@ -14968,8 +14983,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (!scheduledResume) await cancelPendingResumes();
         // done_json is always a success claim; its result carries no outcome.
+        // So is an Ask answer's done, whose schema has no outcome.
         const claimsSuccess = toolResult.outcome === 'success' || (fnName === 'done_json'
-          && toolResult.doneJson === true && toolResult.cloudFailed !== true && toolResult.outcome === undefined);
+          && toolResult.doneJson === true && toolResult.cloudFailed !== true && toolResult.outcome === undefined)
+          || (fnName === 'done' && toolResult.done === true && toolResult.outcome == null
+            && !this._isActionMode(this._effectiveRunMode(tabId)));
         let doneEndStatus = null;
         if (!scheduledResume && claimsSuccess && this._completionOutcomeDowngraded(tabId)) {
           // Accepted over a guard that knows the claim is wrong: end the run,
