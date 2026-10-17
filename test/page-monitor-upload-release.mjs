@@ -7,7 +7,7 @@ import { uploadReleaseHtml, stageSequentialReleaseUploads } from './lib/upload-r
 const recipientUploadHtml = `<!doctype html><style>
 #binary-widget{display:block;width:400px;padding:10px}input[type=file]{width:1px;height:1px;opacity:0}
 </style><form id="release-form"><div id="recipient">Upload recipient: Alice</div>
-<div id="binary-widget"><button type="button">Upload document</button><input type="file" id="releases-upload"></div></form>
+<div id="binary-widget"><button type="button" aria-controls="releases-upload">Upload document</button><input type="file" id="releases-upload"></div></form>
 <script>window.attachmentEvents={markdown:[],binary:[]};window.chooserClicks=0;window.uploadRecipients=[];
 document.getElementById('releases-upload').onchange=event=>{
  attachmentEvents.binary.push([...event.target.files].map(file=>({name:file.name,size:file.size})));
@@ -128,6 +128,18 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         assert.equal(attached.fence.ready, !changed);
         assert.deepEqual(await page.evaluate(() => uploadRecipients), changed ? [] : ['Upload recipient: Alice']);
       }, recipientUploadHtml));
+      for (const unrelated of ['aria-controls removed', 'aria-controls names another input'])
+        await t.test(`a direct hidden slot cannot borrow an unrelated button in its form: ${unrelated}`, () => withFixture(async page => {
+          await page.evaluate(unrelated => {
+            const button = document.querySelector('#binary-widget button');
+            if (unrelated === 'aria-controls removed') button.removeAttribute('aria-controls');
+            else button.setAttribute('aria-controls', 'another-upload');
+          }, unrelated);
+          const snapshot = await capture(page, { uploadTargets: ['#releases-upload'] });
+          assert.equal((await validate(page, snapshot)).ready, false, 'A button merely sharing the form is not the slot\'s activator');
+          const attached = await attach(page, snapshot);
+          assert.equal(attached.events.binary.length, 0); assert.equal(attached.chooserClicks, 0);
+        }, recipientUploadHtml));
       await t.test('a direct hidden slot cannot use partially observed recipient text', () => withFixture(async page => {
         await page.evaluate(() => { document.getElementById('recipient').textContent = 'Upload recipient: ' + 'Alice '.repeat(100); });
         const snapshot = await capture(page, { uploadTargets: ['#releases-upload'] });

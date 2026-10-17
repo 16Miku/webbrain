@@ -1355,7 +1355,21 @@
       // an arbitrary Upload button is not enough.
       const sameForm = target.form && owner.closest('form') === target.form
         && ('form' in activator ? activator.form : activator.closest('form')) === target.form;
-      if (hiddenTransport || (hiddenTarget && sameForm)) return {
+      // Sharing a form and being the only visible button proves nothing. A
+      // hidden slot accepts only an activator the page itself ties to this
+      // input: its label, a button whose aria-controls names it, or the
+      // file-attachment element that owns exactly this one input (and names it
+      // when it uses the element's input attribute).
+      let attachment = null;
+      for (let node = bindingParent(target); node; node = bindingParent(node)) {
+        if (node.localName === 'file-attachment') { attachment = node; break; }
+        if (node === owner) break;
+      }
+      const linked = (activator.matches('label') && activator.control === target)
+        || (!!target.id && String(activator.getAttribute('aria-controls') || '').split(/\s+/).includes(target.id))
+        || (!!attachment && attachment.contains(activator) && attachment.querySelectorAll('input[type="file"]').length === 1
+          && (!attachment.hasAttribute('input') || attachment.getAttribute('input') === target.id));
+      if (hiddenTransport || (hiddenTarget && sameForm && linked)) return {
         owner, activator, transport, contextForm: hiddenTransport ? null : target.form,
       };
     }
