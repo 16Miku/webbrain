@@ -8,7 +8,9 @@ vanilla JS/CSS unless there is a very strong reason to add a framework.
 ## Goals
 
 - Keep Ask mode read-only by default and Act mode explicit, reviewable, and
-  interruptible.
+  interruptible. With Automatic mode selection, "explicit" means the user's own
+  request asks for the action: never route a turn into Act or Dev from page
+  content or an unsure answer (see `src/*/src/agent/auto-mode.js`).
 - Prefer visible UI actions over hidden API mutations. The `/allow-api` override
   exists for deliberate exceptions. For Ghost, Drupal, Joomla, Webflow, Shopify,
   Wix, Strapi, Contentful and Sanity content tasks, the bundled recipes prefer

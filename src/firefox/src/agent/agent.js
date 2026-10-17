@@ -12,6 +12,7 @@ import { installPageFeedback, beforePageAgentDispatch, hasPageAgentDispatchOwner
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText, systemOneStateBytes } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
+import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
@@ -629,6 +630,12 @@ export class Agent extends LoopDetector {
     this.conversationIds = new Map(); // tabId -> stable conversationId (regenerated on clearConversation)
     this.conversationModes = new Map(); // tabId -> 'ask' | 'act' | 'dev'
     this._runModeOverrides = new Map(); // tabId -> effective mode for the active run only
+    // Automatic mode selection (auto-mode.js): routed Ask turns that may hand
+    // themselves to Act/Dev, turns whose mode is not chosen yet, and accepted
+    // hand-offs that the caller restarts once.
+    this._autoModeEscalationTabs = new Set();
+    this._autoModeRoutePendingTabs = new Set();
+    this._pendingModeEscalations = new Map();
     this._standaloneChatRunTabs = new Set(); // tabIds using the provider-independent plain-chat boundary
     this.responseLanguagePolicies = new Map(); // tabId -> trusted, normalized language policy for the active run
     this.submittedRunRequestIds = new Map(); // tabId -> request whose user turn is durable in storage.session
@@ -20294,6 +20301,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runId) {
       trace.recordTurnStart(runId, 0, { mode });
       this.currentRunId.set(tabId, runId);
+      // How an automatically routed turn chose its mode, and how long it waited.
+      if (runOptions?.modeRoute) {
+        try { trace.recordNote(runId, 0, 'mode_route', runOptions.modeRoute); } catch {}
+      }
       this._flushAdapterMatchTraces(tabId, runId);
       const pendingVisionRoutes = this.pendingVisionRouteTraces.get(tabId) || [];
       this.pendingVisionRouteTraces.delete(tabId);
@@ -21782,6 +21793,122 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         content: '/no_think\nThe previous attempt did not produce a valid read-scope classification. Output exactly one JSON object with one allowed value: {"read_scope":"complete_thread"}, {"read_scope":"current_message"}, {"read_scope":"visible_page"}, or {"read_scope":"none"}. No prose, markdown, tool calls, or reasoning text.',
       },
     ];
+  }
+
+  // ── Automatic mode selection (see auto-mode.js) ──────────────────────
+
+  // Starts an automatically routed turn. Run state alone decides when it
+  // can; otherwise the turn starts as Ask and is routed while its page
+  // context is gathered (_routeAutoRunMode, _settleAutoModeRun).
+  _beginAutoModeRun(tabId, attachments, runOptions = {}, onUpdate = () => {}) {
+    const previousMode = this.conversationModes.get(tabId) || null;
+    let tier = '';
+    try { tier = this._resolvePromptTier(this._activeProvider(tabId)); } catch {}
+    const hard = autoModeHardRoute({
+      trustedContinuation: runOptions?.trustedContinuation === true,
+      previousMode,
+      standaloneChat: this._isStandaloneChatRun(runOptions),
+      selectionScoped: isSelectionSourceGrounding(runOptions?.sourceGrounding) || this.selectionGroundingScopes.has(tabId),
+      cloudRun: runOptions?.cloudRun === true,
+      attachments,
+      tier,
+    });
+    if (hard) {
+      onUpdate('run_mode', { mode: hard.mode, source: hard.source });
+      return { mode: hard.mode, runOptions: { ...runOptions, modeRoute: { requested: AUTO_MODE, ...hard } } };
+    }
+    this._autoModeEscalationTabs.add(tabId);
+    this._autoModeRoutePendingTabs.add(tabId);
+    return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode } } };
+  }
+
+  // The decision model's `run_mode` answer for a routed turn. It reads only
+  // the user's words and run state, never asks the main model, and never
+  // rejects: without a sure answer the turn starts read-only.
+  async _routeAutoRunMode(tabId, messages, userMessage, previousMode = null) {
+    const startedAt = Date.now();
+    try {
+      const binding = this._activeTaskBinding(messages || []);
+      const page = {
+        previous_mode: isRunMode(previousMode) ? previousMode : 'none',
+        current_task: binding.index >= 0 ? String(binding.requestText || binding.text || '') : '',
+      };
+      const verdict = await this._semanticDecision(tabId, 'run_mode', {
+        request: this._messageText(userMessage),
+        page,
+      }, { mainModel: false });
+      const tier = this._resolvePromptTier(this._activeProvider(tabId));
+      return {
+        mode: autoModeForChoice(verdict.choice, { tier }),
+        choice: verdict.choice || null,
+        source: verdict.choice ? verdict.source : 'ask_first',
+        latencyMs: Date.now() - startedAt,
+      };
+    } catch {
+      return { mode: 'ask', choice: null, source: 'ask_first', latencyMs: Date.now() - startedAt };
+    }
+  }
+
+  // Applies the route once the page context is ready, waiting for it only a
+  // short grace period. An action mode replaces the provisional Ask setup:
+  // run mode, system prompt, the turn's runtime line and the BiDi run.
+  async _settleAutoModeRun(tabId, route, enriched, onUpdate, runOptions = {}) {
+    const waitStartedAt = Date.now();
+    const routed = await settleAutoModeRoute(route);
+    const mode = routed.mode;
+    this._autoModeRoutePendingTabs.delete(tabId);
+    if (mode !== 'ask') {
+      this._autoModeEscalationTabs.delete(tabId);
+      this._runModeOverrides.set(tabId, mode);
+      this.getConversation(tabId, mode);
+      withRoutedRuntimeMode(enriched, mode);
+      if (!this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
+    }
+    onUpdate('run_mode', { mode, source: routed.source });
+    return {
+      mode,
+      runOptions: {
+        ...runOptions,
+        modeRoute: {
+          requested: AUTO_MODE,
+          mode,
+          source: routed.source,
+          choice: routed.choice ?? null,
+          routeMs: Number.isFinite(routed.latencyMs) ? routed.latencyMs : null,
+          waitedMs: Date.now() - waitStartedAt,
+        },
+      },
+    };
+  }
+
+  // An accepted `request_action_mode` call of a routed Ask turn: its quote
+  // must come from the user's own words, never from generated page context.
+  _autoModeEscalation(tabId, toolCalls, enriched, provider = null) {
+    const call = (toolCalls || []).find(item => item?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME);
+    if (!call) return null;
+    const request = typeof enriched?.webbrainUserAuthoredText === 'string'
+      ? enriched.webbrainUserAuthoredText
+      : this._plannerUserAuthoredText(enriched);
+    return acceptModeEscalation(call.function?.arguments, request, { tier: this._resolvePromptTier(provider) });
+  }
+
+  // Removes the current turn, which a hand-off replaces with an action run.
+  _rollbackTurnForModeEscalation(messages, enriched) {
+    let index = messages.lastIndexOf(enriched);
+    const text = enriched?.webbrainUserAuthoredText;
+    if (index < 0 && typeof text === 'string' && text) {
+      index = messages.findLastIndex(message => message?.role === 'user' && message.webbrainUserAuthoredText === text);
+    }
+    if (index > 0) messages.splice(index);
+    return index > 0;
+  }
+
+  // The action mode a routed turn handed itself to, read once by the caller
+  // that restarts the turn in it.
+  takeModeEscalation(tabId) {
+    const escalation = this._pendingModeEscalations.get(tabId) || null;
+    this._pendingModeEscalations.delete(tabId);
+    return escalation;
   }
 
   async _maybeEmitAskModeHandoff(tabId, mode, userMessage, finalResponse, onUpdate, runOptions = {}) {
@@ -28690,6 +28817,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (mode === 'dev') {
       prompt += `\n\n${SYSTEM_PROMPT_DEV_APPENDIX.trim()}`;
     }
+    if (mode === 'ask' && tabId != null && this._autoModeEscalationTabs.has(tabId)) {
+      prompt += `\n\n${AUTO_MODE_ASK_NOTE}`;
+    }
     if (this.useSiteAdapters) {
       prompt += `\n\n${UNIVERSAL_PREAMBLE.trim()}`;
     }
@@ -29575,6 +29705,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   getConversation(tabId, mode = 'ask') {
+    // "auto" is a request to route the turn, never a conversation mode.
+    if (!isRunMode(mode)) mode = this.conversationModes.get(tabId) || 'ask';
     if (!this.conversations.has(tabId)) {
       this.conversations.set(tabId, [
         { role: 'system', content: this._buildSystemPrompt(mode, tabId) },
@@ -41973,6 +42105,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // cannot outlive the run that cleared them. The outer finally releases
     // the run even if this first storage read fails.
     await this._hydrate(tabId);
+    this._pendingModeEscalations.delete(tabId);
+    if (mode === AUTO_MODE) {
+      ({ mode, runOptions } = this._beginAutoModeRun(tabId, attachments, runOptions, onUpdate));
+    } else if (runOptions?.modeEscalation && isRunMode(mode)) {
+      runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation' } };
+      onUpdate('run_mode', { mode, source: 'escalation' });
+    }
     // Before any model or tool boundary, so a run resumed after a background
     // restart applies the corrections it had accepted before the old task acts.
     await this._restoreJournaledSteering(tabId);
@@ -42014,7 +42153,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
       messageProcessingStarted = true;
       const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
-      void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
+      void this._maybeEmitAskModeHandoff(tabId, this._effectiveRunMode(tabId, mode), userMessage, result, onUpdate, runOptions);
       return result;
     } finally {
       if (botMemorySession) await botMemorySession.close();
@@ -42061,6 +42200,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return stopped;
     } finally {
       if (runClaimed) {
+        this._autoModeEscalationTabs.delete(tabId);
+        this._autoModeRoutePendingTabs.delete(tabId);
         try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
       }
     }
@@ -42306,6 +42447,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.currentCostState.set(tabId, costState);
     // New user turn: drop transient "allow once" / "deny once" permission grants.
     this.permissions.beginTurn(tabId);
+    // An automatically routed turn asks the decision model while its page
+    // context is gathered below (see auto-mode.js).
+    const autoModeRoute = runOptions?.autoModeRouting
+      ? this._routeAutoRunMode(tabId, messages, userMessage, runOptions.autoModeRouting.previousMode)
+      : null;
 
     // Resolve model-bound local vision metadata before enrichment captures a
     // screenshot or attachment validation consults provider.supportsVision.
@@ -42330,7 +42476,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const enriched = await this._enrichUserMessageWithCurrentPage(
       tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions,
     );
-    this._applyUserTurnKind(enriched, await userTurnKind);
+    if (autoModeRoute) {
+      ({ mode, runOptions } = await this._settleAutoModeRun(tabId, autoModeRoute, enriched, onUpdate, runOptions));
+    }
+    // A turn routed into an action mode reads how it relates to the earlier
+    // task the way an action-mode turn does.
+    this._applyUserTurnKind(enriched, autoModeRoute && mode !== 'ask'
+      ? await this._userTurnKind(tabId, messages, userMessage, mode, runOptions, selectionOnly || standaloneChatRun)
+      : await userTurnKind);
     let sourceBoundTrimmedMessages = null;
     let sourceBoundMessagesAtTrim = null;
     const rawModelMessagesForRun = () => {
@@ -42593,6 +42746,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
+      autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
     });
     // The selected text is already present in the trusted run envelope.
     // Advertising page/network tools would let an injected selection induce a
@@ -42610,6 +42764,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let emptyOutputRecoveryAttempted = false;
     let compressionPlaceholderRecoveryAttempted = false;
     let structuredOutputRecoveryAttempted = false;
+    let autoModeEscalationRefusals = 0;
     let completionPlainFinalRecoveryAttempted = 0;
     let forceCompletionVerificationTurn = false;
     let allowCompletionFailureTurn = false;
@@ -42866,6 +43021,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
+        autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
       });
       tools = this._botMemoryRunTools(tabId, tools);
       if (selectionOnly || standaloneChatRun) tools = [];
@@ -43191,6 +43347,44 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;
+      }
+
+      if (mode === 'ask' && this._autoModeEscalationTabs.has(tabId)
+          && result.toolCalls?.some(call => call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME)) {
+        const escalation = this._autoModeEscalation(tabId, result.toolCalls, enriched, provider);
+        if (escalation) {
+          // The caller restarts this turn in the requested mode. Drop the turn
+          // so the action run records the request once.
+          this._rollbackTurnForModeEscalation(messages, enriched);
+          this._pendingModeEscalations.set(tabId, escalation);
+          onUpdate('text', { content: '', replace: true });
+          _traceStatus = 'mode_escalated';
+          if (runId) {
+            try { trace.recordNote(runId, steps, 'mode_route', { requested: AUTO_MODE, mode: escalation.mode, source: 'escalation_requested' }); } catch {}
+          }
+          await this._persistNow(tabId);
+          return (finalResponse = '');
+        }
+        // Without the user's own words behind it the hand-off is refused and
+        // the turn stays read-only; a second refusal withdraws the tool.
+        autoModeEscalationRefusals += 1;
+        if (autoModeEscalationRefusals >= 2) this._autoModeEscalationTabs.delete(tabId);
+        messages.push(this._withResponseItems({
+          role: 'assistant',
+          content: result.content || null,
+          tool_calls: result.toolCalls,
+        }, result.responseItems, result.reasoningContent, provider));
+        for (const call of result.toolCalls) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify(call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME
+              ? { success: false, error: 'request_action_mode was refused: `evidence` must quote the words of the user\'s latest message that ask for the action, exactly as written. Answer the request read-only if you can.' }
+              : { success: false, skipped: true, dispatched: false, noDispatch: true, error: 'Skipped because request_action_mode was called in the same response. Repeat this call if you still need it.' }),
+          });
+        }
+        onUpdate('text', { content: '', replace: true });
+        continue;
       }
 
       if (result.toolCalls && result.toolCalls.length > 0) {
@@ -43651,6 +43845,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Process a message with streaming output.
    */
   async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
+    // The streaming entry point is not routed; an automatic request starts read-only.
+    if (mode === AUTO_MODE) mode = 'ask';
     let runClaimed = false;
     try {
     await this._claimRunEntry(tabId, 'interactive', runOptions, onUpdate);

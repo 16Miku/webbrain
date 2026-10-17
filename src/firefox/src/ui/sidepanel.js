@@ -717,6 +717,13 @@ const ASK_PLACEHOLDER_KEYS = [
   'sp.input.ask_placeholder',
   'sp.input.placeholder_tip.help',
 ];
+// Automatic mode answers questions and takes actions, so it rotates both.
+const AUTO_PLACEHOLDER_KEYS = [
+  'sp.input.ask_placeholder',
+  'sp.input.act_placeholder',
+  'sp.input.placeholder_tip.help',
+  'sp.input.placeholder_tip.record',
+];
 const PERMISSION_REMINDER_PLACEHOLDER_KEY = 'sp.input.placeholder_tip.skip_permissions';
 let pendingAnswerSelection = null;
 let selectionAskActionRefreshFrame = null;
@@ -1125,6 +1132,10 @@ let currentAssistantEl = null;
 let verboseMode = false;
 let compactProgressVisible = true;
 let agentMode = 'ask'; // 'ask' | 'act' | 'dev'
+// Settings → Mode selection. In Automatic the toggle is hidden, the composer
+// sends "auto" and the agent routes each turn (src/*/src/agent/auto-mode.js);
+// slash commands and the mode shortcuts choose a mode for one message.
+let autoModeSelection = false;
 let abortRequested = false;
 const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
@@ -1194,6 +1205,7 @@ function setTabProcessing(tabId, processing) {
     isProcessing = effectiveProcessing;
     syncSelectionScopeRestoreAvailability();
     if (typeof syncFailureRecoveryButtons === 'function') syncFailureRecoveryButtons();
+    if (typeof updateActWarning === 'function') updateActWarning();
   }
 }
 
@@ -1776,6 +1788,8 @@ function isSuccessfulActCompletion(response) {
 }
 
 function isSuccessfulAskCompletion(mode, response) {
+  // An automatic run counts as Ask when it was routed to Ask.
+  if (mode === 'auto') mode = (response?.updates || []).findLast(update => update?.type === 'run_mode')?.data?.mode;
   if (mode !== 'ask') return false;
   if (!response || response.quota || response.success === false || response.ok === false) return false;
   if (updatesContainStoreReviewFailure(response.updates)) return false;
@@ -1930,11 +1944,17 @@ browser.storage.onChanged.addListener((changes) => {
   }
 });
 
+// An automatically routed run that is acting in the visible tab.
+function autoActionRunVisible() {
+  return autoModeSelection && isProcessing
+    && ['act', 'dev'].includes(currentAssistantEl?.dataset?.runMode);
+}
+
 function updateActWarning() {
   if (!actWarning) return;
   const show = actWarningPreferenceLoaded
     && !actWarningDismissed
-    && agentMode !== 'ask'
+    && (agentMode !== 'ask' || autoActionRunVisible())
     && !askBeforeConsequential;
   actWarning.classList.toggle('hidden', !show);
 }
@@ -1972,6 +1992,25 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.composerDeliveryMode) return;
   composerDeliveryMode = changes.composerDeliveryMode.newValue === 'steer' ? 'steer' : 'queue';
   syncSendButtonState();
+});
+
+function applyModeSelection(value) {
+  autoModeSelection = value === 'auto' && !isStandaloneWindow;
+  document.documentElement.dataset.modeSelection = autoModeSelection ? 'auto' : 'manual';
+  // A mode pinned before switching to Automatic must not linger in the
+  // composer styling; Automatic chooses per turn.
+  if (autoModeSelection && agentMode !== 'ask') setMode('ask');
+  else {
+    updateActWarning();
+    resetInputPlaceholderRotation();
+  }
+}
+browser.storage.local.get('modeSelection').then((stored) => {
+  applyModeSelection(stored.modeSelection);
+}).catch(() => {});
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.modeSelection) return;
+  applyModeSelection(changes.modeSelection.newValue);
 });
 
 function enqueueTabChatOperation(tabId, fn) {
@@ -4180,7 +4219,7 @@ async function renderScheduleComposer(prefillPrompt = '', tabId = currentTabId) 
   const modeInput = document.createElement('select');
   modeInput.className = 'schedule-mode';
   modeInput.innerHTML = `<option value="act">${escapeHtml(t('sp.mode.act'))}</option><option value="ask">${escapeHtml(t('sp.mode.ask'))}</option><option value="dev">${escapeHtml(t('sp.mode.dev'))}</option>`;
-  modeInput.value = agentMode === 'dev' ? 'dev' : (agentMode === 'ask' ? 'ask' : 'act');
+  modeInput.value = autoModeSelection ? 'act' : (agentMode === 'dev' ? 'dev' : (agentMode === 'ask' ? 'ask' : 'act'));
   addScheduleField(form, t('sp.schedule_form.mode'), modeInput);
 
   const errorEl = document.createElement('div');
@@ -6075,6 +6114,7 @@ function rebindContinueButtons() {
     btn.dataset.bound = 'true';
     btn.addEventListener('click', () => continueAgent({
       foreground: btn.dataset.foreground === 'true',
+      ...automaticContinuationMode(),
     }));
   });
 }
@@ -7176,7 +7216,7 @@ function retryPayloadFromButton(btn) {
   const text = String(btn?.dataset?.retryText || '').trim();
   if (!text) return null;
   const displayText = String(btn?.dataset?.retryDisplayText || text).trim() || text;
-  const mode = ['ask', 'act', 'dev'].includes(btn.dataset.retryMode)
+  const mode = ['ask', 'act', 'dev', 'auto'].includes(btn.dataset.retryMode)
     ? btn.dataset.retryMode
     : agentMode;
   const retryId = btn.dataset.retryId || '';
@@ -7294,7 +7334,7 @@ function retryPayloadForRunAssistant(assistantEl) {
   return {
     text,
     displayText,
-    mode: ['ask', 'act', 'dev'].includes(assistantEl?.dataset.runMode)
+    mode: ['ask', 'act', 'dev', 'auto'].includes(assistantEl?.dataset.runMode)
       ? assistantEl.dataset.runMode
       : agentMode,
     apiMutationsAllowed: assistantEl?.dataset.retryApiMutationsAllowed === 'true',
@@ -9234,6 +9274,7 @@ function modeForMessageText(text) {
   if (invocation?.command?.value === '/ask' || invocation?.command?.value === '/plan') return 'ask';
   if (invocation?.command?.value === '/act') return 'act';
   if (invocation?.command?.value === '/dev') return 'dev';
+  if (autoModeSelection) return 'auto';
   return agentMode;
 }
 
@@ -10332,6 +10373,15 @@ function handleAgentUpdateMessage(msg) {
 
     case 'message_info':
       applyMessageCompletion(eventAssistantEl || currentAssistantEl, data);
+      break;
+
+    case 'run_mode':
+      // An automatically routed run reports the mode it was routed to, which
+      // its Retry, Continue and recovery controls then reuse.
+      if (['ask', 'act', 'dev'].includes(data?.mode) && (eventAssistantEl || currentAssistantEl)) {
+        (eventAssistantEl || currentAssistantEl).dataset.runMode = data.mode;
+        updateActWarning();
+      }
       break;
 
     case 'ask_mode_handoff':
@@ -13106,7 +13156,15 @@ function showContinueButton(options = {}) {
   continueBtn.dataset.bound = 'true';
   continueBtn.addEventListener('click', () => continueAgent({
     foreground: continueBtn.dataset.foreground === 'true',
+    ...automaticContinuationMode(),
   }));
+}
+
+// In Automatic mode a continuation keeps the routed mode of the latest run.
+function automaticContinuationMode() {
+  if (!autoModeSelection) return {};
+  const mode = [...messagesEl.querySelectorAll('.message.assistant')].at(-1)?.dataset?.runMode;
+  return ['ask', 'act', 'dev'].includes(mode) ? { mode } : {};
 }
 
 async function continueAgent(options = {}) {
@@ -13867,7 +13925,8 @@ function getInputPlaceholderKeys() {
     return ['sp.input.selection_placeholder'];
   }
   let keys;
-  if (agentMode === 'ask') keys = ASK_PLACEHOLDER_KEYS;
+  if (autoModeSelection) keys = AUTO_PLACEHOLDER_KEYS;
+  else if (agentMode === 'ask') keys = ASK_PLACEHOLDER_KEYS;
   else if (agentMode === 'dev') keys = ['sp.input.dev_placeholder'];
   else keys = ['sp.input.act_placeholder'];
   if (askBeforeConsequential && permissionEducationState.promptCount > 0) {
@@ -14070,24 +14129,39 @@ async function handleGlobalKeydown(e) {
     inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
     return;
   }
-  // Ctrl+Shift+A: switch to Ask mode (blocked while agent is running)
+  // Ctrl+Shift+A: switch to Ask mode (blocked while agent is running).
+  // In Automatic mode the shortcuts choose a mode for the next message only.
   if (mod && e.shiftKey && e.key === 'A' && !isProcessing) {
     e.preventDefault();
-    setMode('ask');
+    if (autoModeSelection) prefixComposerModeCommand('/ask');
+    else setMode('ask');
     return;
   }
   // Ctrl+Shift+X: switch to Act mode (blocked while agent is running)
   if (mod && e.shiftKey && e.key === 'X' && !isProcessing) {
     e.preventDefault();
-    await ensureActMode();
+    if (autoModeSelection) prefixComposerModeCommand('/act');
+    else await ensureActMode();
     return;
   }
   // Ctrl+Shift+D: switch to Dev mode (blocked while agent is running)
   if (mod && e.shiftKey && e.key === 'D' && !isProcessing) {
     e.preventDefault();
-    await ensureDevMode();
+    if (autoModeSelection) prefixComposerModeCommand('/dev');
+    else await ensureDevMode();
     return;
   }
+}
+
+// Automatic mode: a mode shortcut writes its slash command in front of the
+// draft, replacing an earlier one, so the choice stays visible and applies to
+// that message only.
+function prefixComposerModeCommand(command) {
+  const draft = inputEl.value.replace(/^\/(?:ask|act|dev|plan)(?:\s+|$)/i, '');
+  inputEl.value = `${command} ${draft}`;
+  inputEl.focus();
+  inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length);
+  autoResizeInput();
 }
 
 // --- Mode Toggle ---
@@ -14102,6 +14176,8 @@ function positionModeHighlight(btn, { instant = false } = {}) {
 
 function setMode(mode) {
   mode = normalizeAgentMode(mode);
+  // Automatic never pins a mode: callers pass the mode of their own send.
+  if (autoModeSelection) mode = 'ask';
   agentMode = mode;
 
   modeAskBtn.classList.toggle('active', mode === 'ask');
@@ -14132,6 +14208,7 @@ async function ensureActMode() {
     return false;
   }
   if (agentMode === 'act') return true;
+  if (autoModeSelection) return true;
   setMode('act');
   return true;
 }
@@ -14154,6 +14231,7 @@ async function ensureDevMode() {
     // The agent also enforces this server-side; don't block Dev on a stale
     // sidepanel/background lookup failure.
   }
+  if (autoModeSelection) return true;
   setMode('dev');
   return true;
 }

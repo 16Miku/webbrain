@@ -112,6 +112,14 @@ OpenRouter Decider with completion verification enabled once outsourcing is
 configured. Compass completion uses its managed Cloud decision route by default;
 an explicitly enabled and consented D1 selection changes that decision route only.
 
+With Settings → Mode selection set to Automatic, each turn the user sends also
+asks the configured decision model one `run_mode` question: the text of that
+message, the previous turn's mode and the user's earlier task in the
+conversation. No page text, title, address or screenshot is included, and the
+question is asked only when a message is sent, never while it is typed. Without
+a decision model nothing extra is sent: the turn starts in Ask and the active
+model may hand it to Act itself.
+
 The optional experimental **D1 FP32 WebGPU** decision provider has no inference
 endpoint or API key. Its bounded text/JSON state, questions and inline screenshots
 stay in the local decision Worker. Explicit download consent permits only pinned

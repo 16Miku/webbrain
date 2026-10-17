@@ -384,6 +384,8 @@ export class RunUiJournal {
       snapshot.discardedBeforeSeq = removedSeq || snapshot.discardedBeforeSeq;
       snapshot.truncatedBeforeSeq = snapshot.discardedBeforeSeq;
     }
+    // An automatically routed run reports the mode it was routed to.
+    if (type === 'run_mode' && ['ask', 'act', 'dev'].includes(data?.mode)) snapshot.mode = data.mode;
     if (type === 'plan_review') {
       snapshot.status = 'awaiting_plan';
       snapshot.pendingPlanId = String(data?.planId || '') || null;

@@ -27,6 +27,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   [UI_SCALE_STORAGE_KEY]: 100,
   verboseMode: false,
   composerDeliveryMode: 'queue',
+  modeSelection: 'manual',
   selectionShortcutEnabled: true,
   [AUTO_GROUP_TABS_KEY]: true,
   helpImproveWebBrain: true,
@@ -184,6 +185,7 @@ const NUMBER_KEYS = new Set([
 ]);
 const STRING_KEYS = new Set([
   'composerDeliveryMode',
+  'modeSelection',
   'wbLocale',
   'themeMode',
   'autoScreenshot',

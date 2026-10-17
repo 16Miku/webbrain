@@ -3061,6 +3061,16 @@ html[data-standalone="true"] #header #btn-clear .conversation-action-label {
   margin-bottom: 8px;
 }
 
+/* Settings -> Mode selection: Automatic. The agent routes each turn, so the
+   Ask/Act/Dev toggle is hidden and the conversation actions keep the row. */
+html[data-mode-selection="auto"] #mode-toggle {
+  display: none;
+}
+
+html[data-mode-selection="auto"] .composer-control-row {
+  justify-content: flex-end;
+}
+
 #mode-toggle {
   display: flex;
   flex: 1 1 auto;
