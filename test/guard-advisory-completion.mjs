@@ -569,6 +569,37 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: a done_json accepted over unfinished progress rows ends as partial`, async () => {
+    // done_json is always a success claim; its result carries no outcome.
+    const outputSchema = { type: 'object', properties: { items: { type: 'integer' } }, required: ['items'], additionalProperties: false };
+    const schemas = new Map(getToolsForMode('act', { tier: 'full', cloudRun: true, outputSchema })
+      .map(tool => [tool.function.name, tool.function.parameters]));
+    assert.ok(schemas.has('done_json'), `${build}: the structured run offers done_json`);
+    const h = batchAgent(Agent, { schemas });
+    h.agent.cloudRunContexts.set(h.tab, { outputSchema });
+    h.agent._currentTaskLedgerRows = () => [{ id: 'item-1', label: 'First', status: 'processed' },
+      { id: 'item-2', label: 'Second', status: 'pending' }];
+    const stub = h.agent.executeTool;
+    h.agent.executeTool = async (tab, name, args, ...rest) => (name === 'done_json'
+      ? { done: true, doneJson: true, summary: args.summary, result: args.result, cloudResult: args.result }
+      : stub(tab, name, args, ...rest));
+    const batch = async (updates = []) => {
+      const toolCalls = [{ id: `done_json_${nextCall++}`, function: { name: 'done_json',
+        arguments: JSON.stringify({ summary: 'Both items are done.', result: { items: 2 } }) } }];
+      const messages = h.agent.conversations.get(h.tab);
+      messages.push({ role: 'assistant', content: null, tool_calls: toolCalls });
+      return h.agent._executeToolBatch(h.tab, toolCalls, messages, (type, data) => updates.push({ type, data }),
+        { supportsVision: false }, null, new Set(['done_json', 'click_ax', 'get_accessibility_tree']), 1, {}, schemas);
+    };
+    assert.equal((await batch()).action, 'continue', `${build}: the first done_json gets its note`);
+    const updates = [];
+    const accepted = await batch(updates);
+    assert.equal(accepted.action, 'return', `${build}: the second done_json is accepted`);
+    const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done_json').at(-1)?.data.result;
+    assert.equal(doneResult?.outcome, 'partial', `${build}: an accepted done_json over an unfinished item was not downgraded`);
+    assert.deepEqual(doneResult?.cloudResult, { items: 2 }, `${build}: the structured result is still delivered`);
+  });
+
   test(`${build}: a success claim over skipped or failed progress rows is advised once`, async () => {
     const rows = [{ id: 'item-1', label: 'First', status: 'processed' }, { id: 'item-2', label: 'Second', status: 'skipped' }];
     await refusedOnceThenAccepted(Agent, {

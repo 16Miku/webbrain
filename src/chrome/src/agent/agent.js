@@ -16692,12 +16692,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { action: 'continue' };
         }
         if (!scheduledResume) await cancelPendingResumes();
-        if (!scheduledResume && toolResult.outcome === 'success'
-            && this._completionOutcomeDowngraded(tabId)) {
+        // done_json is always a success claim; its result carries no outcome.
+        const claimsSuccess = toolResult.outcome === 'success' || (fnName === 'done_json'
+          && toolResult.doneJson === true && toolResult.cloudFailed !== true && toolResult.outcome === undefined);
+        if (!scheduledResume && claimsSuccess && this._completionOutcomeDowngraded(tabId)) {
           // Accepted over a guard that knows the claim is wrong: end the run,
-          // but as partial so schedules and watches do not count a success.
-          // Before the chat ending below, so a chat run gets the same
-          // partial contract (runEnded, no auto-resume, the notice).
+          // but as partial so schedules, watches and Cloud runs do not count a
+          // success. Before the chat ending below, so a chat run gets the
+          // same partial contract (runEnded, no auto-resume, the notice).
           toolResult.outcome = 'partial';
         }
         if (!scheduledResume && runOptions?.scheduledRun !== true && this.chatSessions.has(tabId)
