@@ -1311,11 +1311,18 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [null] })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: 'data:ok' }, { name: 'no url' }] })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: 'nope' })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: '' }] })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: '   ' }] })), false);
+    // links follow the add/edit URL policy
+    for (const url of ['javascript:alert(1)', '', 'not a url', 'ftp://a.test']) {
+      assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: JSON.stringify([{ name: 'a', url, key: 'k' }]) })), false, url);
+      assert.equal(await mod.importSettings(JSON.stringify({ applinks: JSON.stringify([{ name: 'a', url, key: 'k' }]) })), false, url);
+    }
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"x"}]' })), false);
     // delete / drag-and-drop identify links by key: it must be present and unique
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"a","url":"https://a.test"}]' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ applinks: '[{"name":"a","url":"u","key":"k"},{"name":"b","url":"u","key":"k"}]' })), false);
-    assert.equal(globalThis.__toasts.length, 20);
+    assert.equal(globalThis.__toasts.length, 30);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({
@@ -1442,7 +1449,7 @@ test('round-31: history navigation keeps the breadcrumb in step; breadcrumb clic
   assert.match(main, /\{ fromHistory = false \} = \{\}/);
   assert.match(main, /if \(fromHistory\) return;/);
   assert.match(read('components/Elements/MainModal/components/ModalTopBar.jsx'), /onSubSectionChange\(null, currentSectionName\)/);
-  assert.match(read('utils/settings/import.js'), /quicklinks: \(e\) => isObject\(e\)/);
+  assert.match(read('utils/settings/import.js'), /quicklinks: isLinkEntry/);
 });
 
 test('round-32: closing or normally opening the settings modal drops stale deep-link data', () => {
@@ -1470,4 +1477,10 @@ test('round-34: keyed import lists, keyboard sections, named navbar buttons, for
   assert.match(read('features/misc/modals/Modals.jsx'), /addEventListener\('popstate', handlePopState\)/);
   assert.match(read('App.jsx'), /setToastDisplayTime\(parseInt\(localStorage\.getItem\('toastDisplayTime'\)/);
   assert.match(read('components/Elements/MainModal/components/ModalTopBar.jsx'), /<button\s+type="button"\s+className="closeModal"/);
+});
+
+test('round-36: reset stops when uploads cannot be cleared', () => {
+  const src = readFileSync(nt('components/Elements/ResetModal/ResetModal.jsx'), 'utf8');
+  assert.match(src, /catch \(error\) \{[\s\S]*toast\(variables\.getMessage\('toasts\.error'\)\);\s*return;/);
+  assert.ok(src.indexOf('return;') < src.indexOf("setDefaultSettings('reset')"));
 });

@@ -8,6 +8,7 @@ import {
 } from 'utils/customBackgroundDB';
 import EventBus from 'utils/eventbus';
 import { rawStorage } from 'lib/storage-namespace';
+import { normalizeLinkUrl } from 'utils/links/normalizeLinkUrl';
 import { BACKGROUNDS_BACKUP_KEY } from './export';
 
 /**
@@ -89,12 +90,15 @@ const isString = (value) => typeof value === 'string';
 // Delete and drag-and-drop identify these entries by `key`, so it has to be there (and unique).
 const hasKey = (e) => (isString(e.key) && e.key !== '') || Number.isFinite(e.key);
 const KEYED_LISTS = ['applinks', 'quicklinks'];
+// Links are rendered as hrefs, so they get the same http(s) policy as adding or editing one.
+const isLinkEntry = (e) =>
+  isObject(e) && isString(e.name) && isString(e.url) && normalizeLinkUrl(e.url) !== null && hasKey(e);
 // key -> what every entry of the list must look like (the widgets read these fields unguarded)
 const JSON_ARRAY_ENTRIES = {
-  applinks: (e) => isObject(e) && isString(e.name) && isString(e.url) && hasKey(e),
+  applinks: isLinkEntry,
   backgroundExclude: isString,
   customEvents: (e) => isObject(e) && isString(e.name) && Number.isFinite(e.month) && Number.isFinite(e.date),
-  quicklinks: (e) => isObject(e) && isString(e.name) && isString(e.url) && hasKey(e),
+  quicklinks: isLinkEntry,
   messages: isString,
   order: isString,
   todo: (e) => isObject(e) && isString(e.value),
@@ -133,7 +137,7 @@ export function validateSettings(content) {
 }
 
 const isBackgroundList = (list) =>
-  Array.isArray(list) && list.every((record) => isObject(record) && typeof record.url === 'string');
+  Array.isArray(list) && list.every((record) => isObject(record) && typeof record.url === 'string' && record.url.trim() !== '');
 
 const withoutId = ({ id: _id, ...record }) => record; // ids are assigned again
 

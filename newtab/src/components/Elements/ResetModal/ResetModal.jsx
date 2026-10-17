@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { toast } from 'react-toastify';
 import variables from 'config/variables';
 import { MdClose, MdRestartAlt } from 'react-icons/md';
 import { setDefaultSettings } from 'utils/settings';
@@ -12,8 +13,12 @@ function ResetModal({ modalClose }) {
     // delete everything, so they go too (and stop taking up space).
     try {
       await clearAllBackgrounds();
-    } catch {
-      // The settings reset below still goes ahead.
+    } catch (error) {
+      // Resetting the settings while the uploads stay behind would break the "delete
+      // everything" promise (they would reappear with the custom source), so stop here.
+      console.error('Could not clear the uploaded backgrounds, reset cancelled:', error);
+      toast(variables.getMessage('toasts.error'));
+      return;
     }
     setDefaultSettings('reset');
     window.location.reload();
