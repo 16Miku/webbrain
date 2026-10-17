@@ -933,7 +933,7 @@
     parts.cut.hidden = !((status === 'ready' || cutOffOnly) && cardState.truncated);
     parts.notice.hidden = !(status !== 'loading' && cardState.notice);
     parts.notice.textContent = status !== 'loading' ? cardState.notice : '';
-    if (status === 'ready') renderAnswer(parts.text, cardState.text, kind !== 'translate');
+    if (status === 'ready') renderAnswer(parts.text, cardState.text, kind === 'explain');
     if (status === 'error') {
       parts.errorText.textContent = str('inlineFailed');
       parts.errorDetail.textContent = cardState.error;

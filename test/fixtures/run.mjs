@@ -2205,6 +2205,19 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
+  test(`${label}: Proofread preserves whitespace-sensitive corrections`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    const correction = 'def example():\n    return {\n        "answer": 42,\n    }';
+    await page.evaluate((text) => {
+      window.__selectionInlineHandler = async () => ({ ok: true, text });
+    }, correction);
+    await openInlineCard(page, 'proofread');
+    const state = await waitForCardStatus(page, 'ready');
+    if (state.cardText !== correction) {
+      throw new Error(`Proofread should preserve its whitespace: ${JSON.stringify(state.cardText)}`);
+    }
+  });
+
   test(`${label}: a failed card answer offers a retry, and a follow-up waits for an answer`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     await page.evaluate(() => {
