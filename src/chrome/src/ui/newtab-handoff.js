@@ -87,6 +87,9 @@ export function createNewtabHandoff({
   // When a look at storage was first put off because a send still held the composer. A task that
   // sat waiting behind that send is not stale for the time the panel itself kept it waiting.
   let heldSince = null;
+  // The waiting time of tasks put off by that hold, kept until every task it delayed has been
+  // looked at (a fresher one may be considered first).
+  let heldAllowanceMs = 0;
   // Writes to the retry slot (a list, written only by this panel) run one after another, so
   // two hand-backs or a hand-back and a claim never overwrite each other.
   let retrySlotWrites = Promise.resolve();
@@ -133,15 +136,20 @@ export function createNewtabHandoff({
       return false;
     }
     retries = 0;
-    const heldMs = heldSince == null ? 0 : Math.min(now() - heldSince, NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS);
-    heldSince = null;
+    if (heldSince != null) {
+      heldAllowanceMs = Math.max(
+        heldAllowanceMs,
+        Math.min(now() - heldSince, NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS),
+      );
+      heldSince = null;
+    }
     const primaryKey = newtabHandoffKey(Number(tabId));
     const retryKey = newtabHandoffRetryKey(Number(tabId));
     let key = primaryKey;
     let claimedOne = false;
     consuming = true;
     // Only the first attempt after start() gets the startup allowance.
-    const allowance = startupAllowanceMs + heldMs;
+    const allowance = startupAllowanceMs + heldAllowanceMs;
     startupAllowanceMs = 0;
     // The shared composer belongs to whichever tab is active now. If the user switches
     // tabs while storage is being read or written, this tab's task must not be applied
@@ -186,7 +194,11 @@ export function createNewtabHandoff({
         key = retryKey;
         handoff = stored == null ? null : accept(stored);
       }
-      if (stored == null || !sameTab()) return false;
+      if (stored == null) {
+        heldAllowanceMs = 0; // nothing left that the hold could have delayed
+        return false;
+      }
+      if (!sameTab()) return false;
       if (!handoff) {
         // Only the panel writes the retry slot, so dropping an expired entry is safe.
         if (key === retryKey) {

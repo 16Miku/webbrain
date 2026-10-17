@@ -731,6 +731,57 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: the hold allowance lasts until every task it delayed has been considered`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const retry3 = newtabHandoffRetryKey(3);
+    const clock = { t: 100_000 };
+    const store = {
+      [key3]: { id: 'C', tabId: 3, text: 'task C', mode: 'ask', createdAt: 99_950 },
+      [retry3]: [{ id: 'B-retry', tabId: 3, text: 'task B', mode: 'ask', createdAt: 99_900 }],
+    };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    let finishC;
+    const gateC = new Promise((r) => { finishC = r; });
+    const sentTexts = [];
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn) => { queueMicrotask(fn); return 0; };
+    try {
+      const handoff = createNewtabHandoff({
+        storage: {
+          get: async (k) => (k in store ? { [k]: store[k] } : {}),
+          remove: async (k) => { delete store[k]; },
+          set: async (o) => Object.assign(store, o),
+        },
+        getCurrentTabId: () => 3,
+        getIsProcessing: () => false,
+        getIsBlocked: () => false,
+        getIsDocumentVisible: () => true,
+        doc: { addEventListener() {} },
+        setMode() {},
+        getInputEl: () => input,
+        autoResizeInput() {},
+        sendMessage: async () => {
+          const text = input.value;
+          sentTexts.push(text);
+          if (text === 'task C') await gateC;
+          input.value = '';
+          return true;
+        },
+        now: () => clock.t,
+      });
+      await handoff.start(); // C is sent first; B (retry slot) is put off behind it
+      for (let i = 0; i < 400; i++) await Promise.resolve();
+      clock.t += 45_000; // C's preflight is slow
+      store[key3] = { id: 'D', tabId: 3, text: 'task D', mode: 'ask', createdAt: clock.t }; // fresh
+      finishC();
+      for (let i = 0; i < 40; i++) await new Promise((r) => realSetTimeout(r, 0));
+      assert.deepEqual(sentTexts, ['task C', 'task D', 'task B']);
+      assert.equal(retry3 in store, false);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+  });
+
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
   const KEY = newtabHandoffKey(3);
 
@@ -1904,4 +1955,16 @@ test('round-55: the video fallback also runs when the fade transition is off', (
   const src = readFileSync(nt('features/background/hooks/useBackgroundRenderer.js'), 'utf8');
   const skipBranch = src.slice(src.indexOf('if (!hasTransition || prefersReducedMotion)'), src.indexOf('// Create or get overlay element'));
   assert.match(skipBranch, /onRemoteImageFailedRef\.current\?\.\(backgroundData\.url\)/);
+});
+
+test('round-58: CSS url() values are quoted and escaped', () => {
+  const src = readFileSync(nt('features/background/hooks/useBackgroundRenderer.js'), 'utf8');
+  const match = /export const cssUrl = \(url\) =>\n\s+(`[^\n]*`);/.exec(src);
+  assert.ok(match, 'cssUrl helper present');
+  const cssUrl = new Function('url', `return ${match[1]};`);
+  assert.equal(cssUrl('https://host/a.jpg'), 'url("https://host/a.jpg")');
+  assert.equal(cssUrl('https://host/image).jpg'), 'url("https://host/image).jpg")');
+  assert.equal(cssUrl('a"b\\c'), 'url("a\\"b\\\\c")');
+  assert.equal(cssUrl('a\nb'), 'url("a\\a b")');
+  assert.doesNotMatch(src, /`url\(\$\{/, 'no raw url(${...}) left');
 });

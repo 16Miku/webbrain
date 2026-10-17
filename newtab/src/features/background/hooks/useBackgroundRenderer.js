@@ -11,6 +11,13 @@ const NO_OVERLAY = { backdropFilter: '', WebkitBackdropFilter: '', backgroundCol
 const TRANSITION_DURATION = 1200; // milliseconds
 
 /**
+ * A CSS url() value for an address that may contain ) " \\ or a line break: quoted and escaped,
+ * so it cannot end the declaration early or make it invalid.
+ */
+export const cssUrl = (url) =>
+  `url("${String(url).replace(/[\\"]/g, '\\$&').replace(/\r?\n|\r/g, '\\a ')}")`;
+
+/**
  * Hook for rendering backgrounds to the DOM
  */
 export function useBackgroundRenderer(backgroundData, onRemoteImageFailed) {
@@ -50,7 +57,7 @@ export function useBackgroundRenderer(backgroundData, onRemoteImageFailed) {
               return;
             }
           }
-          element.style.background = `url(${backgroundData.url})`;
+          element.style.background = cssUrl(backgroundData.url);
           document.querySelector('.photoInformation')?.style.setProperty('display', 'flex');
           return;
         }
@@ -73,7 +80,7 @@ export function useBackgroundRenderer(backgroundData, onRemoteImageFailed) {
         if (backgroundData.photoInfo?.blur_hash) {
           const blurHashUrl = generateBlurHashDataUrl(backgroundData.photoInfo.blur_hash, 64, 64);
           if (blurHashUrl) {
-            element.style.backgroundImage = `url(${blurHashUrl})`;
+            element.style.backgroundImage = cssUrl(blurHashUrl);
           }
         }
 
@@ -119,7 +126,7 @@ export function useBackgroundRenderer(backgroundData, onRemoteImageFailed) {
         void overlay.offsetHeight;
 
         // Now set the new image
-        overlay.style.backgroundImage = `url(${finalUrl})`;
+        overlay.style.backgroundImage = cssUrl(finalUrl);
 
         // Force another reflow
         void overlay.offsetHeight;
@@ -135,7 +142,7 @@ export function useBackgroundRenderer(backgroundData, onRemoteImageFailed) {
 
         // After fade completes, swap to main element and reset overlay
         swapTimer = setTimeout(() => {
-          element.style.backgroundImage = `url(${finalUrl})`;
+          element.style.backgroundImage = cssUrl(finalUrl);
           overlay.style.opacity = '0';
           overlay.style.backgroundImage = '';
         }, TRANSITION_DURATION + 100);
