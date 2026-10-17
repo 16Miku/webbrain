@@ -240,34 +240,49 @@ The labelled set is d1's balanced-V3 held-out test (72 synthetic screenshots,
     `scripts/models/d1/parity-cpu.mjs` (the extension's runtime on
     onnxruntime-node, both packages, scored against the labels) and
     `scripts/models/d1/package_fp16.py`.
-- **The chat model's decision readout** (`src/chrome/src/offscreen/webgpu-decisions.js`).
-  Bonsai 2 Vision prefills the state and screenshots once, appends each
-  question as a short continuation of that cache and reads the probabilities
-  of the option-code tokens (A, B, …; Yes/No; 0–9). This is the readout
-  Perplexity's decider uses; it needs no training. It is reachable only
-  through the Settings-only `webgpu_decide_fixture` diagnostic action, not as
-  a decision provider.
+- **The chat model as a decision model** (`src/chrome/src/offscreen/webgpu-decisions.js`,
+  `bonsai-decision-probe.js`). Ternary Bonsai 2 2B Vision prefills the state
+  and screenshots once and appends each question as a short continuation of
+  that cache; nothing generates text.
+  - The zero-shot readout (option-code token probabilities, the Perplexity
+    decider's readout) follows the answer format but never says "unknown"
+    for completion: it called 30 of 48 pending or failed views completed. A
+    stricter prompt, chosen on the validation split, only reached 26/48.
+  - The shipped mode asks about one option at a time ("Proposed answer: …
+    Is the proposed answer correct?") and scores each option from its Yes
+    margin and the decoder's last-position hidden state with a 2,049-parameter
+    probe (`scripts/models/bonsai/train_decision_probe.py`). The backbone is
+    frozen; the probe is trained on d1's train split and its regularization
+    chosen on validation. The 2B decoder graph exposes that state as
+    `decision_hidden` (`scripts/models/bonsai/add_decision_hidden.py`);
+    logits and caches are unchanged.
+  - Settings → Decision models offers it in Chrome as an explicit, key-free,
+    local provider (`webgpu_chat`). Like D1, a positive completion still needs
+    independent confirmation, and the judge allows it 15 s instead of 5 s for
+    the first load after a browser restart.
 
 Results on the held-out test, RTX 5090, through the extension:
 
-| | d1 FP32, main | d1 FP32, new runtime | d1 FP16, new runtime | Bonsai 2 2B Vision readout |
+| | d1 FP32, main | d1 FP16, new runtime | Bonsai 2B readout, no training | Bonsai 2B + probe |
 |---|---:|---:|---:|---:|
-| Categorical | 92/126 | 92/126 | 92/126 | 74/126 |
-| Completion found | 22/24 | 22/24 | 22/24 | 24/24 |
-| False completions | 1/48 | 1/48 | 1/48 | 30/48 |
-| Other choice / yes-no | 10/36, 13/18 | 10/36, 13/18 | 10/36, 13/18 | 18/36, 14/18 |
-| Score MAE | 0.574 | 0.574 | 0.573 | 0.459 |
-| Latency p50 / p95 (s per request) | 0.83 / 0.97 | 0.74 / 0.84 | 0.75 / 0.88 | 1.65 / 2.16 |
-| 16 questions on 1k / 2k / 4k / 8k-token states | ok / fail / fail / fail | all ok | all ok | not run |
+| Categorical | 92/126 | 92/126 | 74/126 | {probe_cat} |
+| Completion found | 22/24 | 22/24 | 24/24 | {probe_tp} |
+| False completions | 1/48 | 1/48 | 30/48 | {probe_fp} |
+| Unknown recognized | 23/24 | 23/24 | 0/24 | {probe_unk} |
+| Other choice / yes-no | 10/36, 13/18 | 10/36, 13/18 | 18/36, 14/18 | {probe_aux} |
+| Score MAE | 0.574 | 0.573 | 0.459 | {probe_mae} |
+| Latency p50 / p95 (s per request) | 0.83 / 0.97 | 0.75 / 0.88 | 1.65 / 2.16 | {probe_lat} |
+| 16 questions on 1k / 2k / 4k / 8k-token states | ok / fail / fail / fail | all ok | not run | not run |
 
-- The readout followed the answer format (median 99.9% of the next-token
-  probability on the option codes), and on the auxiliary questions it beat
-  d1. It never chose "unknown" for the completion question and called 30 of
-  48 pending or failed views completed, so it cannot verify completion
-  without training. A stricter prompt, chosen on the validation split, only
-  moved false completions from 30 to 26 on the test.
-- Bonsai's cost is the prefill: about 1.1 s for a screenshot of about 1,000
-  tokens, then about 0.15 s per question from the shared cache.
+- At WebBrain's 0.9 completion threshold d1 is still the better completion
+  verifier (22 found, 1 false against 19 and 4); the probe is better on every
+  other question type and better calibrated overall (test NLL 1.04 against
+  1.38). Score questions got worse with the probe (18 test questions).
+- All of these are synthetic, AI-labelled screens from one generator; the
+  probe and d1 were trained on the same train split. Neither result
+  establishes real-site quality.
+- Bonsai's cost is the prefill (about 1.1 s for a screenshot of about 1,000
+  tokens) plus about 0.15 s per option.
 
 ## Updating a published graph
 

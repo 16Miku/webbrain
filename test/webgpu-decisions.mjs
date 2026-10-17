@@ -150,6 +150,7 @@ test('the in-browser chat model is an explicit, key-free, local decision provide
 test('the judge answers webgpu_chat decisions through the offscreen worker in Chrome and refuses them in Firefox', async () => {
   const saved = { chrome: globalThis.chrome };
   const sent = [];
+  const decideMessages = [];
   const answers = { q: { type: 'noul', noul: 0.8 } };
   globalThis.chrome = {
     offscreen: { hasDocument: async () => true, createDocument: async () => {} },
@@ -158,6 +159,7 @@ test('the judge answers webgpu_chat decisions through the offscreen worker in Ch
       getURL: path => `chrome-extension://test/${path}`,
       sendMessage(message, callback) {
         sent.push(message.type);
+        if (message.type === 'webgpu-decide') decideMessages.push(message);
         const reply = message.type === 'webgpu-download-status' ? { ready: true }
           : message.type === 'webgpu-decide' ? { ok: true, model: message.model, answers, usage: { input_tokens: 900, output_tokens: 0 } }
             : { ok: true };
@@ -170,9 +172,13 @@ test('the judge answers webgpu_chat decisions through the offscreen worker in Ch
     const { resolveDecisionConfig } = await import('../src/chrome/src/agent/decision-config.js');
     const { createSystemOneJudge } = await import('../src/chrome/src/agent/systemone-judge.js');
     const config = resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
+    const screenshot = 'data:image/png;base64,YQ==';
     const result = await createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0 })
-      .evaluate({ state: 'Page', images: [], questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config });
+      .evaluate({ state: [{ task: 'Save' }, { type: 'image_url', image_url: { url: screenshot } }], questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config });
     assert.deepEqual(result.answers, answers);
+    const decide = decideMessages.at(-1);
+    assert.deepEqual(decide.images, [screenshot], 'screenshots in the state reach the model as images');
+    assert.doesNotMatch(JSON.stringify(decide.state), /base64/, 'no screenshot is left in the prompt text');
     assert.equal(result.usage.output_tokens, 0);
     assert.equal(result.estimatedCostUsd, 0);
     assert.ok(sent.includes('webgpu-decide'));

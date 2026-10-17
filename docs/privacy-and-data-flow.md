@@ -121,6 +121,11 @@ a decision model the turn starts in Ask; only when the active model asks to
 hand the turn to Act or Dev is the same page-free question sent to the active
 model to confirm it.
 
+The experimental **in-browser chat model** decision provider (Chrome) runs
+decisions on the already downloaded WebGPU chat model in the offscreen
+worker. Its state, questions and screenshots never leave the browser, and it
+downloads nothing beyond the chat model itself.
+
 The optional experimental **D1 WebGPU** decision provider has no inference
 endpoint or API key. Its bounded text/JSON state, questions and inline screenshots
 stay in the local decision Worker. Explicit download consent permits only pinned

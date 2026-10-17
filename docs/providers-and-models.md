@@ -105,6 +105,18 @@ Page state and screenshots remain untrusted evidence, never instructions.
 No inference input goes to Hugging Face. Existing optional provider/research
 sharing settings and existing privacy boundaries are not bypassed.
 
+**In-browser chat model (experimental, Chrome)** answers decisions with the
+WebGPU chat model itself, Ternary Bonsai 2 2B Vision, so one downloaded model
+serves chat, screenshots and decisions. It needs no extra download, key or
+endpoint: download that preset under Providers → WebGPU first. Each option is
+scored from a short continuation of the prefilled page state by a small
+probe trained on d1's synthetic data, with the model's weights unchanged. On
+d1's held-out test it answers more questions correctly than D1 but accepts
+more false completions, so like D1 a positive completion is never the sole
+authority. The first decision after a browser restart loads the model and can
+fall back to the existing chain. Details and numbers are in
+[`docs/webgpu-models.md`](webgpu-models.md).
+
 The adapter retains Python-style JSON spacing and fractional exponent
 formatting. JavaScript cannot distinguish an integer `1` from a Python float
 `1.0` after JSON parsing, and cannot preserve integers outside its exact Number
