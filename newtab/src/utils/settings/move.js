@@ -8,7 +8,7 @@ import { setDefaultSettings } from './default';
 export function moveSettings() {
   const currentSettings = Object.keys(localStorage);
   if (currentSettings.length === 0) {
-    return this.setDefaultSettings();
+    return setDefaultSettings();
   }
 
   const settings = {};

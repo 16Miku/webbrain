@@ -61,9 +61,16 @@ export function createNewtabHandoff({
   let ready = false;
   let startupAllowanceMs = 0;
   let consuming = false;
+  let rerun = false;
 
   async function consume() {
-    if (!ready || consuming || !getIsDocumentVisible()) return false;
+    if (!ready || !getIsDocumentVisible()) return false;
+    // A record can arrive while another is being claimed (the new tab unlocks as
+    // soon as the first is removed). Remember it and look again when this ends.
+    if (consuming) {
+      rerun = true;
+      return false;
+    }
     const tabId = getCurrentTabId();
     if (tabId == null) return false;
     const key = newtabHandoffKey(Number(tabId));
@@ -94,21 +101,32 @@ export function createNewtabHandoff({
       fill();
       input.focus?.();
       if (handoff.mode === 'ask' && !getIsBlocked()) {
-        let sent = false;
+        // sendMessage reads the composer synchronously when called, so starting it
+        // here captures this task. It is not awaited: a send can last a whole run,
+        // and that must not hold up later hand-offs or the panel's own startup.
+        let sending;
         try {
-          sent = (await sendMessage(getIsProcessing() ? { __deliveryMode: 'queue' } : undefined)) !== false;
-        } catch {
-          sent = false;
+          sending = Promise.resolve(sendMessage(getIsProcessing() ? { __deliveryMode: 'queue' } : undefined));
+        } catch (error) {
+          sending = Promise.reject(error);
         }
-        // Declined or failed: the new tab already showed success and cleared its
-        // box, so make sure the text is still sitting in the composer.
-        if (!sent && !String(input.value || '').trim()) fill();
+        sending
+          .then((result) => result !== false, () => false)
+          .then((sent) => {
+            // Declined or failed: the new tab already showed success and cleared its
+            // box, so make sure the text is still sitting in the composer.
+            if (!sent && !String(input.value || '').trim()) fill();
+          });
       }
       return true;
     } catch {
       return false;
     } finally {
       consuming = false;
+      if (rerun) {
+        rerun = false;
+        queueMicrotask(() => { consume(); });
+      }
     }
   }
 

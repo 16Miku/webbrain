@@ -33,7 +33,7 @@ function RecentChats() {
         <ul>
           {chats.map((chat) => (
             <li key={chat.id}>
-              <a href={chat.url ? `${HISTORY_PAGE}?url=${encodeURIComponent(chat.url)}` : HISTORY_PAGE}>
+              <a href={`${HISTORY_PAGE}?id=${encodeURIComponent(chat.id)}`}>
                 {chat.title || chat.url}
               </a>
             </li>

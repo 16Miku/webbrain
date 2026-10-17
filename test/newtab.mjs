@@ -13,6 +13,8 @@ const { buildHandoff, toNavigableUrl, submitTask, handoffKey, HANDOFF_PREFIX, is
 const { getTitleFromUrl } = await load(nt('utils/links/getTitleFromUrl.js'));
 const { normalizeLinkUrl } = await load(nt('utils/links/normalizeLinkUrl.js'));
 
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 function memoryStorage(seed = {}) {
   const map = new Map(Object.entries(seed));
   return {
@@ -381,7 +383,69 @@ for (const browser of ['chrome', 'firefox']) {
     h.input.value = '';
     assert.equal(await h.handoff.consume(), true);
     assert.equal(h.log.sent.length, 1);
+    await flush();
     assert.equal(h.input.value, 'summarise');
+  });
+
+  test(`${browser}: a send that lasts a whole run does not block the next hand-off`, async () => {
+    const h = await harness({ record: rec() });
+    let finishRun;
+    const slow = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in h.store ? { [k]: h.store[k] } : {}),
+        remove: async (k) => { delete h.store[k]; },
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => false,
+      getIsDocumentVisible: () => true,
+      doc: null,
+      setMode() {},
+      getInputEl: () => h.input,
+      autoResizeInput() {},
+      sendMessage: () => new Promise((resolve) => { finishRun = resolve; }),
+      now: () => 100_000,
+    });
+    await slow.start();
+    const result = await Promise.race([slow.consume(), new Promise((r) => setTimeout(() => r('blocked'), 200))]);
+    assert.equal(result, false); // record was already claimed by start(); nothing hangs
+    h.store[KEY] = rec({ id: 'r2', text: 'next' });
+    const second = await Promise.race([slow.consume(), new Promise((r) => setTimeout(() => r('blocked'), 200))]);
+    assert.equal(second, true, 'the second task is claimed while the first run is still going');
+    finishRun();
+  });
+
+  test(`${browser}: a record that arrives while another is being claimed is retried`, async () => {
+    const h = await harness({ record: rec({ id: 'r1', text: 'first' }) });
+    const sent = [];
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in h.store ? { [k]: h.store[k] } : {}),
+        remove: async (k) => { delete h.store[k]; },
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => false,
+      getIsDocumentVisible: () => true,
+      doc: null,
+      setMode: () => {
+        // The new tab unlocks once the first record is removed, so the next one
+        // lands (and its storage event calls consume) while this claim is running.
+        if (!h.store[KEY] && !sent.length) {
+          h.store[KEY] = rec({ id: 'r2', text: 'second' });
+          handoff.consume();
+        }
+      },
+      getInputEl: () => h.input,
+      autoResizeInput() {},
+      sendMessage: async () => { sent.push(h.input.value); h.input.value = ''; },
+      now: () => 100_000,
+    });
+    await handoff.start();
+    h.store[KEY] = rec({ id: 'r1', text: 'first' });
+    await handoff.consume();
+    await flush();
+    await flush();
+    assert.deepEqual(sent, ['first', 'second']);
+    assert.equal(KEY in h.store, false);
   });
 
   test(`${browser}: manifest and background are wired`, () => {
@@ -444,5 +508,60 @@ test('every WebBrain locale has every new tab string', async (t) => {
     for (const k of keys) {
       assert.ok(String(WB_STRINGS[lang][k] ?? '').trim(), `${lang} is missing ${k}`);
     }
+  }
+});
+
+test('first run on an empty store writes the defaults instead of throwing', async (t) => {
+  let esbuild;
+  try {
+    esbuild = await import(pathToFileURL(path.join(root, 'newtab/node_modules/esbuild/lib/main.js')).href);
+  } catch {
+    return t.skip('newtab dependencies are not installed');
+  }
+  const out = await esbuild.build({
+    stdin: {
+      contents: "import variables from 'config/variables'; export { moveSettings } from 'utils/settings/move'; export { variables };",
+      resolveDir: nt(),
+      loader: 'js',
+    },
+    bundle: true,
+    write: false,
+    format: 'esm',
+    nodePaths: [nt()],
+    platform: 'node',
+  });
+  const mod = await import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
+  mod.variables.getMessage = () => 'New Tab';
+
+  const real = globalThis.localStorage;
+  const store = memoryStorage();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new Proxy(store, {
+    ownKeys: () => [...store._map.keys()],
+    getOwnPropertyDescriptor: (_t, k) => (store._map.has(k) ? { value: store._map.get(k), enumerable: true, configurable: true } : undefined),
+  }) });
+  try {
+    assert.doesNotThrow(() => mod.moveSettings());
+    assert.equal(store.getItem('firstRun'), 'true');
+    assert.equal(store.getItem('taskBox'), 'true');
+
+    // A store that already has values keeps them over the defaults.
+    store.clear();
+    store.setItem('taskBoxMode', 'act');
+    mod.moveSettings();
+    assert.equal(store.getItem('taskBoxMode'), 'act');
+    assert.equal(store.getItem('firstRun'), 'true');
+  } finally {
+    if (real === undefined) delete globalThis.localStorage;
+    else Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: real });
+  }
+});
+
+test('recent chats open the clicked conversation by id', () => {
+  const recent = readFileSync(nt('features/agent/RecentChats.jsx'), 'utf8');
+  assert.match(recent, /\?id=\$\{encodeURIComponent\(chat\.id\)\}/);
+  for (const b of ['chrome', 'firefox']) {
+    const history = readFileSync(path.join(root, 'src', b, 'src/ui/history.js'), 'utf8');
+    assert.match(history, /get\('id'\)/, `${b} history reads ?id=`);
+    assert.match(history, /renderRecord\(initialRecordId\)/, `${b} history opens it`);
   }
 });
