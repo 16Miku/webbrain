@@ -91,7 +91,12 @@ export function reportSidePanelPresence({
       void runtime.lastError;
       if (port === next) port = null;
       quickCloses = now() - openedAt < QUICK_CLOSE_MS ? quickCloses + 1 : 0;
-      const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** quickCloses);
+      // A port that lived was dropped because the background worker restarted, which
+      // leaves it knowing of no panel until this one reports again, so come back at
+      // once. Only a port that is refused straight away backs off.
+      const delay = quickCloses === 0
+        ? 0
+        : Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** (quickCloses - 1));
       schedule(connect, delay);
     });
     report();

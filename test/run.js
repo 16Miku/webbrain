@@ -52684,30 +52684,37 @@ test('side panel presence: the background learns which windows show a panel, and
   clock = 60_000;
   connections[0].drop();
   assert.equal(timers.length, 1);
-  assert.equal(timers[0].delay, 500);
+  assert.equal(timers[0].delay, 0, 'a restarted background is told about the panel again at once, not after a gap in which it would reopen it');
   timers.shift().callback();
   assert.equal(connections.length, 2, 'the panel reopens its port');
   assert.deepEqual(posted.at(-1), { visible: true, windowId: 5 });
 
   // A port that keeps being refused backs off instead of spinning.
   connections[1].drop();
-  assert.equal(timers[0].delay, 1_000);
+  assert.equal(timers[0].delay, 500);
   timers.shift().callback();
   connections[2].drop();
-  assert.equal(timers[0].delay, 2_000);
+  assert.equal(timers[0].delay, 1_000);
   timers.shift().callback();
   assert.equal(connections.length, 4);
+
+  // One that lived again after a refusal goes back to reconnecting at once.
+  clock = 120_000;
+  connections[3].drop();
+  assert.equal(timers[0].delay, 0);
+  timers.shift().callback();
+  assert.equal(connections.length, 5);
 
   reporter.stop();
   assert.equal(connections.at(-1).disconnected, true);
   assert.equal(doc.listeners.length, 0);
   connections.at(-1).drop();
   timers.splice(0).forEach(timer => timer.callback());
-  assert.equal(connections.length, 4, 'a stopped reporter does not reconnect');
+  assert.equal(connections.length, 5, 'a stopped reporter does not reconnect');
 
   // Without a window it reports nothing, which keeps the old always-open behaviour.
   const anonymous = reportSidePanelPresence({ runtime, doc, windowId: null });
-  assert.equal(connections.length, 4);
+  assert.equal(connections.length, 5);
   anonymous.stop();
 });
 

@@ -547,7 +547,9 @@ continues in the side panel as a custom question. In Chrome the background opens
 only when none is showing in that window: re-running `sidePanel.setOptions()` + `open()` on an
 open panel closes it, so each panel reports its visibility over a long-lived port
 (`sidepanel-presence.js`) and the background reads that synchronously, before the user
-gesture can lapse, then hands an already-open panel the prompt by message. The card's
+gesture can lapse, then hands an already-open panel the prompt by message. A panel whose port
+was dropped by a background restart reconnects at once (only a port that is refused straight
+away backs off), so the restarted worker is not left unaware of a panel that is still showing. The card's
 answer travels inside the selection's untrusted boundary, labelled as an earlier answer that
 may contain mistakes and
 capped at 6,000 characters, so model output derived from page text never becomes trusted
