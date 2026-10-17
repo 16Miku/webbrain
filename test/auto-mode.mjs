@@ -507,6 +507,51 @@ function extract(text, name) {
   return text.slice(start, end + 2);
 }
 
+test('chrome: switching to Automatic during a Dev run keeps its capture until the run ends', () => {
+  const panel = source('chrome', 'ui/sidepanel.js');
+  const sent = [];
+  const classList = { toggle() {}, remove() {} };
+  const context = vm.createContext({
+    agentMode: 'dev', autoModeSelection: false, isStandaloneWindow: false, devDiagnosticsDrainDeferred: false,
+    processingTabs: new Set([7]), failedConversationClearRecoveryTabs: new Set(), currentTabId: 7, isProcessing: true,
+    document: { documentElement: { dataset: {} } },
+    modeAskBtn: { classList }, modeActBtn: { classList }, modeDevBtn: { classList }, inputArea: { classList },
+    modeToggleHighlight: { classList }, positionModeHighlight() {}, updateActWarning() {}, resetInputPlaceholderRotation() {},
+    syncSelectionScopeRestoreAvailability() {}, sameTabId: (a, b) => Number(a) === Number(b),
+    sendToBackground: (type, payload) => { sent.push(`${type} ${JSON.stringify(payload)}`); return Promise.resolve(); },
+  });
+  for (const name of ['normalizeAgentMode', 'setMode', 'applyModeSelection', 'setTabProcessing', 'drainDeferredDevDiagnostics']) {
+    vm.runInContext(extract(panel, name), context);
+  }
+  const drain = 'disable_dev_diagnostics {"all":true}';
+
+  context.applyModeSelection('auto');
+  assert.equal(context.agentMode, 'ask', 'the composer leaves Dev at once');
+  assert.deepEqual(sent, [], 'the active run keeps its console and network history');
+  context.setTabProcessing(7, false);
+  assert.deepEqual(sent, [drain], 'drained once the panel has no run left');
+  context.setTabProcessing(7, false);
+  assert.deepEqual(sent, [drain], 'drained only once');
+
+  sent.length = 0;
+  context.applyModeSelection('manual');
+  context.setMode('dev');
+  context.applyModeSelection('auto');
+  assert.deepEqual(sent, [drain], 'with no run active the drain is immediate');
+
+  sent.length = 0;
+  context.applyModeSelection('manual');
+  context.setMode('dev');
+  context.setTabProcessing(7, true);
+  context.applyModeSelection('auto');
+  context.applyModeSelection('manual');
+  context.setMode('dev');
+  context.setTabProcessing(7, false);
+  assert.deepEqual(sent, [], 'choosing Dev again before the run ends cancels the owed drain');
+  context.setMode('ask');
+  assert.deepEqual(sent, [drain], 'leaving Dev by hand still drains at once');
+});
+
 for (const build of BUILDS) {
   const panel = source(build, 'ui/sidepanel.js');
 

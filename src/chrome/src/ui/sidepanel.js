@@ -1258,6 +1258,10 @@ let agentMode = 'ask'; // 'ask' | 'act' | 'dev'
 // sends "auto" and the agent routes each turn (src/*/src/agent/auto-mode.js);
 // slash commands and the mode shortcuts choose a mode for one message.
 let autoModeSelection = false;
+// Set when switching to Automatic left Dev while a run was still active:
+// that run keeps its console and network capture until the panel has no
+// run left, then the drain that leaving Dev asks for runs.
+let devDiagnosticsDrainDeferred = false;
 let abortRequested = false;
 const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
@@ -1334,6 +1338,14 @@ function setTabProcessing(tabId, processing) {
     if (typeof syncFailureRecoveryButtons === 'function') syncFailureRecoveryButtons();
     if (typeof updateActWarning === 'function') updateActWarning();
   }
+  if (!effectiveProcessing && typeof drainDeferredDevDiagnostics === 'function') drainDeferredDevDiagnostics();
+}
+
+function drainDeferredDevDiagnostics() {
+  if (!devDiagnosticsDrainDeferred || processingTabs.size > 0) return;
+  devDiagnosticsDrainDeferred = false;
+  if (agentMode === 'dev') return;
+  sendToBackground('disable_dev_diagnostics', { all: true }).catch(() => {});
 }
 
 function isTabProcessing(tabId) {
@@ -2119,9 +2131,12 @@ function applyModeSelection(value) {
   autoModeSelection = value === 'auto' && !isStandaloneWindow;
   document.documentElement.dataset.modeSelection = autoModeSelection ? 'auto' : 'manual';
   // A mode pinned before switching to Automatic must not linger in the
-  // composer styling; Automatic chooses per turn.
-  if (autoModeSelection && agentMode !== 'ask') setMode('ask');
-  else {
+  // composer styling; Automatic chooses per turn. A run still going keeps
+  // the Dev capture it may read until the panel's runs have ended.
+  if (autoModeSelection && agentMode !== 'ask') {
+    if (agentMode === 'dev' && processingTabs.size > 0) devDiagnosticsDrainDeferred = true;
+    setMode('ask');
+  } else {
     updateActWarning();
     resetInputPlaceholderRotation();
   }
@@ -14553,7 +14568,9 @@ function setMode(mode) {
   if (autoModeSelection) mode = 'ask';
   const previousMode = agentMode;
   agentMode = mode;
-  if (previousMode === 'dev' && mode !== 'dev') {
+  if (mode === 'dev') devDiagnosticsDrainDeferred = false;
+  // A drain already owed to the end of the panel's runs is not sent twice.
+  if (previousMode === 'dev' && mode !== 'dev' && !devDiagnosticsDrainDeferred) {
     // Dev mode is panel-wide, while diagnostics may be active on a tab the
     // user switched away from. Ask the background to drain its tracked set
     // instead of assuming currentTabId is the tab that started capture.
