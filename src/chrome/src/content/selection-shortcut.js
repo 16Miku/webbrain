@@ -629,6 +629,10 @@
     cardParts.target.addEventListener('change', () => {
       if (!cardState || !isSupportedTranslationLanguage(cardParts.target.value)) return;
       cardState.target = cardParts.target.value;
+      if (snapshot?.text.length > INLINE_MAX_CHARS) {
+        submitSelection('translate', '', cardState.target);
+        return;
+      }
       runInline();
     });
     cardParts.retry.addEventListener('click', (event) => {
@@ -954,7 +958,7 @@
 
   async function openCard(kind, opener) {
     if (!snapshot || submitting || !INLINE_ACTIONS.includes(kind)) return;
-    if (snapshot.text.length > INLINE_MAX_CHARS) {
+    if (kind !== 'translate' && snapshot.text.length > INLINE_MAX_CHARS) {
       // Too long for a card: the side panel is the better place to read it. This is
       // decided before anything is awaited, because the panel can only be opened
       // inside the click's user gesture, which the localization wait would outlive.
@@ -993,6 +997,15 @@
     // does not dismiss it, and Escape and Enter reach the card's handlers.
     card.focus({ preventScroll: true });
     if (kind === 'translate') {
+      // Long selections go straight to the side panel, where an automatic target
+      // could be a no-op. Require an explicit target rather than guessing.
+      if (snapshot?.text.length > INLINE_MAX_CHARS) {
+        cardState.status = 'idle';
+        cardState.target = '';
+        renderCard();
+        cardParts.target.focus({ preventScroll: true });
+        return;
+      }
       const detected = await detectSourceLanguage(cardState?.quote || '');
       if (requestId !== cardRequestId || !cardState) return;
       cardState.sourceLabel = detected ? languageName(detected) : '';

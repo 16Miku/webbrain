@@ -2677,6 +2677,32 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
+  test(`${label}: a long translation waits for a target choice`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      const article = document.createElement('article');
+      article.id = 'long-english-selection';
+      article.textContent = 'This is an English sentence. '.repeat(250);
+      document.body.appendChild(article);
+    });
+    const selected = await selectFixtureText(page, '#long-english-selection');
+    await clickRectCenter(page, selected.inlineRects.translate);
+    await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().cardStatus === 'idle');
+    let state = await page.evaluate(() => ({
+      state: window.__webbrainSelectionShortcut.getState(),
+      messages: window.__selectionMessages,
+    }));
+    if (state.messages.length || state.state.cardTarget !== '') {
+      throw new Error(`a long translation should wait for a target: ${JSON.stringify(state)}`);
+    }
+    await page.evaluate(() => window.__webbrainSelectionShortcut.chooseTarget('de'));
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    state = await page.evaluate(() => ({ message: window.__selectionMessages[0], state: window.__webbrainSelectionShortcut.getState() }));
+    if (state.message.language !== 'de' || state.state.cardVisible) {
+      throw new Error(`the chosen target should be handed to the side panel: ${JSON.stringify(state)}`);
+    }
+  });
+
   test(`${label}: a long selection is handed over at once, not after the language bundle loads`, async (page) => {
     // The side panel can only be opened inside the click's user gesture, so the hand-over
     // must not wait for localization.
@@ -2692,13 +2718,13 @@ for (const [label, sourcePath, manualOpen] of [
       document.body.appendChild(article);
     });
     const selected = await selectFixtureText(page, '#long-selection');
-    await clickRectCenter(page, selected.inlineRects.translate);
+    await clickRectCenter(page, selected.inlineRects.explain);
     await page.waitForFunction(() => window.__selectionMessages.length === 1, null, { timeout: 2000 });
     const result = await page.evaluate(() => ({
       message: window.__selectionMessages[0],
       inline: window.__selectionInlineMessages.length,
     }));
-    if (result.message.action !== 'translate' || result.inline !== 0) {
+    if (result.message.action !== 'explain' || result.inline !== 0) {
       throw new Error(`a long selection should reach the side panel flow while localization is still loading: ${JSON.stringify(result)}`);
     }
     await page.evaluate(() => window.__releaseLocalization?.());
