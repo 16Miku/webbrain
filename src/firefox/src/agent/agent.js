@@ -25806,9 +25806,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const publishWorkflowAuthorized = guard?.siteWorkflow?.adapterName === 'linkedin'
         && guard?.siteWorkflow?.job?.id === 'publish-post';
       // A public Post control is not a message send, but it is still a
-      // consequential action. Only the explicit LinkedIn publish workflow can
-      // bypass recipient dispatch binding for that control.
-      if (!linkedInPublicPost || publishWorkflowAuthorized) return null;
+      // consequential action. The explicit LinkedIn publish workflow
+      // authorizes it, and so does a plan that requires a submission without
+      // naming a private message to send: a task that started on another
+      // site has no LinkedIn workflow yet. The normal submission gates still
+      // apply to the post.
+      const planAuthorizesPublication = !!guard && guard.requiresSubmission === true
+        && guard.requiresStateChange === true && !target;
+      if (!linkedInPublicPost || publishWorkflowAuthorized || planAuthorizesPublication) return null;
       return {
         success: false,
         blocked: true,
@@ -25816,7 +25821,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         dispatched: false,
         messageRecipientGuard: true,
         reasonCode: 'public_post_not_authorized',
-        error: 'LinkedIn Post blocked because this task authorizes a private message, not a public post.',
+        error: target
+          ? 'LinkedIn Post blocked because this task authorizes a private message, not a public post.'
+          : 'LinkedIn Post blocked because this task does not ask to publish anything, so nothing was posted. Do not post; report what is ready instead.',
       };
     }
     // Gmail reply editors can be collapsed when planning begins. Allow only a
