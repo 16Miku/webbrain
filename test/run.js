@@ -689,8 +689,12 @@ const { historyTextFromElement: historyTextFromElementFx } = await import(
 );
 const {
   CONTEXT_MENU_CLAIM_LEASE_MS: CONTEXT_MENU_CLAIM_LEASE_MS_CH,
+  INLINE_ANSWER_MAX_TOKENS: INLINE_ANSWER_MAX_TOKENS_CH,
+  INLINE_ANSWER_MIN_TOKENS: INLINE_ANSWER_MIN_TOKENS_CH,
   INLINE_SELECTION_ACTIONS: INLINE_SELECTION_ACTIONS_CH,
   INLINE_SELECTION_MAX_CHARS: INLINE_SELECTION_MAX_CHARS_CH,
+  inlineAnswerWasCut: inlineAnswerWasCutCh,
+  inlineSelectionMaxTokens: inlineSelectionMaxTokensCh,
   buildFollowUpSelectionText: buildFollowUpSelectionTextCh,
   buildInlineSelectionMessages: buildInlineSelectionMessagesCh,
   SELECTION_CONTEXT_SOURCE_GROUNDING: SELECTION_CONTEXT_SOURCE_GROUNDING_CH,
@@ -706,8 +710,12 @@ const {
 );
 const {
   CONTEXT_MENU_CLAIM_LEASE_MS: CONTEXT_MENU_CLAIM_LEASE_MS_FX,
+  INLINE_ANSWER_MAX_TOKENS: INLINE_ANSWER_MAX_TOKENS_FX,
+  INLINE_ANSWER_MIN_TOKENS: INLINE_ANSWER_MIN_TOKENS_FX,
   INLINE_SELECTION_ACTIONS: INLINE_SELECTION_ACTIONS_FX,
   INLINE_SELECTION_MAX_CHARS: INLINE_SELECTION_MAX_CHARS_FX,
+  inlineAnswerWasCut: inlineAnswerWasCutFx,
+  inlineSelectionMaxTokens: inlineSelectionMaxTokensFx,
   buildFollowUpSelectionText: buildFollowUpSelectionTextFx,
   buildInlineSelectionMessages: buildInlineSelectionMessagesFx,
   SELECTION_CONTEXT_SOURCE_GROUNDING: SELECTION_CONTEXT_SOURCE_GROUNDING_FX,
@@ -51620,9 +51628,9 @@ test('selection shortcut localizations cover every interface locale with browser
   ];
   const expectedKeys = [
     'addSelectionToChat', 'askAbout', 'askFollowUp', 'askHighlightedText', 'askQuestion', 'askSelection', 'autoDetect',
-    'explain', 'hideShortcut', 'humanize', 'includePageContext', 'inlineFailed', 'more', 'openChat', 'proofread',
-    'quiz', 'retry', 'sendFailed', 'sendFollowUp', 'sendQuestion', 'sentManual', 'summarize', 'translate',
-    'translateTo', 'working',
+    'continueInPanel', 'cutOff', 'explain', 'hideShortcut', 'humanize', 'includePageContext', 'inlineFailed', 'more',
+    'openChat', 'proofread', 'quiz', 'retry', 'sendFailed', 'sendFollowUp', 'sendQuestion', 'sentManual', 'summarize',
+    'translate', 'translateTo', 'working',
   ].sort();
 
   for (const [label, locales, getLocalization, normalizeLocale] of [
@@ -51740,10 +51748,84 @@ test('inline card answers are one tool-less, bounded model call behind validated
     const body = background.slice(start, background.indexOf('\n}\n', start));
     assert.match(body, /buildInlineSelectionMessages\(msg\.selectionText, msg\.action, msg\.language\)/, `${prefix}: the prompt comes from the validated builder`);
     assert.match(body, /if \(!messages\) return \{ ok: false/, `${prefix}: invalid requests are refused before any model call`);
-    assert.match(body, /agent\._chatWithCostAllowance\(\s*provider,\s*messages,\s*\{ maxTokens: 2000, temperature: 0, signal: controller\.signal \},\s*agent\._newCostRunState\(\),/, `${prefix}: the call is bounded, abortable and goes through the cost allowance`);
+    assert.match(body, /agent\._chatWithCostAllowance\(\s*provider,\s*messages,\s*\{ maxTokens, temperature: 0, signal: controller\.signal \},\s*agent\._newCostRunState\(\),/, `${prefix}: the call is bounded, abortable and goes through the cost allowance`);
+    assert.match(body, /const maxTokens = inlineSelectionMaxTokens\(msg\.selectionText, msg\.action, provider\?\.maxOutputTokens\);/, `${prefix}: the budget is sized to the selection and the provider's ceiling`);
+    assert.match(body, /inlineAnswerWasCut\(result, maxTokens\) \? \{ ok: true, text, truncated: true \}/, `${prefix}: a capped answer is flagged instead of passing as complete`);
+
+    // A card that is closed, retried or retargeted cancels the paid call it no longer needs.
+    assert.match(body, /const jobId = typeof msg\.jobId === 'string' && INLINE_JOB_ID_PATTERN\.test\(msg\.jobId\) \? msg\.jobId : '';\s*if \(jobId\) inlineSelectionJobs\.set\(jobId, controller\);/, `${prefix}: only well-formed job ids are tracked`);
+    assert.match(body, /finally \{[^}]*inlineSelectionJobs\.get\(jobId\) === controller\) inlineSelectionJobs\.delete\(jobId\);/, `${prefix}: a finished job leaves the table`);
+    assert.match(background, /if \(msg\?\.type !== 'WB_SELECTION_SHORTCUT_INLINE_CANCEL'\) return;[^}]*inlineSelectionJobs\.get\(jobId\)\?\.abort\(/, `${prefix}: a cancel message aborts the tracked call`);
+    assert.match(content, /const INLINE_CANCEL_MESSAGE = 'WB_SELECTION_SHORTCUT_INLINE_CANCEL';/, `${prefix}: the card uses the cancel message the background listens for`);
     assert.doesNotMatch(body, /\btools\b|toolDefs|tool_choice/, `${prefix}: an in-page answer must not have tools`);
     assert.match(body, /controller\.abort\(/, `${prefix}: a hung provider must time out`);
     assert.match(body, /finally \{\s*clearTimeout\(timer\);/, `${prefix}: the timeout timer is always cleared`);
+  }
+});
+
+test('inline card token budget follows the selection and never exceeds the provider ceiling', () => {
+  for (const [label, min, max, budget] of [
+    ['chrome', INLINE_ANSWER_MIN_TOKENS_CH, INLINE_ANSWER_MAX_TOKENS_CH, inlineSelectionMaxTokensCh],
+    ['firefox', INLINE_ANSWER_MIN_TOKENS_FX, INLINE_ANSWER_MAX_TOKENS_FX, inlineSelectionMaxTokensFx],
+  ]) {
+    assert.equal(min, 2000, `${label}: short answers keep the original budget`);
+    assert.equal(max, 8000, `${label}: the budget has a hard upper bound`);
+    assert.equal(budget('a short phrase', 'translate', 16_000), min, `${label}: a short translation uses the floor`);
+    assert.equal(budget('x'.repeat(1500), 'translate', 16_000), 3000, `${label}: a long translation gets room for roughly two tokens per character`);
+    assert.equal(budget('x'.repeat(1500), 'proofread', 16_000), 3000, `${label}: proofreading rewrites the whole selection too`);
+    assert.equal(budget('x'.repeat(6000), 'translate', 64_000), max, `${label}: the budget never passes the upper bound`);
+    assert.equal(budget('x'.repeat(6000), 'explain', 64_000), min, `${label}: an explanation does not grow with the selection`);
+    assert.equal(budget('x'.repeat(6000), 'translate', 2048), 2048, `${label}: a small-output model caps the request, which it would otherwise reject`);
+    assert.equal(budget('x'.repeat(1500), 'translate', undefined), 3000, `${label}: an unknown ceiling falls back to a safe default`);
+    assert.equal(budget('x'.repeat(6000), 'translate', undefined), 4096, `${label}: the fallback ceiling stays conservative`);
+    assert.equal(budget('x'.repeat(6000), 'translate', 'junk'), 4096, `${label}: a non-numeric ceiling is ignored`);
+  }
+});
+
+test('inline card detects an answer that stopped at the output cap on every provider shape', () => {
+  for (const [label, wasCut] of [['chrome', inlineAnswerWasCutCh], ['firefox', inlineAnswerWasCutFx]]) {
+    assert.equal(wasCut({ content: 'x', finishReason: 'length' }, 2000), true, `${label}: OpenAI-style length stop`);
+    assert.equal(wasCut({ content: 'x', raw: { stop_reason: 'max_tokens' } }, 2000), true, `${label}: Anthropic max_tokens stop`);
+    assert.equal(wasCut({ content: 'x', raw: { choices: [{ finish_reason: 'length' }] } }, 2000), true, `${label}: raw chat completion`);
+    assert.equal(wasCut({ content: 'x', raw: { candidates: [{ finishReason: 'MAX_TOKENS' }] } }, 2000), true, `${label}: Gemini stop is case-insensitive`);
+    assert.equal(wasCut({ content: 'x', raw: { incomplete_details: { reason: 'max_output_tokens' } } }, 2000), true, `${label}: Responses API incomplete`);
+    assert.equal(wasCut({ content: 'x', finishReason: 'stop', usage: { completion_tokens: 2000 } }, 2000), false, `${label}: an explicit natural stop wins over a coincidental token count`);
+    assert.equal(wasCut({ content: 'x', raw: { stop_reason: 'end_turn' } }, 2000), false, `${label}: Anthropic natural stop`);
+    assert.equal(wasCut({ content: 'x', usage: { completion_tokens: 1990 } }, 2000), true, `${label}: no stop reason but the usage sits at the cap`);
+    assert.equal(wasCut({ content: 'x', usage: { output_tokens: 2000 } }, 2000), true, `${label}: output_tokens is read too`);
+    assert.equal(wasCut({ content: 'x', usage: { completion_tokens: 400 } }, 2000), false, `${label}: a short answer is complete`);
+    assert.equal(wasCut({ content: 'x' }, 2000), false, `${label}: no signal at all is treated as complete`);
+    assert.equal(wasCut(null, 2000), false, `${label}: a missing result is not a cut-off`);
+  }
+});
+
+test('inline card claims its request before waiting, cancels what it abandons and finishes cut-off answers in the panel', () => {
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const content = fs.readFileSync(path.join(ROOT, prefix, 'src/content/selection-shortcut.js'), 'utf8');
+    const body = (name, next) => content.slice(content.indexOf(name), content.indexOf(next, content.indexOf(name)));
+
+    // Double click while the localization bundle loads: the later click owns the card.
+    const open = body('async function openCard(kind, opener) {', 'async function runInline()');
+    assert.ok(
+      open.indexOf('const requestId = ++cardRequestId;') < open.indexOf('await refreshLocalization('),
+      `${prefix}: the card must claim its request id before the first await`,
+    );
+    assert.match(open, /await refreshLocalization\(interfaceLanguage\);\s*if \(requestId !== cardRequestId \|\| !snapshot \|\| submitting\) return;/, `${prefix}: a superseded open must stop after the localization wait`);
+    assert.equal((open.match(/\+\+cardRequestId/g) || []).length, 1, `${prefix}: opening a card takes exactly one request id`);
+
+    // Every path that abandons a running call tells the background.
+    const run = body('async function runInline()', 'function submitFollowUp()');
+    assert.match(run, /cancelInline\(\);\s*const requestId = \+\+cardRequestId;/, `${prefix}: a retry or new target cancels the call it replaces`);
+    assert.match(run, /type: INLINE_MESSAGE,\s*jobId,/, `${prefix}: the call carries its job id`);
+    assert.match(content, /function newInlineJobId\(\) \{[^}]*crypto\.getRandomValues/, `${prefix}: job ids are unguessable`);
+    assert.match(body('function resetCard()', 'function closeCard('), /cancelInline\(\);\s*cardRequestId \+= 1;/, `${prefix}: closing or dismissing the card cancels the call`);
+    assert.match(body('function destroySurface()', 'function hideToast()'), /cancelInline\(\);\s*cardRequestId \+= 1;/, `${prefix}: tearing the surface down cancels the call`);
+    assert.match(body('function cancelInline()', 'async function runInline()'), /type: INLINE_CANCEL_MESSAGE, jobId/, `${prefix}: cancellation names the job`);
+
+    // A capped answer is never shown as complete.
+    assert.match(run, /cardState\.truncated = response\.truncated === true;/, `${prefix}: the card records the cut-off flag`);
+    assert.match(content, /parts\.cut\.hidden = !\(status === 'ready' && cardState\.truncated\);/, `${prefix}: the notice shows for a cut-off answer only`);
+    assert.match(body('function continueInPanel()', 'function resetCard()'), /submitSelection\(kind, '', kind === 'translate' \? target : interfaceLanguage\)/, `${prefix}: continuing hands the same action to the side panel`);
   }
 });
 

@@ -30,6 +30,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Auto-detect',
     inlineFailed: 'Could not get an answer.',
     retry: 'Try again',
+    cutOff: 'This answer was cut off.',
+    continueInPanel: 'Continue in side panel',
   },
   zh: {
     askSelection: '添加到聊天',
@@ -57,6 +59,8 @@ const STRINGS = Object.freeze({
     autoDetect: '自动检测',
     inlineFailed: '无法获取回答。',
     retry: '重试',
+    cutOff: '此回答被截断了。',
+    continueInPanel: '在侧边栏继续',
   },
   ar: {
     askSelection: 'إضافة إلى الدردشة',
@@ -84,6 +88,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'اكتشاف تلقائي',
     inlineFailed: 'تعذر الحصول على إجابة.',
     retry: 'حاول مرة أخرى',
+    cutOff: 'تم اقتطاع هذه الإجابة.',
+    continueInPanel: 'المتابعة في اللوحة الجانبية',
   },
   bn: {
     askSelection: 'চ্যাটে যোগ করুন',
@@ -111,6 +117,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'স্বয়ংক্রিয় শনাক্তকরণ',
     inlineFailed: 'উত্তর পাওয়া যায়নি।',
     retry: 'আবার চেষ্টা করুন',
+    cutOff: 'এই উত্তরটি কেটে গেছে।',
+    continueInPanel: 'সাইড প্যানেলে চালিয়ে যান',
   },
   de: {
     askSelection: 'Zum Chat hinzufügen',
@@ -138,6 +146,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Automatisch erkennen',
     inlineFailed: 'Es konnte keine Antwort abgerufen werden.',
     retry: 'Erneut versuchen',
+    cutOff: 'Diese Antwort wurde abgeschnitten.',
+    continueInPanel: 'In der Seitenleiste fortsetzen',
   },
   es: {
     askSelection: 'Añadir al chat',
@@ -165,6 +175,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Detectar automáticamente',
     inlineFailed: 'No se pudo obtener una respuesta.',
     retry: 'Reintentar',
+    cutOff: 'Esta respuesta se cortó.',
+    continueInPanel: 'Continuar en el panel lateral',
   },
   fa: {
     askSelection: 'افزودن به چت',
@@ -192,6 +204,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'تشخیص خودکار',
     inlineFailed: 'دریافت پاسخ ممکن نشد.',
     retry: 'تلاش دوباره',
+    cutOff: 'این پاسخ ناقص مانده است.',
+    continueInPanel: 'ادامه در پنل کناری',
   },
   fr: {
     askSelection: 'Ajouter au chat',
@@ -219,6 +233,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Détection automatique',
     inlineFailed: 'Impossible d’obtenir une réponse.',
     retry: 'Réessayer',
+    cutOff: 'Cette réponse a été tronquée.',
+    continueInPanel: 'Continuer dans le panneau latéral',
   },
   he: {
     askSelection: 'הוספה לצ׳אט',
@@ -246,6 +262,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'זיהוי אוטומטי',
     inlineFailed: 'לא ניתן היה לקבל תשובה.',
     retry: 'נסה שוב',
+    cutOff: 'התשובה נקטעה.',
+    continueInPanel: 'המשך בחלונית הצד',
   },
   hi: {
     askSelection: 'चैट में जोड़ें',
@@ -273,6 +291,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'स्वतः पहचानें',
     inlineFailed: 'उत्तर नहीं मिल सका।',
     retry: 'फिर से प्रयास करें',
+    cutOff: 'यह उत्तर अधूरा रह गया।',
+    continueInPanel: 'साइड पैनल में जारी रखें',
   },
   id: {
     askSelection: 'Tambahkan ke chat',
@@ -300,6 +320,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Deteksi otomatis',
     inlineFailed: 'Tidak dapat memperoleh jawaban.',
     retry: 'Coba lagi',
+    cutOff: 'Jawaban ini terpotong.',
+    continueInPanel: 'Lanjutkan di panel samping',
   },
   ja: {
     askSelection: 'チャットに追加',
@@ -327,6 +349,8 @@ const STRINGS = Object.freeze({
     autoDetect: '自動検出',
     inlineFailed: '回答を取得できませんでした。',
     retry: '再試行',
+    cutOff: 'この回答は途中で切れています。',
+    continueInPanel: 'サイドパネルで続ける',
   },
   ko: {
     askSelection: '채팅에 추가',
@@ -354,6 +378,8 @@ const STRINGS = Object.freeze({
     autoDetect: '자동 감지',
     inlineFailed: '답변을 가져오지 못했습니다.',
     retry: '다시 시도',
+    cutOff: '답변이 잘렸습니다.',
+    continueInPanel: '사이드 패널에서 계속',
   },
   ms: {
     askSelection: 'Tambahkan pada sembang',
@@ -381,6 +407,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Kesan automatik',
     inlineFailed: 'Tidak dapat mendapatkan jawapan.',
     retry: 'Cuba lagi',
+    cutOff: 'Jawapan ini terpotong.',
+    continueInPanel: 'Teruskan di panel sisi',
   },
   nl: {
     askSelection: 'Toevoegen aan chat',
@@ -408,6 +436,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Automatisch detecteren',
     inlineFailed: 'Er kon geen antwoord worden opgehaald.',
     retry: 'Opnieuw proberen',
+    cutOff: 'Dit antwoord is afgekapt.',
+    continueInPanel: 'Verder in het zijpaneel',
   },
   pl: {
     askSelection: 'Dodaj do czatu',
@@ -435,6 +465,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Wykryj automatycznie',
     inlineFailed: 'Nie udało się uzyskać odpowiedzi.',
     retry: 'Spróbuj ponownie',
+    cutOff: 'Ta odpowiedź została ucięta.',
+    continueInPanel: 'Kontynuuj w panelu bocznym',
   },
   pt: {
     askSelection: 'Adicionar ao chat',
@@ -462,6 +494,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Detectar automaticamente',
     inlineFailed: 'Não foi possível obter uma resposta.',
     retry: 'Tentar novamente',
+    cutOff: 'Esta resposta foi cortada.',
+    continueInPanel: 'Continuar no painel lateral',
   },
   ru: {
     askSelection: 'Добавить в чат',
@@ -489,6 +523,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Определить автоматически',
     inlineFailed: 'Не удалось получить ответ.',
     retry: 'Повторить',
+    cutOff: 'Ответ обрезан.',
+    continueInPanel: 'Продолжить в боковой панели',
   },
   th: {
     askSelection: 'เพิ่มไปยังแชท',
@@ -516,6 +552,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'ตรวจหาอัตโนมัติ',
     inlineFailed: 'ไม่สามารถรับคำตอบได้',
     retry: 'ลองอีกครั้ง',
+    cutOff: 'คำตอบนี้ถูกตัดทอน',
+    continueInPanel: 'ดำเนินการต่อในแผงด้านข้าง',
   },
   tl: {
     askSelection: 'Idagdag sa chat',
@@ -543,6 +581,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Awtomatikong tukuyin',
     inlineFailed: 'Hindi makakuha ng sagot.',
     retry: 'Subukan muli',
+    cutOff: 'Naputol ang sagot na ito.',
+    continueInPanel: 'Ipagpatuloy sa side panel',
   },
   tr: {
     askSelection: 'Sohbete ekle',
@@ -570,6 +610,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Otomatik algıla',
     inlineFailed: 'Yanıt alınamadı.',
     retry: 'Tekrar dene',
+    cutOff: 'Bu yanıt yarıda kesildi.',
+    continueInPanel: 'Yan panelde devam et',
   },
   uk: {
     askSelection: 'Додати до чату',
@@ -597,6 +639,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Визначити автоматично',
     inlineFailed: 'Не вдалося отримати відповідь.',
     retry: 'Спробувати ще раз',
+    cutOff: 'Відповідь обрізано.',
+    continueInPanel: 'Продовжити в бічній панелі',
   },
   vi: {
     askSelection: 'Thêm vào cuộc trò chuyện',
@@ -624,6 +668,8 @@ const STRINGS = Object.freeze({
     autoDetect: 'Tự động phát hiện',
     inlineFailed: 'Không thể nhận được câu trả lời.',
     retry: 'Thử lại',
+    cutOff: 'Câu trả lời này bị cắt ngắn.',
+    continueInPanel: 'Tiếp tục trong bảng bên',
   },
 });
 

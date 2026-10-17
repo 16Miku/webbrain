@@ -363,7 +363,7 @@ async function collectSmd(page, mode = 'auto') {
   }, mode);
 }
 
-async function setupSelectionShortcut(page, sourcePath, { enabled = true, requiresManualOpen = false, locale = 'en', promiseDetect = false } = {}) {
+async function setupSelectionShortcut(page, sourcePath, { enabled = true, requiresManualOpen = false, locale = 'en', promiseDetect = false, holdLocalization = false } = {}) {
   await page.setViewportSize({ width: 360, height: 280 });
   await page.setContent(`<!doctype html>
     <style>body{margin:0;font:18px/1.5 sans-serif} #copy{position:absolute;right:2px;bottom:2px;width:210px}</style>
@@ -372,6 +372,9 @@ async function setupSelectionShortcut(page, sourcePath, { enabled = true, requir
   await page.addScriptTag({ content: `
     window.__selectionMessages = [];
     window.__selectionInlineMessages = [];
+    window.__selectionCancelMessages = [];
+    window.__selectionLocalizationRequests = 0;
+    window.__selectionLocalizationGate = ${holdLocalization ? 'new Promise((resolve) => { window.__releaseLocalization = resolve; })' : 'null'};
     window.__selectionDetectedLanguage = '';
     window.__selectionInlineHandler = async (message) => ({
       ok: true,
@@ -385,12 +388,18 @@ async function setupSelectionShortcut(page, sourcePath, { enabled = true, requir
       runtime: {
         sendMessage: async (message) => {
           if (message.type === 'WB_SELECTION_SHORTCUT_LOCALIZATION') {
+            window.__selectionLocalizationRequests += 1;
+            if (window.__selectionLocalizationGate) await window.__selectionLocalizationGate;
             const locale = String(message.locale || 'en').toLowerCase().split('-')[0];
             return { ok: true, ...(window.__selectionLocalizations[locale] || window.__selectionLocalizations.en) };
           }
           if (message.type === 'WB_SELECTION_SHORTCUT_INLINE') {
             window.__selectionInlineMessages.push(message);
             return window.__selectionInlineHandler(message);
+          }
+          if (message.type === 'WB_SELECTION_SHORTCUT_INLINE_CANCEL') {
+            window.__selectionCancelMessages.push(message);
+            return { ok: true };
           }
           window.__selectionMessages.push(message);
           return { ok: true, queued: true, requiresManualOpen: ${requiresManualOpen ? 'true' : 'false'} };
@@ -2236,6 +2245,116 @@ for (const [label, sourcePath, manualOpen] of [
     const state = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     if (state.cardVisible || state.cardStatus !== '' || state.cardText || !state.shortcutVisible) {
       throw new Error(`a late answer must not reopen or fill a closed card: ${JSON.stringify(state)}`);
+    }
+  });
+
+  test(`${label}: a double click while the language bundle loads starts one card and one model call`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, holdLocalization: true });
+    const selected = await selectFixtureText(page);
+    await clickRectCenter(page, selected.inlineRects.explain);
+    await clickRectCenter(page, selected.inlineRects.explain);
+    // The start-up request plus one per click are now waiting on the held bundle.
+    await page.waitForFunction(() => window.__selectionLocalizationRequests >= 3);
+    await page.evaluate(() => window.__releaseLocalization());
+    await waitForCardStatus(page, 'ready');
+    await page.waitForTimeout(60);
+    const result = await page.evaluate(() => ({
+      inline: window.__selectionInlineMessages.length,
+      cancels: window.__selectionCancelMessages.length,
+      state: window.__webbrainSelectionShortcut.getState(),
+    }));
+    if (result.inline !== 1 || result.cancels !== 0 || !result.state.cardVisible || result.state.cardText !== 'Mock explain answer for en') {
+      throw new Error(`a double click opened more than one paid request: ${JSON.stringify(result)}`);
+    }
+  });
+
+  test(`${label}: closing, retargeting or retrying a card cancels the call it abandons`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = () => new Promise(() => {});
+    });
+    await openInlineCard(page, 'explain');
+    await page.waitForFunction(() => window.__selectionInlineMessages.length === 1);
+    let result = await page.evaluate(() => ({
+      inline: window.__selectionInlineMessages, cancels: window.__selectionCancelMessages,
+    }));
+    const firstId = result.inline[0].jobId;
+    if (!/^[a-z0-9]{8,64}$/.test(firstId) || result.cancels.length !== 0) {
+      throw new Error(`a running card should carry a well-formed job id and nothing to cancel yet: ${JSON.stringify(result)}`);
+    }
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => window.__selectionCancelMessages.length === 1);
+    result = await page.evaluate(() => window.__selectionCancelMessages);
+    if (result[0].jobId !== firstId) {
+      throw new Error(`closing the card should cancel its own call: ${JSON.stringify({ firstId, result })}`);
+    }
+
+    // Retargeting a Translate card replaces the running call with a new one.
+    await openInlineCard(page, 'translate');
+    await page.waitForFunction(() => window.__selectionInlineMessages.length === 2);
+    await page.evaluate(() => window.__webbrainSelectionShortcut.chooseTarget('de'));
+    await page.waitForFunction(() => window.__selectionInlineMessages.length === 3);
+    result = await page.evaluate(() => ({
+      ids: window.__selectionInlineMessages.map((message) => message.jobId),
+      cancels: window.__selectionCancelMessages.map((message) => message.jobId),
+    }));
+    if (new Set(result.ids).size !== 3 || result.cancels.length !== 2 || result.cancels[1] !== result.ids[1]) {
+      throw new Error(`a new target should cancel the call it replaces and use a fresh id: ${JSON.stringify(result)}`);
+    }
+
+    // Closing mid-flight cancels the third call too, but a call that already finished has nothing to cancel.
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = async () => ({ ok: true, text: 'Done' });
+    });
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => window.__selectionCancelMessages.length === 3);
+    await openInlineCard(page, 'proofread');
+    await waitForCardStatus(page, 'ready');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(60);
+    const cancels = await page.evaluate(() => window.__selectionCancelMessages.length);
+    if (cancels !== 3) throw new Error(`closing a finished card should not send a cancel: ${cancels}`);
+  });
+
+  test(`${label}: a cut-off card answer says so and continues in the side panel`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'zh' });
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = async (message) => ({
+        ok: true,
+        text: 'Partial ' + message.action + ' answer',
+        truncated: message.action === 'translate',
+      });
+    });
+    const zh = await page.evaluate(() => window.__selectionLocalizations.zh.strings);
+    await openInlineCard(page, 'translate');
+    await page.evaluate(() => window.__webbrainSelectionShortcut.chooseTarget('de'));
+    let state = await waitForCardStatus(page, 'ready');
+    await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().cardTruncated);
+    state = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    if (state.cutNoticeText !== zh.cutOff || !state.continueRect || state.cardText !== 'Partial translate answer') {
+      throw new Error(`a capped answer should be flagged in the interface language: ${JSON.stringify({ state, zh: zh.cutOff })}`);
+    }
+    if (state.continueLabel !== zh.continueInPanel) {
+      throw new Error(`the continue button should be localized: ${state.continueLabel}`);
+    }
+    await clickRectCenter(page, state.continueRect);
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    const handoff = await page.evaluate(() => ({
+      message: window.__selectionMessages[0],
+      cancels: window.__selectionCancelMessages.length,
+      state: window.__webbrainSelectionShortcut.getState(),
+    }));
+    if (handoff.message.action !== 'translate' || handoff.message.language !== 'de'
+        || !/Selected words near the viewport edge/.test(handoff.message.selectionText)
+        || handoff.state.cardVisible || handoff.cancels > 1) {
+      throw new Error(`continuing should hand the same translation to the side panel: ${JSON.stringify(handoff)}`);
+    }
+
+    // A complete answer shows no notice.
+    await openInlineCard(page, 'explain');
+    state = await waitForCardStatus(page, 'ready');
+    if (state.cardTruncated || state.continueRect || state.cutNoticeText) {
+      throw new Error(`a complete answer must not look cut off: ${JSON.stringify(state)}`);
     }
   });
 

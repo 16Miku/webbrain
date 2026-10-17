@@ -263,6 +263,47 @@ export function buildInlineSelectionMessages(selectionText, action, language = '
   ];
 }
 
+// How many output tokens a card answer may need. Translate and Proofread hand the
+// whole text back, so they scale with the selection (CJK and Indic scripts can take
+// one to two tokens per character on either side of a translation); Explain stays
+// short. The request never exceeds what the provider says it will accept.
+export const INLINE_ANSWER_MIN_TOKENS = 2000;
+export const INLINE_ANSWER_MAX_TOKENS = 8000;
+const INLINE_FALLBACK_OUTPUT_CEILING = 4096;
+
+export function inlineSelectionMaxTokens(selectionText, action, providerCeiling) {
+  const chars = String(selectionText || '').trim().length;
+  const wanted = String(action || '').trim() === 'explain'
+    ? INLINE_ANSWER_MIN_TOKENS
+    : Math.max(INLINE_ANSWER_MIN_TOKENS, Math.min(INLINE_ANSWER_MAX_TOKENS, chars * 2));
+  const limit = Math.floor(Number(providerCeiling));
+  return Math.min(wanted, limit > 0 ? limit : INLINE_FALLBACK_OUTPUT_CEILING);
+}
+
+// Whether the model stopped because it ran out of output budget. Providers report
+// this in different places (a normalized finishReason, Anthropic's raw stop_reason,
+// OpenAI's choices[0].finish_reason, a Responses-API incomplete status). A reported
+// reason is trusted either way; the token count is only a fallback for providers
+// that report none.
+const INLINE_CUT_REASONS = new Set(['length', 'max_tokens', 'max_output_tokens', 'max_completion_tokens']);
+
+export function inlineAnswerWasCut(result, maxTokens) {
+  const raw = result?.raw;
+  const reason = [
+    result?.finishReason,
+    result?.stopReason,
+    raw?.stop_reason,
+    raw?.stopReason,
+    raw?.choices?.[0]?.finish_reason,
+    raw?.candidates?.[0]?.finishReason,
+    raw?.incomplete_details?.reason,
+  ].map((value) => String(value ?? '').trim().toLowerCase()).find(Boolean);
+  if (reason) return INLINE_CUT_REASONS.has(reason);
+  const used = Number(result?.usage?.completion_tokens ?? result?.usage?.output_tokens);
+  return Number.isFinite(used) && Number.isFinite(maxTokens) && maxTokens > 0
+    && used >= Math.floor(maxTokens * 0.98);
+}
+
 const INLINE_FOLLOW_UP_LABELS = Object.freeze({
   translate: 'translation',
   explain: 'explanation',

@@ -517,8 +517,17 @@ described above. Translate, Explain and Proofread answer in place instead: the s
 one `WB_SELECTION_SHORTCUT_INLINE` message and the background builds the same allowlisted
 selection prompt (the selection inside its untrusted boundary, `selection_only` grounding)
 behind a short fixed system message, then makes a single tool-less model call through the
-cost allowance (2,000 output tokens, 90 s timeout) and returns the text. Selections over
-4,000 characters skip the card and use the side-panel flow. The card draws the answer as DOM
+cost allowance (90 s timeout) and returns the text. The output budget is sized to the
+selection (at least 2,000 tokens; Translate and Proofread grow to about two tokens per
+character, up to 8,000) and never exceeds the provider's own output ceiling. If the reply
+still stopped at the cap (finish reason, Anthropic `stop_reason` or Responses
+`incomplete_details`, or token usage at the budget when no reason is reported) the response
+is flagged `truncated`, and the card says so and offers **Continue in side panel** instead
+of passing a cut-off translation off as complete. Each call carries a job id, and a card
+that is closed, retried or retargeted sends `WB_SELECTION_SHORTCUT_INLINE_CANCEL` so the
+background aborts the paid request it no longer needs; the card also claims its request id
+before it waits for the language bundle, so a double click starts only one call. Selections
+over 4,000 characters skip the card and use the side-panel flow. The card draws the answer as DOM
 nodes (paragraphs, lists, bold, italic and code), never as HTML, and takes the source
 language from the browser's own detector, with no network call. A follow-up typed in a card
 continues in the side panel as a custom question. The card's answer travels inside the

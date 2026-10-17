@@ -31,6 +31,7 @@
     : {};
   const LOCALIZATION_MESSAGE = 'WB_SELECTION_SHORTCUT_LOCALIZATION';
   const INLINE_MESSAGE = 'WB_SELECTION_SHORTCUT_INLINE';
+  const INLINE_CANCEL_MESSAGE = 'WB_SELECTION_SHORTCUT_INLINE_CANCEL';
   const GAP = 8;
   const TOOLBAR_HEIGHT = 38;
   const POPUP_WIDTH = 316;
@@ -53,6 +54,7 @@
     'proofread', 'humanize', 'translate', 'translateTo', 'askAbout',
     'askQuestion', 'sendQuestion', 'includePageContext', 'hideShortcut', 'sentManual', 'sendFailed',
     'more', 'askFollowUp', 'sendFollowUp', 'working', 'autoDetect', 'inlineFailed', 'retry',
+    'cutOff', 'continueInPanel',
   ]);
   // English copy for strings the card shows before the localization bundle
   // arrives (or when the background cannot be reached).
@@ -60,6 +62,8 @@
     translateTo: 'Translate to',
     autoDetect: 'Auto-detect',
     inlineFailed: 'Could not get an answer.',
+    cutOff: 'This answer was cut off.',
+    continueInPanel: 'Continue in side panel',
   });
   // Language codes the browser's detector reports that differ from ours.
   const DETECTED_LANGUAGE_ALIASES = Object.freeze({ iw: 'he', fil: 'tl', in: 'id' });
@@ -84,6 +88,8 @@
   let cardSide = 'above';
   let cardOpener = null;
   let cardRequestId = 0;
+  // Id of the model call the card is waiting on, so closing or redoing the card can cancel it.
+  let cardJobId = '';
   let toolbarLeft = 0;
   let interfaceLanguage = resolveInterfaceLanguage('');
   let localization = null;
@@ -223,6 +229,8 @@
     cardParts.target.setAttribute('aria-label', strings.translateTo);
     cardParts.skeleton.setAttribute('aria-label', strings.working);
     cardParts.retry.textContent = strings.retry;
+    cardParts.cutText.textContent = strings.cutOff;
+    cardParts.continueButton.textContent = strings.continueInPanel;
     populateTargetLanguages();
     renderCard();
     // Label widths change with the language, and the bar is centered on the selection.
@@ -416,6 +424,15 @@
           color:var(--text); font-size:14px; font-weight:550; cursor:pointer;
         }
         .card-retry:hover { background:var(--hover); }
+        .card-cut {
+          display:flex; flex:none; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-top:10px;
+          color:var(--muted); font-size:13px; line-height:1.4;
+        }
+        .card-continue {
+          padding:5px 11px; border:1px solid var(--border); border-radius:10px; background:transparent;
+          color:var(--text); font-size:13px; font-weight:550; cursor:pointer;
+        }
+        .card-continue:hover { background:var(--hover); }
         .followup {
           display:flex; flex:none; align-items:center; gap:8px; margin-top:12px;
           padding:5px 5px 5px 14px; border-radius:16px; background:var(--field);
@@ -542,6 +559,10 @@
             <button class="card-retry" type="button">Try again</button>
           </div>
         </div>
+        <div class="card-cut" hidden>
+          <span class="card-cut-text">This answer was cut off.</span>
+          <button class="card-continue" type="button">Continue in side panel</button>
+        </div>
         <div class="followup">
           <input class="followup-input" type="text" maxlength="2000" aria-label="Ask a follow-up" placeholder="Ask a follow-up">
           <button class="followup-send" type="button" aria-label="Send follow-up" disabled>
@@ -572,6 +593,9 @@
       errorText: shadow.querySelector('.card-error-text'),
       errorDetail: shadow.querySelector('.card-error-detail'),
       retry: shadow.querySelector('.card-retry'),
+      cut: shadow.querySelector('.card-cut'),
+      cutText: shadow.querySelector('.card-cut-text'),
+      continueButton: shadow.querySelector('.card-continue'),
       followUp: shadow.querySelector('.followup-input'),
       send: shadow.querySelector('.followup-send'),
     };
@@ -608,6 +632,9 @@
     });
     cardParts.retry.addEventListener('click', (event) => {
       if (event.isTrusted) runInline();
+    });
+    cardParts.continueButton.addEventListener('click', (event) => {
+      if (event.isTrusted) continueInPanel();
     });
     cardParts.followUp.addEventListener('input', () => {
       cardParts.send.disabled = !cardParts.followUp.value.trim();
@@ -896,6 +923,7 @@
     parts.skeleton.hidden = status !== 'loading';
     parts.text.hidden = status !== 'ready';
     parts.error.hidden = status !== 'error';
+    parts.cut.hidden = !(status === 'ready' && cardState.truncated);
     if (status === 'ready') renderAnswer(parts.text, cardState.text, kind !== 'translate');
     if (status === 'error') {
       parts.errorText.textContent = str('inlineFailed');
@@ -908,8 +936,12 @@
 
   async function openCard(kind, opener) {
     if (!snapshot || submitting || !INLINE_ACTIONS.includes(kind)) return;
+    // Claim the card before anything is awaited: a second click while the
+    // localization loads takes a newer id, so this call stops instead of opening
+    // a second card and starting a second paid request.
+    const requestId = ++cardRequestId;
     if (!localization) await refreshLocalization(interfaceLanguage);
-    if (!snapshot || submitting) return;
+    if (requestId !== cardRequestId || !snapshot || submitting) return;
     if (snapshot.text.length > INLINE_MAX_CHARS) {
       // Too long for a card: the side panel is the better place to read it.
       submitSelection(kind, '', interfaceLanguage);
@@ -918,7 +950,6 @@
     ensureSurface();
     applyLocalization();
     closePopup(false);
-    const requestId = ++cardRequestId;
     cardOpener = opener || null;
     cardState = {
       kind,
@@ -927,6 +958,7 @@
       sourceLabel: '',
       quote: kind === 'translate' ? snapshot.text : '',
       text: '',
+      truncated: false,
       error: '',
     };
     cardParts.followUp.value = '';
@@ -956,29 +988,54 @@
     runInline();
   }
 
+  function newInlineJobId() {
+    const bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => (byte % 36).toString(36)).join('');
+  }
+
+  // Tell the background to stop the model call the card no longer needs.
+  function cancelInline() {
+    const jobId = cardJobId;
+    cardJobId = '';
+    if (!jobId) return;
+    try {
+      Promise.resolve(api.runtime.sendMessage({ type: INLINE_CANCEL_MESSAGE, jobId })).catch(() => {});
+    } catch { /* The call ends on its own timeout if the background is unreachable. */ }
+  }
+
   async function runInline() {
     if (!cardState || !snapshot) return;
+    // Retrying or retargeting replaces the call that is still running.
+    cancelInline();
     const requestId = ++cardRequestId;
+    const jobId = newInlineJobId();
+    cardJobId = jobId;
     const { kind, target } = cardState;
     const selectionText = snapshot.text;
     cardState.status = 'loading';
     cardState.text = '';
+    cardState.truncated = false;
     cardState.error = '';
     renderCard();
     try {
       const response = await api.runtime.sendMessage({
         type: INLINE_MESSAGE,
+        jobId,
         action: kind,
         selectionText,
         language: kind === 'translate' ? target : interfaceLanguage,
       });
       if (requestId !== cardRequestId || !cardState) return;
+      cardJobId = '';
       const answer = typeof response?.text === 'string' ? response.text.trim() : '';
       if (!response?.ok || !answer) throw new Error(typeof response?.error === 'string' ? response.error : '');
       cardState.status = 'ready';
       cardState.text = answer;
+      cardState.truncated = response.truncated === true;
     } catch (error) {
       if (requestId !== cardRequestId || !cardState) return;
+      cardJobId = '';
       cardState.status = 'error';
       cardState.error = String(error?.message || '').slice(0, 300);
     }
@@ -997,8 +1054,16 @@
     });
   }
 
-  // Forget the card without touching the bar; a request still in flight is ignored.
+  // A cut-off answer is finished in the side panel, where the reply is not capped.
+  function continueInPanel() {
+    if (!cardState || cardState.status !== 'ready') return;
+    const { kind, target } = cardState;
+    submitSelection(kind, '', kind === 'translate' ? target : interfaceLanguage);
+  }
+
+  // Forget the card without touching the bar; a request still in flight is cancelled and ignored.
   function resetCard() {
+    cancelInline();
     cardRequestId += 1;
     cardState = null;
     cardOpener = null;
@@ -1034,6 +1099,7 @@
 
   function destroySurface() {
     hideToast();
+    cancelInline();
     cardRequestId += 1;
     host?.remove();
     host = shadow = highlightLayer = shortcut = moreButton = popup = question = includePageContext = sendButton = toast = null;
@@ -1230,6 +1296,10 @@
       followUpRect: card && !card.hidden ? rectOf('.followup') : null,
       followUpSendRect: card && !card.hidden ? rectOf('.followup-send') : null,
       retryRect: cardParts && !cardParts.error.hidden ? rectOf('.card-retry') : null,
+      cardTruncated: cardState?.truncated === true,
+      cutNoticeText: cardParts && !cardParts.cut.hidden ? cardParts.cutText.textContent : '',
+      continueRect: cardParts && !cardParts.cut.hidden ? rectOf('.card-continue') : null,
+      continueLabel: cardParts && !cardParts.cut.hidden ? cardParts.continueButton.textContent : '',
       followUpPlaceholder: cardParts?.followUp.placeholder || '',
       followUpValue: cardParts?.followUp.value || '',
       followUpSendDisabled: cardParts ? cardParts.send.disabled : true,

@@ -72,6 +72,8 @@ import {
   buildFollowUpSelectionText,
   buildFullContextSelectionPrompt,
   buildInlineSelectionMessages,
+  inlineAnswerWasCut,
+  inlineSelectionMaxTokens,
   buildSelectionPrompt,
   normalizeSelectionAction,
   normalizeSelectionSourceGrounding,
@@ -1748,11 +1750,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // prompt builder keeps the selection inside the untrusted boundary and caps its
 // length, and the call goes through the normal cost allowance.
 const INLINE_SELECTION_TIMEOUT_MS = 90_000;
+// Calls still in flight, keyed by the card's job id, so a card that is closed,
+// retried or retargeted can cancel the paid request it no longer needs.
+const inlineSelectionJobs = new Map();
+const INLINE_JOB_ID_PATTERN = /^[a-z0-9]{8,64}$/;
 
 async function answerInlineSelection(msg) {
   const messages = buildInlineSelectionMessages(msg.selectionText, msg.action, msg.language);
   if (!messages) return { ok: false, error: 'Invalid selection request.' };
   const controller = new AbortController();
+  const jobId = typeof msg.jobId === 'string' && INLINE_JOB_ID_PATTERN.test(msg.jobId) ? msg.jobId : '';
+  if (jobId) inlineSelectionJobs.set(jobId, controller);
   const timer = setTimeout(
     () => controller.abort(new Error('The model took too long to answer.')),
     INLINE_SELECTION_TIMEOUT_MS,
@@ -1760,18 +1768,24 @@ async function answerInlineSelection(msg) {
   try {
     if (providerManager.providers.size === 0) await providerManager.load();
     const provider = providerManager.getActive();
+    // Sized to the selection and never above what the provider accepts; an answer
+    // that still hits the ceiling is flagged so the card can offer the side panel
+    // instead of presenting a cut-off translation as complete.
+    const maxTokens = inlineSelectionMaxTokens(msg.selectionText, msg.action, provider?.maxOutputTokens);
     const result = await agent._chatWithCostAllowance(
       provider,
       messages,
-      { maxTokens: 2000, temperature: 0, signal: controller.signal },
+      { maxTokens, temperature: 0, signal: controller.signal },
       agent._newCostRunState(),
     );
     const text = String(result?.content || '').trim();
-    return text ? { ok: true, text } : { ok: false, error: 'The model returned an empty answer.' };
+    if (!text) return { ok: false, error: 'The model returned an empty answer.' };
+    return inlineAnswerWasCut(result, maxTokens) ? { ok: true, text, truncated: true } : { ok: true, text };
   } catch (error) {
     return { ok: false, error: String(error?.message || error).slice(0, 300) };
   } finally {
     clearTimeout(timer);
+    if (jobId && inlineSelectionJobs.get(jobId) === controller) inlineSelectionJobs.delete(jobId);
   }
 }
 
@@ -1779,6 +1793,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== 'WB_SELECTION_SHORTCUT_INLINE') return;
   answerInlineSelection(msg).then(sendResponse);
   return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_INLINE_CANCEL') return;
+  const jobId = typeof msg.jobId === 'string' ? msg.jobId : '';
+  inlineSelectionJobs.get(jobId)?.abort(new Error('The card was closed.'));
+  sendResponse({ ok: true });
 });
 
 // Selection-shortcut clicks originate in a content script. Keep this listener
