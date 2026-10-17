@@ -67590,11 +67590,29 @@ test('Bonsai 2 Vision worker replaces only a stale cached decoder graph', async 
     globalThis.fetch = async () => new Response('tampered graph');
     assert.equal(await worker.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'unexpected');
     assert.equal(entries.get(otherUrl), 'scan graph', 'an unverified response must not replace the cached graph');
+    assert.equal(await worker.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'skipped',
+      'a failed refresh is attempted once per worker lifetime, not on every runtime load');
+
+    const fresh = async tag => import(`${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?bonsai2-graph-refresh-${tag}`);
+    const offline = await fresh('offline');
     globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
-    assert.equal(await worker.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'unavailable');
+    assert.equal(await offline.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'unavailable');
     assert.equal(entries.get(otherUrl), 'scan graph', 'offline loads keep the working cached graph');
+
+    const stalled = await fresh('stalled');
+    let aborted = false;
+    globalThis.fetch = (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => { aborted = true; reject(new DOMException('Aborted', 'AbortError')); });
+    });
+    const started = Date.now();
+    assert.equal(await stalled.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph'), timeoutMs: 50 }), 'unavailable');
+    assert.equal(aborted, true, 'a stalled refresh must be aborted');
+    assert.ok(Date.now() - started < 2000, 'a stalled refresh must not hold up model loading');
+    assert.equal(entries.get(otherUrl), 'scan graph');
+
+    const current = await fresh('current');
     entries.set(otherUrl, 'chunked graph');
-    assert.equal(await worker.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'current');
+    assert.equal(await current.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'current');
   } finally {
     if (previousSelf === undefined) delete globalThis.self;
     else globalThis.self = previousSelf;

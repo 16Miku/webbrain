@@ -58,6 +58,9 @@ const BONSAI2_DECODER_GRAPH_SHA256 = new Map([
   ['webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision', '2768d880f4fdab46a984d697b901db6e8ac54dc9b896524cb8cb769bbb339df0'],
   ['webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision', '52424fbb7094ed0a1036d8795e78c3da349fce1838ee6bd077523929b0bb7bb2'],
 ]);
+// A refresh must never stall model loading on a flaky network; one attempt per
+// worker lifetime, after which the working cached graph is used.
+const BONSAI2_DECODER_GRAPH_REFRESH_TIMEOUT_MS = 15_000;
 const checkedBonsai2DecoderGraphs = new Set();
 // The Qwen3.5 generation_config sidecar omitted by Danyal's split exports.
 // Per-request decoding still controls do_sample and the output token budget.
@@ -229,12 +232,16 @@ async function sha256Hex(buffer) {
  * Best effort: offline or unexpected responses keep the cached graph, which
  * still produces the same answers, only with slower prefill.
  */
-export async function refreshBonsai2DecoderGraph(modelId, { expected = BONSAI2_DECODER_GRAPH_SHA256.get(modelId) } = {}) {
+export async function refreshBonsai2DecoderGraph(modelId, {
+  expected = BONSAI2_DECODER_GRAPH_SHA256.get(modelId),
+  timeoutMs = BONSAI2_DECODER_GRAPH_REFRESH_TIMEOUT_MS,
+} = {}) {
   if (!expected || checkedBonsai2DecoderGraphs.has(modelId)) return 'skipped';
   if (typeof caches === 'undefined' || !globalThis.crypto?.subtle) return 'unavailable';
   const url = `https://huggingface.co/${modelId}/resolve/main/${BONSAI2_DECODER_GRAPH_FILE}`;
+  let cache;
   try {
-    const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
+    cache = await caches.open(TRANSFORMERS_CACHE_NAME);
     const cached = await cache.match(url);
     if (!cached) {
       // Not downloaded yet: the regular download fetches the current graph.
@@ -245,19 +252,27 @@ export async function refreshBonsai2DecoderGraph(modelId, { expected = BONSAI2_D
       checkedBonsai2DecoderGraphs.add(modelId);
       return 'current';
     }
-    const fetcher = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : nativeFetch;
-    if (!fetcher) return 'unavailable';
-    const response = await fetcher(url, { cache: 'no-store' });
+  } catch {
+    return 'unavailable';
+  }
+  const fetcher = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : nativeFetch;
+  if (!fetcher) return 'unavailable';
+  checkedBonsai2DecoderGraphs.add(modelId);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetcher(url, { cache: 'no-store', signal: controller.signal });
     if (!response?.ok) return 'unavailable';
     const bytes = await response.arrayBuffer();
     if (await sha256Hex(bytes) !== expected) return 'unexpected';
     await cache.put(url, new Response(bytes, {
       headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.byteLength) },
     }));
-    checkedBonsai2DecoderGraphs.add(modelId);
     return 'updated';
   } catch {
     return 'unavailable';
+  } finally {
+    clearTimeout(timer);
   }
 }
 
