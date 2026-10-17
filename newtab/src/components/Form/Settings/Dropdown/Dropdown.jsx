@@ -68,10 +68,20 @@ const Dropdown = memo((props) => {
 
       switch (e.key) {
         case 'Enter':
-        case ' ':
+        case ' ': {
           e.preventDefault();
-          setIsOpen(!isOpen);
+          // Arrow keys only move the highlight (DOM focus stays on the control), so Enter /
+          // Space on an open menu has to commit the highlighted option.
+          const highlighted = isOpen && focusedIndex >= 0
+            ? props.items.filter((i) => i !== null)[focusedIndex]
+            : null;
+          if (highlighted) {
+            onChange(highlighted.value);
+          } else {
+            setIsOpen(!isOpen);
+          }
           break;
+        }
         case 'Escape':
           setIsOpen(false);
           setFocusedIndex(-1);
@@ -92,7 +102,7 @@ const Dropdown = memo((props) => {
           break;
       }
     },
-    [isOpen, props.items, props.disabled],
+    [isOpen, focusedIndex, onChange, props.items, props.disabled],
   );
 
   const handleOptionKeyDown = useCallback(

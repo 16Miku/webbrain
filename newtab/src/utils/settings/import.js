@@ -24,6 +24,8 @@ export async function importSettings(e, initial = false) {
       throw new Error('settings file is not an object');
     }
     ({ [BACKGROUNDS_BACKUP_KEY]: backgrounds, ...content } = parsed);
+    const problem = validateSettings(content);
+    if (problem) throw new Error(`invalid settings: ${problem}`);
   } catch (error) {
     // Truncated or foreign file: say so, and change nothing.
     console.error('Could not read the settings file:', error);
@@ -74,6 +76,36 @@ export async function importSettings(e, initial = false) {
     EventBus.emit('settingsimported');
   }
   return true;
+}
+
+// Settings the widgets JSON.parse on load. A wrong value here would not fail the import (every
+// write succeeds) but would crash the page on the next load, so check them up front.
+const JSON_ARRAY_KEYS = ['applinks', 'backgroundExclude', 'customEvents', 'messages', 'order', 'todo'];
+
+/** Returns a reason when the backup would leave the new tab unable to load, else null. */
+export function validateSettings(content) {
+  for (const [key, value] of Object.entries(content)) {
+    if (value !== null && typeof value === 'object') return `${key} is not a plain value`;
+  }
+  for (const key of JSON_ARRAY_KEYS) {
+    if (!(key in content)) continue;
+    try {
+      if (!Array.isArray(JSON.parse(content[key]))) return `${key} is not a list`;
+    } catch {
+      return `${key} is not valid JSON`;
+    }
+  }
+  if ('favourite' in content && content.favourite !== 'null') {
+    try {
+      const favourite = JSON.parse(content.favourite);
+      if (favourite !== null && (typeof favourite !== 'object' || Array.isArray(favourite))) {
+        return 'favourite is not an object';
+      }
+    } catch {
+      return 'favourite is not valid JSON';
+    }
+  }
+  return null;
 }
 
 const withoutId = ({ id: _id, ...record }) => record; // ids are assigned again

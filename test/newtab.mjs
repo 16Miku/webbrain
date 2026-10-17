@@ -1256,6 +1256,22 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     assert.deepEqual(globalThis.__toasts, ['toasts.error', 'toasts.error', 'toasts.error', 'toasts.error']);
     assert.equal(store.getItem('theme'), 'light');
 
+    // structured settings that would crash the page on the next load are refused up front
+    globalThis.__toasts = []; globalThis.__reloads = 0;
+    mod.db.rows = [{ id: 1, url: 'data:keep' }];
+    for (const bad of [
+      { customEvents: 'not-json' }, { messages: '{"a":1}' }, { applinks: '' }, { order: 'null' },
+      { favourite: '[1]' }, { theme: { nested: true } },
+    ]) {
+      assert.equal(await mod.importSettings(JSON.stringify({ ...bad, [K]: [{ url: 'data:other' }] })), false, JSON.stringify(bad));
+    }
+    assert.equal(globalThis.__toasts.length, 6);
+    assert.equal(globalThis.__reloads, 0);
+    assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
+    assert.equal(await mod.importSettings(JSON.stringify({
+      customEvents: '[]', messages: '["hi"]', applinks: '[{"name":"a","url":"https://a.test"}]', order: '["time"]', todo: '[]', favourite: 'null',
+    })), true);
+
     // a settings write that fails part-way (quota) rolls back both stores
     {
       const failing = memoryStorage({ theme: 'light', keep: 'me' });
@@ -1354,4 +1370,11 @@ test('round-28: migration cleans up partial copies; maximised remounts stay unfi
   assert.match(read('App.jsx'), /importedHandler = \(\) => \{\s*loadSettings\(true\);/);
   const custom = read('features/background/options/Custom.jsx');
   assert.match(custom, /syncBackgroundCount\(backgrounds\);\s*\/\/ Selections are array indices[^\n]*\n\s*setSelectedImages\(new Set\(\)\);/);
+});
+
+test('round-29: an open dropdown commits the highlighted option on Enter / Space', () => {
+  const src = readFileSync(nt('components/Form/Settings/Dropdown/Dropdown.jsx'), 'utf8');
+  assert.match(src, /isOpen && focusedIndex >= 0\s*\? props\.items\.filter\(\(i\) => i !== null\)\[focusedIndex\]/);
+  assert.match(src, /onChange\(highlighted\.value\)/);
+  assert.match(src, /\[isOpen, focusedIndex, onChange, props\.items, props\.disabled\]/);
 });
