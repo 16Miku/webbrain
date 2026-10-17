@@ -79,7 +79,7 @@ function contentHarness(build, current) {
   const source = fs.readFileSync(`src/${build}/src/content/content.js`, 'utf8');
   const ownInputScope = source.match(/^  let _messageRecipientOwnedInputScope = null;$/m)?.[0];
   assert.ok(ownInputScope, 'Use the real private production owned-input scope');
-  const names = ['_setFieldValueMatches', 'readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText',
+  const names = ['_setFieldValueMatches', 'readProseMirrorText', 'readCodeMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText',
     '_nativeChatCaretContext', '_sameNativeChatCaretContext', '_singleEditableCaretBreak',
     '_rememberNativeChatEmptyCaret', '_nativeChatCaretValueIsEmpty', '_editableTextValue', '_insertContentEditableText'];
   if (build === 'chrome') names.unshift('_contentEditableValueMatches');
