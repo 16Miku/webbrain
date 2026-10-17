@@ -694,11 +694,16 @@ async function initialize() {
   state.streamInfo = streamInfo;
   if (streamInfo.embedded === true) document.body.dataset.embedded = 'true';
   elements['pdf-title'].textContent = String(streamInfo.originalUrl || 'WebBrain PDF');
+  // The window this viewer is in. The background needs it before its first await to
+  // tell whether WebBrain's side panel is already showing there (re-opening it closes it).
+  let windowId = null;
+  try { windowId = (await api.windows?.getCurrent?.())?.id ?? null; } catch { /* optional */ }
   globalThis.__webbrainSelectionShortcutConfig = {
     submitMessage: 'WB_PDF_SELECTION_SHORTCUT_SUBMIT',
     submitFields: {
       tabId: streamInfo.tabId,
       originalUrl: String(streamInfo.originalUrl || ''),
+      ...(Number.isInteger(windowId) ? { windowId } : {}),
     },
     allowNestedFrame: true,
   };

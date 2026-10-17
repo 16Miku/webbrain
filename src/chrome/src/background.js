@@ -1903,9 +1903,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   // sidePanel.open() must run synchronously in this handler to preserve the
   // click gesture; chrome.tabs.get() would lose it. Open for the claimed tab
-  // now (stub is enough for setOptions/open), then verify the live tab.
+  // now (stub is enough for setOptions/open), then verify the live tab. The stub
+  // carries the window too, known without an await, so a side panel that is already
+  // showing there is left alone instead of being closed by a second open(): Chrome's
+  // own sender.tab when it is this tab, otherwise the window the viewer reports.
+  const windowId = sender?.tab?.id === tabId && Number.isInteger(sender.tab.windowId)
+    ? sender.tab.windowId
+    : (Number.isInteger(msg.windowId) ? msg.windowId : undefined);
   try {
-    openSidePanelForContextMenu({ id: tabId });
+    openSidePanelForContextMenu(windowId === undefined ? { id: tabId } : { id: tabId, windowId });
   } catch {}
   chrome.tabs.get(tabId)
     .then(tab => queueSelectionShortcutPrompt(msg, tab, sendResponse))

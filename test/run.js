@@ -52754,13 +52754,70 @@ test('background does not re-open a side panel that is already showing, and stil
     'a panel showing in another window does not count');
   assert.deepEqual(run(4, { id: 12 }),
     ['save', ['setOptions', 12], ['open', 12], 'group'],
-    'a tab with no window id (the PDF viewer stub) keeps opening');
+    'a tab with no window id keeps opening');
 
   assert.match(background, /chrome\.runtime\.onConnect\.addListener\(\(port\) => \{ sidePanelPresence\.attach\(port\); \}\);/,
     'the presence port must be accepted at the top level of the worker');
   const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
   assert.match(panel, /if \(!isBtwWindow\) \{\s*reportSidePanelPresence\(\{[\s\S]*?runtime: chrome\.runtime,[\s\S]*?windowId: initialWindowId \?\? tab\?\.windowId \?\? null,/,
     'the side panel must tell the background when it is on screen');
+});
+
+test('a PDF viewer selection leaves a side panel that is already showing in its window alone', () => {
+  const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const helperStart = background.indexOf('function openSidePanelForContextMenu(tab) {');
+  const helperEnd = background.indexOf('\nasync function handleContextMenuAsk', helperStart);
+  const listenerStart = background.indexOf("chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {\n  if (msg?.type !== 'WB_PDF_SELECTION_SHORTCUT_SUBMIT') return;");
+  const listenerEnd = background.indexOf('\n// (See the panel visibility comment above', listenerStart);
+  assert.ok(helperStart > 0 && helperEnd > helperStart && listenerStart > 0 && listenerEnd > listenerStart,
+    'the helper and the PDF listener should be found');
+
+  const run = ({ visibleWindowId, message, sender }) => {
+    const calls = [];
+    let listener = null;
+    const context = vm.createContext({
+      panelTabs: new Set(),
+      savePanelTabs: () => {},
+      ensureWebBrainGroup: () => Promise.resolve(),
+      isPdfHandlerSender: () => true,
+      queueSelectionShortcutPrompt: () => {},
+      sidePanelPresence: { isVisibleInWindow: windowId => windowId === visibleWindowId },
+      chrome: {
+        sidePanel: {
+          setOptions: options => calls.push(['setOptions', options.tabId]),
+          open: options => calls.push(['open', options.tabId]),
+        },
+        tabs: { get: () => new Promise(() => {}) },
+        runtime: { onMessage: { addListener: callback => { listener = callback; } } },
+      },
+    });
+    vm.runInContext(
+      `${background.slice(helperStart, helperEnd)}\n${background.slice(listenerStart, listenerEnd)}`,
+      context,
+    );
+    listener({ type: 'WB_PDF_SELECTION_SHORTCUT_SUBMIT', tabId: 7, ...message }, sender, () => {});
+    return calls;
+  };
+  const opened = [['setOptions', 7], ['open', 7]];
+
+  assert.deepEqual(run({ visibleWindowId: 4, message: { windowId: 4 }, sender: {} }), [],
+    'a panel showing in the window the viewer reports is left alone');
+  assert.deepEqual(run({ visibleWindowId: 4, message: {}, sender: { tab: { id: 7, windowId: 4 } } }), [],
+    'Chrome\'s own sender.tab is enough');
+  assert.deepEqual(run({ visibleWindowId: 4, message: { windowId: 9 }, sender: { tab: { id: 7, windowId: 4 } } }), [],
+    'sender.tab for the claimed tab wins over what the page says');
+  assert.deepEqual(run({ visibleWindowId: 4, message: { windowId: 4 }, sender: { tab: { id: 99, windowId: 9 } } }), [],
+    'a sender.tab for some other tab is not used');
+  assert.deepEqual(run({ visibleWindowId: 9, message: { windowId: 4 }, sender: {} }), opened,
+    'a panel showing in another window does not count');
+  assert.deepEqual(run({ visibleWindowId: 4, message: {}, sender: {} }), opened,
+    'with no window known the panel is opened as before');
+  assert.deepEqual(run({ visibleWindowId: 4, message: { windowId: '4' }, sender: {} }), opened,
+    'a window id that is not a number is ignored');
+
+  const viewer = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/pdf-handler.js'), 'utf8');
+  assert.match(viewer, /windowId = \(await api\.windows\?\.getCurrent\?\.\(\)\)\?\.id \?\? null;[\s\S]*?submitFields: \{[\s\S]*?\.\.\.\(Number\.isInteger\(windowId\) \? \{ windowId \} : \{\}\),/,
+    'the PDF viewer must report the window it is in');
 });
 
 test('WebGPU provider drops a request whose caller aborts while the offscreen document is starting', async () => {

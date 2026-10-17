@@ -317,7 +317,7 @@ async function testPdfSelectionCarriesItsTabScope() {
       };
       window.__webbrainSelectionShortcutConfig = {
         submitMessage: 'WB_PDF_SELECTION_SHORTCUT_SUBMIT',
-        submitFields: { tabId: 73, originalUrl: 'https://papers.example.test/reading.pdf' },
+        submitFields: { tabId: 73, originalUrl: 'https://papers.example.test/reading.pdf', windowId: 5 },
         allowNestedFrame: true,
       };
     ` });
@@ -339,6 +339,7 @@ async function testPdfSelectionCarriesItsTabScope() {
     assert.equal(message.type, 'WB_PDF_SELECTION_SHORTCUT_SUBMIT');
     assert.equal(message.tabId, 73);
     assert.equal(message.originalUrl, 'https://papers.example.test/reading.pdf');
+    assert.equal(message.windowId, 5, 'the viewer\'s window travels with the selection');
     assert.equal(message.action, 'summarize');
     assert.match(message.selectionText, /Selectable text rendered by the PDF text layer/);
   } finally {

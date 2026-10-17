@@ -549,7 +549,10 @@ open panel closes it, so each panel reports its visibility over a long-lived por
 (`sidepanel-presence.js`) and the background reads that synchronously, before the user
 gesture can lapse, then hands an already-open panel the prompt by message. A panel whose port
 was dropped by a background restart reconnects at once (only a port that is refused straight
-away backs off), so the restarted worker is not left unaware of a panel that is still showing. The card's
+away backs off), so the restarted worker is not left unaware of a panel that is still showing.
+A selection made in the bundled PDF viewer, whose message carries only a tab id, brings the
+window too (Chrome's `sender.tab` for that tab, else the window the viewer reported from
+`windows.getCurrent()`), so the same check applies there. The card's
 answer travels inside the selection's untrusted boundary, labelled as an earlier answer that
 may contain mistakes and
 capped at 6,000 characters, so model output derived from page text never becomes trusted
