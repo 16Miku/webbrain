@@ -14604,15 +14604,17 @@ async function inBrowserProviderBlocksMode() {
 
 // `switchMode: false` only answers whether Act may run; the caller switches the mode itself (the
 // new-tab handoff does so after re-checking the composer, which can change while this awaits).
+// That query also re-checks the provider when Act is already selected: picking an Ask-only
+// provider (WebGPU) leaves the mode as it was.
 async function ensureActMode({ switchMode = true } = {}) {
   if (isSelectionGroundedForTab(currentTabId)) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return false;
   }
-  if (agentMode === 'act') return true;
+  if (agentMode === 'act' && switchMode) return true;
   if (await inBrowserProviderBlocksMode()) return false;
   if (autoModeSelection) return true;
-  if (switchMode) setMode('act');
+  if (switchMode && agentMode !== 'act') setMode('act');
   return true;
 }
 

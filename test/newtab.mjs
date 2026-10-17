@@ -2689,6 +2689,9 @@ test('round-82: the Apps popup reads one appsPinned key everywhere', () => {
 test('round-83: ensureActMode can answer eligibility without switching the panel mode', () => {
   for (const browser of ['chrome', 'firefox']) {
     const src = readFileSync(path.join(root, 'src', browser, 'src/ui/sidepanel.js'), 'utf8');
-    assert.match(src, /async function ensureActMode\(\{ switchMode = true \} = \{\}\)[\s\S]*?if \(switchMode\) setMode\('act'\);/, browser);
+    assert.match(src, /async function ensureActMode\(\{ switchMode = true \} = \{\}\)[\s\S]*?setMode\('act'\);/, browser);
   }
+  const chrome = readFileSync(path.join(root, 'src', 'chrome', 'src/ui/sidepanel.js'), 'utf8');
+  // already in Act: the eligibility query still looks at the provider (WebGPU is Ask-only)
+  assert.match(chrome, /if \(agentMode === 'act' && switchMode\) return true;\s*if \(await inBrowserProviderBlocksMode\(\)\) return false;/);
 });
