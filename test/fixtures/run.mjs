@@ -363,7 +363,7 @@ async function collectSmd(page, mode = 'auto') {
   }, mode);
 }
 
-async function setupSelectionShortcut(page, sourcePath, { enabled = true, requiresManualOpen = false, locale = 'en' } = {}) {
+async function setupSelectionShortcut(page, sourcePath, { enabled = true, requiresManualOpen = false, locale = 'en', promiseDetect = false } = {}) {
   await page.setViewportSize({ width: 360, height: 280 });
   await page.setContent(`<!doctype html>
     <style>body{margin:0;font:18px/1.5 sans-serif} #copy{position:absolute;right:2px;bottom:2px;width:210px}</style>
@@ -371,6 +371,12 @@ async function setupSelectionShortcut(page, sourcePath, { enabled = true, requir
     <div id="editor" contenteditable="true">Editable selection text.</div>`);
   await page.addScriptTag({ content: `
     window.__selectionMessages = [];
+    window.__selectionInlineMessages = [];
+    window.__selectionDetectedLanguage = '';
+    window.__selectionInlineHandler = async (message) => ({
+      ok: true,
+      text: 'Mock ' + message.action + ' answer for ' + message.language,
+    });
     window.__selectionStorage = { selectionShortcutEnabled: ${enabled ? 'true' : 'false'}, wbLocale: '${locale}' };
     window.__selectionLocalizations = ${JSON.stringify(selectionShortcutLocalizations)};
     window.__selectionRuntimeListeners = [];
@@ -382,10 +388,23 @@ async function setupSelectionShortcut(page, sourcePath, { enabled = true, requir
             const locale = String(message.locale || 'en').toLowerCase().split('-')[0];
             return { ok: true, ...(window.__selectionLocalizations[locale] || window.__selectionLocalizations.en) };
           }
+          if (message.type === 'WB_SELECTION_SHORTCUT_INLINE') {
+            window.__selectionInlineMessages.push(message);
+            return window.__selectionInlineHandler(message);
+          }
           window.__selectionMessages.push(message);
           return { ok: true, queued: true, requiresManualOpen: ${requiresManualOpen ? 'true' : 'false'} };
         },
         onMessage: { addListener: (listener) => window.__selectionRuntimeListeners.push(listener) }
+      },
+      i18n: {
+        detectLanguage: (text, callback) => {
+          const result = window.__selectionDetectedLanguage
+            ? { isReliable: true, languages: [{ language: window.__selectionDetectedLanguage, percentage: 100 }] }
+            : { isReliable: false, languages: [] };
+          if (${promiseDetect ? 'true' : 'false'}) return Promise.resolve(result);
+          callback(result);
+        }
       },
       storage: {
         local: {
@@ -402,6 +421,7 @@ async function setupSelectionShortcut(page, sourcePath, { enabled = true, requir
         onChanged: { addListener: (listener) => window.__selectionStorageListeners.push(listener) }
       }
     };
+    if (${promiseDetect ? 'true' : 'false'}) window.browser = window.chrome;
     window.__setSelectionShortcutEnabled = async (value) => {
       await window.chrome.storage.local.set({ selectionShortcutEnabled: value });
     };
@@ -431,6 +451,26 @@ async function selectFixtureText(page, selector = '#copy') {
   await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().shortcutVisible);
   await page.waitForTimeout(20);
   return page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+}
+
+
+async function clickRectCenter(page, rect) {
+  await page.mouse.click(rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+async function waitForCardStatus(page, status) {
+  await page.waitForFunction(
+    (expected) => window.__webbrainSelectionShortcut.getState().cardStatus === expected,
+    status,
+  );
+  return page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+}
+
+async function openInlineCard(page, kind, selector = '#copy') {
+  const selected = await selectFixtureText(page, selector);
+  await clickRectCenter(page, selected.inlineRects[kind]);
+  await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().cardVisible);
+  return selected;
 }
 
 const tests = [];
@@ -1634,6 +1674,8 @@ for (const [label, sourcePath, manualOpen] of [
         || localized.explainLabel !== '解释'
         || localized.quizLabel !== '测验我'
         || localized.actionIconCount !== 6
+        || localized.barLabels.join('|') !== '翻译|解释|校对|更多…'
+        || localized.followUpPlaceholder !== '继续追问'
         || localized.direction !== 'ltr') {
       throw new Error(`Chinese shortcut localization mismatch: ${JSON.stringify(localized)}`);
     }
@@ -1702,11 +1744,13 @@ for (const [label, sourcePath, manualOpen] of [
     }
     if (state.shortcutLabel !== 'Ask WebBrain about this'
         || state.shortcutBackground !== 'rgb(255, 255, 255)'
-        || state.shortcutColor !== 'rgb(108, 99, 255)'
-        || state.shortcutBoxShadow === 'none') {
-      throw new Error(`shortcut should retain its purple selected-text treatment: ${JSON.stringify(state)}`);
+        || state.shortcutColor !== 'rgb(23, 23, 34)'
+        || state.shortcutBoxShadow === 'none'
+        || state.barLabels.join('|') !== 'Translate|Explain|Proofread|More…') {
+      throw new Error(`shortcut should be a white action bar: Translate, Explain, Proofread, More: ${JSON.stringify(state)}`);
     }
-    await page.mouse.click(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const moreRect = state.moreRect;
+    await page.mouse.click(moreRect.left + moreRect.width / 2, moreRect.top + moreRect.height / 2);
     let popupState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     if (!popupState.popupVisible) throw new Error('popup did not open for the selected text');
     await page.keyboard.press('Escape');
@@ -1715,10 +1759,7 @@ for (const [label, sourcePath, manualOpen] of [
       throw new Error(`Escape should close the popup and retain the shortcut: ${JSON.stringify(popupState)}`);
     }
 
-    // Measure resting geometry; the previous click can leave the floating
-    // button hovered and its 130ms lift/scale transition still running.
     await page.mouse.move(0, 0);
-    await page.waitForTimeout(150);
 
     await page.evaluate(() => {
       const topCopy = document.createElement('p');
@@ -1748,8 +1789,8 @@ for (const [label, sourcePath, manualOpen] of [
     });
     const selectedState = await selectFixtureText(page);
     await page.mouse.click(
-      selectedState.shortcutRect.left + selectedState.shortcutRect.width / 2,
-      selectedState.shortcutRect.top + selectedState.shortcutRect.height / 2,
+      selectedState.moreRect.left + selectedState.moreRect.width / 2,
+      selectedState.moreRect.top + selectedState.moreRect.height / 2,
     );
     const openState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     if (!openState.questionRect || openState.highlightRectCount < 1) {
@@ -1838,8 +1879,8 @@ for (const [label, sourcePath, manualOpen] of [
 
     const selectedState = await selectFixtureText(page, '#long-selection');
     await page.mouse.click(
-      selectedState.shortcutRect.left + selectedState.shortcutRect.width / 2,
-      selectedState.shortcutRect.top + selectedState.shortcutRect.height / 2,
+      selectedState.moreRect.left + selectedState.moreRect.width / 2,
+      selectedState.moreRect.top + selectedState.moreRect.height / 2,
     );
     const openState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     if (openState.highlightRectCount < 1 || openState.highlightRectCount > 200) {
@@ -1853,8 +1894,8 @@ for (const [label, sourcePath, manualOpen] of [
   test(`${label}: selection shortcut submits once and dismisses before delivery`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     const selectedState = await selectFixtureText(page, '#editor');
-    const shortcutRect = selectedState.shortcutRect;
-    await page.mouse.click(shortcutRect.left + shortcutRect.width / 2, shortcutRect.top + shortcutRect.height / 2);
+    const moreRect = selectedState.moreRect;
+    await page.mouse.click(moreRect.left + moreRect.width / 2, moreRect.top + moreRect.height / 2);
     const openState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     const summarizeRect = openState.summarizeRect;
     if (!summarizeRect) throw new Error('Summarize action was not visible after opening the popup');
@@ -1888,7 +1929,7 @@ for (const [label, sourcePath, manualOpen] of [
 
     await page.evaluate(() => window.__setSelectionShortcutLocale('tr'));
     const translationSelection = await selectFixtureText(page);
-    const translationShortcutRect = translationSelection.shortcutRect;
+    const translationShortcutRect = translationSelection.moreRect;
     await page.mouse.click(
       translationShortcutRect.left + translationShortcutRect.width / 2,
       translationShortcutRect.top + translationShortcutRect.height / 2,
@@ -1911,7 +1952,7 @@ for (const [label, sourcePath, manualOpen] of [
 
     await page.evaluate(() => window.__setSelectionShortcutLocale('fr'));
     const updatedLocaleSelection = await selectFixtureText(page);
-    const updatedLocaleShortcutRect = updatedLocaleSelection.shortcutRect;
+    const updatedLocaleShortcutRect = updatedLocaleSelection.moreRect;
     await page.mouse.click(
       updatedLocaleShortcutRect.left + updatedLocaleShortcutRect.width / 2,
       updatedLocaleShortcutRect.top + updatedLocaleShortcutRect.height / 2,
@@ -1958,6 +1999,309 @@ for (const [label, sourcePath, manualOpen] of [
     state = await selectFixtureText(page);
     stored = await page.evaluate(() => window.__selectionStorage.selectionShortcutEnabled);
     if (stored !== true || !state.shortcutVisible) throw new Error('settings re-enable did not restore future shortcut detection');
+  });
+
+  test(`${label}: Explain answers in a page card and renders the answer safely`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = async () => ({
+        ok: true,
+        text: 'It means **words** near the edge, *roughly*.\n\n- First point with `code`\n- Second point, 2 * 3 * 4 stays literal\n<img src=x onerror="window.__xss=1">',
+      });
+    });
+    await openInlineCard(page, 'explain');
+    const loading = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    if (!loading.cardVisible || loading.shortcutVisible || loading.cardKind !== 'explain' || loading.highlightRectCount < 1) {
+      throw new Error(`Explain should replace the bar with a card and keep the selection marked: ${JSON.stringify(loading)}`);
+    }
+    const ready = await waitForCardStatus(page, 'ready');
+    const inline = await page.evaluate(() => window.__selectionInlineMessages);
+    const sidebar = await page.evaluate(() => window.__selectionMessages);
+    if (inline.length !== 1 || sidebar.length !== 0
+        || inline[0].action !== 'explain'
+        || inline[0].language !== 'en'
+        || !/Selected words near the viewport edge/.test(inline[0].selectionText)) {
+      throw new Error(`Explain should make one in-page request and no side-panel request: ${JSON.stringify({ inline, sidebar })}`);
+    }
+    if (!/<strong>words<\/strong>/.test(ready.cardHtml)
+        || !/<code>code<\/code>/.test(ready.cardHtml)
+        || (ready.cardHtml.match(/<li>/g) || []).length !== 2
+        || !/<em>roughly<\/em>/.test(ready.cardHtml)
+        || !/2 \* 3 \* 4 stays literal/.test(ready.cardHtml)
+        || /<img/i.test(ready.cardHtml)
+        || await page.evaluate(() => window.__xss === 1)) {
+      throw new Error(`the answer should render as safe text with bold, code and bullets: ${ready.cardHtml}`);
+    }
+    const card = ready.cardRect;
+    if (card.left < 8 || card.top < 8 || card.right > 352 || card.bottom > 272
+        || card.bottom > ready.selectionRect.top + 0.5
+        || ready.cardSide !== 'above') {
+      throw new Error(`the card should stay in the viewport and clear the selected text: ${JSON.stringify(ready)}`);
+    }
+    if (ready.followUpPlaceholder !== 'Ask a follow-up') {
+      throw new Error(`the card should offer a follow-up input: ${JSON.stringify(ready)}`);
+    }
+
+    // Escape closes the card, keeps the bar, and returns focus to the button that opened it.
+    await page.keyboard.press('Escape');
+    const closed = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    if (closed.cardVisible || !closed.shortcutVisible || closed.highlightRectCount !== 0) {
+      throw new Error(`Escape should close the card and restore the bar: ${JSON.stringify(closed)}`);
+    }
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().cardVisible);
+    await waitForCardStatus(page, 'ready');
+    if ((await page.evaluate(() => window.__selectionInlineMessages.length)) !== 2) {
+      throw new Error('focus should return to the Explain button so Enter reopens the card');
+    }
+
+    // A click outside dismisses the card and the bar.
+    await page.mouse.click(5, 5);
+    const outside = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    if (outside.cardVisible || outside.shortcutVisible) {
+      throw new Error(`a click outside should dismiss the card: ${JSON.stringify(outside)}`);
+    }
+  });
+
+  test(`${label}: a card follow-up continues in the side panel with the answer as context`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      window.__selectionPageKeys = [];
+      for (const type of ['keydown', 'keypress', 'keyup']) {
+        document.addEventListener(type, (event) => window.__selectionPageKeys.push(`${type}:${event.key}`));
+      }
+    });
+    await openInlineCard(page, 'explain');
+    let state = await waitForCardStatus(page, 'ready');
+    await clickRectCenter(page, state.followUpRect);
+    // An empty follow-up must not send anything.
+    await page.keyboard.press('Enter');
+    if ((await page.evaluate(() => window.__selectionMessages.length)) !== 0) {
+      throw new Error('an empty follow-up should not be sent');
+    }
+    await page.keyboard.type('Why does it matter?');
+    state = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    if (state.followUpValue !== 'Why does it matter?' || state.followUpSendDisabled) {
+      throw new Error(`typing should enable the follow-up send button: ${JSON.stringify(state)}`);
+    }
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    const result = await page.evaluate(() => ({
+      message: window.__selectionMessages[0],
+      surface: window.__webbrainSelectionShortcut.getState(),
+      pageKeys: window.__selectionPageKeys,
+    }));
+    const message = result.message;
+    if (message.action !== 'custom'
+        || message.question !== 'Why does it matter?'
+        || message.priorAction !== 'explain'
+        || message.priorAnswer !== 'Mock explain answer for en'
+        || message.includePageContext !== true
+        || message.language !== undefined
+        || !/Selected words near the viewport edge/.test(message.selectionText)) {
+      throw new Error(`the follow-up should carry the selection, question and earlier answer: ${JSON.stringify(message)}`);
+    }
+    if (result.surface.cardVisible || result.surface.shortcutVisible || result.surface.highlightRectCount !== 0) {
+      throw new Error(`sending a follow-up should dismiss the card: ${JSON.stringify(result.surface)}`);
+    }
+    if (result.pageKeys.length) throw new Error(`card keystrokes leaked to the page: ${JSON.stringify(result.pageKeys)}`);
+
+    // The arrow button sends too.
+    await page.waitForFunction(() => !window.__webbrainSelectionShortcut.getState().submitting);
+    await openInlineCard(page, 'proofread');
+    state = await waitForCardStatus(page, 'ready');
+    await clickRectCenter(page, state.followUpRect);
+    await page.keyboard.type('Any other fixes?');
+    state = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    await clickRectCenter(page, state.followUpSendRect);
+    await page.waitForFunction(() => window.__selectionMessages.length === 2);
+    const second = await page.evaluate(() => window.__selectionMessages[1]);
+    if (second.question !== 'Any other fixes?' || second.priorAction !== 'proofread') {
+      throw new Error(`the send button should send the follow-up: ${JSON.stringify(second)}`);
+    }
+  });
+
+  test(`${label}: Translate detects the source language and lets the target change`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, promiseDetect: manualOpen });
+    await page.evaluate(() => { window.__selectionDetectedLanguage = 'fr'; });
+    await openInlineCard(page, 'translate');
+    let state = await waitForCardStatus(page, 'ready');
+    if (state.cardSourceLabel !== 'French'
+        || state.cardTarget !== 'en'
+        || state.cardTargetLabel !== 'English'
+        || state.cardTargetOptionCount !== 24
+        || !/Selected words near the viewport edge/.test(state.cardQuote)
+        || state.cardText !== 'Mock translate answer for en') {
+      throw new Error(`Translate should show source, target, original and translation: ${JSON.stringify(state)}`);
+    }
+    await page.evaluate(() => window.__webbrainSelectionShortcut.chooseTarget('de'));
+    await page.waitForFunction(() => window.__selectionInlineMessages.length === 2
+      && window.__webbrainSelectionShortcut.getState().cardStatus === 'ready');
+    state = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    const messages = await page.evaluate(() => window.__selectionInlineMessages);
+    if (messages[1].action !== 'translate' || messages[1].language !== 'de'
+        || state.cardText !== 'Mock translate answer for de'
+        || state.cardTargetLabel !== 'German') {
+      throw new Error(`changing the target should translate again: ${JSON.stringify({ messages, state })}`);
+    }
+  });
+
+  test(`${label}: Translate waits for a target when the text is already in the interface language`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => { window.__selectionDetectedLanguage = 'en'; });
+    await openInlineCard(page, 'translate');
+    let state = await waitForCardStatus(page, 'idle');
+    if (state.cardSourceLabel !== 'English' || state.cardTarget !== '' || state.cardTargetLabel !== 'Translate to') {
+      throw new Error(`Translate should ask for a target instead of echoing the text: ${JSON.stringify(state)}`);
+    }
+    if ((await page.evaluate(() => window.__selectionInlineMessages.length)) !== 0) {
+      throw new Error('no model call should be made when source and target are the same language');
+    }
+    await page.evaluate(() => window.__webbrainSelectionShortcut.chooseTarget('es'));
+    state = await waitForCardStatus(page, 'ready');
+    const messages = await page.evaluate(() => window.__selectionInlineMessages);
+    if (messages.length !== 1 || messages[0].language !== 'es') {
+      throw new Error(`choosing a target should start the translation: ${JSON.stringify(messages)}`);
+    }
+  });
+
+  test(`${label}: Proofread follows the interface language and direction`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'ar' });
+    await openInlineCard(page, 'proofread');
+    const state = await waitForCardStatus(page, 'ready');
+    const messages = await page.evaluate(() => window.__selectionInlineMessages);
+    if (messages.length !== 1 || messages[0].action !== 'proofread' || messages[0].language !== 'ar'
+        || state.direction !== 'rtl'
+        || state.barLabels[1] !== 'شرح'
+        || state.cardText !== 'Mock proofread answer for ar') {
+      throw new Error(`Proofread should use the Arabic interface: ${JSON.stringify({ messages, state })}`);
+    }
+  });
+
+  test(`${label}: a failed card answer offers a retry and a follow-up without a stale answer`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      window.__selectionInlineCalls = 0;
+      window.__selectionInlineHandler = async () => {
+        window.__selectionInlineCalls += 1;
+        if (window.__selectionInlineCalls === 1) return { ok: false, error: 'No provider configured' };
+        if (window.__selectionInlineCalls === 2) throw new Error('Extension context invalidated');
+        return { ok: true, text: 'Recovered answer' };
+      };
+    });
+    await openInlineCard(page, 'explain');
+    let state = await waitForCardStatus(page, 'error');
+    if (state.cardError !== 'No provider configured' || !state.retryRect) {
+      throw new Error(`a failed answer should show the reason and a retry button: ${JSON.stringify(state)}`);
+    }
+    await clickRectCenter(page, state.retryRect);
+    await page.waitForFunction(() => window.__selectionInlineCalls === 2);
+    state = await waitForCardStatus(page, 'error');
+    if (!/Extension context invalidated/.test(state.cardError)) {
+      throw new Error(`a rejected request should also end in the error state: ${JSON.stringify(state)}`);
+    }
+    await clickRectCenter(page, state.retryRect);
+    state = await waitForCardStatus(page, 'ready');
+    if (state.cardText !== 'Recovered answer') throw new Error(`retry should recover: ${JSON.stringify(state)}`);
+
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = async () => ({ ok: false, error: 'Offline' });
+    });
+    await page.keyboard.press('Escape');
+    await openInlineCard(page, 'explain');
+    state = await waitForCardStatus(page, 'error');
+    await clickRectCenter(page, state.followUpRect);
+    await page.keyboard.type('Still there?');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    const message = await page.evaluate(() => window.__selectionMessages[0]);
+    if (message.question !== 'Still there?' || 'priorAnswer' in message || 'priorAction' in message) {
+      throw new Error(`a follow-up after a failure must not claim an earlier answer: ${JSON.stringify(message)}`);
+    }
+  });
+
+  test(`${label}: closing a card ignores its late answer`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = () => new Promise((resolve) => { window.__resolveInline = resolve; });
+    });
+    await openInlineCard(page, 'explain');
+    const loading = await waitForCardStatus(page, 'loading');
+    if (!loading.cardRect || loading.cardRect.height < 60) {
+      throw new Error(`the loading card should reserve room for the answer: ${JSON.stringify(loading)}`);
+    }
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.__resolveInline({ ok: true, text: 'Late answer' }));
+    await page.waitForTimeout(40);
+    const state = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    if (state.cardVisible || state.cardStatus !== '' || state.cardText || !state.shortcutVisible) {
+      throw new Error(`a late answer must not reopen or fill a closed card: ${JSON.stringify(state)}`);
+    }
+  });
+
+  test(`${label}: an older Translate answer never replaces a newer one`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      window.__pendingInline = [];
+      window.__selectionInlineHandler = (message) => new Promise((resolve) => {
+        window.__pendingInline.push({ language: message.language, resolve });
+      });
+    });
+    await openInlineCard(page, 'translate');
+    await page.waitForFunction(() => window.__pendingInline.length === 1);
+    await page.evaluate(() => window.__webbrainSelectionShortcut.chooseTarget('de'));
+    await page.waitForFunction(() => window.__pendingInline.length === 2);
+    await page.evaluate(() => window.__pendingInline[1].resolve({ ok: true, text: 'German answer' }));
+    await waitForCardStatus(page, 'ready');
+    await page.evaluate(() => window.__pendingInline[0].resolve({ ok: true, text: 'Late English answer' }));
+    await page.waitForTimeout(40);
+    const state = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    if (state.cardText !== 'German answer' || state.cardStatus !== 'ready') {
+      throw new Error(`a stale answer replaced the current translation: ${JSON.stringify(state)}`);
+    }
+  });
+
+  test(`${label}: very long selections go to the side panel instead of a card`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      const article = document.createElement('article');
+      article.id = 'long-selection';
+      for (let index = 0; index < 400; index += 1) {
+        const line = document.createElement('div');
+        line.textContent = `Selected article line ${index + 1}`;
+        article.appendChild(line);
+      }
+      document.body.appendChild(article);
+    });
+    const selected = await selectFixtureText(page, '#long-selection');
+    await clickRectCenter(page, selected.inlineRects.explain);
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    const result = await page.evaluate(() => ({
+      message: window.__selectionMessages[0],
+      inline: window.__selectionInlineMessages,
+      state: window.__webbrainSelectionShortcut.getState(),
+    }));
+    if (result.message.action !== 'explain' || result.message.language !== 'en'
+        || result.inline.length !== 0 || result.state.cardVisible) {
+      throw new Error(`a long selection should use the side panel flow: ${JSON.stringify(result)}`);
+    }
+  });
+
+  test(`${label}: the card opens below a selection near the top edge`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      const topCopy = document.createElement('p');
+      topCopy.id = 'top-copy';
+      topCopy.style.cssText = 'position:absolute;left:74px;top:2px;width:210px;margin:0';
+      topCopy.textContent = 'A multiline selection near the top edge must keep the card below every selected line.';
+      document.body.appendChild(topCopy);
+    });
+    await openInlineCard(page, 'explain', '#top-copy');
+    const state = await waitForCardStatus(page, 'ready');
+    const card = state.cardRect;
+    if (state.cardSide !== 'below' || card.top < state.selectionBottom || card.bottom > 272 || card.left < 8 || card.right > 352) {
+      throw new Error(`the card should open below the selected lines inside the viewport: ${JSON.stringify(state)}`);
+    }
   });
 }
 

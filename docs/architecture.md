@@ -508,6 +508,25 @@ other run, event, screenshot, deep-debug, or lossless fields follow the current
 privacy mode documented in [Privacy & Data Flow](privacy-and-data-flow.md). Treat
 trace and diagnostic exports as privacy-sensitive data.
 
+### Page selection bar and inline cards
+
+Selecting text on a page shows a bar (Translate, Explain, Proofread, More…) drawn by a
+content script in a closed Shadow DOM, in the top frame and in the PDF viewer page.
+**More…** opens the full popup; its actions and question box queue a side-panel prompt as
+described above. Translate, Explain and Proofread answer in place instead: the script sends
+one `WB_SELECTION_SHORTCUT_INLINE` message and the background builds the same allowlisted
+selection prompt (the selection inside its untrusted boundary, `selection_only` grounding)
+behind a short fixed system message, then makes a single tool-less model call through the
+cost allowance (2,000 output tokens, 90 s timeout) and returns the text. Selections over
+4,000 characters skip the card and use the side-panel flow. The card draws the answer as DOM
+nodes (paragraphs, lists, bold, italic and code), never as HTML, and takes the source
+language from the browser's own detector, with no network call. A follow-up typed in a card
+continues in the side panel as a custom question. The card's answer travels inside the
+selection's untrusted boundary, labelled as an earlier answer that may contain mistakes and
+capped at 6,000 characters, so model output derived from page text never becomes trusted
+instruction. The selection and the answer go to the configured provider like any other
+model call.
+
 ### Step 6: Tool Execution
 
 `executeTool(tabId, name, args, onUpdate)` dispatches by name:

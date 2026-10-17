@@ -66,7 +66,9 @@ import {
   SELECTION_ONLY_SOURCE_GROUNDING,
   SELECTION_TRANSLATION_LANGUAGES,
   buildContextMenuPrompt,
+  buildFollowUpSelectionText,
   buildFullContextSelectionPrompt,
+  buildInlineSelectionMessages,
   buildSelectionPrompt,
   normalizeSelectionAction,
   normalizeSelectionSourceGrounding,
@@ -1503,6 +1505,45 @@ browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   sendResponse({ ok: true, ...getSelectionShortcutLocalization(msg.locale) });
 });
 
+// Translate, Explain and Proofread in the page card answer in place, so they
+// take one tool-less model call here instead of a sidebar run. Only the
+// selection content script and the PDF viewer page can send this message; the
+// prompt builder keeps the selection inside the untrusted boundary and caps its
+// length, and the call goes through the normal cost allowance.
+const INLINE_SELECTION_TIMEOUT_MS = 90_000;
+
+async function answerInlineSelection(msg) {
+  const messages = buildInlineSelectionMessages(msg.selectionText, msg.action, msg.language);
+  if (!messages) return { ok: false, error: 'Invalid selection request.' };
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error('The model took too long to answer.')),
+    INLINE_SELECTION_TIMEOUT_MS,
+  );
+  try {
+    if (providerManager.providers.size === 0) await providerManager.load();
+    const provider = providerManager.getActive();
+    const result = await agent._chatWithCostAllowance(
+      provider,
+      messages,
+      { maxTokens: 2000, temperature: 0, signal: controller.signal },
+      agent._newCostRunState(),
+    );
+    const text = String(result?.content || '').trim();
+    return text ? { ok: true, text } : { ok: false, error: 'The model returned an empty answer.' };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error).slice(0, 300) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_INLINE') return;
+  answerInlineSelection(msg).then(sendResponse);
+  return true;
+});
+
 // Firefox does not treat a click in an injected page UI as an authorized
 // sidebarAction.open() gesture. Persist and notify the existing sidebar when
 // it is open; otherwise startup recovery will consume the prompt after the
@@ -1515,10 +1556,14 @@ function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
     : selectionAction === 'custom'
       ? SELECTION_CONTEXT_SOURCE_GROUNDING
       : SELECTION_ONLY_SOURCE_GROUNDING;
+  // A follow-up typed in a page card carries that card's answer as context.
+  const selectionText = selectionAction === 'custom'
+    ? buildFollowUpSelectionText(msg.selectionText, msg.priorAction, msg.priorAnswer)
+    : msg.selectionText;
   const text = includePageContext
-    ? buildFullContextSelectionPrompt(msg.selectionText, msg.question)
+    ? buildFullContextSelectionPrompt(selectionText, msg.question)
     : buildSelectionPrompt(
-      msg.selectionText,
+      selectionText,
       msg.action,
       msg.question,
       msg.language,
