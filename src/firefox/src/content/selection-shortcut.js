@@ -310,10 +310,14 @@
           font:14px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
         }
         .bar-item {
-          padding:8px 12px; border:0; border-radius:8px; background:transparent;
+          flex:0 1 auto; min-width:0; padding:8px 12px; border:0; border-radius:8px; background:transparent;
           color:inherit; font-weight:550; cursor:pointer;
         }
         .bar-item:hover { background:var(--hover); }
+        .bar-item[data-more] { flex:none; }
+        .bar-label { display:block; overflow:hidden; text-overflow:ellipsis; }
+        /* On a narrow viewport the bar tightens, then shortens the other labels, so More stays on screen. */
+        @media (max-width:420px) { .bar-item { padding:8px 8px; } }
         .bar-sep { flex:0 0 1px; width:1px; height:16px; background:var(--border); }
         .popup {
           position:fixed; width:min(${POPUP_WIDTH}px,calc(100vw - 16px));

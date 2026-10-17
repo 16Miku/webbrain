@@ -2248,6 +2248,30 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
+  for (const [locale, width] of [['en', 320], ['de', 320], ['ru', 300], ['tr', 300], ['en', 240]]) {
+    test(`${label}: every bar action stays reachable at ${width}px in ${locale}`, async (page) => {
+      await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale });
+      await page.setViewportSize({ width, height: 280 });
+      const selected = await selectFixtureText(page);
+      const bar = selected.shortcutRect;
+      const buttons = { ...selected.inlineRects, more: selected.moreRect };
+      for (const [name, rect] of Object.entries(buttons)) {
+        const inside = rect
+          && rect.left >= bar.left - 0.5 && rect.right <= bar.right + 0.5
+          && rect.left >= 0 && rect.right <= width
+          && rect.width >= 24;
+        if (!inside) {
+          throw new Error(`the ${name} button is clipped or off screen: ${JSON.stringify({ bar, rect, labels: selected.barLabels })}`);
+        }
+      }
+      if (bar.left < 0 || bar.right > width + 0.5) {
+        throw new Error(`the bar overflows the viewport: ${JSON.stringify(bar)}`);
+      }
+      await clickRectCenter(page, selected.moreRect);
+      await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().popupVisible);
+    });
+  }
+
   test(`${label}: a double click while the language bundle loads starts one card and one model call`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, holdLocalization: true });
     const selected = await selectFixtureText(page);

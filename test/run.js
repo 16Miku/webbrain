@@ -51694,6 +51694,12 @@ test('inline card prompts keep the selection and any earlier answer inside the u
       assert.equal(user.indexOf('</untrusted_page_content>') > user.indexOf(injected), true);
     }
     assert.match(buildMessages('Hallo', 'translate', 'de')[1].content, /into German/, `${label}: Translate should name the chosen target language`);
+    // Brevity is for Explain only: Proofread must still return the whole corrected passage.
+    const proofreadSystem = buildMessages('Teh quick brown fox jumpd over the lazy dog.', 'proofread')[0].content;
+    assert.doesNotMatch(proofreadSystem, /Explain and Proofread/, `${label}: the brevity rule must not cover Proofread`);
+    assert.match(proofreadSystem, /Keep Explain answers short/, `${label}: the brevity rule applies to Explain`);
+    assert.match(proofreadSystem, /Proofread[^.]*complete corrected passage[^.]*never shorten the corrected text/, `${label}: Proofread keeps its complete-version requirement`);
+    assert.match(buildMessages('Teh quick brown fox jumpd over the lazy dog.', 'proofread')[1].content, /one complete corrected version/, `${label}: the Proofread task still asks for one complete corrected version`);
     assert.equal(buildMessages('x', 'summarize'), null, `${label}: side-panel-only actions must not be answerable in place`);
     assert.equal(buildMessages('x', 'custom'), null, `${label}: free-form questions must not be answerable in place`);
     assert.equal(buildMessages('   ', 'explain'), null, `${label}: an empty selection has nothing to answer`);
