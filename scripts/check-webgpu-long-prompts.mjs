@@ -98,7 +98,6 @@ const server = http.createServer(async (request, response) => {
   }
 });
 await fs.mkdir(path.dirname(output), { recursive: true });
-await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(option('--port', 8769)), '127.0.0.1', resolve); });
 const words = text => String(text || '').trim().split(/\s+/).filter(Boolean);
 const commonPrefixWords = (a, b) => {
   const left = words(a), right = words(b);
@@ -112,6 +111,8 @@ const result = {
 };
 let context;
 try {
+  // Inside the guarded block so a busy port is recorded as a failed run too.
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(option('--port', 8769)), '127.0.0.1', resolve); });
   context = await chromium.launchPersistentContext(profile, {
     headless: true,
     channel: 'chromium',
@@ -219,7 +220,7 @@ try {
   result.finishedAt = new Date().toISOString();
   await fs.writeFile(output, JSON.stringify(result, null, 2));
   await context?.close().catch(() => {});
-  server.close();
+  if (server.listening) server.close();
 }
 for (const divergence of result.divergences) console.log(`divergence: ${JSON.stringify(divergence)}`);
 for (const failure of result.failures || []) console.log(`failure: ${JSON.stringify(failure)}`);
