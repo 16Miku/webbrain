@@ -1547,10 +1547,11 @@ async function answerInlineSelection(msg) {
       contextWindow: provider?.contextWindow,
       messages,
     });
-    // The prompt alone fills the model's context window: no call could answer, so the
-    // card offers the side panel, which manages its own context, instead.
+    // The prompt alone fills the model's context window: no call could answer. This is a plain
+    // error, not a cut-off: the side panel sizes its reply to the same window and would refuse
+    // the same selection, so the card must not offer it as a way to finish the answer.
     if (maxTokens === 0) {
-      return { ok: false, truncated: true, error: 'This selection is too long for the model\'s context window.' };
+      return { ok: false, error: 'This selection is too long for the model\'s context window.' };
     }
     const result = await agent._chatWithCostAllowance(
       provider,

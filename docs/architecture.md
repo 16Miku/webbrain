@@ -524,8 +524,9 @@ character, up to 8,000) and never exceeds the provider's own output ceiling or t
 context window leaves after the prompt (estimated on the high side, since the provider's tokenizer
 is not available: a whole token per ASCII character, as dense text such as minified code or hashes can need, four per other character, the most a byte-level fallback spends on one code point (accented letters, CJK, emoji),
 plus a reserve), so a small local window is not sent a request it would reject. When the prompt
-leaves less than 256 tokens for the answer, the background makes no call and answers with the
-cut-off shape, so the card hands the selection to the side panel. If the reply
+leaves less than 256 tokens for the answer, the background makes no call and answers with a plain
+context-window error (not the cut-off shape: the side panel sizes its reply to the same window and
+would refuse the same selection, so the card must not offer it as a way to finish). If the reply
 still stopped at the cap (finish reason, Anthropic `stop_reason` or Responses
 `incomplete_details`, or token usage at the budget when no reason is reported; OpenAI
 Responses reports the limit as an error, which the background treats the same way and

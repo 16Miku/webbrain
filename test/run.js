@@ -52357,7 +52357,8 @@ test('inline card answers are one tool-less, bounded model call behind validated
     assert.match(body, /if \(!messages\) return \{ ok: false/, `${prefix}: invalid requests are refused before any model call`);
     assert.match(body, /agent\._chatWithCostAllowance\(\s*provider,\s*messages,\s*\{ maxTokens, temperature: 0, signal: controller\.signal \},\s*agent\._newCostRunState\(\),/, `${prefix}: the call is bounded, abortable and goes through the cost allowance`);
     assert.match(body, /const maxTokens = inlineSelectionMaxTokens\(msg\.selectionText, msg\.action, provider\?\.maxOutputTokens, \{\s*contextWindow: provider\?\.contextWindow,\s*messages,\s*\}\);/, `${prefix}: the budget is sized to the selection, the provider's ceiling and the room its context window leaves after the prompt`);
-    assert.match(body, /if \(maxTokens === 0\) \{\s*return \{ ok: false, truncated: true, error: [^}]*context window[^}]*\};\s*\}\s*const result = await agent\._chatWithCostAllowance/, `${prefix}: a prompt that fills the context window is handed to the side panel without a model call`);
+    assert.match(body, /if \(maxTokens === 0\) \{\s*return \{ ok: false, error: [^}]*context window[^}]*\};\s*\}\s*const result = await agent\._chatWithCostAllowance/, `${prefix}: a prompt that fills the context window is reported as an error without a model call`);
+    assert.doesNotMatch(body.slice(body.indexOf('if (maxTokens === 0)'), body.indexOf('const result = await')), /truncated/, `${prefix}: and is not offered as a cut-off to finish in the side panel, which would refuse it too`);
     assert.match(body, /inlineAnswerWasCut\(result, maxTokens\) \? \{ \.\.\.answer, truncated: true \} : answer/, `${prefix}: a capped answer is flagged instead of passing as complete`);
     assert.match(body, /catch \(error\) \{\s*if \(inlineErrorWasCut\(error\)\) \{[\s\S]*?\{ ok: true, text: partial, truncated: true, \.\.\.\(notice \? \{ notice \} : \{\}\) \}[\s\S]*?\{ ok: false, truncated: true, error:/, `${prefix}: a provider that reports the output limit as an error still ends in the cut-off state`);
 
@@ -52496,6 +52497,34 @@ test('a card never holds more than its answer limit, so a follow-up or continuat
 
     const content = fs.readFileSync(path.join(ROOT, prefix, 'src/content/selection-shortcut.js'), 'utf8');
     assert.match(content, /if \(answer\.length > INLINE_ANSWER_MAX_CHARS\) \{[\s\S]*?answer = answer\.slice\(0, end\);\s*cardState\.truncated = true;/, `${label}: the card enforces the limit itself on whatever it receives`);
+  }
+});
+
+test('a selection that leaves the model no room is an error the card reports, not a cut-off to continue', async () => {
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const helperStart = background.indexOf('function inlineCostNotice(source) {');
+    const start = background.indexOf('async function answerInlineSelection(msg) {');
+    const source = background.slice(helperStart, background.indexOf('\n}\n', start) + 2);
+    let called = 0;
+    const context = vm.createContext({
+      AbortController, setTimeout, clearTimeout, String, Map,
+      INLINE_SELECTION_TIMEOUT_MS: 1000,
+      INLINE_JOB_ID_PATTERN: /^[a-z0-9]{8,64}$/,
+      inlineSelectionJobs: new Map(),
+      buildInlineSelectionMessages: () => [{ role: 'user', content: 'x' }],
+      inlineSelectionMaxTokens: () => 0,
+      inlineAnswerWasCut: () => false,
+      inlineErrorWasCut: () => false,
+      capInlineAnswer: (text) => ({ text, cut: false }),
+      providerManager: { providers: { size: 1 }, getActive: () => ({}) },
+      agent: { _newCostRunState: () => ({}), _chatWithCostAllowance: async () => { called += 1; return { content: 'never' }; } },
+    });
+    vm.runInContext(`${source}\nthis.answerInlineSelection = answerInlineSelection;`, context);
+    const result = JSON.parse(JSON.stringify(await context.answerInlineSelection({ selectionText: 'x', action: 'translate', language: 'fr' })));
+    assert.deepEqual(result, { ok: false, error: "This selection is too long for the model's context window." },
+      `${prefix}: a plain error, so the card does not offer a continuation the side panel would refuse`);
+    assert.equal(called, 0, `${prefix}: and no model call is made`);
   }
 });
 

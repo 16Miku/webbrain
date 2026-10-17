@@ -285,7 +285,7 @@ const INLINE_FALLBACK_OUTPUT_CEILING = 4096;
 // code, identifiers, hashes and other high-entropy text can take that, and prose takes far
 // less), anything else (accented Latin, CJK, Indic, Arabic, Cyrillic, emoji) at four, the
 // most a byte-level fallback spends on one code point (its UTF-8 bytes). Over-counting only
-// makes a tight window end in a flagged cut-off or a hand-off to the side panel instead of a
+// makes a tight window end in a flagged cut-off or a plain "too long for the model" error instead of a
 // refused request. Chat-template tokens are covered by the reserve.
 const INLINE_ASCII_TOKENS_PER_CHAR = 1;
 const INLINE_OTHER_TOKENS_PER_CHAR = 4;
@@ -323,7 +323,7 @@ export function fitAnswerToContext({ contextWindow, messages, wanted }) {
 export const SELECTION_TOO_LONG_FOR_CONTEXT = 'This selection, with the earlier text it builds on, is too long for the model\'s context window, so it was not sent. Select less text, or switch to a model with a larger context window.';
 
 // 0 means the prompt alone leaves the answer less than its floor in the provider's
-// context window, so the card should hand the selection to the side panel.
+// context window, so no call is made and the card reports it as too long for the model.
 export function inlineSelectionMaxTokens(selectionText, action, providerCeiling, { contextWindow, messages } = {}) {
   const chars = String(selectionText || '').trim().length;
   const wanted = String(action || '').trim() === 'explain'
