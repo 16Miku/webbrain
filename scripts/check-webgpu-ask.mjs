@@ -14,6 +14,9 @@
 // --extension DIR    unpacked extension to load (default src/chrome). The
 //                    extension ID, and so the model cache, follows the path:
 //                    reuse one directory and profile to compare two builds.
+//                    Chrome keeps the registered service worker while the
+//                    manifest version is unchanged, so give the second build a
+//                    different version (for example append ".1").
 // --model ID         WebGPU preset (default Bonsai 2 2B Vision)
 // --download         download the model if it is not cached yet
 // --tasks a,b        run only these tasks
@@ -114,7 +117,9 @@ try {
   const message = (action, data = {}) => harness.evaluate(({ action, data }) => chrome.runtime.sendMessage({ target: 'background', action, ...data }), { action, data });
   await harness.evaluate(() => chrome.storage.local.set({
     onboardingComplete: true, wbLocale: 'en', helpImproveWebBrain: false, agentAllowLocalNetwork: true,
+    tracingEnabled: true,
   }));
+  result.extensionVersion = await harness.evaluate(() => chrome.runtime.getManifest().version);
   result.adapter = await harness.evaluate(async () => {
     const adapter = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' });
     return adapter ? { vendor: adapter.info.vendor, architecture: adapter.info.architecture } : null;
@@ -177,7 +182,14 @@ try {
       .map(update => update.data.step)).size;
     const answer = String(reply?.content || '');
     const passed = !error && task.expect.test(answer) && !(task.reject && task.reject.test(answer.trim()));
-    const entry = { name: task.name, seconds, steps, passed, answer, ...(error ? { error } : {}) };
+    // The trace export names each model request's prompt variant, which
+    // shows which profile actually answered (for example tiny_ask or ask).
+    let promptVariants = [];
+    try {
+      const exported = await message('export_traces', { tabId });
+      promptVariants = [...String(exported?.markdown || '').matchAll(/\bprompt ([a-z_]+)/g)].map(match => match[1]);
+    } catch { /* Tracing is diagnostic only. */ }
+    const entry = { name: task.name, seconds, steps, passed, promptVariants, answer, ...(error ? { error } : {}) };
     result.tasks.push(entry);
     console.log(JSON.stringify({ ...entry, answer: answer.slice(0, 160) }));
   }
