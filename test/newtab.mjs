@@ -1660,6 +1660,16 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     assert.equal(await mod.importSettings(JSON.stringify({ customBackground: JSON.stringify(['https://x.test/a.jpg']) })), true);
     store.setItem('theme', 'light');
 
+    // the shipped defaults (what a fresh profile exports) must import
+    const defaults = JSON.parse(readFileSync(nt('utils/data/default_settings.json'), 'utf8'));
+    const shipped = Object.fromEntries(
+      ['applinks', 'backgroundExclude', 'customBackground', 'customEvents', 'quicklinks', 'order']
+        .map((k) => [k, defaults.find((d) => d.name === k).value]),
+    );
+    assert.equal(shipped.customBackground, '');
+    assert.equal(await mod.importSettings(JSON.stringify(shipped)), true);
+    store.setItem('theme', 'light');
+
     // a widget listed twice would render twice and break drag-and-drop ordering
     assert.equal(await mod.importSettings(JSON.stringify({ order: JSON.stringify(['time', 'time']) })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ order: JSON.stringify(['time', 'date']) })), true);

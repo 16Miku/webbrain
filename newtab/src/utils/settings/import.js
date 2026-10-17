@@ -139,6 +139,9 @@ export function validateSettings(content) {
   }
   for (const [key, isValidEntry] of Object.entries(JSON_ARRAY_ENTRIES)) {
     if (!(key in content)) continue;
+    // A profile that never had a legacy gallery stores "" here (the shipped default); the loader
+    // treats that and "null" as "no list", so a backup exported from one has to import.
+    if (key === 'customBackground' && (content[key] === '' || content[key] === 'null')) continue;
     let list;
     try {
       list = JSON.parse(content[key]);
