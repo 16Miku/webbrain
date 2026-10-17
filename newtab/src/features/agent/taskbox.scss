@@ -87,6 +87,12 @@
   opacity: 1;
 }
 
+// Act starts working in the browser as soon as it is sent, so its notice is not dimmed.
+.taskBoxWarning {
+  opacity: 1;
+  font-weight: 600;
+}
+
 .recentChats {
   @extend %basic;
 

@@ -395,6 +395,7 @@ for (const browser of ['chrome', 'firefox']) {
     const store = { [key3]: { id: 'A', tabId: 3, text: '/compact question', mode: 'ask', createdAt: 99_000 } };
     const input = { value: '', dispatchEvent() {}, focus() {} };
     let processing = false;
+    const sent = [];
     let release;
     const gate = new Promise((r) => { release = r; });
     const handoff = createNewtabHandoff({
@@ -412,7 +413,7 @@ for (const browser of ['chrome', 'firefox']) {
       getInputEl: () => input,
       autoResizeInput() {},
       // like sidepanel.js: a slash command empties the box, then awaits its preflight
-      sendMessage: async () => { input.value = ''; await gate; return true; },
+      sendMessage: async () => { sent.push(input.value); input.value = ''; await gate; return true; },
       now: () => 100_000,
     });
     await handoff.start();
@@ -426,7 +427,7 @@ for (const browser of ['chrome', 'firefox']) {
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
-    assert.equal(input.value, 'task B', 'it is applied once the first send has settled');
+    assert.deepEqual(sent, ['/compact question', 'task B'], 'it is sent once the first send has settled');
     assert.equal(processing, false);
   });
 
@@ -609,6 +610,8 @@ for (const browser of ['chrome', 'firefox']) {
     };
     const state = { tabId: 3, clock: 100_000 };
     const input = { value: '', dispatchEvent() {}, focus() {} };
+    const sent = [];
+    const settle = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
     const handoff = createNewtabHandoff({
       storage: {
         get: async (k) => (k in store ? { [k]: store[k] } : {}),
@@ -623,23 +626,24 @@ for (const browser of ['chrome', 'firefox']) {
       setMode() {},
       getInputEl: () => input,
       autoResizeInput() {},
-      sendMessage: async () => {},
+      sendMessage: async () => { sent.push(input.value); input.value = ''; },
       now: () => state.clock,
     });
     state.clock = 150_000; // a cold panel took 50 s to restore its chat; both tasks are ~50 s old
     await handoff.start();
-    assert.equal(input.value, 'task three');
+    await settle();
+    assert.deepEqual(sent, ['task three']);
     state.tabId = 4;
-    input.value = '';
     await handoff.consume();
-    assert.equal(input.value, 'task four', "the second tab's equally old task is accepted too");
+    await settle();
+    assert.deepEqual(sent, ['task three', 'task four'], "the second tab's equally old task is accepted too");
     // a task typed after startup gets no such credit
     store[newtabHandoffKey(3)] = { id: 'late', tabId: 3, text: 'late', mode: 'act', createdAt: 150_100 };
     state.clock = 190_000; // 40 s old, more than the ordinary 30 s
     state.tabId = 3;
-    input.value = '';
     await handoff.consume();
-    assert.equal(input.value, '', 'a task created after startup uses the ordinary window');
+    await settle();
+    assert.deepEqual(sent, ['task three', 'task four'], 'a task created after startup uses the ordinary window');
   });
 
   test(`${browser}: the hold allowance is dropped once the delayed task has been claimed`, async () => {
@@ -647,6 +651,7 @@ for (const browser of ['chrome', 'firefox']) {
     const store = { [key3]: { id: 'A', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_000 } };
     const state = { clock: 100_000 };
     const input = { value: '', dispatchEvent() {}, focus() {} };
+    const sent = [];
     let releaseA;
     const gateA = new Promise((r) => { releaseA = r; });
     const handoff = createNewtabHandoff({
@@ -663,7 +668,7 @@ for (const browser of ['chrome', 'firefox']) {
       setMode() {},
       getInputEl: () => input,
       autoResizeInput() {},
-      sendMessage: async () => { await gateA; input.value = ''; return true; },
+      sendMessage: async () => { sent.push(input.value); await gateA; input.value = ''; return true; },
       now: () => state.clock,
     });
     await handoff.start();
@@ -673,12 +678,12 @@ for (const browser of ['chrome', 'firefox']) {
     state.clock = 135_000; // B is 35 s old because of the hold
     releaseA();
     for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
-    assert.equal(input.value, 'task B', 'the delayed task is accepted');
+    assert.deepEqual(sent, ['task A', 'task B'], 'the delayed task is accepted and sent');
     // a later, unrelated task that is genuinely stale (40 s) must not borrow the allowance
-    input.value = '';
     store[key3] = { id: 'C', tabId: 3, text: 'task C', mode: 'act', createdAt: state.clock - 40_000 };
     await handoff.consume();
-    assert.equal(input.value, '', 'it is judged on its own age');
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(sent, ['task A', 'task B'], 'it is judged on its own age');
   });
 
   test(`${browser}: a declined send never refills another tab's composer; the task goes back to its own tab`, async () => {
@@ -1173,12 +1178,17 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(h.log.sent.length, 1);
   });
 
-  test(`${browser}: Act is pre-filled but never sent`, async () => {
+  test(`${browser}: Act is sent immediately, in Act mode, like Ask`, async () => {
     const h = await harness({ record: rec({ mode: 'act', text: 'book a table' }) });
     assert.equal(await h.handoff.consume(), true);
     assert.equal(h.log.mode, 'act');
-    assert.equal(h.log.sent.length, 0);
-    assert.equal(h.input.value, 'book a table');
+    assert.equal(h.log.sent.length, 1);
+    assert.equal(h.log.value, 'book a table', 'the composer held the task when it was sent');
+    const ask = await harness({ record: rec({ mode: 'ask', text: 'what is this' }) });
+    await ask.handoff.consume();
+    assert.equal(ask.log.mode, 'ask');
+    assert.equal(ask.log.sent.length, 1);
+    assert.equal(ask.log.value, 'what is this');
   });
 
   test(`${browser}: a record for another tab is left alone; a stale one is ignored and left in place`, async () => {
@@ -1380,14 +1390,15 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(h.log.sent.length, 0);
     assert.equal(h.log.mode, null, 'the draft keeps the mode it was written in');
 
-    // The same text twice is not duplicated; an empty composer is simply filled.
+    // The same text twice is not duplicated; an empty composer is filled and the task is sent.
     const same = await harness({ record: rec({ mode: 'act', text: 'x' }) });
     same.input.value = 'x';
     await same.handoff.consume();
-    assert.equal(same.input.value, 'x');
+    assert.equal(same.log.value, 'x');
     const empty = await harness({ record: rec({ mode: 'act', text: 'y' }) });
     await empty.handoff.consume();
-    assert.equal(empty.input.value, 'y');
+    assert.equal(empty.log.value, 'y');
+    assert.equal(empty.log.sent.length, 1);
   });
 
   test(`${browser}: Ask never overwrites an existing draft and is not sent over it`, async () => {
@@ -1408,7 +1419,7 @@ for (const browser of ['chrome', 'firefox']) {
     const blank = await harness({ record: rec({ mode: 'act', text: 'task' }) });
     blank.input.value = '   \n ';
     await blank.handoff.consume();
-    assert.equal(blank.input.value, 'task', 'a whitespace-only composer counts as empty');
+    assert.equal(blank.log.value, 'task', 'a whitespace-only composer counts as empty');
   });
 
   test(`${browser}: manifest and background are wired`, () => {
@@ -2526,4 +2537,14 @@ test('round-74: gallery writes resolve only once the IndexedDB transaction has c
 test('round-74: gallery selection checkboxes are named', () => {
   const src = readFileSync(nt('features/background/options/Custom.jsx'), 'utf8');
   assert.match(src, /onChange=\{\(\) => toggleImageSelection\(originalIndex\)\}\s+aria-label=\{bg\.name \|\| `\$\{originalIndex \+ 1\}`\}/);
+});
+
+test('round-76: Act warns that it starts immediately, in every shipped language', () => {
+  const box = readFileSync(nt('features/agent/TaskBox.jsx'), 'utf8');
+  assert.match(box, /mode === 'act' && \(\s*<span className="taskBoxHint taskBoxWarning" role="note">\s*\{wbT\('wb\.act_hint'\)\}/);
+  const strings = readFileSync(nt('lib/wb-strings.js'), 'utf8');
+  assert.doesNotMatch(strings, /Press Enter there to run it|Pulsa Intro allí/);
+  assert.equal((strings.match(/^    "[^"]*(?:Enter|Intro|Entrée|Eingabetaste)[^"]*",$/gm) || []).length >= 15, true);
+  const h = readFileSync(path.join(root, 'src/chrome/src/ui/newtab-handoff.js'), 'utf8');
+  assert.doesNotMatch(h, /handoff\.mode === 'ask' && !getIsBlocked/);
 });

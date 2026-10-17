@@ -9,7 +9,7 @@ single WebBrain box. Source: `newtab/`. Built output: `src/{chrome,firefox}/newt
 | Mode | What happens |
 |------|--------------|
 | Ask | The text is handed to the side panel and **sent** (Ask is read-only). |
-| Act | The panel opens in Act with the text **pre-filled and not sent**. The user presses Enter there, so Act stays explicit and reviewable. |
+| Act | The panel opens in Act and the text is **sent immediately**, like Ask. The box shows a warning that Act starts working right away. If **Plan before Act** is on in WebBrain, the plan is still shown for approval before anything is done. |
 | Search | A URL is opened (http/https only); anything else goes to the browser's default search engine via `chrome.search.query` / `browser.search.search`. Hidden if the API is missing. |
 
 No search engine is hard-coded and nothing is sent to WebBrain's servers by the page.
@@ -46,11 +46,11 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
    - **Ask** is filled in and sent. If a run is already active in that tab it is
      queued behind it, like pressing Send. If the panel declines to send (plan review
      pending, a refresh in progress) the text stays in the composer.
-   - **Act** is filled in with the panel switched to Act, and never sent.
+   - **Act** is sent the same way, with the panel switched to Act. It is queued behind an active run and, when Plan before Act is on, goes through plan review like any Act turn.
    - Neither mode ever overwrites what is already in the composer (the user's own
-     draft, an unconfirmed Act task, a declined Ask). The new task is added below it for
-     review; the panel keeps the mode that draft was written in, and an Ask is not sent
-     automatically in that case.
+     draft, a declined send). The new task is added below it for review; the panel keeps
+     the mode that draft was written in, and the combined text is not sent automatically
+     in that case.
    - A later hand-off is held back (retried every 150 ms, for up to about 15 s) while an
      earlier Ask's text is still in the composer waiting for its send to commit, so one
      task can never replace the other. The record stays in storage meanwhile; after the

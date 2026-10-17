@@ -1457,7 +1457,7 @@ const {
   },
 });
 // A task typed into the WebBrain new tab arrives through extension storage:
-// Ask runs immediately, Act is only pre-filled for the user to confirm.
+// Ask and Act both run immediately (Act still goes through Plan before Act when it is on).
 const newtabHandoff = createNewtabHandoff({
   storage: browser.storage.local,
   onChanged: browser.storage.onChanged,

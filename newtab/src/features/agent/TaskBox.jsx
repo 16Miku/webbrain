@@ -119,7 +119,11 @@ function TaskBox() {
           </button>
         ))}
       </div>
-      {mode === 'act' && <span className="taskBoxHint">{wbT('wb.act_hint')}</span>}
+      {mode === 'act' && (
+        <span className="taskBoxHint taskBoxWarning" role="note">
+          {wbT('wb.act_hint')}
+        </span>
+      )}
       {error && (
         <span className="taskBoxHint taskBoxError" role="alert">
           {error}

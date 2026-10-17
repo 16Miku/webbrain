@@ -275,7 +275,7 @@ export function createNewtabHandoff({
       };
       fill();
       input.focus?.();
-      if (handoff.mode === 'ask' && !getIsBlocked() && !keepsDraft) {
+      if (!getIsBlocked() && !keepsDraft) {
         // sendMessage reads the composer synchronously when called, so starting it
         // here captures this task. It is not awaited: a send can last a whole run,
         // and that must not hold up later hand-offs or the panel's own startup.
