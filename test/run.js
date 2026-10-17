@@ -20800,7 +20800,6 @@ async function runCoordinateSemanticCase({
   privateRestoreAttempt = null,
   privateDraftPreparationAttempt = false,
   privateDraftBindingAttempt = null,
-  strictGuards = false,
 }) {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;
@@ -20833,7 +20832,6 @@ async function runCoordinateSemanticCase({
     : { ...(previousBrowser || {}), tabs: { ...(previousBrowser?.tabs || {}), ...tabs } };
   try {
     const agent = new AgentClass({ getVisionProvider: async () => null });
-    agent.strictGuards = strictGuards;
     const tabId = label === 'chrome' ? 8811 : 8812;
     agent._isPdfTab = async () => false;
     agent._richTextToolbarToolBlock = async () => null;
@@ -21095,8 +21093,6 @@ test('screenshot coordinate assertions reject an unrelated language selector wit
       globalKey,
       expectedName: 'Next',
       expectedRole: 'button',
-      // Strict checks: the guard's refusal itself is under test.
-      strictGuards: true,
       resolverResponse: {
         success: true,
         semanticTarget: {

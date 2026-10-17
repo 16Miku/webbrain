@@ -16136,18 +16136,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const expectedRole = normalized(messageRecipientContext.expectedRole);
     const intentMismatch = (expectedName && normalized(target?.name) !== expectedName)
       || (expectedRole && normalized(target?.role) !== expectedRole);
-    // click-coordinate-intent (quality): the model's own expected_name /
-    // expected_role no longer matches what the point resolves to. Without
-    // Strict checks the raw point is clicked, exactly as a coordinate click
-    // without those hints would be; recipient, deletion and publication checks
-    // still apply to that click.
-    if (intentMismatch && this._guardAdvisesFor(messageRecipientContext.guardAdvisories, 'click-coordinate-intent',
-      'The point no longer resolves to the expected_name/expected_role you gave, so WebBrain could not confirm it hits the intended control. The point was clicked anyway; read the page to check what it activated.')) {
-      return {
-        result: null,
-        diagnostic: this._coordinateReconciliationDiagnostic(point, resolution, 'coordinate-fallback', 'intent-mismatch'),
-      };
-    }
+    // click-coordinate-intent (infra): expected_name / expected_role are the
+    // call's own safety assertions, which the tool contract checks before
+    // dispatch. A point that no longer resolves to them may now hit another
+    // control, so the call cannot run as given: nothing is clicked.
     if (intentMismatch) {
       return {
         result: {

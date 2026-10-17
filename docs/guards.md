@@ -55,8 +55,9 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
   modes and budgets (`permission_gate`); same-site, frame and task-authority
   boundaries, CAPTCHA and access walls, and a person acting in the same tab
   (`host_check`); loop and observation limits (`budget`); calls that cannot
-  run as given (`infra`); and Stop, corrections and cancelled cards
-  (`user_control`).
+  run as given (`infra`), such as a coordinate click whose own
+  `expected_name` or `expected_role` no longer matches the point; and Stop,
+  corrections and cancelled cards (`user_control`).
 - **Strict checks.** Settings → General → "Strict checks" (`strictGuards`)
   makes every quality guard block again, with the old forced verification
   turns and the failure-only `done`.

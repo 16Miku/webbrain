@@ -494,27 +494,39 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   // ── click-coordinate-intent ─────────────────────────────────────────────
+  // expected_name / expected_role are the call's own safety assertions, which
+  // the tool contract checks before dispatch: a point that no longer resolves
+  // to them is never clicked, by default or with Strict checks.
   for (const [mode, strict] of MODES) {
-    test(`${build}: click-coordinate-intent ${mode} mode ${strict ? 'refuses a mismatched point' : 'clicks the raw point with a note'}`, async () => {
+    test(`${build}: click-coordinate-intent ${mode} mode refuses a point that no longer resolves to the expected target`, async () => {
       const agent = new Agent({ getVisionProvider: async () => null });
       agent.strictGuards = strict;
       agent._resolveCoordinateVisualTarget = async () => ({ success: true, documentToken: 'doc', refScopeUrl: PAGE_URL,
         semanticTarget: { name: 'Language', role: 'button', eligibility: 'semantic-button', ref_id: 'ref_9' } });
       agent._dispatchClickAx = async () => assert.fail('A mismatched semantic target is never clicked by ref');
-      const advisories = [];
-      const reconciled = await agent._reconcileCoordinateClick(nextTab++, { x: 40, y: 50 },
-        { expectedName: 'Send', guardAdvisories: advisories });
-      if (strict) {
+      for (const assertion of [{ expectedName: 'Send' }, { expectedRole: 'link' }]) {
+        const advisories = [];
+        const reconciled = await agent._reconcileCoordinateClick(nextTab++, { x: 40, y: 50 },
+          { ...assertion, guardAdvisories: advisories });
+        // A null result would make the click handler dispatch the raw point.
+        assert.notEqual(reconciled.result, null, JSON.stringify(assertion));
         assert.equal(reconciled.result.targetMismatch, true);
+        assert.equal(reconciled.result.dispatched, false);
         assert.equal(reconciled.result.noDispatch, true);
         assert.deepEqual(advisories, []);
-      } else {
-        // result:null makes the click handler dispatch the raw point.
-        assert.equal(reconciled.result, null);
-        assert.equal(reconciled.diagnostic.clickPath, 'coordinate-fallback');
-        assert.equal(reconciled.diagnostic.fallbackReason, 'intent-mismatch');
-        assert.deepEqual(guardsOf(advisories), ['click-coordinate-intent']);
       }
+      // A point that resolves to nothing cannot satisfy an assertion either.
+      agent._resolveCoordinateVisualTarget = async () => ({ success: false });
+      const unresolved = await agent._reconcileCoordinateClick(nextTab++, { x: 40, y: 50 }, { expectedName: 'Send', guardAdvisories: [] });
+      assert.equal(unresolved.result?.targetMismatch, true);
+      // A matching assertion clicks the semantic target by its ref.
+      agent._resolveCoordinateVisualTarget = async () => ({ success: true, documentToken: 'doc', refScopeUrl: PAGE_URL,
+        semanticTarget: { name: 'Send', role: 'button', eligibility: 'semantic-button', ref_id: 'ref_9' } });
+      const clicked = [];
+      agent._dispatchClickAx = async (_tab, args) => { clicked.push(args.ref_id); return { success: true, dispatched: true }; };
+      const matched = await agent._reconcileCoordinateClick(nextTab++, { x: 40, y: 50 }, { expectedName: 'send', guardAdvisories: [] });
+      assert.equal(matched.result.success, true);
+      assert.deepEqual(clicked, ['ref_9']);
     });
   }
 
