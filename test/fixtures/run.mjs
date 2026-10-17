@@ -2547,6 +2547,40 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
+  test(`${label}: an answer beyond the card limit is cut, flagged and carried whole to the side panel`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      // 70,000 characters, as a background without the limit might hand back.
+      window.__selectionInlineHandler = async () => ({ ok: true, text: 'word '.repeat(14000) });
+    });
+    await openInlineCard(page, 'explain');
+    const state = await waitForCardStatus(page, 'ready');
+    if (state.cardText.length !== 64000 || !state.cardTruncated || !state.continueRect || !state.cutNoticeText) {
+      throw new Error(`an over-long answer should be held at the limit and offered to the side panel: ${JSON.stringify({ length: state.cardText.length, truncated: state.cardTruncated, continueRect: state.continueRect })}`);
+    }
+    await clickRectCenter(page, state.continueRect);
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    const message = await page.evaluate(() => ({
+      length: window.__selectionMessages[0].continueFrom.length,
+      same: window.__selectionMessages[0].continueFrom === ('word '.repeat(14000)).trim().slice(0, 64000),
+    }));
+    if (message.length !== 64000 || !message.same) {
+      throw new Error(`Continue should carry exactly the text the card shows: ${JSON.stringify(message)}`);
+    }
+  });
+
+  test(`${label}: cutting an over-long answer never leaves half of an emoji`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = async () => ({ ok: true, text: `${'x'.repeat(63999)}😀 and more` });
+    });
+    await openInlineCard(page, 'explain');
+    const state = await waitForCardStatus(page, 'ready');
+    if (state.cardText !== 'x'.repeat(63999) || !state.cardTruncated) {
+      throw new Error(`the cut should fall before the emoji, not inside it: ${JSON.stringify({ length: state.cardText.length, tail: state.cardText.slice(-3), truncated: state.cardTruncated })}`);
+    }
+  });
+
   test(`${label}: an older Translate answer never replaces a newer one`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     await page.evaluate(() => {

@@ -75,6 +75,7 @@ import {
   buildContextMenuPrompt,
   buildContinuationSelectionPrompt,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS,
+  capInlineAnswer,
   buildFollowUpSelectionText,
   buildFullContextSelectionPrompt,
   buildInlineSelectionMessages,
@@ -1806,18 +1807,18 @@ async function answerInlineSelection(msg) {
       { maxTokens, temperature: 0, signal: controller.signal },
       agent._newCostRunState(),
     );
-    const text = String(result?.content || '').trim();
+    const { text, cut } = capInlineAnswer(String(result?.content || '').trim());
     if (!text) return { ok: false, error: 'The model returned an empty answer.' };
     // The call that reaches the cost allowance still returns its answer; the card is told
     // so it can say the next one will not run.
     const notice = inlineCostNotice(result);
     const answer = { ok: true, text, ...(notice ? { notice } : {}) };
-    return inlineAnswerWasCut(result, maxTokens) ? { ...answer, truncated: true } : answer;
+    return cut || inlineAnswerWasCut(result, maxTokens) ? { ...answer, truncated: true } : answer;
   } catch (error) {
     if (inlineErrorWasCut(error)) {
       // The provider reported the output limit as an error. Show what it wrote, if
       // anything, and let the card hand the rest to the side panel.
-      const partial = String(error.partialContent || '').trim();
+      const partial = capInlineAnswer(String(error.partialContent || '').trim()).text;
       const notice = inlineCostNotice(error);
       return partial
         ? { ok: true, text: partial, truncated: true, ...(notice ? { notice } : {}) }

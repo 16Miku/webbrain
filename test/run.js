@@ -697,6 +697,8 @@ const {
   inlineErrorWasCut: inlineErrorWasCutCh,
   inlineSelectionMaxTokens: inlineSelectionMaxTokensCh,
   fitAnswerToContext: fitAnswerToContextCh,
+  capInlineAnswer: capInlineAnswerCh,
+  INLINE_ANSWER_MAX_CHARS: INLINE_ANSWER_MAX_CHARS_CH,
   SELECTION_TOO_LONG_FOR_CONTEXT: SELECTION_TOO_LONG_FOR_CONTEXT_CH,
   buildContinuationSelectionPrompt: buildContinuationSelectionPromptCh,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS: INLINE_CONTINUE_PARTIAL_MAX_CHARS_CH,
@@ -724,6 +726,8 @@ const {
   inlineErrorWasCut: inlineErrorWasCutFx,
   inlineSelectionMaxTokens: inlineSelectionMaxTokensFx,
   fitAnswerToContext: fitAnswerToContextFx,
+  capInlineAnswer: capInlineAnswerFx,
+  INLINE_ANSWER_MAX_CHARS: INLINE_ANSWER_MAX_CHARS_FX,
   SELECTION_TOO_LONG_FOR_CONTEXT: SELECTION_TOO_LONG_FOR_CONTEXT_FX,
   buildContinuationSelectionPrompt: buildContinuationSelectionPromptFx,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS: INLINE_CONTINUE_PARTIAL_MAX_CHARS_FX,
@@ -52198,7 +52202,7 @@ test('a cut-off card answer is resumed in the side panel, not run again', () => 
     assert.equal((block.match(/<\/untrusted_page_content>/g) || []).length, 1, `${label}: the boundary closes exactly once`);
 
     // The side panel shows this block, so a partial answer is kept whole up to the most a card can produce.
-    assert.equal(maxChars, 32000, `${label}: the cap is the largest card answer (8,000 tokens at four characters)`);
+    assert.equal(maxChars, 64000, `${label}: the cap is the most a card holds, enforced when an answer is produced`);
     const wholePartial = `FIRST-${'y'.repeat(11_000)}-LAST`;
     const wholePrompt = buildContinuation('Some text.', 'translate', wholePartial, 'de');
     assert.ok(wholePrompt.includes(wholePartial), `${label}: an unfinished answer well past the old 6,000-character cap is kept in full`);
@@ -52298,11 +52302,11 @@ test('inline card prompts keep the selection and any earlier answer inside the u
     // The whole card answer reaches the side panel, up to the most a card can produce.
     const wholeAnswer = `FIRST-${'y'.repeat(11_000)}-LAST`;
     assert.equal(buildFollowUp('sel', 'translate', wholeAnswer).endsWith(`\n${wholeAnswer}`), true, `${label}: a long card answer is carried in full, end included`);
-    assert.equal(label === 'chrome' ? INLINE_FOLLOW_UP_ANSWER_MAX_CHARS_CH : INLINE_FOLLOW_UP_ANSWER_MAX_CHARS_FX, 32000, `${label}: the follow-up cap is the largest card answer`);
-    const oversized = buildFollowUp('sel', 'translate', 'x'.repeat(40000));
-    assert.equal(oversized.length < 'sel'.length + 32300 + 120, true, `${label}: an answer beyond that is bounded`);
+    assert.equal(label === 'chrome' ? INLINE_FOLLOW_UP_ANSWER_MAX_CHARS_CH : INLINE_FOLLOW_UP_ANSWER_MAX_CHARS_FX, 64000, `${label}: the follow-up cap is the most a card holds`);
+    const oversized = buildFollowUp('sel', 'translate', 'x'.repeat(70000));
+    assert.equal(oversized.length < 'sel'.length + 64300 + 120, true, `${label}: an answer beyond that is bounded`);
     assert.match(oversized, /\[The answer continues beyond this point\.\]$/, `${label}: and says it was shortened`);
-    assert.doesNotMatch(buildFollowUp('sel', 'translate', 'x'.repeat(32000)), /continues beyond/, `${label}: an answer at the cap is not marked`);
+    assert.doesNotMatch(buildFollowUp('sel', 'translate', 'x'.repeat(64000)), /continues beyond/, `${label}: an answer at the cap is not marked`);
     const prompt = buildSelectionPrompt(follow, 'custom', 'Why?', '', grounding);
     const answerAt = prompt.indexOf('do evil');
     assert.equal(answerAt > prompt.indexOf('<untrusted_page_content id="'), true, `${label}: the earlier answer must sit inside the untrusted block`);
@@ -52321,6 +52325,11 @@ test('inline card answers are one tool-less, bounded model call behind validated
       content.match(/const INLINE_MAX_CHARS = (\d+);/)?.[1],
       storage.match(/export const INLINE_SELECTION_MAX_CHARS = (\d+);/)?.[1],
       `${prefix}: the card limit must match the background's`,
+    );
+    assert.equal(
+      content.match(/const INLINE_ANSWER_MAX_CHARS = (\d+);/)?.[1],
+      storage.match(/export const INLINE_ANSWER_MAX_CHARS = (\d+);/)?.[1],
+      `${prefix}: the card and the background hold an answer to the same limit`,
     );
     const contentActions = content.match(/const INLINE_ACTIONS = Object\.freeze\(\[([^\]]*)\]\)/)?.[1].replace(/[\s']/g, '');
     const storageActions = storage.match(/export const INLINE_SELECTION_ACTIONS = Object\.freeze\(\[([^\]]*)\]\)/)?.[1].replace(/[\s']/g, '');
@@ -52365,7 +52374,7 @@ test('inline card answers are one tool-less, bounded model call behind validated
 
 test('inline card answers tell the card when that request reached the cost allowance', async () => {
   const NOTICE = 'Cloud cost allowance reached: total cloud/router usage is $5.00 against the $5.00 limit. Stopping before further cloud/router model calls.';
-  for (const prefix of ['src/chrome', 'src/firefox']) {
+  for (const [prefix, capAnswer] of [['src/chrome', capInlineAnswerCh], ['src/firefox', capInlineAnswerFx]]) {
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const helperStart = background.indexOf('function inlineCostNotice(source) {');
     const start = background.indexOf('async function answerInlineSelection(msg) {');
@@ -52383,6 +52392,7 @@ test('inline card answers tell the card when that request reached the cost allow
         inlineSelectionMaxTokens: () => 500,
         inlineAnswerWasCut: (result) => result?.finishReason === 'length',
         inlineErrorWasCut: (error) => error?.incompleteReason === 'max_output_tokens',
+        capInlineAnswer: capAnswer,
         providerManager: { providers: { size: 1 }, getActive: () => ({}) },
         agent: { _newCostRunState: () => ({}), _chatWithCostAllowance: chat },
       });
@@ -52435,6 +52445,57 @@ test('inline card answers tell the card when that request reached the cost allow
       { ok: true, text: 'Half of it', truncated: true },
       `${prefix}: and without reaching it there is no notice`,
     );
+  }
+});
+
+test('a card never holds more than its answer limit, so a follow-up or continuation carries it whole', async () => {
+  for (const [label, prefix, cap, maxChars] of [
+    ['chrome', 'src/chrome', capInlineAnswerCh, INLINE_ANSWER_MAX_CHARS_CH],
+    ['firefox', 'src/firefox', capInlineAnswerFx, INLINE_ANSWER_MAX_CHARS_FX],
+  ]) {
+    assert.equal(maxChars, 64000, `${label}: eight characters per token of the largest answer`);
+    assert.deepEqual(cap('x'.repeat(maxChars)), { text: 'x'.repeat(maxChars), cut: false }, `${label}: an answer at the limit is kept whole`);
+    const over = cap('x'.repeat(maxChars + 5000));
+    assert.equal(over.text.length, maxChars, `${label}: a longer one is cut at the limit`);
+    assert.equal(over.cut, true, `${label}: and says so`);
+    const pair = cap(`${'x'.repeat(maxChars - 1)}😀tail`);
+    assert.equal(pair.text, 'x'.repeat(maxChars - 1), `${label}: a cut never leaves half of a surrogate pair`);
+    assert.deepEqual(cap(undefined), { text: '', cut: false });
+
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const helperStart = background.indexOf('function inlineCostNotice(source) {');
+    const start = background.indexOf('async function answerInlineSelection(msg) {');
+    const source = background.slice(helperStart, background.indexOf('\n}\n', start) + 2);
+    const run = async (chat) => {
+      const context = vm.createContext({
+        AbortController, setTimeout, clearTimeout, String, Map,
+        INLINE_SELECTION_TIMEOUT_MS: 1000,
+        INLINE_JOB_ID_PATTERN: /^[a-z0-9]{8,64}$/,
+        inlineSelectionJobs: new Map(),
+        buildInlineSelectionMessages: () => [{ role: 'user', content: 'x' }],
+        inlineSelectionMaxTokens: () => 500,
+        inlineAnswerWasCut: () => false,
+        inlineErrorWasCut: (error) => error?.incompleteReason === 'max_output_tokens',
+        capInlineAnswer: cap,
+        providerManager: { providers: { size: 1 }, getActive: () => ({}) },
+        agent: { _newCostRunState: () => ({}), _chatWithCostAllowance: chat },
+      });
+      vm.runInContext(`${source}\nthis.answerInlineSelection = answerInlineSelection;`, context);
+      return JSON.parse(JSON.stringify(await context.answerInlineSelection({ selectionText: 'x', action: 'translate', language: 'fr' })));
+    };
+    let result = await run(async () => ({ content: 'y'.repeat(maxChars + 9000) }));
+    assert.equal(result.text.length, maxChars, `${label}: the background does not hand the card more than it holds`);
+    assert.equal(result.truncated, true, `${label}: and flags the answer as cut off so the rest can go to the side panel`);
+    result = await run(async () => ({ content: 'y'.repeat(maxChars) }));
+    assert.deepEqual([result.text.length, result.truncated], [maxChars, undefined], `${label}: an answer that fits is not flagged`);
+    result = await run(async () => {
+      throw Object.assign(new Error('Responses incomplete'), { incompleteReason: 'max_output_tokens', partialContent: 'z'.repeat(maxChars + 100) });
+    });
+    assert.equal(result.text.length, maxChars, `${label}: a partial answer from an output-limit error is bounded too`);
+    assert.equal(result.truncated, true);
+
+    const content = fs.readFileSync(path.join(ROOT, prefix, 'src/content/selection-shortcut.js'), 'utf8');
+    assert.match(content, /if \(answer\.length > INLINE_ANSWER_MAX_CHARS\) \{[\s\S]*?answer = answer\.slice\(0, end\);\s*cardState\.truncated = true;/, `${label}: the card enforces the limit itself on whatever it receives`);
   }
 });
 

@@ -531,12 +531,12 @@ still stopped at the cap (finish reason, Anthropic `stop_reason` or Responses
 Responses reports the limit as an error, which the background treats the same way and
 answers with whatever text the provider returned) the response
 is flagged `truncated`, and the card says so and offers **Continue in side panel** instead
-of passing a cut-off translation off as complete. The call that reaches the configured cost allowance still returns its answer (the
+of passing a cut-off translation off as complete. An answer is held to 64,000 characters, a limit enforced rather than inferred from the token budget (tokens are not a fixed number of characters): the background cuts a longer one there (never inside a surrogate pair) and flags it `truncated`, and the card applies the same limit to whatever it receives, so a follow-up or a continuation carries exactly the text the card shows and nothing is silently shortened afterwards. The call that reaches the configured cost allowance still returns its answer (the
 background passes the allowance's own message as `notice`, from the result or, for a Responses
 cut-off, the error), and the card shows it under that answer, since the next card would otherwise
 fail with no warning. Continue sends the unfinished text as
 `continueFrom`; the background wraps it inside the selection's untrusted block (whole, up to the
-most a card can produce, because the side panel shows that block to the user) with a trusted request to resume from where it stops, because running the action again
+most a card holds, because the side panel shows that block to the user) with a trusted request to resume from where it stops, because running the action again
 would meet the same output limit. The side-panel reply to a continuation or a card follow-up carries the earlier answer as well as the selection, and a selection-only run skips context management, so that reply is sized to the room the model's context window leaves (the same worst-case estimate, `fitAnswerToContext`) rather than asking for the provider's full output ceiling; when the window leaves no room it says the selection is too long for the model and sends nothing. A resumed Proofread gets its own instruction, without the ordinary request for one complete corrected version, so a model asked for only the remainder is not also asked to write the corrected text again. A side-panel reply that is cut off again says so (the
 response-only path appends a notice when the provider reports a length finish, WebGPU
 reports `outputTruncated`, or OpenAI Responses raises the limit as an error carrying
@@ -577,7 +577,7 @@ click and queues the verified prompt with `panelOpened`, because a panel that is
 up has not reported in yet and a second `open()` would close it. The card's
 answer travels inside the selection's untrusted boundary, labelled as an earlier answer that
 may contain mistakes and
-capped at 32,000 characters (the most a card can produce; a longer one is shortened and says so), so model output derived from page text never becomes trusted
+capped at 64,000 characters (the most a card is ever held to), so model output derived from page text never becomes trusted
 instruction. The selection and the answer go to the configured provider like any other
 model call.
 

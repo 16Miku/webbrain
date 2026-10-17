@@ -44,6 +44,9 @@
   // Keep in step with INLINE_SELECTION_MAX_CHARS in context-menu-storage.js.
   // Longer selections are read better in the side panel than in a small card.
   const INLINE_MAX_CHARS = 4000;
+  // Keep in step with INLINE_ANSWER_MAX_CHARS in context-menu-storage.js. An answer is never
+  // held beyond it, so a follow-up or a continuation carries the card's text whole.
+  const INLINE_ANSWER_MAX_CHARS = 64000;
   const INLINE_ACTIONS = Object.freeze(['translate', 'explain', 'proofread']);
   const MAX_SELECTION_HIGHLIGHT_RECTS = 200;
   const TRANSLATION_LANGUAGES = Object.freeze([
@@ -1047,10 +1050,17 @@
       });
       if (requestId !== cardRequestId || !cardState) return;
       cardJobId = '';
-      const answer = typeof response?.text === 'string' ? response.text.trim() : '';
+      let answer = typeof response?.text === 'string' ? response.text.trim() : '';
       cardState.truncated = response?.truncated === true;
       if (!response?.ok || !answer) {
         throw new Error(typeof response?.error === 'string' && !cardState.truncated ? response.error : '');
+      }
+      if (answer.length > INLINE_ANSWER_MAX_CHARS) {
+        let end = INLINE_ANSWER_MAX_CHARS;
+        const last = answer.charCodeAt(end - 1);
+        if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+        answer = answer.slice(0, end);
+        cardState.truncated = true;
       }
       cardState.status = 'ready';
       cardState.text = answer;

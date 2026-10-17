@@ -372,11 +372,25 @@ const INLINE_FOLLOW_UP_LABELS = Object.freeze({
   explain: 'explanation',
   proofread: 'proofreading result',
 });
-// The most a card answer can hold: 8,000 output tokens at four characters each. Both a
-// follow-up and a continuation carry the whole answer up to this, because the side panel
-// shows it to the user and a question may refer to any part of it.
-const INLINE_CARD_ANSWER_MAX_CHARS = 32000;
+// The most a card holds. Tokens are not a fixed number of characters (whitespace and long
+// vocabulary tokens run past the usual four), so the limit is enforced where the answer
+// is produced and where the card receives it, not derived from the 8,000-token budget: an
+// answer beyond it is cut here and flagged, so what the card shows is exactly what a
+// follow-up or a continuation carries to the side panel, never a silently shortened copy.
+// Eight characters per token leaves twice the room an ordinary answer needs. Keep in step
+// with INLINE_ANSWER_MAX_CHARS in the content script.
+export const INLINE_ANSWER_MAX_CHARS = 64000;
+const INLINE_CARD_ANSWER_MAX_CHARS = INLINE_ANSWER_MAX_CHARS;
 export const INLINE_FOLLOW_UP_ANSWER_MAX_CHARS = INLINE_CARD_ANSWER_MAX_CHARS;
+
+export function capInlineAnswer(text) {
+  const full = String(text || '');
+  if (full.length <= INLINE_ANSWER_MAX_CHARS) return { text: full, cut: false };
+  let end = INLINE_ANSWER_MAX_CHARS;
+  const last = full.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1; // never end on half of a surrogate pair
+  return { text: full.slice(0, end), cut: true };
+}
 
 // A follow-up typed in a card continues in the side panel. The card's earlier
 // answer is model output derived from untrusted page text, so it travels inside
@@ -398,7 +412,7 @@ export function buildFollowUpSelectionText(selectionText, priorAction, priorAnsw
 // same limit. The unfinished text is model output derived from untrusted page
 // text, so it travels inside the selection's untrusted block. The side panel shows that
 // block to the user, so the whole unfinished text is kept (the cap is the most a card
-// can produce, 8,000 tokens at four characters each) and only a longer one loses its start.
+// holds) and only a longer one, which a card never produces, loses its start.
 export const INLINE_CONTINUE_PARTIAL_MAX_CHARS = INLINE_CARD_ANSWER_MAX_CHARS;
 const INLINE_CONTINUE_NOTE = ' An earlier attempt at this stopped partway; the text it produced is included after the selection. Continue it from exactly where it stops and give only the missing remainder, without repeating anything already written.';
 
