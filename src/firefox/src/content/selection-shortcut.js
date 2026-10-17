@@ -922,12 +922,14 @@
       parts.source.textContent = cardState.sourceLabel || str('autoDetect');
       parts.target.value = cardState.target;
     }
-    parts.result.hidden = status === 'idle';
+    // A cut-off with no text has nothing to show or retry, so only the notice remains.
+    const cutOffOnly = status === 'error' && cardState.truncated;
+    parts.result.hidden = status === 'idle' || cutOffOnly;
     parts.result.setAttribute('aria-busy', status === 'loading' ? 'true' : 'false');
     parts.skeleton.hidden = status !== 'loading';
     parts.text.hidden = status !== 'ready';
-    parts.error.hidden = status !== 'error';
-    parts.cut.hidden = !(status === 'ready' && cardState.truncated);
+    parts.error.hidden = status !== 'error' || cutOffOnly;
+    parts.cut.hidden = !((status === 'ready' || cutOffOnly) && cardState.truncated);
     if (status === 'ready') renderAnswer(parts.text, cardState.text, kind !== 'translate');
     if (status === 'error') {
       parts.errorText.textContent = str('inlineFailed');
@@ -1033,10 +1035,12 @@
       if (requestId !== cardRequestId || !cardState) return;
       cardJobId = '';
       const answer = typeof response?.text === 'string' ? response.text.trim() : '';
-      if (!response?.ok || !answer) throw new Error(typeof response?.error === 'string' ? response.error : '');
+      cardState.truncated = response?.truncated === true;
+      if (!response?.ok || !answer) {
+        throw new Error(typeof response?.error === 'string' && !cardState.truncated ? response.error : '');
+      }
       cardState.status = 'ready';
       cardState.text = answer;
-      cardState.truncated = response.truncated === true;
     } catch (error) {
       if (requestId !== cardRequestId || !cardState) return;
       cardJobId = '';
@@ -1060,7 +1064,7 @@
 
   // A cut-off answer is finished in the side panel, where the reply is not capped.
   function continueInPanel() {
-    if (!cardState || cardState.status !== 'ready') return;
+    if (!cardState?.truncated) return;
     const { kind, target } = cardState;
     submitSelection(kind, '', kind === 'translate' ? target : interfaceLanguage);
   }

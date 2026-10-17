@@ -288,6 +288,13 @@ export function inlineSelectionMaxTokens(selectionText, action, providerCeiling)
 // that report none.
 const INLINE_CUT_REASONS = new Set(['length', 'max_tokens', 'max_output_tokens', 'max_completion_tokens']);
 
+// Some providers (OpenAI Responses) report hitting the output limit as an error
+// instead of a result. Such an error counts as a cut-off, not as a failure to retry.
+export function inlineErrorWasCut(error) {
+  const reason = String(error?.incompleteReason ?? '').trim().toLowerCase();
+  return INLINE_CUT_REASONS.has(reason);
+}
+
 export function inlineAnswerWasCut(result, maxTokens) {
   const raw = result?.raw;
   const reason = [

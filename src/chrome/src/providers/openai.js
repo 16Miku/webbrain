@@ -889,6 +889,9 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     error.isAskStreamTerminalError = !!stream && !error.isResponsesStreamFallbackSafe;
     error.incomplete = true;
     error.incompleteReason = reason;
+    // What the model wrote before it stopped, for callers that can show a partial answer.
+    const partial = Array.isArray(response?.output) ? this._responseText(response.output) : '';
+    if (partial) error.partialContent = partial;
     return error;
   }
 

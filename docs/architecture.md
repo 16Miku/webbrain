@@ -521,7 +521,9 @@ cost allowance (90 s timeout) and returns the text. The output budget is sized t
 selection (at least 2,000 tokens; Translate and Proofread grow to about two tokens per
 character, up to 8,000) and never exceeds the provider's own output ceiling. If the reply
 still stopped at the cap (finish reason, Anthropic `stop_reason` or Responses
-`incomplete_details`, or token usage at the budget when no reason is reported) the response
+`incomplete_details`, or token usage at the budget when no reason is reported; OpenAI
+Responses reports the limit as an error, which the background treats the same way and
+answers with whatever text the provider returned) the response
 is flagged `truncated`, and the card says so and offers **Continue in side panel** instead
 of passing a cut-off translation off as complete. Each call carries a job id, and a card
 that is closed, retried or retargeted sends `WB_SELECTION_SHORTCUT_INLINE_CANCEL` so the

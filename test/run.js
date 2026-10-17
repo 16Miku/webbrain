@@ -694,6 +694,7 @@ const {
   INLINE_SELECTION_ACTIONS: INLINE_SELECTION_ACTIONS_CH,
   INLINE_SELECTION_MAX_CHARS: INLINE_SELECTION_MAX_CHARS_CH,
   inlineAnswerWasCut: inlineAnswerWasCutCh,
+  inlineErrorWasCut: inlineErrorWasCutCh,
   inlineSelectionMaxTokens: inlineSelectionMaxTokensCh,
   buildFollowUpSelectionText: buildFollowUpSelectionTextCh,
   buildInlineSelectionMessages: buildInlineSelectionMessagesCh,
@@ -715,6 +716,7 @@ const {
   INLINE_SELECTION_ACTIONS: INLINE_SELECTION_ACTIONS_FX,
   INLINE_SELECTION_MAX_CHARS: INLINE_SELECTION_MAX_CHARS_FX,
   inlineAnswerWasCut: inlineAnswerWasCutFx,
+  inlineErrorWasCut: inlineErrorWasCutFx,
   inlineSelectionMaxTokens: inlineSelectionMaxTokensFx,
   buildFollowUpSelectionText: buildFollowUpSelectionTextFx,
   buildInlineSelectionMessages: buildInlineSelectionMessagesFx,
@@ -51757,6 +51759,7 @@ test('inline card answers are one tool-less, bounded model call behind validated
     assert.match(body, /agent\._chatWithCostAllowance\(\s*provider,\s*messages,\s*\{ maxTokens, temperature: 0, signal: controller\.signal \},\s*agent\._newCostRunState\(\),/, `${prefix}: the call is bounded, abortable and goes through the cost allowance`);
     assert.match(body, /const maxTokens = inlineSelectionMaxTokens\(msg\.selectionText, msg\.action, provider\?\.maxOutputTokens\);/, `${prefix}: the budget is sized to the selection and the provider's ceiling`);
     assert.match(body, /inlineAnswerWasCut\(result, maxTokens\) \? \{ ok: true, text, truncated: true \}/, `${prefix}: a capped answer is flagged instead of passing as complete`);
+    assert.match(body, /catch \(error\) \{\s*if \(inlineErrorWasCut\(error\)\) \{[\s\S]*?\{ ok: true, text: partial, truncated: true \}[\s\S]*?\{ ok: false, truncated: true, error:/, `${prefix}: a provider that reports the output limit as an error still ends in the cut-off state`);
 
     // A card that is closed, retried or retargeted cancels the paid call it no longer needs.
     assert.match(body, /const jobId = typeof msg\.jobId === 'string' && INLINE_JOB_ID_PATTERN\.test\(msg\.jobId\) \? msg\.jobId : '';\s*if \(jobId\) inlineSelectionJobs\.set\(jobId, controller\);/, `${prefix}: only well-formed job ids are tracked`);
@@ -51805,6 +51808,45 @@ test('inline card detects an answer that stopped at the output cap on every prov
   }
 });
 
+test('inline card treats a Responses output-limit error as a cut-off with any partial text', () => {
+  for (const [label, Provider, wasCutError] of [
+    ['chrome', OpenAIProviderCh, inlineErrorWasCutCh],
+    ['firefox', OpenAIProviderFx, inlineErrorWasCutFx],
+  ]) {
+    const provider = new Provider({
+      category: 'cloud',
+      providerName: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5.6-terra',
+    });
+    const thrown = (data) => {
+      try { provider._parseResponsesData(data); } catch (error) { return error; }
+      return null;
+    };
+    const partial = thrown({
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'Half of the ' }, { type: 'output_text', text: 'translation' }] }],
+    });
+    assert.equal(partial?.incompleteReason, 'max_output_tokens', `${label}: the provider still raises the output limit as an error for the agent`);
+    assert.equal(partial?.partialContent, 'Half of the translation', `${label}: the error carries what the model wrote before it stopped`);
+    assert.equal(wasCutError(partial), true, `${label}: the card treats that error as a cut-off`);
+
+    const reasoningOnly = thrown({
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output: [{ type: 'reasoning', summary: [] }],
+    });
+    assert.equal(wasCutError(reasoningOnly), true, `${label}: a limit spent on reasoning is still a cut-off`);
+    assert.equal('partialContent' in reasoningOnly, false, `${label}: no text means no partial answer`);
+
+    assert.equal(wasCutError(thrown({ status: 'incomplete', incomplete_details: { reason: 'content_filter' } })), false, `${label}: a content filter is a failure, not a cut-off`);
+    assert.equal(wasCutError(provider._responsesIncompleteError({ incomplete_details: { reason: 'missing_response_completed' } }, { stream: true })), false, `${label}: a stream that never completed is a failure`);
+    assert.equal(wasCutError(new Error('network error')), false, `${label}: ordinary errors stay errors`);
+    assert.equal(wasCutError(null), false, `${label}: no error is not a cut-off`);
+  }
+});
+
 test('inline card claims its request before waiting, cancels what it abandons and finishes cut-off answers in the panel', () => {
   for (const prefix of ['src/chrome', 'src/firefox']) {
     const content = fs.readFileSync(path.join(ROOT, prefix, 'src/content/selection-shortcut.js'), 'utf8');
@@ -51829,9 +51871,9 @@ test('inline card claims its request before waiting, cancels what it abandons an
     assert.match(body('function cancelInline()', 'async function runInline()'), /type: INLINE_CANCEL_MESSAGE, jobId/, `${prefix}: cancellation names the job`);
 
     // A capped answer is never shown as complete.
-    assert.match(run, /cardState\.truncated = response\.truncated === true;/, `${prefix}: the card records the cut-off flag`);
-    assert.match(content, /parts\.cut\.hidden = !\(status === 'ready' && cardState\.truncated\);/, `${prefix}: the notice shows for a cut-off answer only`);
-    assert.match(body('function continueInPanel()', 'function resetCard()'), /submitSelection\(kind, '', kind === 'translate' \? target : interfaceLanguage\)/, `${prefix}: continuing hands the same action to the side panel`);
+    assert.match(run, /cardState\.truncated = response\?\.truncated === true;\s*if \(!response\?\.ok \|\| !answer\) \{\s*throw new Error\(typeof response\?\.error === 'string' && !cardState\.truncated \? response\.error : ''\);/, `${prefix}: the card records the cut-off flag even when no text came back`);
+    assert.match(content, /const cutOffOnly = status === 'error' && cardState\.truncated;[\s\S]*?parts\.error\.hidden = status !== 'error' \|\| cutOffOnly;\s*parts\.cut\.hidden = !\(\(status === 'ready' \|\| cutOffOnly\) && cardState\.truncated\);/, `${prefix}: the notice shows for a cut-off answer only, and a cut-off with no text drops the retry`);
+    assert.match(body('function continueInPanel()', 'function resetCard()'), /if \(!cardState\?\.truncated\) return;[\s\S]*submitSelection\(kind, '', kind === 'translate' \? target : interfaceLanguage\)/, `${prefix}: continuing is only offered for a cut-off answer and hands the same action to the side panel`);
   }
 });
 

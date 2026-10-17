@@ -2272,6 +2272,39 @@ for (const [label, sourcePath, manualOpen] of [
     });
   }
 
+  test(`${label}: an output limit with no text left offers only the side panel, not a retry`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = async () => ({
+        ok: false,
+        truncated: true,
+        error: 'The answer was cut off before any text was produced.',
+      });
+    });
+    await openInlineCard(page, 'proofread');
+    await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().cardTruncated);
+    let state = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    if (state.cardStatus !== 'error' || state.retryRect || state.cardError || !state.continueRect || !state.cutNoticeText) {
+      throw new Error(`a cut-off without text should show the notice and the side-panel button only: ${JSON.stringify(state)}`);
+    }
+    await clickRectCenter(page, state.continueRect);
+    await page.waitForFunction(() => window.__selectionMessages.length === 1);
+    const message = await page.evaluate(() => window.__selectionMessages[0]);
+    if (message.action !== 'proofread' || !/Selected words near the viewport edge/.test(message.selectionText)) {
+      throw new Error(`continuing should hand the same action to the side panel: ${JSON.stringify(message)}`);
+    }
+
+    // A plain failure is unchanged: the reason and a retry, no side-panel button.
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = async () => ({ ok: false, error: 'No provider configured' });
+    });
+    await openInlineCard(page, 'explain');
+    state = await waitForCardStatus(page, 'error');
+    if (state.cardTruncated || state.continueRect || !state.retryRect || state.cardError !== 'No provider configured') {
+      throw new Error(`an ordinary failure must keep its retry and reason: ${JSON.stringify(state)}`);
+    }
+  });
+
   test(`${label}: a double click while the language bundle loads starts one card and one model call`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, holdLocalization: true });
     const selected = await selectFixtureText(page);

@@ -73,6 +73,7 @@ import {
   buildFullContextSelectionPrompt,
   buildInlineSelectionMessages,
   inlineAnswerWasCut,
+  inlineErrorWasCut,
   inlineSelectionMaxTokens,
   buildSelectionPrompt,
   normalizeSelectionAction,
@@ -1782,6 +1783,14 @@ async function answerInlineSelection(msg) {
     if (!text) return { ok: false, error: 'The model returned an empty answer.' };
     return inlineAnswerWasCut(result, maxTokens) ? { ok: true, text, truncated: true } : { ok: true, text };
   } catch (error) {
+    if (inlineErrorWasCut(error)) {
+      // The provider reported the output limit as an error. Show what it wrote, if
+      // anything, and let the card hand the rest to the side panel.
+      const partial = String(error.partialContent || '').trim();
+      return partial
+        ? { ok: true, text: partial, truncated: true }
+        : { ok: false, truncated: true, error: 'The answer was cut off before any text was produced.' };
+    }
     return { ok: false, error: String(error?.message || error).slice(0, 300) };
   } finally {
     clearTimeout(timer);
