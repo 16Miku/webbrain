@@ -12,14 +12,18 @@
 // (default 8). A broken cache handoff loses the prompt and diverges at once,
 // while FP16 rounding differences between slice sizes can change a near-tied
 // token later in a long greedy answer; the common prefix is reported either
-// way. Slicing applies to the Bonsai 2 Vision path. See docs/webgpu-models.md.
+// way. Prefill slicing applies only to the vision path (Bonsai 2 Vision), so
+// without --vision each prompt runs once, for timing only: some text presets
+// sample, and their answers are not comparable. Software (fallback) WebGPU
+// adapters are rejected. See docs/webgpu-models.md.
 //
 //   node scripts/check-webgpu-long-prompts.mjs --model webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision \
 //     --vision --profile .build/bonsai/chunked-2b-profile --offline --lengths 1000,4000,8000 --slices 0,512
 //
 // Options mirror check-bonsai-webgpu.mjs: --local-repo owner/repo=dir serves
 // unpublished files, --offline requires a cached model and blocks Hugging Face,
-// --adapter-luid high,low (decimal) selects a Windows GPU.
+// --adapter-luid high,low (decimal) selects a Windows GPU, and --timeout-ms
+// sets the per-operation deadline (default 30 minutes).
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
@@ -42,6 +46,7 @@ const slices = option('--slices', '0,512').split(',').map(Number);
 const maxTokens = Number(option('--max-tokens', 48));
 const maxSecondsPer1k = Number(option('--max-seconds-per-1k', 10));
 const minCommonWords = Number(option('--min-common-words', 8));
+const timeout = Number(option('--timeout-ms', 30 * 60_000));
 const profile = path.resolve(option('--profile', '.build/webgpu-long-prompts/profile'));
 const output = path.resolve(option('--output', '.build/webgpu-long-prompts/result.json'));
 const localRepos = {};
@@ -117,22 +122,33 @@ try {
     worker.onmessage = ({ data }) => {
       if (data.type === 'harness-ready') ready();
       else if (data.id && pending.has(data.id)) {
-        const { resolve, reject } = pending.get(data.id); pending.delete(data.id);
+        const { resolve, reject, timer } = pending.get(data.id);
+        clearTimeout(timer); pending.delete(data.id);
         if (data.ok === false) reject(new Error(data.error)); else resolve(data);
       }
     };
-    worker.onerror = event => failed(new Error(event.message));
-    window.workerCall = (type, payload) => new Promise((resolve, reject) => {
-      const requestId = ++id; pending.set(requestId, { resolve, reject }); worker.postMessage({ id: requestId, type, payload });
+    worker.onerror = event => {
+      failed(new Error(event.message));
+      for (const { reject, timer } of pending.values()) { clearTimeout(timer); reject(new Error(event.message)); }
+      pending.clear();
+    };
+    window.workerCall = (type, payload, timeout) => new Promise((resolve, reject) => {
+      const requestId = ++id;
+      const timer = setTimeout(() => { pending.delete(requestId); reject(new Error(`Timeout: ${type}`)); }, timeout);
+      pending.set(requestId, { resolve, reject, timer });
+      worker.postMessage({ id: requestId, type, payload });
     });
   }));
   const origin = new URL(page.url()).origin;
-  const call = (type, payload = {}) => page.evaluate(({ type, payload }) => window.workerCall(type, payload), { type, payload });
+  const call = (type, payload = {}) => page.evaluate(({ type, payload, timeout }) => window.workerCall(type, payload, timeout), { type, payload, timeout });
   await call('init', {
     transformersUrl: `${origin}/extension/vendor/transformers/transformers.web.js`,
     wasmMjsUrl: `${origin}/extension/vendor/transformers/ort-wasm-simd-threaded.asyncify.mjs`,
     wasmUrl: `${origin}/extension/vendor/transformers/ort-wasm-simd-threaded.asyncify.wasm`,
   });
+  result.probe = await call('probe');
+  assert(result.probe.hasWebGPU, 'Hardware WebGPU required');
+  assert(!result.probe.isFallbackAdapter, 'Software WebGPU cannot validate prefill speed');
   result.adapter = await page.evaluate(async () => {
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
     return { vendor: adapter?.info.vendor, architecture: adapter?.info.architecture };
@@ -161,11 +177,14 @@ try {
   }
   const type = vision ? 'multimodal-text-chat' : 'text-chat';
   await call(type, { modelId: model, dtype, device: 'webgpu', messages: [{ role: 'user', content: 'Hi' }], options: { maxTokens: 4 } });
+  // Only the vision path slices its prefill and decodes greedily.
+  const runSlices = vision ? slices : [null];
   for (const prompt of prompts) {
     const answers = new Map();
-    for (const slice of slices) {
+    for (const slice of runSlices) {
       const started = Date.now();
-      const reply = await call(type, { modelId: model, dtype, device: 'webgpu', messages: prompt.messages, options: { maxTokens, prefillSliceTokens: slice } });
+      const options = { maxTokens, ...(slice == null ? {} : { prefillSliceTokens: slice }) };
+      const reply = await call(type, { modelId: model, dtype, device: 'webgpu', messages: prompt.messages, options });
       const seconds = (Date.now() - started) / 1000;
       const run = { prompt: prompt.name, slice, seconds, secondsPer1kPromptTokens: +(seconds / (prompt.tokens / 1000)).toFixed(3), content: reply.content };
       result.runs.push(run);
@@ -175,11 +194,11 @@ try {
         result.failures.push({ prompt: prompt.name, slice, check: 'prefill-speed', secondsPer1kPromptTokens: run.secondsPer1kPromptTokens });
       }
     }
-    const reference = answers.get(slices[0]);
+    const reference = answers.get(runSlices[0]);
     for (const [slice, content] of answers) {
       if (content === reference) continue;
       const common = commonPrefixWords(reference, content);
-      const divergence = { prompt: prompt.name, slice, reference: slices[0], commonPrefixWords: common, referenceWords: words(reference).length };
+      const divergence = { prompt: prompt.name, slice, reference: runSlices[0], commonPrefixWords: common, referenceWords: words(reference).length };
       result.divergences.push(divergence);
       if (common < Math.min(minCommonWords, words(reference).length)) result.failures.push({ ...divergence, check: 'early-divergence' });
     }

@@ -76,14 +76,28 @@ Do all of these on the exact files you will publish.
      --profile <cached profile> --offline --lengths 1000,4000,8000 --slices 0,512
    ```
 
-   It prints wall time and seconds per 1k prompt tokens for each prompt, and
-   fails if the greedy answer changes between slice sizes. Seconds per 1k
-   tokens should stay roughly flat and around a second or less on a desktop
-   GPU. Tens of seconds per 1k tokens that scale linearly mean a CPU
-   fallback. Reference for rewritten Bonsai 2 2B on an RTX 5090 (48 new
-   tokens, including decode): 3k tokens in 2.5 s and 8k in 5.6 s in one pass,
-   7.8 s in 512-token slices. In a decoder-only benchmark, 4B prefilled 8,192
-   tokens in 16 s. The original Scan graph took 128 s for 1,024 tokens.
+   It prints wall time and seconds per 1k prompt tokens for each prompt. It
+   rejects software WebGPU adapters, and it fails when a text prompt of 4k or
+   more tokens takes longer than `--max-seconds-per-1k` (default 10). A
+   CPU fallback costs 100 seconds or more per 1k tokens.
+   - With `--vision`, it also compares each sliced answer with the first
+     `--slices` value. It fails if they diverge within the first eight words,
+     which is what a broken cache handoff does. A later divergence is reported
+     but expected (see "Sliced prefill" below).
+   - Without `--vision`, each prompt runs once, for timing only.
+
+   Seconds per 1k tokens should stay roughly flat, around a second on a
+   desktop GPU. Reference for rewritten Bonsai 2 2B Vision on an RTX 5090
+   (48 new tokens, including decode):
+
+   | Prompt tokens | One pass | 512-token slices | 256-token slices |
+   |---|---|---|---|
+   | 1k | 1.3 s | 1.4 s | 1.4 s |
+   | 4k | 3.3 s | 4.0 s | 4.7 s |
+   | 8k | 5.5 s | 7.7 s | 10.0 s |
+
+   In a decoder-only benchmark, 4B prefilled 8,192 tokens in 16 s. The
+   original Scan graph took 128 s for 1,024 tokens.
 4. **Production harness.** Run `scripts/check-bonsai-webgpu.mjs` online and
    `--offline` (with `--vision --image-history` for vision models) and record
    the evidence with `scripts/models/bonsai/record_browser_validation.py`.
@@ -124,12 +138,22 @@ Use the tools in `scripts/models/bonsai/`:
 
 - **Sliced prefill.** For the Bonsai 2 Vision presets the worker prefills
   long prompts in 512-token slices that carry the recurrent, conv and KV
-  cache, then lets `generate()` continue from that cache. Greedy answers are
-  identical to a single pass. Each extra slice adds roughly one decoder run of
-  fixed overhead (about 0.14 s on an RTX 5090). The `chrome.storage.local` key
-  `webgpuPrefillSliceTokens` overrides the slice (64–8192, `0` disables).
-  Apply the same pattern to any new model that serves long prompts on shared
-  GPUs.
+  cache, then lets `generate()` continue from that cache.
+  - Answers match a single pass up to FP16 rounding. In the RTX 5090 runs,
+    most sliced greedy answers were identical over 48 tokens. The rest
+    matched for the first 30–39 words, then picked a different but
+    equivalent phrasing: slicing changes the order of floating-point sums,
+    which can flip a near-tied token. The results were reproducible run to
+    run, and a smaller slice was not always further off.
+  - A broken cache handoff looks different: the answer loses the prompt right
+    away.
+  - Each extra slice adds roughly one decoder run of fixed overhead (about
+    0.14 s on an RTX 5090).
+
+  - The `chrome.storage.local` key `webgpuPrefillSliceTokens` overrides the
+    slice (64–8192, `0` disables).
+  - Apply the same pattern to any new model that serves long prompts on
+    shared GPUs.
 - **Cache-only inference.** Chat never downloads. Only explicit download or
   preload flows fetch model files.
 
