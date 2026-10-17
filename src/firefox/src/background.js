@@ -485,7 +485,15 @@ function normalizeClarifyTimeoutSec(value) {
 }
 
 async function loadClarifyTimeout() {
-  const stored = await browser.storage.local.get(['clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'clarifyTimeoutPolicy']);
+  let stored;
+  try {
+    stored = await browser.storage.local.get(['clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'clarifyTimeoutPolicy']);
+  } catch (error) {
+    // The user's choice could not be read: until a later load succeeds, a
+    // timeout takes the safe answer rather than the finish default.
+    agent.clarifyTimeoutPolicy = 'safe';
+    throw error;
+  }
   // One-shot: old 0 meant Off; new 0 means Instant and Off is >1200.
   if (!stored.clarifyTimeoutSemanticsV2) {
     const updates = { clarifyTimeoutSemanticsV2: true };
@@ -501,7 +509,8 @@ async function loadClarifyTimeout() {
   agent.clarifyTimeoutPolicy = stored.clarifyTimeoutPolicy === 'safe' ? 'safe' : 'finish';
 }
 // A question's timeout answer is decided when it is asked, so a run must
-// not start before the user's timeout setting is loaded.
+// not start before the user's timeout setting is loaded (or found unreadable,
+// which leaves the safe answer).
 const clarifyTimeoutReady = loadClarifyTimeout().catch(() => {});
 
 async function loadAutoScreenshot() {

@@ -321,6 +321,32 @@ for (const { build, Agent, policy, Capability } of builds) {
     assert.match(tools, /Classify every question\. "none" when answering approves nothing below/);
     assert.match(tools, /set consequence on every question/i);
   });
+
+  test(`${build}: a timeout setting that cannot be read leaves the safe answer`, async () => {
+    const background = await read(`src/${build}/src/background.js`);
+    const start = background.indexOf('async function loadClarifyTimeout()');
+    assert.ok(start >= 0, 'loadClarifyTimeout is in background.js');
+    const source = background.slice(start, background.indexOf('\n}\n', start) + 2);
+    const api = build === 'chrome' ? 'chrome' : 'browser';
+    const load = get => {
+      const agent = { clarifyTimeoutPolicy: 'finish', clarifyTimeoutSec: 60 };
+      const storage = { local: { get, set: async () => {} } };
+      const run = new Function(api, 'agent', 'normalizeClarifyTimeoutSec', 'CLARIFY_TIMEOUT_OFF_SLIDER',
+        `${source}\nreturn loadClarifyTimeout();`);
+      return { agent, done: run({ storage }, agent, value => Number(value), 1201) };
+    };
+    const unreadable = load(async () => { throw new Error('storage unavailable'); });
+    await assert.rejects(unreadable.done, /storage unavailable/, 'callers still see the failure');
+    assert.equal(unreadable.agent.clarifyTimeoutPolicy, 'safe', 'an unreadable setting fails closed, not to finish');
+    for (const policyName of ['finish', 'safe']) {
+      const stored = load(async () => ({ clarifyTimeoutPolicy: policyName, clarifyTimeoutSemanticsV2: true }));
+      await stored.done;
+      assert.equal(stored.agent.clarifyTimeoutPolicy, policyName);
+    }
+    const unset = load(async () => ({ clarifyTimeoutSemanticsV2: true }));
+    await unset.done;
+    assert.equal(unset.agent.clarifyTimeoutPolicy, 'finish', 'no stored choice keeps the default');
+  });
 }
 
 let browser;
