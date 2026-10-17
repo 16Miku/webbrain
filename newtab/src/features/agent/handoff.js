@@ -46,58 +46,70 @@ export function buildHandoff({ text, mode, tabId, now = Date.now() }) {
   };
 }
 
+// A new tab page is the only writer of its tab's hand-off key, so remembering here
+// that one is still waiting is enough to stop a second submit from replacing it
+// while a cold side panel is still starting up. The lock is taken synchronously at
+// submit time (before the write or the panel-open settle) and released when the
+// panel has claimed the task, the submit failed, or CLAIM_TIMEOUT_MS passed.
+const CLAIM_TIMEOUT_MS = 120_000;
+const inFlight = new Map(); // tabId -> { promise, release }
+
+function lockTab(tabId) {
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  const release = () => {
+    if (inFlight.get(tabId)?.promise === promise) inFlight.delete(tabId);
+    resolve();
+  };
+  inFlight.set(tabId, { promise, release });
+  return release;
+}
+
+export const isHandoffPending = (tabId) => inFlight.has(tabId);
+
+/** Resolves when the panel has claimed this tab's task (or the submit failed / timed out). */
+export function whenClaimed(tab = currentTab) {
+  return inFlight.get(tab?.id)?.promise ?? Promise.resolve();
+}
+
+/** After a successful write: release the lock once the record has been removed. */
+function releaseWhenClaimed(api, tabId, release) {
+  const key = handoffKey(tabId);
+  let timer;
+  const listener = (changes, area) => {
+    if ((!area || area === 'local') && changes?.[key] && !changes[key].newValue) finish();
+  };
+  function finish() {
+    clearTimeout(timer);
+    api.storage.onChanged?.removeListener?.(listener);
+    release();
+  }
+  timer = setTimeout(finish, CLAIM_TIMEOUT_MS);
+  api.storage.onChanged?.addListener?.(listener);
+  // It may already have been claimed between the write and now.
+  Promise.resolve(api.storage.local.get?.(key))
+    .then((found) => { if (!found?.[key]) finish(); })
+    .catch(() => {});
+}
+
 /**
  * Call directly from the submit handler (no await before it) so the browser
  * still sees the user gesture. Resolves true once the panel has been asked to
  * open and the task is stored.
  */
-// A new tab page is the only writer of its tab's hand-off key, so remembering here
-// that one is still waiting is enough to stop a second submit from replacing it
-// while a cold side panel is still starting up.
-const CLAIM_TIMEOUT_MS = 120_000;
-const inFlight = new Map(); // tabId -> Promise that settles once the record is claimed
-
-export const isHandoffPending = (tabId) => inFlight.has(tabId);
-
-/** Resolves when the panel has claimed this tab's task (or after a timeout). */
-export function whenClaimed(tab = currentTab) {
-  return inFlight.get(tab?.id) ?? Promise.resolve();
-}
-
-function trackClaim(api, tabId) {
-  const key = handoffKey(tabId);
-  const claimed = new Promise((resolve) => {
-    let timer;
-    const listener = (changes, area) => {
-      if ((!area || area === 'local') && changes?.[key] && !changes[key].newValue) finish();
-    };
-    function finish() {
-      clearTimeout(timer);
-      api.storage.onChanged?.removeListener?.(listener);
-      inFlight.delete(tabId);
-      resolve();
-    }
-    timer = setTimeout(finish, CLAIM_TIMEOUT_MS);
-    api.storage.onChanged?.addListener?.(listener);
-    // It may already have been claimed between the write and now.
-    Promise.resolve(api.storage.local.get?.(key))
-      .then((found) => { if (!found?.[key]) finish(); })
-      .catch(() => {});
-  });
-  inFlight.set(tabId, claimed);
-}
-
 export function submitTask({ text, mode }, api = extApi(), tab = currentTab) {
   if (!api || tab?.id == null) return Promise.reject(new Error('Extension API unavailable'));
   if (inFlight.has(tab.id)) return Promise.reject(new Error('Previous task is still being handed over'));
   const firefox = hasFirefoxSidebar();
   if (!firefox && !api.sidePanel?.open) return Promise.reject(new Error('Side panel API unavailable'));
 
+  const release = lockTab(tab.id);
   const handoff = buildHandoff({ text, mode, tabId: tab.id });
-  const stored = Promise.resolve(api.storage.local.set({ [handoffKey(tab.id)]: handoff }));
 
+  let stored;
   let opened;
   try {
+    stored = Promise.resolve(api.storage.local.set({ [handoffKey(tab.id)]: handoff }));
     if (firefox) {
       opened = api.sidebarAction.open();
     } else {
@@ -108,11 +120,12 @@ export function submitTask({ text, mode }, api = extApi(), tab = currentTab) {
     }
   } catch (error) {
     opened = Promise.reject(error);
+    stored ??= Promise.resolve();
   }
 
   return Promise.all([stored, opened]).then(
     () => {
-      trackClaim(api, tab.id);
+      releaseWhenClaimed(api, tab.id, release);
       Promise.resolve(api.runtime.sendMessage({ type: 'WB_NEWTAB_PANEL_OPENED', tabId: tab.id })).catch(() => {});
       return true;
     },
@@ -122,6 +135,7 @@ export function submitTask({ text, mode }, api = extApi(), tab = currentTab) {
       // would pick it up and send it as if the submit had worked.
       await stored.catch(() => {});
       await discardHandoff(api, tab.id, handoff.id);
+      release();
       throw error;
     },
   );

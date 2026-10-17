@@ -83,6 +83,7 @@ test('submitTask stores the task, opens the panel from the same tick, then annou
 
 function failingApi({ open, withSidePanel = true } = {}) {
   const store = new Map();
+  const listeners = [];
   const api = {
     storage: {
       local: {
@@ -93,6 +94,16 @@ function failingApi({ open, withSidePanel = true } = {}) {
     },
     runtime: { sendMessage: async () => {} },
     _store: store,
+    _claim(tabId) {
+      const key = handoffKey(tabId);
+      const oldValue = store.get(key);
+      store.delete(key);
+      [...listeners].forEach((fn) => fn({ [key]: { oldValue } }, 'local'));
+    },
+  };
+  api.storage.onChanged = {
+    addListener: (fn) => listeners.push(fn),
+    removeListener: (fn) => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); },
   };
   if (withSidePanel) api.sidePanel = { setOptions: async () => {}, open };
   return api;
@@ -123,6 +134,38 @@ test('cleanup never removes a newer task written by another submit', async () =>
   });
   await assert.rejects(() => submitTask({ text: 'first', mode: 'ask' }, api, { id: 1 }));
   assert.equal(api._store.get(handoffKey(1))?.id, 'newer');
+});
+
+test('two submits in the same tick: the second is refused before anything is written', async () => {
+  const writes = [];
+  const api = {
+    storage: {
+      local: {
+        set: (v) => { writes.push(v); return new Promise(() => {}); }, // never settles: the first submit is still in flight
+        get: async () => ({}),
+        remove: async () => {},
+      },
+    },
+    sidePanel: { setOptions: async () => {}, open: () => new Promise(() => {}) },
+    runtime: { sendMessage: async () => {} },
+  };
+  const tab = { id: 88 };
+  submitTask({ text: 'first', mode: 'ask' }, api, tab);
+  assert.equal(isHandoffPending(88), true, 'locked synchronously');
+  await assert.rejects(() => submitTask({ text: 'second', mode: 'ask' }, api, tab), /still being handed over/);
+  assert.equal(writes.length, 1, 'only the first task was written');
+});
+
+test('a failed submit releases the lock so the next one can go through', async () => {
+  const api = failingApi({ open: () => Promise.reject(new Error('blocked')) });
+  await assert.rejects(() => submitTask({ text: 'a', mode: 'ask' }, api, { id: 91 }));
+  assert.equal(isHandoffPending(91), false);
+  api.sidePanel.open = async () => {};
+  await submitTask({ text: 'b', mode: 'ask' }, api, { id: 91 });
+  assert.equal(api._store.get(handoffKey(91)).text, 'b');
+  api._claim(91);
+  await whenClaimed({ id: 91 });
+  assert.equal(isHandoffPending(91), false);
 });
 
 test('a second submit from the same tab waits until the first task has been claimed', async () => {
@@ -402,7 +445,8 @@ for (const browser of ['chrome', 'firefox']) {
       setMode() {},
       getInputEl: () => h.input,
       autoResizeInput() {},
-      sendMessage: () => new Promise((resolve) => { finishRun = resolve; }),
+      // Like the real send: commits (clears the composer) quickly, then runs for a long time.
+      sendMessage: () => new Promise((resolve) => { h.input.value = ''; finishRun = resolve; }),
       now: () => 100_000,
     });
     await slow.start();
@@ -444,6 +488,46 @@ for (const browser of ['chrome', 'firefox']) {
     await handoff.consume();
     await flush();
     await flush();
+    assert.deepEqual(sent, ['first', 'second']);
+    assert.equal(KEY in h.store, false);
+  });
+
+  test(`${browser}: a second hand-off waits while the first Ask still holds the composer`, async () => {
+    const h = await harness({ record: rec({ id: 'r1', text: 'first' }) });
+    const sent = [];
+    let commitFirst;
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in h.store ? { [k]: h.store[k] } : {}),
+        remove: async (k) => { delete h.store[k]; },
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => false,
+      getIsDocumentVisible: () => true,
+      doc: null,
+      setMode() {},
+      getInputEl: () => h.input,
+      autoResizeInput() {},
+      // The send checks the composer, so the draft stays put until it has committed.
+      sendMessage: () => new Promise((resolve) => {
+        sent.push(h.input.value);
+        commitFirst = () => { h.input.value = ''; resolve(undefined); };
+      }),
+      now: () => 100_000,
+    });
+    await handoff.start();
+    h.store[KEY] = rec({ id: 'r1', text: 'first' });
+    await handoff.consume();
+    assert.deepEqual(sent, ['first']);
+
+    // The next task lands before the first send has committed.
+    h.store[KEY] = rec({ id: 'r2', text: 'second' });
+    assert.equal(await handoff.consume(), false);
+    assert.equal(h.input.value, 'first', "the first task's text was not replaced");
+    assert.equal(KEY in h.store, true, 'the second task is still waiting');
+
+    commitFirst();
+    await new Promise((r) => setTimeout(r, 400));
     assert.deepEqual(sent, ['first', 'second']);
     assert.equal(KEY in h.store, false);
   });

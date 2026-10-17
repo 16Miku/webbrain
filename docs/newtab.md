@@ -19,8 +19,8 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
 1. In the submit handler (no `await` before it, to keep the user gesture) the page
    writes `{id, tabId, text, mode, createdAt}` to extension storage key
    `wbNewtabHandoff:<tabId>` (one key per tab, so different tabs cannot overwrite each
-   other; within a tab the box stays disabled until the panel has claimed the task, so a
-   second submit cannot replace it either) and opens the panel for that tab (Chrome
+   other; within a tab the box is locked synchronously at submit and stays disabled until the
+   panel has claimed the task, so a second submit cannot replace it either) and opens the panel for that tab (Chrome
    `sidePanel.setOptions` + `open({tabId})`; Firefox `sidebarAction.open()`). If the
    panel fails to open, the page removes its own record again, so a failed submit can
    never be picked up and sent later when the panel is opened by hand.
@@ -39,6 +39,9 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
      queued behind it, like pressing Send. If the panel declines to send (plan review
      pending, a refresh in progress) the text stays in the composer.
    - **Act** is filled in with the panel switched to Act, and never sent.
+   - A later hand-off is held back (retried every 150 ms, for up to about 30 s) while an
+     earlier Ask's text is still in the composer waiting for its send to commit, so one
+     task can never replace the other. The record stays in storage meanwhile.
 
 The text is user-typed, so it enters the panel exactly like typing in the composer;
 it is never treated as page content.

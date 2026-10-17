@@ -12,6 +12,10 @@
  *   - Act: the task is filled in and the panel switches to Act, but nothing is
  *     sent. Act always needs the user's own Enter in the panel.
  *
+ * A second hand-off is held back while an earlier Ask is still being sent (its text
+ * is still sitting in the composer): filling the composer again would make that
+ * send see a changed draft and drop it.
+ *
  * Nothing is claimed until start() is called, after the panel has finished
  * restoring its chat: sending earlier would be overwritten by the restore. The
  * freshness window is extended by however long that startup took.
@@ -24,6 +28,9 @@ export const newtabHandoffKey = (tabId) => `${NEWTAB_HANDOFF_PREFIX}${tabId}`;
 export const NEWTAB_HANDOFF_MAX_AGE_MS = 30_000;
 export const NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS = 120_000;
 export const NEWTAB_HANDOFF_MAX_TEXT = 4000;
+export const NEWTAB_HANDOFF_SEND_RETRY_MS = 150;
+// Give up holding a later hand-off back after this many retries (~30 s).
+export const NEWTAB_HANDOFF_SEND_HOLD_MAX_RETRIES = 200;
 
 /** Returns a clean record, or null when it is malformed, stale or from the future. */
 export function normalizeNewtabHandoff(raw, now = Date.now(), maxAgeMs = NEWTAB_HANDOFF_MAX_AGE_MS) {
@@ -62,6 +69,26 @@ export function createNewtabHandoff({
   let startupAllowanceMs = 0;
   let consuming = false;
   let rerun = false;
+  let retryTimer = null;
+  let retries = 0;
+  // The Ask most recently handed to sendMessage, while its text may still be in
+  // the composer waiting for the send's own checks to finish.
+  let pendingSend = null;
+
+  const sendStillHoldsComposer = () => {
+    if (!pendingSend || pendingSend.settled) return false;
+    return String(getInputEl()?.value ?? '') === pendingSend.text;
+  };
+
+  function retrySoon() {
+    if (retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      // A send that never commits must not hold later hand-offs back forever.
+      if (++retries > NEWTAB_HANDOFF_SEND_HOLD_MAX_RETRIES && pendingSend) pendingSend.settled = true;
+      consume();
+    }, NEWTAB_HANDOFF_SEND_RETRY_MS);
+  }
 
   async function consume() {
     if (!ready || !getIsDocumentVisible()) return false;
@@ -73,6 +100,11 @@ export function createNewtabHandoff({
     }
     const tabId = getCurrentTabId();
     if (tabId == null) return false;
+    if (sendStillHoldsComposer()) {
+      retrySoon();
+      return false;
+    }
+    retries = 0;
     const key = newtabHandoffKey(Number(tabId));
     consuming = true;
     // Only the first attempt after start() gets the startup allowance.
@@ -104,6 +136,8 @@ export function createNewtabHandoff({
         // sendMessage reads the composer synchronously when called, so starting it
         // here captures this task. It is not awaited: a send can last a whole run,
         // and that must not hold up later hand-offs or the panel's own startup.
+        const send = { text: handoff.text, settled: false };
+        pendingSend = send;
         let sending;
         try {
           sending = Promise.resolve(sendMessage(getIsProcessing() ? { __deliveryMode: 'queue' } : undefined));
@@ -113,6 +147,7 @@ export function createNewtabHandoff({
         sending
           .then((result) => result !== false, () => false)
           .then((sent) => {
+            send.settled = true;
             // Declined or failed: the new tab already showed success and cleared its
             // box, so make sure the text is still sitting in the composer.
             if (!sent && !String(input.value || '').trim()) fill();

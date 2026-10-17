@@ -26,6 +26,8 @@ function TaskBox() {
   // second task cannot replace it while a cold panel is still starting.
   const [waiting, setWaiting] = useState(false);
   const inputRef = useRef(null);
+  // Set synchronously: two submit events in the same tick both see the stale `waiting`.
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     primeCurrentTab();
@@ -35,19 +37,28 @@ function TaskBox() {
   const onSubmit = (event) => {
     event.preventDefault();
     const value = text.trim();
-    if (!value || waiting) return;
+    if (!value || waiting || submittingRef.current) return;
     setError('');
 
     // Both branches start synchronously inside the submit gesture.
-    const run = mode === 'search' ? runSearch(value) : submitTask({ text: value, mode });
-    run
+    if (mode === 'search') {
+      runSearch(value).catch(() => setError(wbT('wb.panel_failed')));
+      return;
+    }
+    submittingRef.current = true;
+    setWaiting(true);
+    submitTask({ text: value, mode })
       .then(() => {
-        if (mode === 'search') return;
         setText('');
-        setWaiting(true);
-        whenClaimed().then(() => setWaiting(false));
+        // Stays locked until the panel has taken the task.
+        return whenClaimed();
       })
-      .catch(() => setError(wbT('wb.panel_failed')));
+      .catch(() => setError(wbT('wb.panel_failed')))
+      .finally(() => {
+        submittingRef.current = false;
+        setWaiting(false);
+        inputRef.current?.focus();
+      });
   };
 
   return (
