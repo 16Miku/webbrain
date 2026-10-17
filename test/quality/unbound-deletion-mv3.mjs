@@ -44,7 +44,7 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
   await fs.mkdir(out, { recursive: true });
   let actionCalls = 0, judgeCalls = 0, blockedRemote = 0;
   const completionRecovery = { reads: 0 };
-  const deletes = [], providerRequests = [], authorizations = [], decisions = [], summaryReadings = [];
+  const deletes = [], providerRequests = [], authorizations = [], decisions = [], summaryReadings = [], continuationReadings = [];
   const textOf = content => typeof content === 'string' ? content : Array.isArray(content)
     ? content.filter(part => part?.type === 'text').map(part => part.text || '').join('\n') : '';
   const refFor = (input, name) => {
@@ -86,9 +86,14 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
       const choices = [...system.matchAll(/^- "([a-z_]+)":/gm)].map(match => match[1]);
       // A failed or partial Act result is read once before it is shown; it
       // gives the outcome here.
+      // A partial end is checked once for remaining work; a refused deletion
+      // must reach that judge as the user's structured refusal.
+      const continuation = choices.includes('continue_now');
       if (choices.includes('mode_claim')) summaryReadings.push({ request, summary: page.summary });
+      else if (continuation) continuationReadings.push({ request, declined: (page.recorded_current_results || []).filter(entry => entry.userDeclined === true).length });
       else decisions.push({ choices, request, page });
       const answer = choices.includes('mode_claim') ? { choice: 'result', evidence: '' }
+        : continuation ? { choice: 'stop_required', evidence: '' }
         : !choices.includes('delete_this') ? { choice: '', evidence: '' }
         : cardAnswer ? { choice: 'unclear', evidence: '' }
         : page.item === rows[0] ? { choice: 'delete_this', evidence } : { choice: 'other_item', evidence: '' };
@@ -206,7 +211,7 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
     const toolResults = result.updates.filter(event => event.type === 'tool_result').map(event => ({ name: event.data?.name,
       blocked: event.data?.result?.blocked === true, reason: event.data?.result?.actionGuard?.reason || null, error: event.data?.result?.error || null }));
     await fs.writeFile(path.join(out, 'evidence.json'), JSON.stringify({ result, diagnostic, deletes, judgeCalls, authorizations,
-      decisions, summaryReadings, toolResults, prompts, cards, unexpected, blockedRemote }, (_key, value) => typeof value === 'string' && value.startsWith('data:image/') ? '[owned fixture screenshot omitted]' : value, 2));
+      decisions, summaryReadings, continuationReadings, toolResults, prompts, cards, unexpected, blockedRemote }, (_key, value) => typeof value === 'string' && value.startsWith('data:image/') ? '[owned fixture screenshot omitted]' : value, 2));
     assert.deepEqual(unexpected, [], 'No other question was asked');
     assert.equal(authorizations.length, 0, 'A deletion is decided by the deletion question, not the publication check');
     // The request reaches the model as written, with the row and the row beside it.
@@ -230,7 +235,10 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
       assert.notEqual(partial?.outcome, 'success', JSON.stringify(partial));
       assert.deepEqual(summaryReadings, [{ request: task, summary: `The user chose not to remove the ${target}; nothing was removed.` }],
         'The partial result was read once, as written');
-      console.log(JSON.stringify({ passed: true, installedMV3: true, variant, cards: cards.length, deletes: deletes.length, blockedRemote }));
+      assert.ok(continuationReadings.length <= 1 && continuationReadings.every(reading => reading.request === task && reading.declined === 1),
+        `A remaining-work check sees the refusal as the user's structured decision: ${JSON.stringify(continuationReadings)}`);
+      console.log(JSON.stringify({ passed: true, installedMV3: true, variant, cards: cards.length, deletes: deletes.length,
+        continuationReadings: continuationReadings.length, blockedRemote }));
       return;
     }
     assert.deepEqual(deletes, [{ method: 'DELETE', path: '/api/cart/items/1' }], `Only the named row is removed, once: ${JSON.stringify(toolResults)}`);

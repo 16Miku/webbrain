@@ -47,7 +47,10 @@ const server = http.createServer(async (request, response) => {
   try {
     let raw = ''; for await (const chunk of request) raw += chunk;
     const input = JSON.parse(raw);
-    const users = input.messages.filter(message => message.role === 'user').map(message => text(message.content));
+    // The latest user turn may carry the app-projected task authority after its
+    // authored text; a correction is counted by the words the user wrote.
+    const users = input.messages.filter(message => message.role === 'user')
+      .map(message => text(message.content).split('\n\n[APP-OWNED CURRENT USER TASK')[0]);
     const evaluator = text(input.messages[0]?.content).startsWith('Evaluate only the observable requirements of the genuine user task');
     const action = Array.isArray(input.tools) && input.tools.length > 0;
     const record = { worker, stage: evaluator ? 'completion' : action ? 'action' : 'planner',

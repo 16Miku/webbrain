@@ -864,6 +864,22 @@ function collectVisibleInteractiveElements(maxEl) {
   return out;
 }
 
+// The user's own task text, normalized like a recipient identity (NFKC,
+// lowercase, collapsed whitespace) so an identity can be found inside it.
+function normalizeAuthoredRecipientText(value) {
+  const text = String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/[\u200b-\u200d\ufeff]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  try {
+    return text.normalize('NFKC').toLocaleLowerCase();
+  } catch {
+    return text.toLowerCase();
+  }
+}
+
 export class Agent extends LoopDetector {
   constructor(providerManager) {
     super();
@@ -24797,7 +24813,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // Semantic intent is necessary but cannot invent a named destination.
         // The fresh authenticated task must itself contain each exact identity;
         // a page title, OCR, prior turn or address suffix cannot provide it.
-        const authored = normalizeRecipientAnswer(this._plannerUserAuthoredText(enriched)).slice(0, 100000);
+        const authored = normalizeAuthoredRecipientText(this._plannerUserAuthoredText(enriched)).slice(0, 100000);
         const tokenChar = /[\p{L}\p{N}@._%+-]/u;
         const present = plan.messaging.recipients.every(recipient => {
           const identity = normalizeRecipientIdentity(recipient.identity);
