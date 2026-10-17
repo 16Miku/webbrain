@@ -259,7 +259,10 @@ The labelled set is d1's balanced-V3 held-out test (72 synthetic screenshots,
   - Settings → Decision models offers it in Chrome as an explicit, key-free,
     local provider (`webgpu_chat`). Like D1, a positive completion still needs
     independent confirmation, and the judge allows it 15 s instead of 5 s for
-    the first load after a browser restart.
+    the first load after a browser restart. An aborted or timed-out decision
+    is cancelled in the worker (between prefill slices and continuations),
+    so it does not hold the model queue: on the 5090 a decision cancelled
+    300 ms in ended at 0.44 s and the next one ran in its usual 1.9 s.
 
 Results on the held-out test, RTX 5090, through the extension:
 
