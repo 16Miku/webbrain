@@ -1259,7 +1259,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // failure part-way: the old gallery is back, nothing else is imported, no success
     mod.db.adds = 0; mod.db.failAddAt = 1;
     globalThis.__toasts = []; globalThis.__reloads = 0;
-    const failed = await mod.importSettings(backup([{ id: 9, url: 'data:new-1' }, { url: 'data:new-2' }, { url: 'data:new-3' }]));
+    const failed = await mod.importSettings(backup([{ id: 9, url: 'data:image/png;base64,N1' }, { url: 'data:image/png;base64,N2' }, { url: 'data:image/png;base64,N3' }]));
     assert.equal(failed, false);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:old-1', 'data:old-2']);
     assert.equal(store.getItem('theme'), null, 'settings were not applied');
@@ -1268,9 +1268,15 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
 
     // success replaces the gallery and applies settings
     mod.db.adds = 0; mod.db.failAddAt = -1; globalThis.__toasts = [];
-    const ok = await mod.importSettings(backup([{ id: 9, url: 'data:new-1' }, { url: 'data:new-2' }]));
+    const ok = await mod.importSettings(backup([{ id: 9, url: 'data:image/png;base64,N1' }, { url: 'data:image/png;base64,N2' }]));
     assert.equal(ok, true);
-    assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:new-1', 'data:new-2']);
+    assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:image/png;base64,N1', 'data:image/png;base64,N2']);
+    // bare hosts in a backup are stored the way the add/edit dialogs would save them
+    const reloads0 = globalThis.__reloads, toasts0 = globalThis.__toasts.length;
+    assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: JSON.stringify([{ name: 'a', url: 'example.com', key: 'k' }]), applinks: JSON.stringify([{ name: 'b', url: 'HTTP://b.test/x', key: 'j' }]) })), true);
+    assert.equal(JSON.parse(store.getItem('quicklinks'))[0].url, 'https://example.com');
+    assert.equal(JSON.parse(store.getItem('applinks'))[0].url, 'http://b.test/x');
+    globalThis.__reloads = reloads0; globalThis.__toasts.length = toasts0;
     assert.equal(store.getItem('theme'), 'dark');
     assert.ok(globalThis.__toasts.includes('toasts.imported'));
     assert.equal(globalThis.__reloads, 1);
@@ -1297,7 +1303,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
       { customEvents: 'not-json' }, { messages: '{"a":1}' }, { applinks: '' }, { order: 'null' },
       { favourite: '[1]' }, { theme: { nested: true } },
     ]) {
-      assert.equal(await mod.importSettings(JSON.stringify({ ...bad, [K]: [{ url: 'data:other' }] })), false, JSON.stringify(bad));
+      assert.equal(await mod.importSettings(JSON.stringify({ ...bad, [K]: [{ url: 'data:image/png;base64,OTHER' }] })), false, JSON.stringify(bad));
     }
     for (const bad of [
       { customEvents: '[null]' }, { customEvents: '[{"name":"x","month":"1","date":1}]' }, { messages: '[1]' },
@@ -1309,10 +1315,14 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // a malformed gallery record is refused as a whole; it must not clear the current gallery
     mod.db.rows = [{ id: 1, url: 'data:keep' }];
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [null] })), false);
-    assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: 'data:ok' }, { name: 'no url' }] })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: 'data:image/png;base64,OK' }, { name: 'no url' }] })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: 'nope' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: '' }] })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: '   ' }] })), false);
+    for (const url of ['not-a-url', 'data:text/plain,x', 'javascript:alert(1)', 'ftp://a.test/x.png']) {
+      assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url }] })), false, url);
+    }
+    mod.db.rows = [{ id: 1, url: 'data:keep' }];
     // links follow the add/edit URL policy
     for (const url of ['javascript:alert(1)', '', 'not a url', 'ftp://a.test']) {
       assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: JSON.stringify([{ name: 'a', url, key: 'k' }]) })), false, url);
@@ -1322,7 +1332,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // delete / drag-and-drop identify links by key: it must be present and unique
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"a","url":"https://a.test"}]' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ applinks: '[{"name":"a","url":"u","key":"k"},{"name":"b","url":"u","key":"k"}]' })), false);
-    assert.equal(globalThis.__toasts.length, 30);
+    assert.equal(globalThis.__toasts.length, 34);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({
@@ -1495,4 +1505,10 @@ test('round-37b: a navigation trigger is acted on once, not on every language ch
   const tabs = readFileSync(nt('components/Elements/MainModal/backend/Tabs.jsx'), 'utf8');
   assert.match(tabs, /handledTriggerRef\.current === navigationTrigger\) return;/);
   assert.equal((tabs.match(/handledTriggerRef\.current = navigationTrigger/g) || []).length, 2);
+});
+
+test('round-38: imported links are stored normalised; gallery urls must be loadable', async () => {
+  const src = readFileSync(nt('utils/settings/import.js'), 'utf8');
+  assert.match(src, /normalizeLinks\(content\);/);
+  assert.match(src, /data:\(image\|video\)/);
 });

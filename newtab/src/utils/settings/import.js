@@ -27,6 +27,7 @@ export async function importSettings(e, initial = false) {
     ({ [BACKGROUNDS_BACKUP_KEY]: backgrounds, ...content } = parsed);
     const problem = validateSettings(content);
     if (problem) throw new Error(`invalid settings: ${problem}`);
+    normalizeLinks(content);
     // Dropping a bad record quietly would still clear the gallery and report success.
     if (backgrounds !== undefined && !isBackgroundList(backgrounds)) {
       throw new Error(`invalid settings: ${BACKGROUNDS_BACKUP_KEY} has an entry of the wrong shape`);
@@ -104,6 +105,21 @@ const JSON_ARRAY_ENTRIES = {
   todo: (e) => isObject(e) && isString(e.value),
 };
 
+/**
+ * Links are rendered as hrefs, so a bare "example.com" would navigate to an extension-relative
+ * address. Store each url in the form the add / edit dialogs would have saved. Run after
+ * validateSettings, which guarantees every url normalises.
+ */
+export function normalizeLinks(content) {
+  for (const key of KEYED_LISTS) {
+    if (!(key in content)) continue;
+    content[key] = JSON.stringify(
+      JSON.parse(content[key]).map((link) => ({ ...link, url: normalizeLinkUrl(link.url) })),
+    );
+  }
+  return content;
+}
+
 /** Returns a reason when the backup would leave the new tab unable to load, else null. */
 export function validateSettings(content) {
   for (const [key, value] of Object.entries(content)) {
@@ -136,8 +152,18 @@ export function validateSettings(content) {
   return null;
 }
 
+// What the loader can show: an uploaded image / video (a data URL) or a remote http(s) address.
+const isBackgroundUrl = (url) => {
+  if (typeof url !== 'string') return false;
+  if (/^data:(image|video)\/[^;,]+[;,]/i.test(url)) return true;
+  try {
+    return /^https?:$/.test(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+};
 const isBackgroundList = (list) =>
-  Array.isArray(list) && list.every((record) => isObject(record) && typeof record.url === 'string' && record.url.trim() !== '');
+  Array.isArray(list) && list.every((record) => isObject(record) && isBackgroundUrl(record.url));
 
 const withoutId = ({ id: _id, ...record }) => record; // ids are assigned again
 
