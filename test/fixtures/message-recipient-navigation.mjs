@@ -850,6 +850,11 @@ export function registerMessageRecipientNavigationFixtures({
       await page.evaluate(() => history.replaceState({}, '', '/sharing/compose'));
       const plan = (overrides = {}) => agent._startPlanExecutionGuard(1, 'act', {
         requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, ...overrides });
+      // The submit probe, run as the agent runs it: it decides the submit
+      // card, the submission receipt and the record of a possible post.
+      const submitProbe = (tool, args) => probeWithReadings((name, passArgs) => page.evaluate(({ source, tool, args }) =>
+        Function('return (' + source + ')')()(tool, args), { source: AgentClass._submitActionProbe.toString(), tool: name, args: passArgs }),
+      tool, args);
       // The task started on another site: no LinkedIn workflow, and no
       // private message named. Its plan requires the submission.
       plan();
@@ -861,6 +866,9 @@ export function registerMessageRecipientNavigationFixtures({
           assert.equal(observed.publicPost, true, JSON.stringify({ postLabel, tool, args, observed }));
           assert.equal(observed.messageSend, false);
           assert.equal(await guard(tool, args), null, `${postLabel} ${tool}: the planned post goes through`);
+          const submit = await submitProbe(tool, args);
+          assert.equal(submit?.isSubmit, true, `${postLabel} ${tool}: the post is a submission ${JSON.stringify(submit)}`);
+          assert.equal(submit.publicationControl, true, `${postLabel} ${tool}: the post is a publication`);
         }
       }
       // The draft's other controls are not sends, and not the post.
@@ -871,6 +879,7 @@ export function registerMessageRecipientNavigationFixtures({
         assert.equal(observed.messageSend, false, selector);
         assert.notEqual(observed.publicPost, true, selector);
         assert.equal(await guard('click', { selector }), null, selector);
+        assert.notEqual((await submitProbe('click', { selector }))?.publicationControl, true, selector);
       }
       // A task that names a private message to send, or asks for no
       // submission at all, does not post.
@@ -888,6 +897,7 @@ export function registerMessageRecipientNavigationFixtures({
       for (const variant of [{ editors: 2 }, { scope: 'data-conversation-id="alice"' }]) {
         await composeShareScreen(page, variant);
         assert.equal((await guard('click', { selector: '#publish' }))?.noDispatch, true, JSON.stringify(variant));
+        assert.notEqual((await submitProbe('click', { selector: '#publish' }))?.publicationControl, true, JSON.stringify(variant));
       }
       await page.evaluate(() => document.getElementById('share-dialog')?.remove());
     });
