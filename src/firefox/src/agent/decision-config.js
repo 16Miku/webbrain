@@ -28,9 +28,11 @@ export function resolveDecisionConfig(stored = {}, compass = null) {
   };
   // Explicitly selected, like D1: an on-device decision provider that never
   // leaves the browser. A positive completion still needs independent proof.
+  // Chrome-only: Firefox keeps the selection (never a cloud fallback) but
+  // never enables it; config-transfer.js imports it with System One off.
   if (provider === 'webgpu_chat') return {
     provider, model: WEBGPU_CHAT_DECISION_MODEL, apiKey: '', baseUrl: '', url: '', local: true,
-    enabled: stored.systemOneEnabled === true,
+    enabled: false, unavailable: 'chrome_only',
     doneEnabled: stored.systemOneDoneEnabled === true,
     threshold: Number.isFinite(stored.systemOneDoneThreshold) && stored.systemOneDoneThreshold >= .5 && stored.systemOneDoneThreshold <= .99 ? stored.systemOneDoneThreshold : .9,
     supportsVision: stored.decisionVisionMode !== 'off', experimental: true,

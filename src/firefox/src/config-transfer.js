@@ -252,6 +252,18 @@ function validSettingValue(key, value) {
   return true;
 }
 
+// The in-browser chat-model decision provider (webgpu_chat) is Chrome-only.
+// A Chrome configuration that selects it imports here with System One off:
+// neither an unusable provider nor a silent switch of a local-only choice to
+// a cloud provider. `sparse` (provisioning patches) leaves the stored
+// provider as it is.
+function dropChromeOnlyDecisionProvider(settings, { sparse = false } = {}) {
+  if (settings.decisionProvider !== 'webgpu_chat') return;
+  if (sparse) delete settings.decisionProvider;
+  else settings.decisionProvider = DEFAULT_CONFIG_SETTINGS.decisionProvider;
+  settings.systemOneEnabled = false;
+}
+
 function normalizeSettings(source, { strict = false } = {}) {
   const settings = clone(DEFAULT_CONFIG_SETTINGS);
   if (!isPlainObject(source)) {
@@ -281,9 +293,11 @@ function normalizeSettings(source, { strict = false } = {}) {
     settings[key] = clone(value);
   }
   settings.providers = sanitizeProviders(settings.providers, { strict });
+  dropChromeOnlyDecisionProvider(settings);
   if (!Object.hasOwn(source, 'decisionInputRate')) {
-    settings.decisionInputRate = source.decisionProvider === 'typesafe' || (!source.decisionProvider && source.typesafeApiKey)
-      ? .042 : ['local', 'webgpu_d1', 'webgpu_chat'].includes(source.decisionProvider) ? 0 : .02;
+    const decisionProvider = settings.decisionProvider;
+    settings.decisionInputRate = decisionProvider === 'typesafe' || (!decisionProvider && source.typesafeApiKey)
+      ? .042 : ['local', 'webgpu_d1'].includes(decisionProvider) ? 0 : .02;
   }
   return settings;
 }
@@ -363,6 +377,7 @@ export function parseConfigPatchImport(json) {
       ? sanitizeProviders(value, { strict: true })
       : clone(value);
   }
+  dropChromeOnlyDecisionProvider(settings, { sparse: true });
   return {
     settings,
     ignoredKeys,

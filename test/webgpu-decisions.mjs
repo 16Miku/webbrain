@@ -130,7 +130,7 @@ test('decisions default to the probe and refuse a decoder without decision_hidde
 });
 
 test('the in-browser chat model is an explicit, key-free, local decision provider that needs independent success proof', async () => {
-  for (const build of ['chrome', 'firefox']) {
+  for (const build of ['chrome']) {
     const config = await import(`../src/${build}/src/agent/decision-config.js`);
     const transfer = await import(`../src/${build}/src/config-transfer.js`);
     const selected = config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
@@ -147,6 +147,28 @@ test('the in-browser chat model is an explicit, key-free, local decision provide
     const imported = transfer.parseConfigImport(JSON.stringify({ schema: transfer.CONFIG_SCHEMA, settings: { decisionProvider: 'webgpu_chat' } })).settings;
     assert.equal(imported.decisionProvider, 'webgpu_chat');
   }
+});
+
+test('Firefox never enables the Chrome-only chat-model provider and imports it with System One off', async () => {
+  const config = await import('../src/firefox/src/agent/decision-config.js');
+  const transfer = await import('../src/firefox/src/config-transfer.js');
+  const stored = { decisionProvider: 'webgpu_chat', systemOneEnabled: true, decisionApiKey: 'sk-or-v1-test', typesafeApiKey: 'ts_test' };
+  const selected = config.resolveDecisionConfig(stored);
+  assert.equal(selected.provider, 'webgpu_chat', 'a local-only choice never falls back to a cloud provider');
+  assert.equal(selected.enabled, false);
+  assert.equal(selected.unavailable, 'chrome_only');
+  const chromeExport = { schema: transfer.CONFIG_SCHEMA, settings: { ...stored, systemOneCompletionEnabled: true } };
+  const restored = transfer.parseConfigImport(JSON.stringify(chromeExport)).settings;
+  assert.equal(restored.decisionProvider, '');
+  assert.equal(restored.systemOneEnabled, false);
+  assert.equal(restored.systemOneCompletionEnabled, true, 'other settings import unchanged');
+  assert.equal(restored.decisionInputRate, .042, 'the cost default follows the provider that is kept');
+  assert.equal(config.resolveDecisionConfig(restored).enabled, false, 'no decisions until a provider is chosen here');
+  const patch = transfer.parseConfigPatchImport(JSON.stringify(chromeExport)).settings;
+  assert.equal(Object.hasOwn(patch, 'decisionProvider'), false, 'a provisioning patch keeps the stored provider');
+  assert.equal(patch.systemOneEnabled, false);
+  const chrome = await import('../src/chrome/src/config-transfer.js');
+  assert.equal(chrome.parseConfigImport(JSON.stringify(chromeExport)).settings.decisionProvider, 'webgpu_chat', 'Chrome round-trips it');
 });
 
 test('the judge answers webgpu_chat decisions through the offscreen worker in Chrome and refuses them in Firefox', async () => {
