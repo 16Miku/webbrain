@@ -1786,3 +1786,16 @@ test('round-52: a video favourite is flagged so it renders as a video', () => {
   const loader = readFileSync(nt('features/background/api/backgroundLoader.js'), 'utf8');
   assert.match(loader, /video: videoCheck\(fav\.url\)/);
 });
+
+test('round-53: video detection looks at the lower-cased path of the address', async () => {
+  const videoCheck = (await load(nt('features/background/api/videoCheck.js'))).default;
+  for (const url of [
+    'https://cdn.example/clip.mp4?token=abc', 'https://cdn.example/CLIP.MP4#t=3', 'data:video/mp4;base64,AA',
+    'video/webm', 'https://a.test/x.OGG', 'clip.webm?x=1',
+  ]) assert.equal(videoCheck(url), true, url);
+  for (const url of ['https://cdn.example/pic.jpg?name=a.mp4', 'https://a.test/mp4', 'data:image/png;base64,AA', '']) {
+    assert.equal(videoCheck(url), false, url);
+  }
+  const privacy = readFileSync(path.join(root, 'docs/privacy-and-data-flow.md'), 'utf8');
+  assert.doesNotMatch(privacy, /unclaimed\s+records are removed after about three minutes/);
+});

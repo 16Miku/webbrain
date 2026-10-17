@@ -1,14 +1,22 @@
+const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.ogg'];
+
 /**
- * If the URL starts with `data:video/` or ends with `.mp4`, `.webm`, or `.ogg`, then it's a video.
+ * A `data:video/` URL, a File's MIME type (`video/mp4`, ...), or an address whose path ends in
+ * `.mp4`, `.webm` or `.ogg` is a video. The path is looked at on its own, in lower case, so a
+ * signed link such as `https://cdn.example/CLIP.MP4?token=abc` still counts.
  * @param url - The URL of the file to be checked.
- * @returns A function that takes a url and returns a boolean.
+ * @returns Whether it is a video.
  */
 export default function videoCheck(url) {
-  return (
-    url.startsWith('data:video/') ||
-    url.startsWith('video/') || // a File's MIME type (video/mp4, video/webm, video/ogg)
-    url.endsWith('.mp4') ||
-    url.endsWith('.webm') ||
-    url.endsWith('.ogg')
-  );
+  const value = String(url ?? '');
+  const lower = value.toLowerCase();
+  if (lower.startsWith('data:video/') || lower.startsWith('video/')) return true;
+  let pathname;
+  try {
+    pathname = new URL(value).pathname;
+  } catch {
+    pathname = value.split(/[?#]/)[0];
+  }
+  pathname = pathname.toLowerCase();
+  return VIDEO_EXTENSIONS.some((extension) => pathname.endsWith(extension));
 }
