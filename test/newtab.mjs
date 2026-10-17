@@ -971,6 +971,62 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: the polling budget belongs to the tab being waited for`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const key4 = newtabHandoffKey(4);
+    const store = { [key3]: { id: 'A', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_900 } };
+    const state = { tabId: 3, looks: 0 };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    const timers = [];
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn) => { timers.push(fn); return timers.length; };
+    const step = async (n) => {
+      for (let i = 0; i < n && timers.length; i++) {
+        timers.shift()();
+        for (let k = 0; k < 30; k++) await Promise.resolve();
+      }
+    };
+    try {
+      const never = new Promise(() => {}); // sends stay in preflight for the whole test
+      const handoff = createNewtabHandoff({
+        storage: {
+          get: async (k) => (k in store ? { [k]: store[k] } : {}),
+          remove: async (k) => { delete store[k]; },
+          set: async (o) => Object.assign(store, o),
+        },
+        getCurrentTabId: () => state.tabId,
+        getIsProcessing: () => false,
+        getIsBlocked: () => false,
+        getIsDocumentVisible: () => { state.looks += 1; return true; },
+        doc: { addEventListener() {} },
+        setMode() {},
+        getInputEl: () => input,
+        autoResizeInput() {},
+        sendMessage: async () => { await never; },
+        now: () => 100_000,
+      });
+      await handoff.start(); // A's send holds tab 3's composer
+      state.tabId = 4;
+      input.value = '';
+      store[key4] = { id: 'C', tabId: 4, text: 'task C', mode: 'ask', createdAt: 99_990 };
+      await handoff.consume(); // C's send holds tab 4's composer
+      state.tabId = 3;
+      input.value = 'task A';
+      store[key3] = { id: 'B', tabId: 3, text: 'task B', mode: 'ask', createdAt: 99_950 };
+      await handoff.consume(); // B waits behind A; polling starts
+      await step(97); // most of tab 3's budget is spent
+      state.tabId = 4;
+      input.value = 'task C';
+      store[key4] = { id: 'D', tabId: 4, text: 'task D', mode: 'ask', createdAt: 99_995 };
+      await handoff.consume(); // D waits behind C
+      const before = state.looks;
+      await step(40);
+      assert.ok(state.looks - before >= 35, `tab 4 keeps polling on its own budget (${state.looks - before} looks)`);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+  });
+
   test(`${browser}: a task delayed by the panel's own hold is not stale when the send settles`, async () => {
     const key3 = newtabHandoffKey(3);
     const clock = { t: 100_000 };

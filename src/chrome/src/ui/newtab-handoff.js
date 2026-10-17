@@ -81,7 +81,7 @@ export function createNewtabHandoff({
   let consuming = false;
   let rerun = false;
   let retryTimer = null;
-  let retries = 0;
+  const retries = new Map(); // tabId -> polls spent waiting for that tab's send
   // The Ask most recently handed to sendMessage, while its text may still be in
   // the composer waiting for the send's own checks to finish.
   // One per tab: a send in preflight on one tab must stay known while another tab is shown.
@@ -131,18 +131,21 @@ export function createNewtabHandoff({
     return pendingSend.text.startsWith('/') && value === '' && (pendingSend.queued || !getIsProcessing());
   };
 
-  function retrySoon() {
+  function retrySoon(tabId) {
+    // Stop polling after the budget instead of forcing the send aside: a send that is still
+    // running owns the composer, and putting the next task in beside it would be sent along
+    // with it or duplicated when it settles. The waiting task stays in storage and is picked
+    // up when that send settles (below) or when the panel is next triggered. The budget belongs
+    // to the tab whose send is being waited for, so another tab's polling does not use it up.
+    const polls = (retries.get(Number(tabId)) ?? 0) + 1;
+    if (polls > NEWTAB_HANDOFF_SEND_HOLD_MAX_RETRIES) {
+      retries.delete(Number(tabId));
+      return;
+    }
+    retries.set(Number(tabId), polls);
     if (retryTimer) return;
     retryTimer = setTimeout(() => {
       retryTimer = null;
-      // Stop polling after the budget instead of forcing the send aside: a send that is still
-      // running owns the composer, and putting the next task in beside it would be sent along
-      // with it or duplicated when it settles. The waiting task stays in storage and is picked
-      // up when that send settles (below) or when the panel is next triggered.
-      if (++retries > NEWTAB_HANDOFF_SEND_HOLD_MAX_RETRIES) {
-        retries = 0;
-        return;
-      }
       consume();
     }, NEWTAB_HANDOFF_SEND_RETRY_MS);
   }
@@ -159,10 +162,10 @@ export function createNewtabHandoff({
     if (tabId == null) return false;
     if (sendStillHoldsComposer(tabId)) {
       if (!heldSince.has(Number(tabId))) heldSince.set(Number(tabId), now());
-      retrySoon();
+      retrySoon(tabId);
       return false;
     }
-    retries = 0;
+    retries.delete(Number(tabId));
     if (heldSince.has(Number(tabId))) {
       heldAllowanceMs.set(
         Number(tabId),
