@@ -1653,6 +1653,14 @@ async function sweepStaleNewtabHandoffs() {
   }
 }
 
+// A tab that closes before its panel claimed the task takes the task with it, and
+// anything left over from a previous browser session is dropped on every start of
+// the background (top level runs at browser start and when the worker wakes).
+chrome.tabs.onRemoved.addListener((closedTabId) => {
+  chrome.storage.local.remove(`wbNewtabHandoff:${closedTabId}`).catch(() => {});
+});
+sweepStaleNewtabHandoffs();
+
 // The new tab page opens the panel from its own submit handler (it must, to
 // keep the user gesture) and reports it here, mirroring the install page above.
 chrome.runtime.onMessage.addListener((msg, sender) => {

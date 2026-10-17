@@ -10,7 +10,9 @@
  *     If the panel declines to send (plan review pending, state refresh, ...) the
  *     text stays in the composer for the user to send.
  *   - Act: the task is filled in and the panel switches to Act, but nothing is
- *     sent. Act always needs the user's own Enter in the panel.
+ *     sent. Act always needs the user's own Enter in the panel. It never replaces
+ *     what is already in the composer (an earlier unconfirmed Act draft, or the
+ *     user's own text): the new task is added below it, where it can be reviewed.
  *
  * A second hand-off is held back while an earlier Ask is still being sent (its text
  * is still sitting in the composer): filling the composer again would make that
@@ -125,8 +127,13 @@ export function createNewtabHandoff({
 
       setMode(handoff.mode);
       const input = getInputEl();
+      let composerText = handoff.text;
+      if (handoff.mode === 'act') {
+        const existing = String(input.value || '').trim();
+        if (existing && existing !== handoff.text) composerText = `${existing}\n\n${handoff.text}`;
+      }
       const fill = () => {
-        input.value = handoff.text;
+        input.value = composerText;
         input.dispatchEvent(new Event('input', { bubbles: true }));
         autoResizeInput();
       };

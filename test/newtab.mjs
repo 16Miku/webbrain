@@ -532,6 +532,23 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(KEY in h.store, false);
   });
 
+  test(`${browser}: Act never replaces what is already in the composer`, async () => {
+    const h = await harness({ record: rec({ mode: 'act', text: 'book a table at 8' }) });
+    h.input.value = 'book a table';
+    assert.equal(await h.handoff.consume(), true);
+    assert.equal(h.input.value, 'book a table\n\nbook a table at 8');
+    assert.equal(h.log.sent.length, 0);
+
+    // The same text twice is not duplicated; an empty composer is simply filled.
+    const same = await harness({ record: rec({ mode: 'act', text: 'x' }) });
+    same.input.value = 'x';
+    await same.handoff.consume();
+    assert.equal(same.input.value, 'x');
+    const empty = await harness({ record: rec({ mode: 'act', text: 'y' }) });
+    await empty.handoff.consume();
+    assert.equal(empty.input.value, 'y');
+  });
+
   test(`${browser}: manifest and background are wired`, () => {
     const manifest = JSON.parse(readFileSync(path.join(root, 'src', browser, 'manifest.json'), 'utf8'));
     assert.equal(manifest.chrome_url_overrides?.newtab, 'newtab/index.html');
@@ -539,6 +556,9 @@ for (const browser of ['chrome', 'firefox']) {
     assert.ok(existsSync(path.join(root, 'src', browser, 'newtab/index.html')), 'run npm run build:newtab');
     const bg = readFileSync(path.join(root, 'src', browser, 'src/background.js'), 'utf8');
     assert.match(bg, /WB_NEWTAB_PANEL_OPENED/);
+    // Unclaimed records are cleaned up without waiting for another submission.
+    assert.match(bg, /tabs\.onRemoved\.addListener\(\(closedTabId\)[^]*?wbNewtabHandoff:\$\{closedTabId\}/);
+    assert.match(bg, /\nsweepStaleNewtabHandoffs\(\);/);
   });
 }
 
