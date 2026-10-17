@@ -702,7 +702,7 @@ async function initialize() {
     tabId: streamInfo.tabId,
     originalUrl: String(streamInfo.originalUrl || ''),
   };
-  await trackViewerWindow({ api, target: window, fields: submitFields }).refresh();
+  await trackViewerWindow({ api, target: window, fields: submitFields, tabId: streamInfo.tabId }).refresh();
   globalThis.__webbrainSelectionShortcutConfig = {
     submitMessage: 'WB_PDF_SELECTION_SHORTCUT_SUBMIT',
     submitFields,

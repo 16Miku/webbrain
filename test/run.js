@@ -52993,7 +52993,7 @@ test('a PDF viewer selection leaves a side panel that is already showing in its 
     assert.equal(JSON.stringify(queued[0].options), '{"panelOpened":true}', 'and told the panel was already opened');
     assert.equal(queued[0].tab.id, 7);
     const viewer = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/pdf-handler.js'), 'utf8');
-    assert.match(viewer, /const submitFields = \{\s*tabId: streamInfo\.tabId,\s*originalUrl: String\(streamInfo\.originalUrl \|\| ''\),\s*\};\s*await trackViewerWindow\(\{ api, target: window, fields: submitFields \}\)\.refresh\(\);[\s\S]*?submitFields,\s*allowNestedFrame: true,/,
+    assert.match(viewer, /const submitFields = \{\s*tabId: streamInfo\.tabId,\s*originalUrl: String\(streamInfo\.originalUrl \|\| ''\),\s*\};\s*await trackViewerWindow\(\{ api, target: window, fields: submitFields, tabId: streamInfo\.tabId \}\)\.refresh\(\);[\s\S]*?submitFields,\s*allowNestedFrame: true,/,
       'the PDF viewer must report the window it is in, and keep that current');
     const shortcut = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/selection-shortcut.js'), 'utf8');
     assert.match(shortcut, /const currentSubmitFields = \(\) => shortcutConfig\?\.submitFields[\s\S]*?\? \{ \.\.\.shortcutConfig\.submitFields \}/,
@@ -53024,15 +53024,30 @@ test('the PDF viewer follows its tab into another window before a selection is s
   };
   const target = { addEventListener: (type, callback, capture) => domListeners.push({ type, callback, capture }) };
   const fields = { tabId: 73 };
-  const tracker = trackViewerWindow({ api, target, fields });
+  const tracker = trackViewerWindow({ api, target, fields, tabId: 73 });
   await tracker.refresh();
   assert.equal(fields.windowId, 5, 'the window the viewer starts in');
 
-  // A tab dragged into another window is found when it is attached.
+  // A tab dragged into another window is taken from the attach event itself, at once:
+  // a click right after the drop must not wait for a lookup.
   liveWindowId = 9;
   attachListeners[0](73, { newWindowId: 9 });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(fields.windowId, 9, 'attaching the tab to another window updates the id');
+  assert.equal(fields.windowId, 9, 'attaching the tab to another window updates the id synchronously');
+  attachListeners[0](74, { newWindowId: 30 });
+  attachListeners[0](73, { newWindowId: undefined });
+  attachListeners[0](73, { newWindowId: '31' });
+  assert.equal(fields.windowId, 9, 'another tab, or an attach without a usable window, changes nothing');
+
+  // A lookup already under way when the tab moved describes the window it left.
+  let releaseStale;
+  gates.push(new Promise(resolve => { releaseStale = resolve; }));
+  liveWindowId = 5;
+  const stale = tracker.refresh();
+  attachListeners[0](73, { newWindowId: 9 });
+  releaseStale();
+  await stale;
+  assert.equal(fields.windowId, 9, 'a lookup that began before the move cannot undo it');
+  liveWindowId = 9;
 
   // Window focus and the start of a pointer gesture refresh it too.
   liveWindowId = 12;
@@ -53070,6 +53085,21 @@ test('the PDF viewer follows its tab into another window before a selection is s
   const bare = { tabId: 1 };
   await trackViewerWindow({ api: {}, target: { addEventListener() {} }, fields: bare }).refresh();
   assert.deepEqual(bare, { tabId: 1 });
+
+  // Not told which tab is its own, it asks where the page is instead of guessing.
+  const unknown = {};
+  const unknownListeners = [];
+  trackViewerWindow({
+    api: {
+      windows: { getCurrent: async () => ({ id: 44 }) },
+      tabs: { onAttached: { addListener: callback => unknownListeners.push(callback) } },
+    },
+    target: { addEventListener() {} },
+    fields: unknown,
+  });
+  unknownListeners[0](3, { newWindowId: 99 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(unknown.windowId, 44);
 });
 
 test('WebGPU provider drops a request whose caller aborts while the offscreen document is starting', async () => {
