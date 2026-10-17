@@ -63,9 +63,12 @@ node assets/webstore-explainer-2026/render.mjs
 
 Render only the recording slide with `ONLY=14-record-video.png node assets/webstore-explainer-2026/render.mjs`.
 
-The renderer also writes copy-free variants of slides 02, 03, 04, and 08 to
+The renderer also writes copy-free variants of slides 02, 03, and 04 to
 the Chrome and Firefox `install-assets` directories. The install page overlays
 localized HTML copy on those variants; the Web Store images in this directory
-keep their original English text.
+keep their original English text. The install page's "Also built in" cards
+(Apocalypse Mode, full-page screenshots, bulk downloads, recording, CAPTCHA,
+SafeSocial) are live HTML/CSS scenes in `install-scenes.css`, so they need no
+rendered artwork.
 
 If browser launch is unavailable, `python3 assets/webstore-explainer-2026/render-record.py` renders slide 14 directly with Pillow and the same vendored fonts. This fallback uses an independently drawn layout.
