@@ -5,6 +5,11 @@ unchanged files are hardlinked. Browser evidence recorded against the previous
 graph is not carried over: rerun scripts/check-bonsai-webgpu.mjs on the new
 bundle and record it with record_browser_validation.py.
 
+The bundle is assembled in `<output>.partial` and swapped into place after
+sealing, so rerunning into the same --output replaces the previous derived
+bundle instead of inheriting its files. An unrelated non-empty --output is
+refused.
+
   python scripts/models/bonsai/make_chunked_bundle.py \
       --source .build/bonsai/exports/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision \
       --output .build/bonsai/exports-chunked/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision \
@@ -28,6 +33,28 @@ SOURCE_GRAPH_SHA256 = {
 STALE_EVIDENCE = {"browser-validation.json", "offline-browser-validation.json"}
 CARD_LANGUAGE_OLD = "The ternary language graphs and Hadamard transforms come unchanged from"
 CARD_LANGUAGE_NEW = "The ternary language weights and Hadamard transforms come unchanged from"
+# Written only by this tool; marks a directory it may replace.
+DERIVED_MARKER = "chunked-prefill-validation.json"
+
+
+def prepare_staging(source, output):
+    """Build into a fresh sibling directory so reruns never inherit stale files."""
+    if output == source or source in output.parents or output in source.parents:
+        raise ValueError("--output must be separate from --source")
+    if output.exists() and any(output.iterdir()) and not (output / DERIVED_MARKER).is_file():
+        raise ValueError(f"{output} is not empty and was not created by this tool; choose a new --output")
+    staging = output.with_name(output.name + ".partial")
+    if staging.exists():
+        shutil.rmtree(staging)
+    (staging / "onnx").mkdir(parents=True)
+    return staging
+
+
+def replace_output(staging, output):
+    """Swap the sealed staging bundle into place; only a previous derived bundle is removed."""
+    if output.exists():
+        shutil.rmtree(output)
+    staging.rename(output)
 
 
 def main():
@@ -48,8 +75,8 @@ def main():
     if digest(source / GRAPH) != SOURCE_GRAPH_SHA256[size]:
         raise ValueError("Source decoder graph is not the validated upstream graph")
 
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "onnx").mkdir(exist_ok=True)
+    final_output = output
+    output = prepare_staging(source, final_output)
     for entry in manifest["files"]:
         path = entry["path"]
         if path == GRAPH or path in STALE_EVIDENCE:
@@ -59,11 +86,7 @@ def main():
         if entry["size"] > 16 * 1024 * 1024:
             link_or_copy(source / path, target)
         else:
-            if target.exists():
-                target.unlink()
             shutil.copy2(source / path, target)
-    for stale in STALE_EVIDENCE:
-        (output / stale).unlink(missing_ok=True)
 
     scratch = output / "onnx" / ".rewrite.onnx"
     report = rewrite_file(source / GRAPH, scratch, chunk=args.chunk)
@@ -85,7 +108,7 @@ def main():
         (output / GRAPH).unlink(missing_ok=True)
         scratch.rename(output / GRAPH)
 
-    write_json(output / "chunked-prefill-validation.json", {
+    write_json(output / DERIVED_MARKER, {
         "rewrite": report,
         "external_data_unchanged": "onnx/decoder_model_merged_q2f16.onnx_data",
         "evidence": [read_json(path) for path in args.evidence],
@@ -111,7 +134,8 @@ def main():
                 "\n\nOCR reports in this repository were recorded with the previous (Scan) graph.\n")
     (output / "README.md").write_text(card, encoding="utf-8")
     total = seal_manifest(output)
-    print(json.dumps({"output": str(output), "graph_sha256": report["output_sha256"], "total_bytes": total}, indent=2))
+    replace_output(output, final_output)
+    print(json.dumps({"output": str(final_output), "graph_sha256": report["output_sha256"], "total_bytes": total}, indent=2))
 
 
 if __name__ == "__main__":
