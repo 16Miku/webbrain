@@ -39,6 +39,8 @@ export function useBackgroundEvents(backgroundData, refreshBackground) {
         (type !== backgroundData.type && !(backgroundData.photoInfo?.offline && type === backgroundData.type)) ||
         (backgroundData.type === 'api' && localStorage.getItem('backgroundAPI') !== backgroundData.currentAPI) ||
         (type === 'custom' && backgroundData.type !== 'custom') ||
+        // Picking or resetting the colour keeps the type, so the check above never fires.
+        type === 'colour' ||
         (backgroundData.photoInfo?.pun && JSON.parse(localStorage.getItem('backgroundExclude') || '[]').includes(backgroundData.photoInfo.pun));
 
       if (needsRefresh) refreshBackground();

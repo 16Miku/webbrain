@@ -649,3 +649,51 @@ test('recent chats open the clicked conversation by id', () => {
     assert.match(history, /renderRecord\(initialRecordId\)/, `${b} history opens it`);
   }
 });
+
+test('EventBus.off removes the listener that was really registered', async () => {
+  const doc = new EventTarget();
+  const hadDocument = 'document' in globalThis;
+  const previous = globalThis.document;
+  globalThis.document = doc;
+  try {
+    const { default: EventBus } = await load(nt('utils/eventbus.js'));
+    const calls = [];
+    const handler = (detail) => calls.push(detail);
+
+    EventBus.on('refresh', handler);
+    EventBus.emit('refresh', 'a');
+    EventBus.off('refresh', handler);
+    EventBus.emit('refresh', 'b');
+    assert.deepEqual(calls, ['a'], 'off() stops further calls (cleanup in React effects works)');
+    assert.equal(EventBus.getListeners('refresh').length, 0);
+
+    // Re-subscribing on every render must not pile handlers up.
+    for (let i = 0; i < 5; i += 1) {
+      EventBus.on('refresh', handler);
+      EventBus.off('refresh', handler);
+    }
+    calls.length = 0;
+    EventBus.emit('refresh', 'c');
+    assert.deepEqual(calls, []);
+
+    EventBus.once('ping', handler);
+    EventBus.emit('ping', 1);
+    EventBus.emit('ping', 2);
+    assert.deepEqual(calls, [1]);
+
+    calls.length = 0;
+    EventBus.prepend('cap', handler);
+    EventBus.emit('cap', 'x');
+    EventBus.off('cap', handler);
+    EventBus.emit('cap', 'y');
+    assert.deepEqual(calls, ['x'], 'capture-phase listeners are removed too');
+  } finally {
+    if (hadDocument) globalThis.document = previous;
+    else delete globalThis.document;
+  }
+});
+
+test('picking a colour refreshes the visible background even though the type is unchanged', () => {
+  const hook = readFileSync(nt('features/background/hooks/useBackgroundEvents.js'), 'utf8');
+  assert.match(hook, /type === 'colour'/);
+});

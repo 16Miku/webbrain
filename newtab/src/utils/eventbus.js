@@ -1,20 +1,34 @@
+/**
+ * Tiny pub/sub on top of document events.
+ *
+ * Every subscription keeps the exact function that was passed to
+ * addEventListener (and its capture flag), so off() removes the real listener.
+ * (Upstream Mue registered an anonymous wrapper and then tried to remove the
+ * original callback, so React cleanups did nothing and handlers piled up.)
+ */
 export default class EventBus {
   static listeners = {};
 
+  static register(event, entry) {
+    if (!this.listeners[event]) {
+      this.listeners[event] = [];
+    }
+    if (entry.first) {
+      this.listeners[event].unshift(entry);
+    } else {
+      this.listeners[event].push(entry);
+    }
+  }
+
   /**
-   * The on function adds an event listener to the document, and then pushes the callback function into
-   * the listeners array.
+   * Subscribes callback to event; it receives the event's detail.
    * @param event - The event name
    * @param callback - The function to be called when the event is triggered.
    */
   static on(event, callback) {
-    document.addEventListener(event, (e) => {
-      callback(e.detail);
-    });
-    if (!this.listeners[event]) {
-      this.listeners[event] = [];
-    }
-    this.listeners[event].push(callback);
+    const listener = (e) => callback(e.detail);
+    document.addEventListener(event, listener);
+    this.register(event, { callback, listener, capture: false });
   }
 
   /**
@@ -31,104 +45,76 @@ export default class EventBus {
   }
 
   /**
-   * It removes an event listener from the document and removes the callback from the listeners array
-   * @param event - The event to listen for.
-   * @param callback - The function to be called when the event is triggered.
+   * Removes the subscription made with this callback (or with this registered listener
+   * function, which is what once()/prependOnce() pass).
+   * @param event - The event to stop listening for.
+   * @param callback - The function that was passed to on()/once()/prepend().
    */
   static off(event, callback) {
-    document.removeEventListener(event, callback);
-    if (this.listeners[event]) {
-      this.listeners[event] = this.listeners[event].filter((listener) => listener !== callback);
-    }
+    const entries = this.listeners[event] || [];
+    const matching = entries.filter(
+      (entry) => entry.callback === callback || entry.listener === callback,
+    );
+    matching.forEach((entry) =>
+      document.removeEventListener(event, entry.listener, { capture: entry.capture }),
+    );
+    this.listeners[event] = entries.filter((entry) => !matching.includes(entry));
   }
 
   /**
-   * The once function takes an event and a callback, and then adds a listener to the event that calls
-   * the callback with the event's detail, and then removes the listener.
-   * @param event - The event name
-   * @param callback - The function to be called when the event is triggered.
+   * Like on(), but unsubscribes itself after the first call.
    */
   static once(event, callback) {
     const listener = (e) => {
-      callback(e.detail);
       this.off(event, listener);
+      callback(e.detail);
     };
     document.addEventListener(event, listener);
-    if (!this.listeners[event]) {
-      this.listeners[event] = [];
-    }
-    this.listeners[event].push({ callback, listener });
+    this.register(event, { callback, listener, capture: false });
   }
 
   /**
-   * It adds a listener to the beginning of the event listener queue.
-   * @param event - The name of the event to listen for.
-   * @param callback - The function to be called when the event is triggered.
+   * Like on(), but runs before listeners added without capture.
    */
   static prepend(event, callback) {
-    const listener = (e) => {
-      callback(e.detail);
-    };
-    document.addEventListener(
-      event,
-      listener,
-      true, // set `useCapture` to `true` to insert the listener at the beginning
-    );
-    if (!this.listeners[event]) {
-      this.listeners[event] = [];
-    }
-    this.listeners[event].unshift({ callback, listener });
+    const listener = (e) => callback(e.detail);
+    document.addEventListener(event, listener, { capture: true });
+    this.register(event, { callback, listener, capture: true, first: true });
   }
 
   /**
-   * It adds an event listener to the document that will be called before any other event listeners for
-   * the same event
-   * @param event - The name of the event to listen for.
-   * @param callback - The function to be called when the event is triggered.
+   * prepend() that unsubscribes itself after the first call.
    */
   static prependOnce(event, callback) {
     const listener = (e) => {
-      callback(e.detail);
       this.off(event, listener);
+      callback(e.detail);
     };
-    document.addEventListener(
-      event,
-      listener,
-      true, // set `useCapture` to `true` to insert the listener at the beginning
-    );
-    if (!this.listeners[event]) {
-      this.listeners[event] = [];
-    }
-    this.listeners[event].unshift({ callback, listener });
+    document.addEventListener(event, listener, { capture: true });
+    this.register(event, { callback, listener, capture: true, first: true });
   }
 
   /**
-   * If the event exists, return the listeners for that event, otherwise return an empty array.
-   * @param event - The event name.
-   * @returns An array of listeners for the event.
+   * The subscriptions for an event, as { callback, listener, capture } entries.
    */
   static getListeners(event) {
-    if (this.listeners[event]) {
-      return this.listeners[event];
-    }
-    return [];
+    return this.listeners[event] || [];
   }
 
   /**
-   * It returns an array of all the event names that have listeners attached to them.
-   * @returns An array of the keys of the listeners object.
+   * The names of all events that have subscriptions.
    */
   static eventNames() {
     return Object.keys(this.listeners);
   }
 
   /**
-   * It removes all event listeners from the document.
+   * Removes every subscription.
    */
   static removeAllListeners() {
     Object.keys(this.listeners).forEach((event) => {
-      this.listeners[event].forEach(({ listener }) => {
-        document.removeEventListener(event, listener);
+      this.listeners[event].forEach(({ listener, capture }) => {
+        document.removeEventListener(event, listener, { capture });
       });
     });
     this.listeners = {};
