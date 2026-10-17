@@ -467,6 +467,91 @@ for (const browser of ['chrome', 'firefox']) {
     assert.deepEqual(sent, ['for tab three']);
   });
 
+  test(`${browser}: a task handed back after a tab switch is still fresh when its tab returns`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'r1', tabId: 3, text: 'for tab three', mode: 'ask', createdAt: 80_000 } };
+    const state = { tabId: 3, clock: 100_000 };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    const sent = [];
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; if (!state.switched) { state.switched = true; state.tabId = 4; } },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => state.tabId,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => { sent.push(input.value); },
+      now: () => state.clock,
+    });
+    await handoff.start(); // claimed at 100 s when 20 s old, then the user switched away
+    assert.equal(store[newtabHandoffRetryKey(3)]?.[0]?.text, 'for tab three');
+    state.clock = 125_000; // back after 25 s: older than 30 s counted from the original typing
+    state.tabId = 3;
+    await handoff.consume();
+    assert.deepEqual(sent, ['for tab three'], 'the task the new tab already cleared is not dropped');
+  });
+
+  test(`${browser}: a send still in preflight on one tab stays known while another tab is shown`, async () => {
+    const store = {
+      [newtabHandoffKey(3)]: { id: 'A', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_000 },
+    };
+    const state = { tabId: 3 };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    const sends = [];
+    let releaseA;
+    const gateA = new Promise((r) => { releaseA = r; });
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => state.tabId,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => {
+        const text = input.value;
+        sends.push(text);
+        if (text === 'task A') { await gateA; input.value = ''; } // A stays in preflight, then commits
+        return true;
+      },
+      now: () => 100_000,
+    });
+    await handoff.start();
+    assert.deepEqual(sends, ['task A']);
+    // the panel swaps in tab 4's composer; tab 4 gets and sends its own task
+    state.tabId = 4;
+    input.value = '';
+    store[newtabHandoffKey(4)] = { id: 'B', tabId: 4, text: 'task B', mode: 'ask', createdAt: 99_500 };
+    await handoff.consume();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(sends, ['task A', 'task B']);
+    // back on tab 3 (its composer shows A again) a new task must not be applied over A
+    state.tabId = 3;
+    input.value = 'task A';
+    store[newtabHandoffKey(3)] = { id: 'A2', tabId: 3, text: 'task A2', mode: 'ask', createdAt: 99_800 };
+    await handoff.consume();
+    assert.equal(input.value, 'task A', "A's composer is untouched while A is still being sent");
+    assert.equal(store[newtabHandoffKey(3)]?.id, 'A2', 'A2 waits in storage');
+    releaseA();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(sends.includes('task A2'), true, 'A2 goes out once A has settled');
+  });
+
   test(`${browser}: a declined send never refills another tab's composer; the task goes back to its own tab`, async () => {
     const key3 = newtabHandoffKey(3);
     const store = { [key3]: { id: 'r1', tabId: 3, text: 'for tab three', mode: 'ask', createdAt: 99_000 } };

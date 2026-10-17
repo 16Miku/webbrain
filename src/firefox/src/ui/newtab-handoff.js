@@ -83,7 +83,8 @@ export function createNewtabHandoff({
   let retries = 0;
   // The Ask most recently handed to sendMessage, while its text may still be in
   // the composer waiting for the send's own checks to finish.
-  let pendingSend = null;
+  // One per tab: a send in preflight on one tab must stay known while another tab is shown.
+  const pendingSends = new Map();
   // When a look at storage was first put off because a send still held the composer. A task that
   // sat waiting behind that send is not stale for the time the panel itself kept it waiting.
   let heldSince = null;
@@ -118,7 +119,8 @@ export function createNewtabHandoff({
     }
   });
 
-  const sendStillHoldsComposer = () => {
+  const sendStillHoldsComposer = (tabId) => {
+    const pendingSend = pendingSends.get(Number(tabId));
     if (!pendingSend || pendingSend.settled) return false;
     const value = String(getInputEl()?.value ?? '');
     if (value === pendingSend.text) return true;
@@ -154,7 +156,7 @@ export function createNewtabHandoff({
     }
     const tabId = getCurrentTabId();
     if (tabId == null) return false;
-    if (sendStillHoldsComposer()) {
+    if (sendStillHoldsComposer(tabId)) {
       if (heldSince == null) heldSince = now();
       retrySoon();
       return false;
@@ -240,7 +242,9 @@ export function createNewtabHandoff({
       if (!sameTab()) {
         // Switched during the removal: put the record back for when this tab is shown again.
         handled.delete(handoff.id);
-        await stashForLater(stored);
+        // The new tab already showed this task as handed over, so it must outlive the freshness
+        // window that has been running since it was typed.
+        await stashForLater({ ...stored, createdAt: now() });
         return false;
       }
 
@@ -267,7 +271,7 @@ export function createNewtabHandoff({
         // here captures this task. It is not awaited: a send can last a whole run,
         // and that must not hold up later hand-offs or the panel's own startup.
         const send = { text: handoff.text, settled: false, queued: Boolean(getIsProcessing()) };
-        pendingSend = send;
+        pendingSends.set(Number(tabId), send);
         let sending;
         try {
           sending = Promise.resolve(sendMessage(getIsProcessing() ? { __deliveryMode: 'queue' } : undefined));
@@ -278,6 +282,7 @@ export function createNewtabHandoff({
           .then((result) => result !== false, () => false)
           .then((sent) => {
             send.settled = true;
+            if (pendingSends.get(Number(tabId)) === send) pendingSends.delete(Number(tabId));
             // A task that arrived while this send held the composer is waiting; look for it once
             // the recovery below (which runs synchronously) is done.
             queueMicrotask(() => { consume(); });
