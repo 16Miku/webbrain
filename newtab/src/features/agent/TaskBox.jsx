@@ -36,7 +36,11 @@ function TaskBox() {
     primeCurrentTab().then((tab) => {
       if (alive && tab?.id != null && isHandoffPending(tab.id)) {
         setWaiting(true);
-        whenClaimed(tab).then(() => alive && setWaiting(false));
+        whenClaimed(tab).then((claimed) => {
+          if (!alive) return;
+          setWaiting(false);
+          if (claimed === false) setError(wbT('wb.panel_failed'));
+        });
       }
     });
     if (localStorage.getItem('taskBoxFocus') !== 'false') inputRef.current?.focus();
@@ -61,6 +65,13 @@ function TaskBox() {
         setText('');
         // Stays locked until the panel has taken the task.
         return whenClaimed();
+      })
+      .then((claimed) => {
+        // The panel never took it: give the text back and say so, rather than unlocking as if it had.
+        if (claimed === false) {
+          setText((current) => current || value);
+          setError(wbT('wb.panel_failed'));
+        }
       })
       .catch(() => setError(wbT('wb.panel_failed')))
       .finally(() => {

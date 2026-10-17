@@ -67,9 +67,10 @@ const inFlight = new Map(); // tabId -> { promise, release }
 function lockTab(tabId) {
   let resolve;
   const promise = new Promise((r) => { resolve = r; });
-  const release = () => {
+  // `claimed` is false only when the wait ran out without the panel ever taking the task.
+  const release = (claimed = true) => {
     if (inFlight.get(tabId)?.promise === promise) inFlight.delete(tabId);
-    resolve();
+    resolve(claimed);
   };
   inFlight.set(tabId, { promise, release });
   return release;
@@ -77,9 +78,12 @@ function lockTab(tabId) {
 
 export const isHandoffPending = (tabId) => inFlight.has(tabId);
 
-/** Resolves when the panel has claimed this tab's task (or the submit failed / timed out). */
+/**
+ * Resolves true when the panel has claimed this tab's task (or the submit failed), false when the
+ * wait timed out with the task still unclaimed.
+ */
 export function whenClaimed(tab = currentTab) {
-  return inFlight.get(tab?.id)?.promise ?? Promise.resolve();
+  return inFlight.get(tab?.id)?.promise ?? Promise.resolve(true);
 }
 
 /** Re-takes the lock for a record this tab wrote before the page was reloaded. */
@@ -106,12 +110,12 @@ function releaseWhenClaimed(api, tabId, release, timeoutMs = CLAIM_TIMEOUT_MS) {
   const listener = (changes, area) => {
     if ((!area || area === 'local') && changes?.[key] && !changes[key].newValue) finish();
   };
-  function finish() {
+  function finish(claimed = true) {
     clearTimeout(timer);
     api.storage.onChanged?.removeListener?.(listener);
-    release();
+    release(claimed);
   }
-  timer = setTimeout(finish, timeoutMs);
+  timer = setTimeout(() => finish(false), timeoutMs);
   api.storage.onChanged?.addListener?.(listener);
   // It may already have been claimed between the write and now.
   Promise.resolve(api.storage.local.get?.(key))

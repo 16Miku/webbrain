@@ -211,6 +211,36 @@ test('a second submit from the same tab waits until the first task has been clai
   await whenClaimed(tab);
 });
 
+test('round-66: a wait that times out is reported as unclaimed, a real claim as claimed', async () => {
+  const store = new Map();
+  const listeners = [];
+  const api = {
+    storage: {
+      local: {
+        get: async (k) => (store.has(k) ? { [k]: store.get(k) } : {}),
+        set: async (v) => { for (const [k, val] of Object.entries(v)) store.set(k, val); },
+        remove: async (k) => { store.delete(k); },
+      },
+      onChanged: { addListener: (fn) => listeners.push(fn), removeListener() {} },
+    },
+  };
+  // a record written 20 ms before the lock would run out, never claimed by any panel
+  const now = Date.now();
+  store.set(handoffKey(188), { id: 'x', tabId: 188, text: 't', mode: 'ask', createdAt: now - 160_000 + 20 });
+  assert.equal(await adoptPendingHandoff(api, 188, now), true);
+  assert.equal(await whenClaimed({ id: 188 }), false, 'timeout is not a claim');
+  assert.equal(isHandoffPending(188), false);
+  // a record that is removed resolves as claimed
+  store.set(handoffKey(189), { id: 'y', tabId: 189, text: 't', mode: 'ask', createdAt: now });
+  assert.equal(await adoptPendingHandoff(api, 189, now), true);
+  const key = handoffKey(189);
+  store.delete(key);
+  listeners.forEach((fn) => fn({ [key]: { oldValue: {} } }, 'local'));
+  assert.equal(await whenClaimed({ id: 189 }), true);
+  const box = readFileSync(nt('features/agent/TaskBox.jsx'), 'utf8');
+  assert.match(box, /if \(claimed === false\) \{\s*setText\(\(current\) => current \|\| value\);\s*setError\(/);
+});
+
 test('quick link style option values match what the renderer checks', () => {
   const options = readFileSync(nt('features/quicklinks/options/QuickLinksOptions.jsx'), 'utf8');
   const renderer = readFileSync(nt('features/quicklinks/QuickLinks.jsx'), 'utf8');
@@ -398,6 +428,43 @@ for (const browser of ['chrome', 'firefox']) {
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(input.value, 'task B', 'it is applied once the first send has settled');
     assert.equal(processing, false);
+  });
+
+  test(`${browser}: a task that could not be written back is kept in memory and saved on the next look`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'r1', tabId: 3, text: 'for tab three', mode: 'ask', createdAt: 99_000 } };
+    const state = { tabId: 3, failSets: true };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    const sent = [];
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        // the user switches tabs as the claim is removed; the write-back is then refused
+        remove: async (k) => { delete store[k]; if (!state.switched) { state.switched = true; state.tabId = 4; } },
+        set: async (o) => { if (state.failSets) throw new Error('storage refused'); Object.assign(store, o); },
+      },
+      getCurrentTabId: () => state.tabId,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => { sent.push(input.value); },
+      now: () => 100_000,
+    });
+    await handoff.start();
+    assert.equal(newtabHandoffRetryKey(3) in store, false, 'the write-back failed');
+    assert.deepEqual(sent, []);
+    // storage works again; the next look (on any tab) saves the task for its own tab
+    state.failSets = false;
+    await handoff.consume();
+    assert.equal(store[newtabHandoffRetryKey(3)]?.[0]?.text, 'for tab three');
+    // and back on tab 3 it is applied
+    state.tabId = 3;
+    await handoff.consume();
+    assert.deepEqual(sent, ['for tab three']);
   });
 
   test(`${browser}: a declined send never refills another tab's composer; the task goes back to its own tab`, async () => {

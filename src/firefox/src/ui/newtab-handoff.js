@@ -98,6 +98,25 @@ export function createNewtabHandoff({
     return retrySlotWrites;
   };
   const asList = (raw) => (Array.isArray(raw) ? raw : raw == null ? [] : [raw]);
+  // Tasks that could not be written back to storage (it was refusing writes). They exist only in
+  // memory, so every look at storage first tries to save them again; the retry slot stays the
+  // one place they are picked up from.
+  const unsaved = [];
+  const stashRecord = (record) => serialRetryWrite(async () => {
+    const retryKey = newtabHandoffRetryKey(Number(record.tabId));
+    try {
+      const queue = asList((await storage.get(retryKey))?.[retryKey]);
+      if (!queue.some((entry) => entry?.id === record.id)) {
+        await storage.set?.({ [retryKey]: [...queue, record] });
+      }
+      const at = unsaved.findIndex((entry) => entry.id === record.id);
+      if (at >= 0) unsaved.splice(at, 1);
+      return true;
+    } catch {
+      if (!unsaved.some((entry) => entry.id === record.id)) unsaved.push(record);
+      return false;
+    }
+  });
 
   const sendStillHoldsComposer = () => {
     if (!pendingSend || pendingSend.settled) return false;
@@ -153,6 +172,8 @@ export function createNewtabHandoff({
     let key = primaryKey;
     let claimedOne = false;
     consuming = true;
+    // Anything that could not be saved earlier gets another try before storage is read.
+    for (const record of unsaved.slice()) await stashRecord(record);
     // Only the first attempt after start() gets the startup allowance.
     const allowance = startupAllowanceMs + heldAllowanceMs;
     startupAllowanceMs = 0;
@@ -162,13 +183,7 @@ export function createNewtabHandoff({
     const sameTab = () => Number(getCurrentTabId()) === Number(tabId);
     // Hand a task back for when this tab is shown again, without touching the key the new tab
     // writes to (it unlocks as soon as a record is removed and may already hold the next task).
-    const stashForLater = (record) => serialRetryWrite(async () => {
-      try {
-        const queue = asList((await storage.get(retryKey))?.[retryKey]);
-        if (queue.some((entry) => entry?.id === record.id)) return;
-        await storage.set?.({ [retryKey]: [...queue, record] });
-      } catch { /* best effort */ }
-    });
+    const stashForLater = stashRecord;
     const retryWaiting = async () => {
       try {
         return asList((await storage.get(retryKey))?.[retryKey]).length > 0;
