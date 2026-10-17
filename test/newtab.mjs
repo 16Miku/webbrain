@@ -1344,3 +1344,14 @@ test('round-27: document language follows the WebBrain locale; effects wait whil
   assert.match(read('features/navbar/components/Maximise.jsx'), /dataset\.bgMaximised = 'true'/);
   assert.match(read('App.jsx'), /EventBus\.on\('settingsimported', importedHandler\)[\s\S]*EventBus\.off\('settingsimported', importedHandler\)/);
 });
+
+test('round-28: migration cleans up partial copies; maximised remounts stay unfiltered; in-memory import reapplies globals; single delete clears selection', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  assert.match(read('utils/customBackgroundDB.js'), /await addBackground\(bg\);\s*\}\s*\} catch \(error\) \{\s*try \{\s*await clearAllBackgrounds\(\);/);
+  const rend = read('features/background/hooks/useBackgroundRenderer.js');
+  assert.match(rend, /isMaximised\(\) \? 'blur\(0px\) brightness\(100%\)'/);
+  assert.match(rend, /isMaximised\(\) \? NO_OVERLAY/);
+  assert.match(read('App.jsx'), /importedHandler = \(\) => \{\s*loadSettings\(true\);/);
+  const custom = read('features/background/options/Custom.jsx');
+  assert.match(custom, /syncBackgroundCount\(backgrounds\);\s*\/\/ Selections are array indices[^\n]*\n\s*setSelectedImages\(new Set\(\)\);/);
+});

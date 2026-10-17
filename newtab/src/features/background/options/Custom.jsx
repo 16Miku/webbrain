@@ -290,6 +290,8 @@ const CustomSettings = memo(() => {
       setCustomBackground(backgrounds);
 
       syncBackgroundCount(backgrounds);
+      // Selections are array indices; after a removal they would point at different images.
+      setSelectedImages(new Set());
 
       // custom -> custom does not count as a type change, so ask for a reload of the picture itself
       EventBus.emit('refresh', 'backgroundrefresh');

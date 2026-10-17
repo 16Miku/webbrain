@@ -34,7 +34,10 @@ const useAppSetup = (onDefaultsApplied) => {
     };
 
     // Import while storage is only in memory: a reload would discard it, so rebuild instead.
-    const importedHandler = () => onDefaultsApplied?.();
+    const importedHandler = () => {
+      loadSettings(true); // theme, title, animations, custom CSS / font are applied imperatively
+      onDefaultsApplied?.();
+    };
 
     EventBus.on('refresh', refreshHandler);
     EventBus.on('settingsimported', importedHandler);

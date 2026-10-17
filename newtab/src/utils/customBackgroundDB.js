@@ -321,9 +321,20 @@ export async function migrateFromLocalStorage() {
       return false; // Already migrated
     }
 
-    // Migrate each background
-    for (const bg of backgrounds) {
-      await addBackground(bg);
+    // Migrate each background. IndexedDB was empty (count === 0), so everything in it after a
+    // failure is a partial copy: remove it, or later attempts would see "already migrated" and
+    // the rest of the legacy list would stay invisible for good.
+    try {
+      for (const bg of backgrounds) {
+        await addBackground(bg);
+      }
+    } catch (error) {
+      try {
+        await clearAllBackgrounds();
+      } catch {
+        // best effort
+      }
+      throw error;
     }
 
     console.log(`Migrated ${backgrounds.length} backgrounds from localStorage to IndexedDB`);

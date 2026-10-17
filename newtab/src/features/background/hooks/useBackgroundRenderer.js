@@ -3,6 +3,10 @@ import { createBlobUrl } from '../api/blobUrl';
 import { generateBlurHashDataUrl } from '../api/blurHash';
 import { getBackgroundFilterStyle, getBackgroundOverlayStyle } from '../api/backgroundFilters';
 
+// Set by Maximise while the effects are cleared (see features/navbar/components/Maximise.jsx).
+const isMaximised = () => document.documentElement.dataset.bgMaximised === 'true';
+const NO_OVERLAY = { backdropFilter: '', WebkitBackdropFilter: '', backgroundColor: '' };
+
 // Constants
 const TRANSITION_DURATION = 1200; // milliseconds
 
@@ -146,7 +150,13 @@ export function useBackgroundFilters(backgroundData) {
   // Effect settings can change while another kind of background is showing, so read them
   // again whenever the background does (a video mounted later must not get stale values).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  return useMemo(() => ({ WebkitFilter: getBackgroundFilterStyle() }), [backgroundData]);
+  return useMemo(
+    () => ({
+      // A video mounted while the page is maximised must come up without effects too.
+      WebkitFilter: isMaximised() ? 'blur(0px) brightness(100%)' : getBackgroundFilterStyle(),
+    }),
+    [backgroundData],
+  );
 }
 
 /**
@@ -154,5 +164,8 @@ export function useBackgroundFilters(backgroundData) {
  */
 export function useBackgroundOverlayFilters(backgroundData) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  return useMemo(() => getBackgroundOverlayStyle(), [backgroundData]);
+  return useMemo(
+    () => (isMaximised() ? NO_OVERLAY : getBackgroundOverlayStyle()),
+    [backgroundData],
+  );
 }
