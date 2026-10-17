@@ -67572,6 +67572,8 @@ test('Bonsai 2 Vision worker replaces only a stale cached decoder graph', async 
     }
     assert.match(workerSource, /refreshBonsai2DecoderGraph\(modelId, \{ allowNetwork: !localFilesOnly \}\)/,
       'runtime loads may download the graph only outside cache-only inference');
+    assert.match(workerSource, /refreshBonsai2DecoderGraph\(modelId, \{ allowNetwork: true \}\) === 'updated'\s*&& visionRuntimeKey\.startsWith\(`vision\|\$\{modelId\}\|`\)\) \{[^}]*await disposeVisionRuntime\(\);/,
+      'an explicit update must drop the resident session built from the replaced graph');
 
     const entries = new Map([[graphUrl, 'scan graph'], [dataUrl, 'weights']]);
     const fetched = [];

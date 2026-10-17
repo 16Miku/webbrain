@@ -222,7 +222,7 @@ def build(size, workspace, offline=False, skip_inference=False):
     # A rebuilt package needs fresh external validation. Keep the original
     # reports outside this directory, but never seal a stale success report
     # into newly generated model artifacts.
-    for filename in ("browser-validation.json", "native-vision-validation.json"):
+    for filename in ("browser-validation.json", "offline-browser-validation.json", "native-vision-validation.json"):
         (output / filename).unlink(missing_ok=True)
     original_config = read_json(prism / "config.json")
     config = read_json(text / "config.json")

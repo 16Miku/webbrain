@@ -1130,8 +1130,12 @@ async function downloadTextModel(payload, { onStarted } = {}) {
   await clearLegacyLfm25VlWrongPrecisionCache(modelId, dtype);
   if (await isTextModelReady(modelId, dtype)) {
     // An explicit download of a cached model is the update path for its graph.
-    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
-      await refreshBonsai2DecoderGraph(modelId, { allowNetwork: true });
+    // Model operations are serialized, so no load can race this replacement.
+    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)
+        && await refreshBonsai2DecoderGraph(modelId, { allowNetwork: true }) === 'updated'
+        && visionRuntimeKey.startsWith(`vision|${modelId}|`)) {
+      // The resident session was built from the replaced graph.
+      await disposeVisionRuntime();
     }
     if (payload?.requireTools === true) {
       const runtime = await getDownloadedTextRuntime(modelId, dtype, device, { localFilesOnly: true });
