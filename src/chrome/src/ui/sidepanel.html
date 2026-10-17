@@ -173,33 +173,7 @@
     <!-- Header -->
     <div class="header-shell">
       <header id="header">
-      <div class="header-left">
-        <div class="provider-picker" id="provider-picker">
-          <!-- Native select kept as the value source for existing handlers.
-               Closed button is text-only; brand icons show only in the open menu. -->
-          <select id="provider-select" class="provider-select-native" title="LLM Provider" tabindex="-1" aria-hidden="true"></select>
-          <button type="button" id="provider-picker-btn" class="provider-picker-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="provider-picker-menu" aria-label="LLM Provider">
-            <span class="provider-picker-label" id="provider-picker-label"></span>
-            <span class="provider-picker-caret" aria-hidden="true">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </span>
-          </button>
-          <div class="provider-picker-menu hidden" id="provider-picker-menu" role="listbox" tabindex="-1"></div>
-        </div>
-        <button
-          type="button"
-          id="btn-webgpu-standalone"
-          class="standalone-webgpu-toggle"
-          title="Enable Apocalypse Mode first"
-          aria-label="Use WebGPU for this standalone chat"
-          aria-pressed="false"
-          hidden
-        ><span aria-hidden="true">☢</span></button>
-        <span id="status-dot" class="status-dot offline" data-i18n-title="sp.status.disconnected"></span>
-      </div>
-      <div class="header-right">
+      <div class="header-tools">
         <div id="language-picker" class="language-picker">
           <select id="language-select" class="language-select-native" tabindex="-1" aria-hidden="true"></select>
           <button type="button" id="language-picker-btn" class="language-picker-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="language-picker-menu" data-i18n-aria-label="sp.btn.language">
@@ -239,6 +213,22 @@
             <path d="M10 14 21 3"/>
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
           </svg>
+        </button>
+      </div>
+      <div class="conversation-action-group header-conversation">
+        <button id="btn-history" aria-haspopup="dialog" aria-controls="history-popover" aria-expanded="false" class="conversation-action" type="button" data-i18n-title="sp.btn.history_short" data-i18n-aria-label="sp.btn.history_short">
+          <svg data-icon="history" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>
+          </svg>
+          <span class="conversation-action-label" data-i18n="sp.btn.history_short">History</span>
+        </button>
+        <div id="history-popover" class="history-popover" popover="auto" role="dialog" aria-label="History" data-i18n-aria-label="sp.btn.history_short"></div>
+        <button id="btn-clear" class="conversation-action" type="button" data-i18n-title="sp.btn.clear_short" data-i18n-aria-label="sp.btn.clear_short">
+          <svg data-icon="plus" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14"/><path d="M12 5v14"/>
+          </svg>
+          <span class="conversation-action-label" data-i18n="sp.btn.clear_short">New chat</span>
         </button>
       </div>
       </header>
@@ -376,50 +366,61 @@
           <button id="btn-mode-act" class="mode-btn" data-i18n="sp.mode.act" data-i18n-title="sp.mode.act.title"></button>
           <button id="btn-mode-dev" class="mode-btn" data-i18n="sp.mode.dev" data-i18n-title="sp.mode.dev.title"></button>
         </div>
-        <div class="conversation-action-group">
-          <button id="btn-history" aria-haspopup="dialog" aria-controls="history-popover" aria-expanded="false" class="conversation-action" type="button" data-i18n-title="sp.btn.history_short" data-i18n-aria-label="sp.btn.history_short">
-            <svg data-icon="history" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-              <path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>
-            </svg>
-            <span class="conversation-action-label" data-i18n="sp.btn.history_short">History</span>
-          </button>
-          <div id="history-popover" class="history-popover" popover="auto" role="dialog" aria-label="History" data-i18n-aria-label="sp.btn.history_short"></div>
-          <button id="btn-clear" class="conversation-action" type="button" data-i18n-title="sp.btn.clear_short" data-i18n-aria-label="sp.btn.clear_short">
-            <svg data-icon="plus" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M5 12h14"/><path d="M12 5v14"/>
-            </svg>
-            <span class="conversation-action-label" data-i18n="sp.btn.clear_short">New chat</span>
-          </button>
-        </div>
       </div>
       <div id="queued-messages" class="queued-messages hidden" role="list" aria-live="polite"></div>
       <div id="slash-command-menu" class="slash-command-menu hidden" role="listbox" data-i18n-aria-label="sp.slash.commands_label"></div>
       <div id="attachment-preview-list" class="attachment-preview-list hidden"></div>
       <input type="file" id="file-attach-input" accept="image/*,application/pdf,application/json,text/plain,text/csv,text/markdown,video/mp4,video/quicktime,video/webm,.json,.txt,.csv,.md,.mp4,.m4v,.mov,.webm" multiple hidden>
       <div id="input-wrapper">
-        <button id="btn-attach" data-i18n-title="sp.btn.attach">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m16 6-8.4 8.6a2 2 0 0 0 2.8 2.8l8.4-8.6a4 4 0 0 0-5.6-5.6l-8.4 8.6a6 6 0 0 0 8.5 8.5l8.4-8.6"/>
-          </svg>
-        </button>
         <div id="input-text-layer">
           <div id="input-highlight" aria-hidden="true"></div>
           <textarea id="user-input" data-i18n-placeholder="sp.input.ask_placeholder" rows="1"></textarea>
         </div>
-        <button id="btn-mic" data-i18n-title="sp.btn.mic">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-            <path d="M12 19v3"/>
-            <path d="M8 22h8"/>
-          </svg>
-        </button>
-        <button id="btn-send" data-i18n-title="sp.btn.send">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-          </svg>
-        </button>
+        <div class="composer-toolbar">
+          <button id="btn-attach" data-i18n-title="sp.btn.attach">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m16 6-8.4 8.6a2 2 0 0 0 2.8 2.8l8.4-8.6a4 4 0 0 0-5.6-5.6l-8.4 8.6a6 6 0 0 0 8.5 8.5l8.4-8.6"/>
+            </svg>
+          </button>
+          <div class="provider-picker" id="provider-picker">
+            <!-- Native select kept as the value source for existing handlers.
+                 Closed button is text-only; brand icons show only in the open menu. -->
+            <select id="provider-select" class="provider-select-native" title="LLM Provider" tabindex="-1" aria-hidden="true"></select>
+            <button type="button" id="provider-picker-btn" class="provider-picker-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="provider-picker-menu" aria-label="LLM Provider">
+              <span class="provider-picker-label" id="provider-picker-label"></span>
+              <span class="provider-picker-caret" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </span>
+            </button>
+            <div class="provider-picker-menu hidden" id="provider-picker-menu" role="listbox" tabindex="-1"></div>
+          </div>
+          <button
+            type="button"
+            id="btn-webgpu-standalone"
+            class="standalone-webgpu-toggle"
+            title="Enable Apocalypse Mode first"
+            aria-label="Use WebGPU for this standalone chat"
+            aria-pressed="false"
+            hidden
+          ><span aria-hidden="true">☢</span></button>
+          <span id="status-dot" class="status-dot offline" data-i18n-title="sp.status.disconnected"></span>
+          <span class="composer-toolbar-spacer" aria-hidden="true"></span>
+          <button id="btn-mic" data-i18n-title="sp.btn.mic">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <path d="M12 19v3"/>
+              <path d="M8 22h8"/>
+            </svg>
+          </button>
+          <button id="btn-send" data-i18n-title="sp.btn.send">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   </div>
