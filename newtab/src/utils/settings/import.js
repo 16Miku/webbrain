@@ -80,20 +80,33 @@ export async function importSettings(e, initial = false) {
 
 // Settings the widgets JSON.parse on load. A wrong value here would not fail the import (every
 // write succeeds) but would crash the page on the next load, so check them up front.
-const JSON_ARRAY_KEYS = ['applinks', 'backgroundExclude', 'customEvents', 'messages', 'order', 'todo'];
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isString = (value) => typeof value === 'string';
+// key -> what every entry of the list must look like (the widgets read these fields unguarded)
+const JSON_ARRAY_ENTRIES = {
+  applinks: (e) => isObject(e) && isString(e.name) && isString(e.url),
+  backgroundExclude: isString,
+  customEvents: (e) => isObject(e) && isString(e.name) && Number.isFinite(e.month) && Number.isFinite(e.date),
+  messages: isString,
+  order: isString,
+  todo: (e) => isObject(e) && isString(e.value),
+};
 
 /** Returns a reason when the backup would leave the new tab unable to load, else null. */
 export function validateSettings(content) {
   for (const [key, value] of Object.entries(content)) {
     if (value !== null && typeof value === 'object') return `${key} is not a plain value`;
   }
-  for (const key of JSON_ARRAY_KEYS) {
+  for (const [key, isValidEntry] of Object.entries(JSON_ARRAY_ENTRIES)) {
     if (!(key in content)) continue;
+    let list;
     try {
-      if (!Array.isArray(JSON.parse(content[key]))) return `${key} is not a list`;
+      list = JSON.parse(content[key]);
     } catch {
       return `${key} is not valid JSON`;
     }
+    if (!Array.isArray(list)) return `${key} is not a list`;
+    if (!list.every(isValidEntry)) return `${key} has an entry of the wrong shape`;
   }
   if ('favourite' in content && content.favourite !== 'null') {
     try {

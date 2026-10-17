@@ -49,12 +49,15 @@ function MainModal({ modalClose, deepLinkData }) {
           timestamp: Date.now(),
         });
         setCurrentSubSection(linkData.subSection || null);
+      } else if (!window.location.hash) {
+        // Back left the settings route (to the bare new tab URL): the modal has to go too.
+        modalClose?.();
       }
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [modalClose]);
 
   const handleSectionChange = (section, sectionName) => {
     setCurrentSection(section);

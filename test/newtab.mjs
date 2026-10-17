@@ -1265,7 +1265,13 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     ]) {
       assert.equal(await mod.importSettings(JSON.stringify({ ...bad, [K]: [{ url: 'data:other' }] })), false, JSON.stringify(bad));
     }
-    assert.equal(globalThis.__toasts.length, 6);
+    for (const bad of [
+      { customEvents: '[null]' }, { customEvents: '[{"name":"x","month":"1","date":1}]' }, { messages: '[1]' },
+      { applinks: '[{"name":"a"}]' }, { order: '[null]' }, { todo: '[{"done":true}]' }, { backgroundExclude: '[{}]' },
+    ]) {
+      assert.equal(await mod.importSettings(JSON.stringify(bad)), false, JSON.stringify(bad));
+    }
+    assert.equal(globalThis.__toasts.length, 13);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({
@@ -1377,4 +1383,10 @@ test('round-29: an open dropdown commits the highlighted option on Enter / Space
   assert.match(src, /isOpen && focusedIndex >= 0\s*\? props\.items\.filter\(\(i\) => i !== null\)\[focusedIndex\]/);
   assert.match(src, /onChange\(highlighted\.value\)/);
   assert.match(src, /\[isOpen, focusedIndex, onChange, props\.items, props\.disabled\]/);
+});
+
+test('round-30: leaving the settings route with Back closes the modal', () => {
+  const src = readFileSync(nt('components/Elements/MainModal/Main.jsx'), 'utf8');
+  assert.match(src, /else if \(!window\.location\.hash\) \{[^}]*modalClose\?\.\(\);/);
+  assert.match(src, /\[modalClose\]\);/);
 });
