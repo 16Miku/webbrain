@@ -210,12 +210,22 @@ export class FirefoxBidiClient {
         deadlineAt: message.actionDeadlineAt || 0,
       }, { onDispatch });
       // The companion answers verified:false only from its settled readback
-      // after trusted typing went out. Its rich-text reader falls back to
-      // innerText, so the agent's policy decides whether that is a failure
-      // (Strict checks) or a noted, unverified success.
+      // after trusted typing went out. A native <input> or <textarea> it
+      // reads back by its exact value, so there a mismatch is known: the
+      // field holds another value, and a batched submit must not run on it
+      // (browser-batch.js textWriteRefuted). A contenteditable editor it
+      // reads through the editor's model or, failing that, its rendered text
+      // (innerText), so there the agent's policy decides whether that is a
+      // failure (Strict checks) or a noted, unverified success.
+      const meta = prepared.fieldMeta || null;
+      const exactValue = !!meta && meta.contentEditable !== true
+        && ['input', 'textarea'].includes(String(meta.tag || '').toLowerCase());
       const unverified = (action === 'type' || action === 'field') && performed?.success === false
         && performed.dispatched === true && performed.verified === false && !performed.unverified
-        ? { unverified: { reason: 'readback_mismatch', reader: 'unknown' } } : {};
+        ? (exactValue
+          ? { unverified: { reason: 'readback_mismatch', reader: 'exact' }, readbackExact: true }
+          : { unverified: { reason: 'readback_mismatch', reader: 'unknown' } })
+        : {};
       return { ...metadata, ...performed, ...unverified, ...(prepared.rect ? { rect: prepared.rect } : {}), ...(prepared._filePickerGuardId ? { _filePickerGuardId: prepared._filePickerGuardId } : {}) };
     } catch (error) {
       if (error?.name === 'AbortError' && isBidiRequestNotSentError(error)) throw error;

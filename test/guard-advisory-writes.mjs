@@ -659,6 +659,7 @@ test('firefox: a trusted BiDi readback mismatch is an unverified write, not debt
     retryable: false, error: 'Trusted typing did not match the requested value; inspect before another write.' });
   const mismatch = await client.sendContent(tab, { target: 'content', action: 'set_field', params: { ...args } });
   assert.deepEqual(mismatch.unverified, { reason: 'readback_mismatch', reader: 'unknown' });
+  assert.equal(mismatch.readbackExact, undefined, 'a contenteditable readback may be the rendered text');
   client.perform = async () => { throw Object.assign(new Error('companion disconnected'), {}); };
   const lost = await client.sendContent(tab, { target: 'content', action: 'set_field', params: { ...args } });
   assert.equal(lost.unverified, undefined, 'a transport failure is an unknown outcome, not an unverified write');
@@ -672,6 +673,34 @@ test('firefox: a trusted BiDi readback mismatch is an unverified write, not debt
   const locked = await agent._finalizeTextMutationResult(tabId, 'set_field', args, mismatch);
   assert.equal(locked.repeatBlocked, true);
   assert.equal(agent._uncertainTextMutations.get(tabId)?.size, 1);
+});
+
+test('firefox: a trusted BiDi mismatch in a native input or textarea is known and ends the batch', async () => {
+  // The companion reads a native field back by its exact value: a mismatch
+  // there means the field holds another value, so a batched submit must not
+  // run on it.
+  const { Agent, batch } = builds.find(item => item.build === 'firefox');
+  const tab = 78;
+  for (const fieldMeta of [{ tag: 'input', type: 'text', contentEditable: false, name: 'title' },
+    { tag: 'textarea', type: 'textarea', contentEditable: false, name: 'body' }]) {
+    const client = new FirefoxBidiClient({ tabs: { sendMessage: async () => ({ bidiPrepared: true, fieldMeta, url: scope.pageUrl }) } });
+    client.runs.set(tab, { runId: 'run-1', bound: true });
+    client.bindRun = async () => {};
+    client.perform = async () => ({ success: false, dispatched: true, verified: false, submitted: false, outcomeUnknown: true,
+      retryable: false, error: 'Trusted typing did not match the requested value; inspect before another write.' });
+    const mismatch = await client.sendContent(tab, { target: 'content', action: 'set_field', params: { ...args } });
+    assert.deepEqual(mismatch.unverified, { reason: 'readback_mismatch', reader: 'exact' }, fieldMeta.tag);
+    assert.equal(mismatch.readbackExact, true, fieldMeta.tag);
+    const agent = setup(Agent);
+    const advisory = await agent._finalizeTextMutationResult(tabId, 'set_field', args, mismatch);
+    assert.equal(advisory.success, true, fieldMeta.tag);
+    assert.equal(advisory.unverifiedWrite, true, fieldMeta.tag);
+    assert.match(advisoryOf(advisory, 'text-write-readback-unverified')?.note || '', /reads back a different value/);
+    assert.equal(batch.textWriteRefuted(advisory), true, `${fieldMeta.tag}: the value is known to be wrong`);
+    const status = batch.browserBatchResultStatus({ role: 'tool', content: JSON.stringify(advisory) });
+    assert.equal(status.failed, true, `${fieldMeta.tag}: the next batched action must not run`);
+    assert.equal(status.reason, 'action_unverified');
+  }
 });
 
 // The real content-script readback handlers, run against a minimal DOM.
