@@ -1865,7 +1865,14 @@ function queueSelectionShortcutPrompt(msg, tab, sendResponse, { panelOpened = fa
   const resumesCutOffAnswer = selectionAction !== 'custom'
     && typeof msg.continueFrom === 'string' && msg.continueFrom.trim() !== '';
   const text = resumesCutOffAnswer
-    ? buildContinuationSelectionPrompt(msg.selectionText, selectionAction, msg.continueFrom.slice(-INLINE_CONTINUE_PARTIAL_MAX_CHARS), msg.language)
+    ? buildContinuationSelectionPrompt(
+      msg.selectionText,
+      selectionAction,
+      msg.continueFrom.slice(-INLINE_CONTINUE_PARTIAL_MAX_CHARS),
+      msg.language,
+      // Known only once the providers have loaded; until then the run's own check decides.
+      { contextWindow: providerManager.providers.size > 0 ? providerManager.getActive()?.contextWindow : undefined },
+    )
     : includePageContext
     ? buildFullContextSelectionPrompt(selectionText, msg.question)
     : buildSelectionPrompt(

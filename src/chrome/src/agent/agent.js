@@ -26282,6 +26282,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         content: Agent._stripReasoningTags(partial),
         toolCalls: [],
         finishReason: String(error.incompleteReason),
+        // The call that was cut off can also be the one that reached the cost allowance.
+        ...(error.costAllowanceMessage ? { costAllowanceMessage: error.costAllowanceMessage } : {}),
       };
     }
     const latencyMs = Date.now() - startedAt;
@@ -26312,9 +26314,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const displayText = repairAssistantDisplayText(displayContent);
     // A reply that ran into the output limit must not read as finished. A selection
     // card's "Continue" lands here too, and the remainder can be cut off again.
-    return phase === 'response_only' && displayText && outputWasCutOff(result)
-      ? `${displayText}${RESPONSE_CUT_OFF_NOTICE}`
-      : displayText;
+    if (phase !== 'response_only' || !displayText) return displayText;
+    const answer = outputWasCutOff(result) ? `${displayText}${RESPONSE_CUT_OFF_NOTICE}` : displayText;
+    // The call that reached the cost allowance says so, so the next one does not fail unexplained.
+    return result?.costAllowanceMessage ? `${answer}\n\n${result.costAllowanceMessage}` : answer;
   }
 
   _consumeContextOnlyAbort(tabId, messages, onUpdate) {

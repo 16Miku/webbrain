@@ -700,6 +700,7 @@ const {
   capInlineAnswer: capInlineAnswerCh,
   INLINE_ANSWER_MAX_CHARS: INLINE_ANSWER_MAX_CHARS_CH,
   SELECTION_TOO_LONG_FOR_CONTEXT: SELECTION_TOO_LONG_FOR_CONTEXT_CH,
+  SIDE_PANEL_SELECTION_SYSTEM_TOKENS: SIDE_PANEL_SELECTION_SYSTEM_TOKENS_CH,
   buildContinuationSelectionPrompt: buildContinuationSelectionPromptCh,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS: INLINE_CONTINUE_PARTIAL_MAX_CHARS_CH,
   buildFollowUpSelectionText: buildFollowUpSelectionTextCh,
@@ -729,6 +730,7 @@ const {
   capInlineAnswer: capInlineAnswerFx,
   INLINE_ANSWER_MAX_CHARS: INLINE_ANSWER_MAX_CHARS_FX,
   SELECTION_TOO_LONG_FOR_CONTEXT: SELECTION_TOO_LONG_FOR_CONTEXT_FX,
+  SIDE_PANEL_SELECTION_SYSTEM_TOKENS: SIDE_PANEL_SELECTION_SYSTEM_TOKENS_FX,
   buildContinuationSelectionPrompt: buildContinuationSelectionPromptFx,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS: INLINE_CONTINUE_PARTIAL_MAX_CHARS_FX,
   buildFollowUpSelectionText: buildFollowUpSelectionTextFx,
@@ -52262,7 +52264,7 @@ test('a cut-off card answer is resumed in the side panel, not run again', () => 
     ['firefox', 'src/firefox/src/background.js'],
   ]) {
     const background = fs.readFileSync(path.join(ROOT, bgPath), 'utf8');
-    assert.match(background, /const resumesCutOffAnswer = selectionAction !== 'custom'\s*&& typeof msg\.continueFrom === 'string' && msg\.continueFrom\.trim\(\) !== '';\s*const text = resumesCutOffAnswer\s*\? buildContinuationSelectionPrompt\(msg\.selectionText, selectionAction, msg\.continueFrom\.slice\(-INLINE_CONTINUE_PARTIAL_MAX_CHARS\), msg\.language\)/,
+    assert.match(background, /const resumesCutOffAnswer = selectionAction !== 'custom'\s*&& typeof msg\.continueFrom === 'string' && msg\.continueFrom\.trim\(\) !== '';\s*const text = resumesCutOffAnswer\s*\? buildContinuationSelectionPrompt\(\s*msg\.selectionText,\s*selectionAction,\s*msg\.continueFrom\.slice\(-INLINE_CONTINUE_PARTIAL_MAX_CHARS\),\s*msg\.language,\s*(?:\/\/[^\n]*\n\s*)*\{ contextWindow: providerManager\.providers\.size > 0 \? providerManager\.getActive\(\)\?\.contextWindow : undefined \},?\s*\)/,
       `${prefix}: the background resumes a cut-off answer for the card actions and bounds what it accepts`);
     const content = fs.readFileSync(path.join(ROOT, `src/${prefix}/src/content/selection-shortcut.js`), 'utf8');
     assert.match(content, /\.\.\.\(action !== 'custom' && extra\.continueFrom \? \{ continueFrom: extra\.continueFrom \} : \{\}\)/,
@@ -52270,6 +52272,88 @@ test('a cut-off card answer is resumed in the side panel, not run again', () => 
     assert.match(content, /function continueInPanel\(\) \{[\s\S]*?submitSelection\(kind, '', kind === 'translate' \? target : interfaceLanguage, \{\s*continueFrom: cardState\.text \|\| '',\s*\}\);/,
       `${prefix}: Continue hands the unfinished text to the side panel`);
   }
+});
+
+const normalizeCtx = (prompt) => prompt.replace(/ctx-\d+-[a-z0-9]+/g, 'ctx-N');
+
+test('a long unfinished answer is trimmed to what the model window leaves, so Continue stays possible', () => {
+  const wellFormed = (text) => /^(?:[^\uD800-\uDFFF]|[\uD800-\uDBFF][\uDC00-\uDFFF])*$/.test(text);
+  const block = (prompt) => prompt.slice(prompt.indexOf('<untrusted_page_content id="'));
+  for (const [label, buildContinuation, fit, reserve] of [
+    ['chrome', buildContinuationSelectionPromptCh, fitAnswerToContextCh, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_CH],
+    ['firefox', buildContinuationSelectionPromptFx, fitAnswerToContextFx, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_FX],
+  ]) {
+    // What the side panel sends: its own system prompt and scope note (about 2,500 characters) and the prompt.
+    const sidePanelRoom = (prompt, contextWindow) => fit({
+      contextWindow,
+      messages: [{ role: 'system', content: 's'.repeat(2600) }, { role: 'user', content: prompt }],
+      wanted: 8192,
+    });
+    const selection = 'The quick brown fox jumps over the lazy dog. '.repeat(20);
+    const ascii = `HEAD-${'a'.repeat(63_000)}-TAIL`;
+    const cjk = `开头-${'汉'.repeat(15_000)}-结尾`;
+    const emoji = `🙂${'😀'.repeat(20_000)}🙃`;
+
+    for (const contextWindow of [8192, 16_384, 32_768]) {
+      for (const [kind, partial, tail] of [['ASCII', ascii, '-TAIL'], ['CJK', cjk, '-结尾'], ['emoji', emoji, '🙃']]) {
+        const whole = buildContinuation(selection, 'explain', partial, 'en');
+        assert.equal(sidePanelRoom(whole, contextWindow), 0, `${label}: a ${kind} answer sent whole into a ${contextWindow}-token window leaves no room (the bug)`);
+        const prompt = buildContinuation(selection, 'explain', partial, 'en', { contextWindow });
+        assert.ok(sidePanelRoom(prompt, contextWindow) >= 256, `${label}: a ${kind} answer trimmed for a ${contextWindow}-token window leaves room to answer: ${sidePanelRoom(prompt, contextWindow)}`);
+        assert.ok(prompt.length < whole.length, `${label}: ${kind} was shortened`);
+        assert.ok(block(prompt).includes(tail), `${label}: the end of the ${kind} answer, where it must pick up, is kept`);
+        assert.match(block(prompt), /\[Unfinished explanation of the text above\.[^\n]*\n…/, `${label}: ${kind} shows that the start was left out`);
+        assert.equal(block(prompt).includes(selection.trim()), true, `${label}: the selection itself is kept whole`);
+        assert.ok(wellFormed(prompt), `${label}: ${kind} is trimmed on a character boundary`);
+        if (contextWindow >= 16_384) {
+          assert.ok(sidePanelRoom(prompt, contextWindow) >= 2048, `${label}: a ${contextWindow}-token window keeps a generous reply for ${kind}: ${sidePanelRoom(prompt, contextWindow)}`);
+        }
+        assert.ok(prompt.length > 400, `${label}: ${kind} still carries a useful tail`);
+      }
+    }
+    // However the room falls against a character that takes several units, the cut never splits one.
+    for (let pad = 0; pad < 9; pad += 1) {
+      const trimmedEmoji = buildContinuation(`${selection}${'x'.repeat(pad)}`, 'explain', emoji, 'en', { contextWindow: 8192 });
+      assert.ok(wellFormed(trimmedEmoji), `${label}: with ${pad} more selected characters the trimmed text is still whole characters`);
+      assert.ok(block(trimmedEmoji).includes('🙃'), `${label}: and still ends where the answer ended`);
+    }
+    // A selection that takes most of a tight window leaves only the least a reply needs, and the answer is still resumable.
+    const bulky = 'word '.repeat(600);
+    const tight = buildContinuation(bulky, 'explain', ascii, 'en', { contextWindow: 8192 });
+    assert.ok(sidePanelRoom(tight, 8192) >= 256 && sidePanelRoom(tight, 8192) < 1024, `${label}: a bulky selection keeps a short tail and the least reply room: ${sidePanelRoom(tight, 8192)}`);
+    assert.ok(block(tight).includes('-TAIL') && block(tight).includes('…'), `${label}: and it is still the end of the answer`);
+    // A larger window takes more of the tail than a smaller one.
+    const small = buildContinuation(selection, 'translate', ascii, 'de', { contextWindow: 8192 });
+    const large = buildContinuation(selection, 'translate', ascii, 'de', { contextWindow: 32_768 });
+    assert.ok(large.length > small.length * 2, `${label}: the room follows the window`);
+    // The reserve really is what the side panel adds, and the reply room is never more than a quarter of the window.
+    assert.ok(reserve >= 2600, `${label}: the reserve covers the side panel's own prompt`);
+
+    // Nothing to trim, or nothing known to trim against: the whole text goes, exactly as before.
+    const plain = buildContinuation(selection, 'explain', ascii, 'en');
+    for (const contextWindow of [undefined, null, 0, -5, NaN, 'abc', 1_000_000]) {
+      assert.equal(normalizeCtx(buildContinuation(selection, 'explain', ascii, 'en', { contextWindow })), normalizeCtx(plain), `${label}: ${String(contextWindow)} is not a window to trim for`);
+    }
+    assert.equal(normalizeCtx(buildContinuation(selection, 'explain', ascii, 'en', {})), normalizeCtx(plain), `${label}: no options keep the whole text`);
+    const short = buildContinuation(selection, 'explain', 'A short unfinished answer.', 'en', { contextWindow: 8192 });
+    assert.match(block(short), /\n A short unfinished answer\.\n<\/untrusted_page_content>$|\nA short unfinished answer\.\n<\/untrusted_page_content>$/, `${label}: an answer that fits is not changed`);
+    assert.doesNotMatch(short, /…/, `${label}: and gets no ellipsis`);
+
+    // A selection that leaves no room at all is not made worse: the whole text goes and the run refuses it with a reason.
+    const huge = 'long words '.repeat(1200);
+    const refused = buildContinuation(huge, 'explain', ascii, 'en', { contextWindow: 8192 });
+    assert.equal(normalizeCtx(refused), normalizeCtx(buildContinuation(huge, 'explain', ascii, 'en')), `${label}: a window the selection already fills trims nothing`);
+    assert.equal(sidePanelRoom(refused, 8192), 0, `${label}: and is refused when it runs`);
+    // So is a 4k window, which the side panel's own prompt nearly fills before any selection is added.
+    const tiny = buildContinuation('Hi.', 'explain', ascii, 'en', { contextWindow: 4096 });
+    assert.equal(normalizeCtx(tiny), normalizeCtx(buildContinuation('Hi.', 'explain', ascii, 'en')), `${label}: nothing is trimmed when not even the least reply fits`);
+    assert.equal(sidePanelRoom(tiny, 4096), 0, `${label}: and the run says why instead of calling the model`);
+  }
+  assert.equal(
+    normalizeCtx(buildContinuationSelectionPromptCh('Same.', 'proofread', 'p'.repeat(40_000), 'en', { contextWindow: 8192 })),
+    normalizeCtx(buildContinuationSelectionPromptFx('Same.', 'proofread', 'p'.repeat(40_000), 'en', { contextWindow: 8192 })),
+    'Chrome and Firefox must trim the same way',
+  );
 });
 
 test('inline card prompts keep the selection and any earlier answer inside the untrusted boundary', () => {
@@ -54415,6 +54499,27 @@ test('an OpenAI Responses call that ends at the output limit is still metered', 
     const under = await agent._chatWithCostAllowance(provider, messages, {}, agent._newCostRunState()).catch(error => error);
     assert.equal('costAllowanceMessage' in under, false, `${label}: below the limit the error carries no notice`);
 
+    // The side-panel path that recovers the partial text says so too, so the next Continue does not fail unexplained.
+    const ALLOWANCE = 'Cloud cost allowance reached: total cloud/router usage is $5.00 against the $5.00 limit.';
+    const generate = (agentToRun, providerToRun, phase = 'response_only') => agentToRun._generateContextOnlyResponse(
+      1, messages, providerToRun, agentToRun._newCostRunState(), null, { phase, step: 1 },
+    );
+    ({ agent, provider } = setup(incomplete({ input_tokens: 120, output_tokens: 800, total_tokens: 920 })));
+    agent._recordCostUsage = async () => ALLOWANCE;
+    const recoveredAtLimit = await generate(agent, provider);
+    assert.match(recoveredAtLimit, /^Half of it[\s\S]*output limit[\s\S]*\n\nCloud cost allowance reached: total cloud\/router usage is \$5\.00/, `${label}: a recovered partial that reached the allowance says so after the cut-off notice`);
+    assert.ok(recoveredAtLimit.endsWith(`\n\n${ALLOWANCE}`), `${label}: the allowance message closes the reply`);
+    ({ agent, provider } = setup(incomplete({ input_tokens: 120, output_tokens: 800, total_tokens: 920 })));
+    assert.doesNotMatch(await generate(agent, provider), /allowance/, `${label}: a recovered partial below the allowance carries no notice`);
+    // An ordinary completed reply that reaches the allowance says so as well; a recovery phase is left to its caller.
+    provider.chat = async () => ({ content: 'Whole translation', toolCalls: null, finishReason: 'stop' });
+    agent._recordCostUsage = async () => ALLOWANCE;
+    assert.equal(await generate(agent, provider), `Whole translation\n\n${ALLOWANCE}`, `${label}: a finished reply that reached the allowance says so`);
+    provider.chat = async () => ({ content: '{"final_text":"Recovered"}', toolCalls: null, finishReason: 'stop' });
+    assert.doesNotMatch(await generate(agent, provider, 'terminal_recovery'), /allowance/, `${label}: only the response-only phase appends it`);
+    provider.chat = async () => ({ content: '', toolCalls: null, finishReason: 'stop' });
+    assert.equal(await generate(agent, provider), '', `${label}: an empty reply keeps its empty-output handling`);
+
     ({ agent, provider, recorded } = setup(incomplete(null)));
     await assert.rejects(agent._chatWithCostAllowance(provider, messages, {}, agent._newCostRunState()), /Responses incomplete/);
     assert.equal(recorded.length, 0, `${label}: nothing reported, nothing recorded`);
@@ -54431,9 +54536,9 @@ test('an OpenAI Responses call that ends at the output limit is still metered', 
 });
 
 test('a side-panel selection reply is sized to the room the context window leaves', async () => {
-  for (const [label, AgentClass, grounding, fit, tooLong] of [
-    ['chrome', AgentCh, SELECTION_ONLY_SOURCE_GROUNDING_CH, fitAnswerToContextCh, SELECTION_TOO_LONG_FOR_CONTEXT_CH],
-    ['firefox', AgentFx, SELECTION_ONLY_SOURCE_GROUNDING_FX, fitAnswerToContextFx, SELECTION_TOO_LONG_FOR_CONTEXT_FX],
+  for (const [label, AgentClass, grounding, fit, tooLong, SIDE_PANEL_SELECTION_SYSTEM_TOKENS] of [
+    ['chrome', AgentCh, SELECTION_ONLY_SOURCE_GROUNDING_CH, fitAnswerToContextCh, SELECTION_TOO_LONG_FOR_CONTEXT_CH, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_CH],
+    ['firefox', AgentFx, SELECTION_ONLY_SOURCE_GROUNDING_FX, fitAnswerToContextFx, SELECTION_TOO_LONG_FOR_CONTEXT_FX, SIDE_PANEL_SELECTION_SYSTEM_TOKENS_FX],
   ]) {
     // The helper: an unknown window changes nothing, a roomy one allows the ceiling, a tight one is clamped, none refuses.
     const prompt = (chars) => [{ role: 'user', content: 'x'.repeat(chars) }];
@@ -54443,12 +54548,13 @@ test('a side-panel selection reply is sized to the room the context window leave
     assert.equal(fit({ contextWindow: 8192, messages: prompt(8000), wanted: 8192 }), 0, `${label}: a prompt that leaves under the floor is refused`);
     assert.equal(fit({ contextWindow: 8192, messages: prompt(8000), wanted: 100 }), 0, `${label}: and so is one that cannot fit even a small ceiling`);
 
+    const systems = [];
     const run = async ({ contextWindow, chars, maxOutputTokens = 8192, runOptions = { sourceGrounding: grounding }, phase = 'response_only' }) => {
       const requested = [];
       const provider = {
         supportsTools: false, supportsVision: false, promptTier: 'full', contextWindow, maxOutputTokens,
         model: 'test-model', name: 'test-provider',
-        chat: async (_messages, options) => { requested.push(options.maxTokens); return { content: 'The rest.', toolCalls: null }; },
+        chat: async (sent, options) => { requested.push(options.maxTokens); systems.push(sent[0]); return { content: 'The rest.', toolCalls: null }; },
       };
       const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
       agent._checkCostAllowance = async () => null;
@@ -54478,6 +54584,13 @@ test('a side-panel selection reply is sized to the room the context window leave
     assert.equal(result.requested[0], 8192, `${label}: an unknown window is not guessed at`);
     result = await run({ contextWindow: 8192, chars: 9000, phase: 'step_limit_recovery' });
     assert.equal(result.requested[0], 8192, `${label}: only the reply itself is clamped, not a recovery phase`);
+
+    // What the side panel adds before the prompt is what a trimmed continuation leaves room for.
+    const worstCaseTokens = (text) => [...text].reduce((sum, ch) => sum + (ch.codePointAt(0) < 0x80 ? 1 : 4), 0);
+    const selectionSystem = systems[0];
+    assert.equal(selectionSystem.role, 'system', `${label}: the side panel puts its own system prompt first`);
+    assert.ok(worstCaseTokens(selectionSystem.content) <= SIDE_PANEL_SELECTION_SYSTEM_TOKENS, `${label}: the side-panel prompt and scope note (${worstCaseTokens(selectionSystem.content)}) fit the room the trimming reserves for them`);
+    assert.ok(worstCaseTokens(selectionSystem.content) > SIDE_PANEL_SELECTION_SYSTEM_TOKENS / 2, `${label}: and the reserve is not wildly larger than what they take`);
   }
 });
 

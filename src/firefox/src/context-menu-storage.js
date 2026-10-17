@@ -424,7 +424,31 @@ const INLINE_CONTINUATION_INSTRUCTIONS = Object.freeze({
   proofread: 'Proofread this selected text, tying every claimed error to exact selected wording and distinguishing actual errors from optional style suggestions. If the earlier text stopped inside the corrected version, carry that version on rather than starting it again.',
 });
 
-export function buildContinuationSelectionPrompt(selectionText, action, partialAnswer, language = '') {
+// What the side panel adds to a selection run before the prompt: its own system prompt and
+// scope note (about 2,500 characters, counted at a token each like everything else). Kept
+// above the real length, and checked against it in the tests, so a continuation that is
+// trimmed to fit here is never refused by the side panel's own context check.
+export const SIDE_PANEL_SELECTION_SYSTEM_TOKENS = 3000;
+// The room left for the rest of the answer when an unfinished one is trimmed to fit.
+const INLINE_CONTINUATION_REPLY_TOKENS = 2048;
+
+// The end of `text` that fits `budget` tokens under the same worst-case estimate.
+function tailWithinTokens(text, budget) {
+  const chars = Array.from(text);
+  let used = 0;
+  let start = chars.length;
+  while (start > 0) {
+    const cost = chars[start - 1].codePointAt(0) < INLINE_ASCII_RANGE_END
+      ? INLINE_ASCII_TOKENS_PER_CHAR
+      : INLINE_OTHER_TOKENS_PER_CHAR;
+    if (used + cost > budget) break;
+    used += cost;
+    start -= 1;
+  }
+  return chars.slice(start).join('');
+}
+
+export function buildContinuationSelectionPrompt(selectionText, action, partialAnswer, language = '', { contextWindow } = {}) {
   const actionId = String(action || '').trim();
   const label = INLINE_FOLLOW_UP_LABELS[actionId];
   const selection = String(selectionText || '').trim();
@@ -434,11 +458,31 @@ export function buildContinuationSelectionPrompt(selectionText, action, partialA
     ? `${INLINE_CONTINUATION_INSTRUCTIONS[actionId]}${responseLanguageInstruction(language)}`
     : selectionActionInstruction(actionId, '', language);
   if (!instruction) return '';
-  const kept = partial.length > INLINE_CONTINUE_PARTIAL_MAX_CHARS
-    ? `…${partial.slice(-INLINE_CONTINUE_PARTIAL_MAX_CHARS)}`
-    : partial;
-  const withPartial = `${selection}\n\n[Unfinished ${label} of the text above. It stops partway and may contain mistakes.]\n${kept}`;
-  return wrapSelectedPageText(withPartial, `${instruction}${INLINE_CONTINUE_NOTE}`, SELECTION_ONLY_SOURCE_GROUNDING);
+  const overCap = partial.length > INLINE_CONTINUE_PARTIAL_MAX_CHARS;
+  let body = overCap ? partial.slice(-INLINE_CONTINUE_PARTIAL_MAX_CHARS) : partial;
+  let trimmed = overCap;
+  const head = `${selection}\n\n[Unfinished ${label} of the text above. It stops partway and may contain mistakes.]\n`;
+  const trusted = `${instruction}${INLINE_CONTINUE_NOTE}`;
+  // The card keeps the whole unfinished answer to show, but a small context window cannot take
+  // all of it back beside the selection and still leave room to write the rest. It resumes from
+  // the end, so only the end is sent, trimmed to what the window leaves. A window that cannot
+  // even take the selection keeps the whole text and is refused, with a reason, when it runs.
+  const windowTokens = Math.floor(Number(contextWindow));
+  if (windowTokens > 0) {
+    const frame = wrapSelectedPageText(head, trusted, SELECTION_ONLY_SOURCE_GROUNDING);
+    const fixedTokens = estimateInlinePromptTokens([{ content: frame }]) + SIDE_PANEL_SELECTION_SYSTEM_TOKENS;
+    // Room for a generous reply first; a tight window gives up all but the least a reply needs.
+    let room = windowTokens - fixedTokens - Math.min(INLINE_CONTINUATION_REPLY_TOKENS, Math.floor(windowTokens / 4));
+    if (room < INLINE_MIN_ANSWER_TOKENS) room = windowTokens - fixedTokens - INLINE_MIN_ANSWER_TOKENS;
+    if (room > 0) {
+      const tail = tailWithinTokens(body, room);
+      if (tail.length < body.length) {
+        body = tail;
+        trimmed = true;
+      }
+    }
+  }
+  return wrapSelectedPageText(`${head}${trimmed ? '…' : ''}${body}`, trusted, SELECTION_ONLY_SOURCE_GROUNDING);
 }
 
 const CONTEXT_MENU_PENDING_PREFIX = 'contextMenuPrompt:';
