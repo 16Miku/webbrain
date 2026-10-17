@@ -196,7 +196,8 @@ for (const { build, Agent, adapters, Scheduler } of builds) {
   // The owner's case: the blog post went into GitHub's CodeMirror editor as a
   // full replacement, the readback (rendered text) could not verify it, and
   // path, branch and commit message bind.
-  async function githubFixture({ strict = false, body = POST_BODY, live = body, message = 'Publish the post' } = {}) {
+  async function githubFixture({ strict = false, body = POST_BODY, live = body, message = 'Publish the post',
+    requestMessage = true } = {}) {
     const provider = { name: 'ask card test', model: 'test', promptTier: 'full', contextWindow: 128000,
       supportsTools: true, supportsVision: false, chat: async () => ({ content: '' }) };
     const agent = new Agent({ getActive: () => provider, getProvider: () => provider, getVisionProvider: async () => null });
@@ -209,7 +210,7 @@ for (const { build, Agent, adapters, Scheduler } of builds) {
     assert.equal(siteWorkflow?.job?.id, 'edit-file-and-commit');
     const guard = { enabled: true, taskKey: `key-${tab}`, siteWorkflow,
       workflowMetadataRequirements: [{ field: 'path', value: 'docs/post.md' }, { field: 'branch', value: 'main' },
-        { field: 'commit_message', value: message }],
+        ...(requestMessage ? [{ field: 'commit_message', value: message }] : [])],
       workflowMetadataRequirementsResolved: true, workflowMetadataRequirementsIncomplete: false };
     agent._planExecutionGuards.set(tab, guard);
     agent._lastAxScopes.set(tab, { documentToken: 'doc', pageUrl: EDIT_URL });
@@ -544,8 +545,19 @@ for (const { build, Agent, adapters, Scheduler } of builds) {
 
   // ── github-commit-split-write-required ─────────────────────────────────
   test(`${build}: an action that may or may not commit asks when a commit is otherwise allowed`, async () => {
+    // With a requested commit message there is no card: the message is
+    // proven only before the commit, and this action could rewrite it.
+    {
+      const { agent, tab } = await githubFixture();
+      const editorTarget = agent._textMutationTarget(tab, 'set_field', { ref_id: 'ref_editor' });
+      agent._unverifiedTextWrites.delete(tab);
+      agent._verifiedTextReplacements.get(tab).set(editorTarget.key, await agent._verifiedTextReplacementRecord(tab, editorTarget, POST_BODY, EDITOR_META));
+      const block = await agent._workflowPreSubmitDispatchBlock(tab, 'execute_js', { code: 'void 0' }, null);
+      assert.equal(block.splitWriteRequired, true);
+      assert.equal(block.unverifiedStepConfirmation, undefined, 'a requested message keeps the split');
+    }
     for (const strict of [false, true]) {
-      const { agent, tab } = await githubFixture({ strict });
+      const { agent, tab } = await githubFixture({ strict, requestMessage: false });
       // A verified editor proof: the commit binding holds.
       const editorTarget = agent._textMutationTarget(tab, 'set_field', { ref_id: 'ref_editor' });
       agent._unverifiedTextWrites.delete(tab);
@@ -575,7 +587,7 @@ for (const { build, Agent, adapters, Scheduler } of builds) {
   });
 
   test(`${build}: a split-write answer covers only the editor text the user saw`, async () => {
-    const { agent, tab, page } = await githubFixture();
+    const { agent, tab, page } = await githubFixture({ requestMessage: false });
     // A verified editor proof: the commit binding holds for POST_BODY.
     const editorTarget = agent._textMutationTarget(tab, 'set_field', { ref_id: 'ref_editor' });
     agent._unverifiedTextWrites.delete(tab);
@@ -617,7 +629,7 @@ for (const { build, Agent, adapters, Scheduler } of builds) {
     assert.equal(resolved, null, 'unchanged text goes ahead once');
     assert.ok((await rerun()).unverifiedStepConfirmation, 'one answer covers one action');
     // An editor that cannot be read cannot be approved.
-    const unreadable = await githubFixture();
+    const unreadable = await githubFixture({ requestMessage: false });
     const target = unreadable.agent._textMutationTarget(unreadable.tab, 'set_field', { ref_id: 'ref_editor' });
     unreadable.agent._unverifiedTextWrites.delete(unreadable.tab);
     unreadable.agent._verifiedTextReplacements.get(unreadable.tab).set(target.key,
@@ -630,7 +642,7 @@ for (const { build, Agent, adapters, Scheduler } of builds) {
   });
 
   test(`${build}: inside one call, a split-write answer holds for every re-run of the call's checks`, async () => {
-    const { agent, tab } = await githubFixture();
+    const { agent, tab } = await githubFixture({ requestMessage: false });
     const editorTarget = agent._textMutationTarget(tab, 'set_field', { ref_id: 'ref_editor' });
     agent._unverifiedTextWrites.delete(tab);
     agent._verifiedTextReplacements.get(tab).set(editorTarget.key, await agent._verifiedTextReplacementRecord(tab, editorTarget, POST_BODY, EDITOR_META));

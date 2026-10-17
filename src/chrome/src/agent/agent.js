@@ -3358,12 +3358,17 @@ export class Agent extends LoopDetector {
       // and message binding is in place, verified or approved by the user),
       // the user decides on WebBrain's card, which shows the editor's text.
       // One answer covers this one tool call (_unverifiedStepApproval).
+      // A requested commit message is proven only before the commit, and
+      // this action could rewrite it while it commits: no card makes that
+      // proof cover it, so while the request names one it keeps refusing.
       if (inconclusiveSubmitCapable
           && this._guardOutcome('github-commit-split-write-required', { decided: false }) === 'ask') {
         const pageUrl = await this._currentUrl(tabId);
         await this._refreshGithubTextReplacementProofs(tabId, pageUrl);
         const binding = this._workflowSubmitBindingForAttempt(tabId, pageUrl, {}, detectedSubmit);
-        if (binding?.metadataRequirementsIncomplete !== true && binding?.githubFileCommit) {
+        const messageRequested = (Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [])
+          .some(requirement => requirement?.field === 'commit_message');
+        if (binding?.metadataRequirementsIncomplete !== true && binding?.githubFileCommit && !messageRequested) {
           const stepKey = this._sha256TextSync(JSON.stringify(['github-commit-split-write-required',
             this._normalizeUrl(pageUrl), this._formValidationActionKey(name, args) || name, this._taskTokens.get(tabId) || '']));
           const ask = { guardId: 'github-commit-split-write-required', hard: false, action: 'commit', reason: 'submit_unclear',
