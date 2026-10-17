@@ -14208,14 +14208,16 @@ function normalizeAgentMode(mode) {
   return mode === 'act' || mode === 'dev' ? mode : 'ask';
 }
 
-async function ensureActMode() {
+// `switchMode: false` only answers whether Act may run; the caller switches the mode itself (the
+// new-tab handoff does so after re-checking the composer, which can change while this awaits).
+async function ensureActMode({ switchMode = true } = {}) {
   if (isSelectionGroundedForTab(currentTabId)) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return false;
   }
   if (agentMode === 'act') return true;
   if (autoModeSelection) return true;
-  setMode('act');
+  if (switchMode) setMode('act');
   return true;
 }
 

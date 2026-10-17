@@ -690,7 +690,7 @@ for (const browser of ['chrome', 'firefox']) {
   });
 
   test(`${browser}: Act is checked for eligibility before it is accepted`, async () => {
-    const run = async ({ allowed, draft = '', throws = false }) => {
+    const run = async ({ allowed, draft = '', throws = false, typeDuringCheck = '' }) => {
       const key3 = newtabHandoffKey(3);
       const store = { [key3]: { id: 'r1', tabId: 3, text: 'book a table', mode: 'act', createdAt: 99_000 } };
       const input = { value: draft, dispatchEvent() {}, focus() {} };
@@ -707,7 +707,7 @@ for (const browser of ['chrome', 'firefox']) {
         getIsDocumentVisible: () => true,
         doc: { addEventListener() {} },
         setMode: (m) => log.modes.push(m),
-        ensureActMode: async () => { log.checks += 1; if (throws) throw new Error('lookup failed'); return allowed; },
+        ensureActMode: async (options) => { log.checks += 1; log.options = options; if (typeDuringCheck) input.value = typeDuringCheck; if (throws) throw new Error('lookup failed'); return allowed; },
         getInputEl: () => input,
         autoResizeInput() {},
         sendMessage: async (p) => { log.sent.push(p); input.value = ''; },
@@ -734,6 +734,12 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(withDraft.log.checks, 0);
     assert.deepEqual(withDraft.log.modes, []);
     assert.equal(withDraft.input.value, 'my own text\n\nbook a table');
+    // the check only answers eligibility; a draft typed while it was running keeps its own mode
+    const typing = await run({ allowed: true, typeDuringCheck: 'typed meanwhile' });
+    assert.deepEqual(typing.log.options, { switchMode: false });
+    assert.deepEqual(typing.log.modes, []);
+    assert.deepEqual(typing.log.sent, []);
+    assert.equal(typing.input.value, 'typed meanwhile\n\nbook a table');
   });
 
   test(`${browser}: a declined send never refills another tab's composer; the task goes back to its own tab`, async () => {
@@ -2678,4 +2684,11 @@ test('round-82: the Apps popup reads one appsPinned key everywhere', () => {
   const apps = readFileSync(nt('features/navbar/components/Apps.jsx'), 'utf8');
   assert.doesNotMatch(apps, /AppsPinned/);
   assert.equal((apps.match(/getItem\('appsPinned'\)/g) || []).length, 3);
+});
+
+test('round-83: ensureActMode can answer eligibility without switching the panel mode', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const src = readFileSync(path.join(root, 'src', browser, 'src/ui/sidepanel.js'), 'utf8');
+    assert.match(src, /async function ensureActMode\(\{ switchMode = true \} = \{\}\)[\s\S]*?if \(switchMode\) setMode\('act'\);/, browser);
+  }
 });

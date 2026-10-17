@@ -266,7 +266,8 @@ export function createNewtabHandoff({
       const draftBefore = String(getInputEl()?.value || '').trim();
       if (handoff.mode === 'act' && ensureActMode && !(draftBefore && draftBefore !== handoff.text)) {
         try {
-          actBlocked = (await ensureActMode()) === false;
+          // Eligibility only: the mode is switched below, after the composer has been looked at again.
+          actBlocked = (await ensureActMode({ switchMode: false })) === false;
         } catch {
           actBlocked = false; // a failed lookup must not block; sending is still checked by the panel
         }
