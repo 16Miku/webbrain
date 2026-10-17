@@ -31562,6 +31562,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { ...options, standaloneChat: true, providerId: 'webgpu', tinyAsk: true };
   }
 
+  // After a background restart a durable selected-text scope is back only once
+  // the tab is hydrated. A tiny Ask candidate on an unhydrated tab hydrates
+  // first and is decided against the restored state, so a full page read never
+  // bypasses the selection-only boundary an uninterrupted worker would keep.
+  // Callers await this only in that case: every other run still claims the
+  // tab synchronously.
+  _tinyAskNeedsHydration(tabId, options = {}) {
+    return options?.tinyAsk === true && !this.hydratedTabs.has(tabId);
+  }
+
+  async _hydratedTinyAskRunOptions(tabId, mode, requestedRunOptions = {}) {
+    try {
+      await this._hydrate(tabId);
+    } catch {
+      // The run hydrates again inside its own error handling; until that
+      // succeeds, nothing proves the tab has no scope, so stay on the normal path.
+      const { tinyAsk: _incoming, ...plain } = requestedRunOptions || {};
+      return plain;
+    }
+    return this._withTinyAskRunOptions(tabId, mode, requestedRunOptions);
+  }
+
   // In-browser models only answer questions (tiny Ask): an Act or Dev run
   // would re-prefill the full agent prompt and tool schemas on every step.
   // Refused before enrichment, so no page read or classifier call runs.
@@ -49959,7 +49981,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async processMessage(tabId, userMessage, onUpdate = () => {}, mode = 'ask', attachments = [], runOptions = {}) {
+    const requestedRunOptions = runOptions;
     runOptions = this._withTinyAskRunOptions(tabId, mode, runOptions);
+    if (this._tinyAskNeedsHydration(tabId, runOptions)) {
+      runOptions = await this._hydratedTinyAskRunOptions(tabId, mode, requestedRunOptions);
+    }
     let runClaimed = false;
     let messageProcessingStarted = false;
     try {
@@ -51847,7 +51873,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   /**
    * Process a message with streaming output.
    */  async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
+    const requestedRunOptions = runOptions;
     runOptions = this._withTinyAskRunOptions(tabId, mode, runOptions);
+    if (this._tinyAskNeedsHydration(tabId, runOptions)) {
+      runOptions = await this._hydratedTinyAskRunOptions(tabId, mode, requestedRunOptions);
+    }
     let runClaimed = false;
     try {
     await this._claimRunEntry(tabId, 'interactive', runOptions, onUpdate);

@@ -164,6 +164,8 @@ Use the tools in `scripts/models/bonsai/`:
     60k characters, the selection, PDF text through the `read_pdf` redirect,
     and a page the user linked in the question (`fetch_url`). It sends a
     ~280-token system prompt with that text in untrusted-content wrappers.
+    The page's URL and title are page-controlled, so they go inside the
+    page's wrapper too, not in a trusted line.
   - A long page keeps its opening plus the chunks that share content words
     with the question, in ~9k characters (~2.5k tokens). The first call stays
     near 4k tokens, against ~10k before.
@@ -176,7 +178,9 @@ Use the tools in `scripts/models/bonsai/`:
     `webbrainTinyAsk` markers).
   - Act and Dev are refused for in-browser models, in the agent before
     enrichment and in the side-panel mode toggle.
-  - Selection shortcuts keep their own source-bound path.
+  - Selection shortcuts keep their own source-bound path. After a background
+    restart a tiny Ask candidate hydrates the tab before it is decided, so a
+    restored selected-text scope is never bypassed by a full page read.
   - Do not add tools or instructions back to this profile without
     re-running `scripts/check-webgpu-ask.mjs`. Every token is prefilled again
     on every call, and a 2B model picks tools unreliably.
