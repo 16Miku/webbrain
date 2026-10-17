@@ -958,6 +958,28 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: a success claimed before any calculator attempt is refused once, then ends as partial`, async () => {
+    for (const strict of [false, true]) {
+      const h = batchAgent(Agent, { strict });
+      h.agent._pureCalculationToolPolicy = () => ({ scope: { owner: 'owned', runToken: 'run', expression: '2+2' },
+        stale: false, attempted: false, names: ['calculate', 'done'] });
+      const done = ['done', { summary: '2+2 is 4.', outcome: 'success' }];
+      assert.equal((await h.batch([done])).action, 'continue', `${build}: premature done gets one note`);
+      const updates = [];
+      const second = await h.batch([done], updates);
+      if (strict) {
+        assert.equal(second.action, 'continue', `${build}: ${STRICT_NOTE}`);
+        assert.equal(h.executed.length, 0);
+        continue;
+      }
+      assert.equal(second.action, 'return');
+      assert.equal(second.value, `2+2 is 4.\n\n${CAVEAT}The result was not computed with the calculator.`);
+      const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
+      assert.equal(doneResult?.outcome, 'partial', `${build}: an uncomputed success was not downgraded`);
+      assert.equal(second.endStatus, 'partial');
+    }
+  });
+
   // ── Meta-only done summary (Ask) ───────────────────────────────────────
   test(`${build}: a summary that only says an answer was given is advised once`, async () => {
     await refusedOnceThenAccepted(Agent, {

@@ -510,7 +510,9 @@ function selectionScopedResponseLanguagePolicy(locale) {
 // or says nothing about it:
 //   completion-page-warning: the open dialog or form error may be unrelated.
 //   done-summary-meta-only, plan-done-summary-shape: the summary's wording.
-//   pure-calculation-done-checks: how the summary writes the result.
+//   pure-calculation-done-checks: how the summary writes the result. A
+//     success claimed before any calculator attempt is downgraded on its
+//     own (_guardRefusesOnce's `downgrade`).
 //   exact-table-done: a rowCount that disagrees with rows that may be complete.
 //     A done whose table can no longer be delivered is downgraded where it
 //     is accepted (_resolveExactTableDone).
@@ -14726,11 +14728,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._planExecutionGuards.get(tabId)?.pureCalculationReceipt?.fraction);
     const prematureCompletion = !policy.stale && name === 'done' && !completed && !policy.attempted;
     if (!policy.stale && policy.names.includes(name) && matchesInput && !missingResult && !missingFormat && !prematureCompletion) return null;
+    // A success claimed before any calculator attempt: WebBrain knows its
+    // result was not computed. An honest partial or failed ending is not.
+    const prematureSuccess = prematureCompletion && String(args?.outcome || '').trim().toLowerCase() === 'success';
     // A done these arithmetic checks refuse is advised once per run by
     // default, then accepted with a caveat. A stale task authority is a
     // host check and keeps refusing.
+    // A premature success is accepted, but not as a success: the run ends
+    // as partial.
     if (!policy.stale && name === 'done' && !this._guardRefusesOnce(tabId, 'pure-calculation-done-checks', {
-      decided: !prematureCompletion,
+      decided: !prematureCompletion || prematureSuccess,
+      downgrade: prematureSuccess,
       caveat: prematureCompletion ? 'The result was not computed with the calculator.'
         : missingResult ? 'The answer may not show the calculator\'s exact result.'
           : 'The answer may not use the exact format you asked for.',
@@ -21026,7 +21034,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * the user. Returns true when this call should still refuse: the first
    * time, or always when the guard blocks in the current mode.
    */
-  _guardRefusesOnce(tabId, id, { decided = true, caveat = '' } = {}) {
+  // `downgrade` marks a decided case of a guard whose other decided cases
+  // keep the model's outcome (OUTCOME_DOWNGRADING_GUARDS lists whole guards).
+  _guardRefusesOnce(tabId, id, { decided = true, caveat = '', downgrade = false } = {}) {
     if (this._guardOutcome(id, { decided }) !== 'advise') return true;
     const state = this._guardRunState(tabId);
     if (!state.advised.has(id)) {
@@ -21037,7 +21047,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (text) state.caveats.set(id, text);
     // A guard that KNOWS the task is not done (not one that only lacked
     // evidence) lets the completion end the run, but not as a success.
-    if (decided === true && OUTCOME_DOWNGRADING_GUARDS.has(id)) (state.outcomeDowngrades ||= new Set()).add(id);
+    if (decided === true && (downgrade === true || OUTCOME_DOWNGRADING_GUARDS.has(id))) {
+      (state.outcomeDowngrades ||= new Set()).add(id);
+    }
     return false;
   }
 
