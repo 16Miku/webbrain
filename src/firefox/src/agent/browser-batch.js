@@ -60,7 +60,12 @@ export function expandBrowserBatchCalls(calls, options) {
   });
 }
 
-export function browserBatchResultStatus(message) {
+// advisoryWritesContinue: a text write that went out but could not be read
+// back exactly (success with unverifiedWrite, see the agent's text-write
+// advisories) ran and does not stop the batch. Only that marker is exempt:
+// failures, refusals and unknown outcomes still do. The agent passes false
+// under Settings → "Strict checks", which never produce that marker anyway.
+export function browserBatchResultStatus(message, { advisoryWritesContinue = true } = {}) {
   if (!message) return { ran: false, reason: 'interrupted' };
   let text = String(message.content || '');
   const wrapped = text.match(/^<untrusted_page_content\b[^>]*>([\s\S]*?)<\/untrusted_page_content\b[^>]*>/);
@@ -72,7 +77,9 @@ export function browserBatchResultStatus(message) {
   if (!object(result)) return { ran: true, reason: '', failed: false };
   const ran = !(result.skipped || result.denied || result.invalidToolArguments || result.invalidArguments
     || ((result.noDispatch === true || result.dispatched === false) && result.success !== true));
-  const unverified = result.inconclusive || result.verified === false || result.remoteStateVerified === false;
+  const advisoryWrite = advisoryWritesContinue === true && result.success === true
+    && result.unverifiedWrite === true && !result.error;
+  const unverified = !advisoryWrite && (result.inconclusive || result.verified === false || result.remoteStateVerified === false);
   const failed = !!(result.success === false || result.error || result.noProgress || result.ambiguous
     || result.outcomeUnknown || result.stale || unverified);
   const reason = result.cancelled ? 'cancelled'
