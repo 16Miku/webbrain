@@ -1,0 +1,203 @@
+import { useEffect, useRef, useMemo } from 'react';
+import { createBlobUrl } from '../api/blobUrl';
+import { generateBlurHashDataUrl } from '../api/blurHash';
+import { getBackgroundFilterStyle, getBackgroundOverlayStyle } from '../api/backgroundFilters';
+
+// Set by Maximise while the effects are cleared (see features/navbar/components/Maximise.jsx).
+const isMaximised = () => document.documentElement.dataset.bgMaximised === 'true';
+const NO_OVERLAY = { backdropFilter: '', WebkitBackdropFilter: '', backgroundColor: '' };
+
+// Constants
+const TRANSITION_DURATION = 1200; // milliseconds
+
+/**
+ * A CSS url() value for an address that may contain ) " \\ or a line break: quoted and escaped,
+ * so it cannot end the declaration early or make it invalid.
+ */
+export const cssUrl = (url) =>
+  `url("${String(url).replace(/[\\"]/g, '\\$&').replace(/\r?\n|\r/g, '\\a ')}")`;
+
+/**
+ * Hook for rendering backgrounds to the DOM
+ */
+export function useBackgroundRenderer(backgroundData, onRemoteImageFailed) {
+  const blobRef = useRef(null);
+  // Read when a load fails, so a new callback each render doesn't restart the effect below.
+  const onRemoteImageFailedRef = useRef(onRemoteImageFailed);
+  onRemoteImageFailedRef.current = onRemoteImageFailed;
+
+  useEffect(() => {
+    if (backgroundData.video) return;
+
+    const element = document.getElementById('backgroundImage');
+    if (!element) return;
+
+    // Set by the cleanup below: an earlier load that resumes after a newer
+    // background was chosen must not paint over it.
+    let cancelled = false;
+    let swapTimer = null;
+
+    const applyBackground = async () => {
+      if (backgroundData.url) {
+        const hasTransition = localStorage.getItem('bgtransition') !== 'false';
+        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        if (!hasTransition || prefersReducedMotion) {
+          // Same probe as the fading path: a remote address that is not a picture may be a video.
+          if (/^https?:/i.test(backgroundData.url)) {
+            const probe = new Image();
+            probe.src = backgroundData.url;
+            const probed = await new Promise((resolve) => {
+              probe.onload = () => resolve(true);
+              probe.onerror = () => resolve(false);
+            });
+            if (cancelled) return;
+            if (!probed) {
+              onRemoteImageFailedRef.current?.(backgroundData.url);
+              return;
+            }
+          }
+          element.style.background = cssUrl(backgroundData.url);
+          document.querySelector('.photoInformation')?.style.setProperty('display', 'flex');
+          return;
+        }
+
+        // Create or get overlay element for smooth transitions
+        let overlay = document.getElementById('backgroundOverlay');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.id = 'backgroundOverlay';
+          // Insert right after the background element
+          element.parentNode.insertBefore(overlay, element.nextSibling);
+        }
+
+        // Set background color
+        if (backgroundData.photoInfo?.colour) {
+          element.style.backgroundColor = backgroundData.photoInfo.colour;
+        }
+
+        // Generate and show blur hash immediately on main element
+        if (backgroundData.photoInfo?.blur_hash) {
+          const blurHashUrl = generateBlurHashDataUrl(backgroundData.photoInfo.blur_hash, 64, 64);
+          if (blurHashUrl) {
+            element.style.backgroundImage = cssUrl(blurHashUrl);
+          }
+        }
+
+        // Load the full image
+        const blobUrl = await createBlobUrl(backgroundData.url);
+        if (cancelled) {
+          if (blobUrl) URL.revokeObjectURL(blobUrl);
+          return;
+        }
+        const finalUrl = blobUrl || backgroundData.url;
+
+        if (blobUrl) {
+          if (blobRef.current) {
+            URL.revokeObjectURL(blobRef.current);
+          }
+          blobRef.current = blobUrl;
+        }
+
+        // Preload the image
+        const img = new Image();
+        img.src = finalUrl;
+
+        const loaded = await new Promise((resolve) => {
+          img.onload = () => resolve(true);
+          img.onerror = () => resolve(false);
+        });
+        if (cancelled) return;
+
+        // A remote address with no recognisable extension (https://cdn.example/media/123) may be
+        // a video: the type is only known from the response, so when it won't load as a picture
+        // let the caller try it as a video.
+        if (!loaded && /^https?:/i.test(backgroundData.url)) {
+          onRemoteImageFailedRef.current?.(backgroundData.url);
+          return;
+        }
+
+        // CRITICAL: Reset overlay to invisible FIRST
+        overlay.style.transition = 'none';
+        overlay.style.opacity = '0';
+        overlay.style.backgroundImage = '';
+
+        // Force a reflow to ensure opacity is actually 0
+        void overlay.offsetHeight;
+
+        // Now set the new image
+        overlay.style.backgroundImage = cssUrl(finalUrl);
+
+        // Force another reflow
+        void overlay.offsetHeight;
+
+        // Re-enable transition
+        overlay.style.transition = `opacity ${TRANSITION_DURATION / 1000}s ease-in-out`;
+
+        // Force another reflow before changing opacity
+        void overlay.offsetHeight;
+
+        // Now fade it in
+        overlay.style.opacity = '1';
+
+        // After fade completes, swap to main element and reset overlay
+        swapTimer = setTimeout(() => {
+          element.style.backgroundImage = cssUrl(finalUrl);
+          overlay.style.opacity = '0';
+          overlay.style.backgroundImage = '';
+        }, TRANSITION_DURATION + 100);
+      } else if (backgroundData.style) {
+        element.setAttribute('style', backgroundData.style);
+      } else {
+        // Nothing to show (e.g. the last upload was deleted): drop the previous picture.
+        element.style.backgroundImage = '';
+      }
+    };
+
+    applyBackground();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(swapTimer);
+
+      // Cleanup blob URL
+      if (blobRef.current) {
+        URL.revokeObjectURL(blobRef.current);
+        blobRef.current = null;
+      }
+
+      // Remove overlay element to prevent memory leak
+      const overlay = document.getElementById('backgroundOverlay');
+      if (overlay) {
+        overlay.remove();
+      }
+    };
+  }, [backgroundData.url, backgroundData.style, backgroundData.video, backgroundData.photoInfo]);
+}
+
+/**
+ * Hook to get computed filter styles (legacy - for video backgrounds)
+ */
+export function useBackgroundFilters(backgroundData) {
+  // Effect settings can change while another kind of background is showing, so read them
+  // again whenever the background does (a video mounted later must not get stale values).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(
+    () => ({
+      // A video mounted while the page is maximised must come up without effects too.
+      WebkitFilter: isMaximised() ? 'blur(0px) brightness(100%)' : getBackgroundFilterStyle(),
+    }),
+    [backgroundData],
+  );
+}
+
+/**
+ * Hook to get computed overlay filter styles
+ */
+export function useBackgroundOverlayFilters(backgroundData) {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(
+    () => (isMaximised() ? NO_OVERLAY : getBackgroundOverlayStyle()),
+    [backgroundData],
+  );
+}

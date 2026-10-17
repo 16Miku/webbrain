@@ -710,7 +710,15 @@ function normalizeCaptchaGateState(gate) {
 
 function isBrowserNewTabUrl(url) {
   const value = String(url || '').toLowerCase();
-  return BROWSER_NEW_TAB_URL_PREFIXES.some(prefix => value.startsWith(prefix));
+  if (BROWSER_NEW_TAB_URL_PREFIXES.some(prefix => value.startsWith(prefix))) return true;
+  // With chrome_url_overrides.newtab on, a fresh tab reports WebBrain's own new tab page.
+  try {
+    const own = new URL(chrome.runtime.getURL('newtab/index.html'));
+    const candidate = new URL(String(url || ''));
+    return candidate.protocol === own.protocol && candidate.host === own.host && candidate.pathname === own.pathname;
+  } catch {
+    return false;
+  }
 }
 
 // Only read a 3-digit number as a status code where it actually reads like

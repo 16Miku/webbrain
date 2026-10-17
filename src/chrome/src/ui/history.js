@@ -20,6 +20,8 @@ const btnExport = document.getElementById('btn-export');
 const btnDelete = document.getElementById('btn-delete');
 const btnClearAll = document.getElementById('btn-clear-all');
 const initialUrlFilter = new URLSearchParams(location.search).get('url') || '';
+// ?id=<record id> opens that conversation directly (used by the new tab's recent chats).
+const initialRecordId = new URLSearchParams(location.search).get('id') || '';
 
 if (initialUrlFilter) {
   filterText.value = initialUrlFilter;
@@ -390,4 +392,5 @@ document.addEventListener('wb-locale-changed', () => {
 
 (async () => {
   await refresh();
+  if (initialRecordId) await renderRecord(initialRecordId);
 })();

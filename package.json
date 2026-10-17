@@ -49,6 +49,8 @@
     "build:web": "npm run build:web:landing && npm run build:blog && npm run build:docs",
     "preview:web": "node scripts/preview-web.mjs",
     "build:zip": "node scripts/build-zip.mjs",
+    "build:newtab": "npm --prefix newtab ci && npm --prefix newtab run build",
+    "test:newtab": "node --test test/newtab.mjs",
     "build:chrome": "node scripts/build-unpacked.mjs --browser chrome",
     "build:firefox": "node scripts/build-unpacked.mjs --browser firefox",
     "build:all": "node scripts/build-unpacked.mjs --browser all",

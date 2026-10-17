@@ -448,6 +448,27 @@ new target is a password field), but it can never downgrade that protection.
 If deterministic replay cannot safely continue, a fallback Agent receives only
 saved metadata and must ask the user again for any still-needed value.
 
+### New Tab Page
+
+The new tab page (`docs/newtab.md`) makes no network requests of its own: backgrounds
+are bundled, there are no fonts, favicons, link-title lookups, weather, quotes or
+analytics requests, and no error reporting. Custom backgrounds are images you upload;
+they are stored in the browser and never leave it. The exceptions are things you
+choose: if you give a quick link or app link a custom icon URL, enter custom CSS that
+references remote resources (`url(...)`, `@import`), or import settings that point a
+background at a URL, the page loads them from the addresses you gave, each time it is
+shown. Links without a custom icon use a local letter tile; nothing is looked up.
+
+Its settings, quick links and uploaded backgrounds stay in the browser under a separate
+`wbnt:` prefix. Text typed into its box is held briefly in extension storage (one
+record per tab) to hand it to the side panel and removed once claimed. A record that is
+never claimed is ignored by the panel once it is older than a couple of minutes, but it can
+stay in `storage.local` until the next submission from that tab replaces it, the tab is
+closed, or the browser starts again (one written in the ten seconds before a crash waits for the start after that); a task handed back to its tab (for example after a tab
+switch mid-send) is kept the same way until it is delivered. **Search** mode uses the browser's own
+default search engine, so a query typed there goes to that engine as it would from the
+address bar.
+
 ### Settings
 
 Provider configs (API keys, base URLs, model selections) are stored in `chrome.storage.local`. API keys are in plaintext — this is a personal-computer tool and the storage is sandboxed by the browser. The extension has no mechanism to exfiltrate these keys.
