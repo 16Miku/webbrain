@@ -2086,6 +2086,10 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: JSON.stringify([{ name: 'a', url: 'example.com', key: 'k' }]), applinks: JSON.stringify([{ name: 'b', url: 'HTTP://b.test/x', key: 'j' }]) })), true);
     assert.equal(JSON.parse(store.getItem('quicklinks'))[0].url, 'https://example.com');
     assert.equal(JSON.parse(store.getItem('applinks'))[0].url, 'http://b.test/x');
+    // a missing / null icon becomes '' (the edit dialogs read icon.length); a real one is kept
+    assert.equal(JSON.parse(store.getItem('applinks'))[0].icon, '');
+    assert.equal(await mod.importSettings(JSON.stringify({ applinks: JSON.stringify([{ name: 'a', url: 'https://a.test', key: 'k', icon: null }, { name: 'b', url: 'https://b.test', key: 'j', icon: 'https://b.test/i.png' }]) })), true);
+    assert.deepEqual(JSON.parse(store.getItem('applinks')).map((l) => l.icon), ['', 'https://b.test/i.png']);
     globalThis.__reloads = reloads0; globalThis.__toasts.length = toasts0;
     assert.equal(store.getItem('theme'), 'dark');
     assert.ok(globalThis.__toasts.includes('toasts.imported'));
@@ -2714,9 +2718,16 @@ test('round-85: inactive settings are inert, dialogs hide the page from assistiv
   ];
   for (const f of files) {
     const src = readFileSync(nt(f), 'utf8');
-    assert.doesNotMatch(src, /ariaHideApp=\{false\}/, f);
-    assert.match(src, /appElement=\{pageElement\(\)\}/, f);
-    if (!f.endsWith('Modals.jsx')) assert.match(src, /aria=\{\{ modal: true \}\}/, f);
+    if (f.endsWith('Modals.jsx')) {
+      // the parent dialog hides the page...
+      assert.doesNotMatch(src, /ariaHideApp=\{false\}/, f);
+      assert.match(src, /appElement=\{pageElement\(\)\}/, f);
+    } else {
+      // ...nested ones must not touch it (react-modal's close would un-hide it under the parent)
+      assert.match(src, /ariaHideApp=\{false\}/, f);
+      assert.doesNotMatch(src, /appElement=/, f);
+      assert.match(src, /aria=\{\{ modal: true \}\}/, f);
+    }
   }
   const handoff = readFileSync(nt('features/agent/handoff.js'), 'utf8');
   assert.doesNotMatch(handoff, /does NOT send|user always confirms an Act run/);

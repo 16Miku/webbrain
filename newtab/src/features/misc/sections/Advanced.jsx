@@ -1,7 +1,6 @@
 import variables from 'config/variables';
 import { useState } from 'react';
 import Modal from 'react-modal';
-import { pageElement } from 'utils/pageElement';
 import {
   MdUpload as ImportIcon,
   MdDownload as ExportIcon,
@@ -104,7 +103,9 @@ function AdvancedOptions({ currentSubSection, onSubSectionChange, sectionName })
             isOpen={resetModal}
             className="Modal resetmodal mainModal"
             overlayClassName="Overlay resetoverlay"
-            appElement={pageElement()}
+            // The parent dialog already hides the page; react-modal's show() on close is not
+            // reference-counted and would expose it again while the parent is still open.
+            ariaHideApp={false}
             aria={{ modal: true }}
           >
             <ResetModal modalClose={() => setResetModal(false)} />

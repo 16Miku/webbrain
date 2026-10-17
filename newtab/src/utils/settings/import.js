@@ -112,14 +112,20 @@ const JSON_ARRAY_ENTRIES = {
 
 /**
  * Links are rendered as hrefs, so a bare "example.com" would navigate to an extension-relative
- * address. Store each url in the form the add / edit dialogs would have saved. Run after
+ * address. Store each url (and icon) in the form the add / edit dialogs would have saved. Run after
  * validateSettings, which guarantees every url normalises.
  */
 export function normalizeLinks(content) {
   for (const key of KEYED_LISTS) {
     if (!(key in content)) continue;
     content[key] = JSON.stringify(
-      JSON.parse(content[key]).map((link) => ({ ...link, url: normalizeLinkUrl(link.url) })),
+      // The edit dialogs read `icon.length`, so a missing / null icon becomes the empty string
+      // (the widgets already fall back to a default icon for it).
+      JSON.parse(content[key]).map((link) => ({
+        ...link,
+        url: normalizeLinkUrl(link.url),
+        icon: isString(link.icon) ? link.icon : '',
+      })),
     );
   }
   return content;

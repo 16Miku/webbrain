@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useT } from 'contexts';
 
 import Modal from 'react-modal';
-import { pageElement } from 'utils/pageElement';
 import EventBus from 'utils/eventbus';
 import { MdAddLink } from 'react-icons/md';
 
@@ -166,7 +165,9 @@ function AppsOptions({ appsEnabled }) {
         isOpen={appsModalInfo.edit || appsModalInfo.newLink}
         className="Modal resetmodal mainModal"
         overlayClassName="Overlay resetoverlay"
-        appElement={pageElement()}
+        // The parent dialog already hides the page; react-modal's show() on close is not
+        // reference-counted and would expose it again while the parent is still open.
+        ariaHideApp={false}
         aria={{ modal: true }}
       >
         <AddModal

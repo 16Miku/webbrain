@@ -37,7 +37,6 @@ import { generateBlurHashDataUrl } from '../api/blurHash';
 import { Checkbox, FileUpload, Dropdown } from 'components/Form/Settings';
 import { Tooltip, Button } from 'components/Elements';
 import Modal from 'react-modal';
-import { pageElement } from 'utils/pageElement';
 
 import FolderTaggingModal from './FolderTaggingModal';
 
@@ -813,7 +812,9 @@ const CustomSettings = memo(() => {
         isOpen={folderTaggingModal}
         className="Modal resetmodal mainModal"
         overlayClassName="Overlay resetoverlay"
-        appElement={pageElement()}
+        // The parent dialog already hides the page; react-modal's show() on close is not
+        // reference-counted and would expose it again while the parent is still open.
+        ariaHideApp={false}
         aria={{ modal: true }}
       >
         <FolderTaggingModal
@@ -832,7 +833,9 @@ const CustomSettings = memo(() => {
         isOpen={storageQuotaModal}
         className="Modal resetmodal mainModal"
         overlayClassName="Overlay resetoverlay"
-        appElement={pageElement()}
+        // The parent dialog already hides the page; react-modal's show() on close is not
+        // reference-counted and would expose it again while the parent is still open.
+        ariaHideApp={false}
         aria={{ modal: true }}
       >
         <div className="smallModal">
