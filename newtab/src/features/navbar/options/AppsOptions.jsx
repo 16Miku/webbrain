@@ -169,6 +169,7 @@ function AppsOptions({ appsEnabled }) {
       >
         <AddModal
           urlError={appsModalInfo.urlError}
+          iconError={appsModalInfo.iconError}
           addLink={(name, url, icon) => addLink(name, url, icon)}
           editLink={(og, name, url, icon) => editLink(og, name, url, icon)}
           edit={appsModalInfo.edit}

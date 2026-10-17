@@ -858,3 +858,19 @@ test('enabling quick links refreshes the widget tree so the widget mounts', () =
   assert.match(src, /setting="quicklinksenabled"\s*category="widgets"/);
   assert.doesNotMatch(src, /element="\.quicklinks-container"/);
 });
+
+test('round-14 inherited fixes: clock timer, custom overlay, video flags, colour reset, icon errors', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  const clock = read('features/time/Clock.jsx');
+  assert.match(clock, /clearTimeout\(timerRef\.current\);\s*timerRef\.current = null;\s*startTime\(0\)/);
+  assert.match(read('features/background/components/BackgroundImage.jsx'), /\[isCustomType, url\]/);
+  const video = read('features/background/components/BackgroundVideo.jsx');
+  assert.doesNotMatch(video, /useMemo/);
+  assert.match(video, /data === 'backgroundvideo'/);
+  const custom = read('features/background/options/Custom.jsx');
+  assert.equal((custom.match(/category="backgroundvideo"/g) || []).length, 2);
+  const colour = read('features/background/options/Colour.jsx');
+  assert.match(colour, /setColour\(DEFAULT_COLOUR\);\s*[^\n]*\n?\s*localStorage\.setItem\('customBackgroundColour', DEFAULT_COLOUR\)/);
+  assert.match(read('features/navbar/options/AppsOptions.jsx'), /iconError=\{appsModalInfo\.iconError\}/);
+  assert.match(read('features/quicklinks/options/QuickLinksOptions.jsx'), /iconError=\{iconError\}/);
+});

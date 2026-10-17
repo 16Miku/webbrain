@@ -119,6 +119,8 @@ const Clock = () => {
           return;
         }
 
+        // Cancel the running chain first, or each settings change would add another one.
+        clearTimeout(timerRef.current);
         timerRef.current = null;
         startTime(0);
 

@@ -782,12 +782,14 @@ const CustomSettings = memo(() => {
         <>
           <Checkbox
             name="backgroundVideoLoop"
+            category="backgroundvideo"
             text={variables.getMessage(
               'modals.main.settings.sections.background.source.loop_video',
             )}
           />
           <Checkbox
             name="backgroundVideoMute"
+            category="backgroundvideo"
             text={variables.getMessage(
               'modals.main.settings.sections.background.source.mute_video',
             )}

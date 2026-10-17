@@ -28,7 +28,9 @@ function BackgroundImage({ photoInfo, currentAPI, url }) {
     };
 
     loadCustomBackgrounds();
-  }, [isCustomType]);
+    // The first upload keeps the type at 'custom' and only changes the url, so
+    // the url has to be a dependency or the empty-state overlay never clears.
+  }, [isCustomType, url]);
 
   const hasNoCustomImages =
     isCustomType && !isLoading && (!customBackgrounds || customBackgrounds.length === 0);

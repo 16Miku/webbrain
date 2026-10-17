@@ -8,9 +8,11 @@ import EventBus from 'utils/eventbus';
 
 import '../scss/_colourpicker.scss';
 
+const DEFAULT_COLOUR = 'rgb(0, 0, 0)';
+
 const ColourOptions = () => {
   const [colour, setColour] = useState(
-    localStorage.getItem('customBackgroundColour') || 'rgba(0, 0, 0, 100)',
+    localStorage.getItem('customBackgroundColour') || DEFAULT_COLOUR,
   );
 
   const changeColour = (output) => {
@@ -20,8 +22,9 @@ const ColourOptions = () => {
   };
 
   const resetColour = () => {
-    setColour('rgba(0, 0, 0, 0)');
-    localStorage.setItem('customBackgroundColour', 'rgba(0, 0, 0, 100)');
+    // Same value for the picker and for storage, so the picker shows what is applied.
+    setColour(DEFAULT_COLOUR);
+    localStorage.setItem('customBackgroundColour', DEFAULT_COLOUR);
     toast(variables.getMessage('toasts.reset'));
     EventBus.emit('refresh', 'background');
   };

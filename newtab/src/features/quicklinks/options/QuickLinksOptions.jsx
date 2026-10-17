@@ -314,6 +314,7 @@ const QuickLinksOptions = () => {
       >
         <AddModal
           urlError={urlError}
+          iconError={iconError}
           addLink={(name, url, icon) => addLink(name, url, icon)}
           editLink={(og, name, url, icon) => editLink(og, name, url, icon)}
           edit={edit}
