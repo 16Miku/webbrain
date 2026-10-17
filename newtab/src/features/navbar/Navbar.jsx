@@ -51,6 +51,10 @@ const Navbar = ({ openModal }) => {
   const [notesEnabled, setNotesEnabled] = useState(localStorage.getItem('notesEnabled') === 'true');
   const [todoEnabled, setTodoEnabled] = useState(localStorage.getItem('todoEnabled') === 'true');
   const [appsEnabled, setAppsEnabled] = useState(localStorage.getItem('appsEnabled') === 'true');
+  // In state (not read during render) so toggling only the background re-renders and mounts / unmounts View.
+  const [backgroundEnabled, setBackgroundEnabled] = useState(
+    localStorage.getItem('background') === 'true',
+  );
 
   useEffect(() => {
     const handleRefresh = (data) => {
@@ -62,6 +66,7 @@ const Navbar = ({ openModal }) => {
         setNotesEnabled(localStorage.getItem('notesEnabled') === 'true');
         setTodoEnabled(localStorage.getItem('todoEnabled') === 'true');
         setAppsEnabled(localStorage.getItem('appsEnabled') === 'true');
+        setBackgroundEnabled(localStorage.getItem('background') === 'true');
         setRefreshText(getRefreshText());
         setZoomFontSize(getZoomFontSize());
       }
@@ -86,8 +91,6 @@ const Navbar = ({ openModal }) => {
         window.location.reload();
     }
   };
-
-  const backgroundEnabled = localStorage.getItem('background') === 'true';
 
   const navbar = (
     <div className="navbar-container">

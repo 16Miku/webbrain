@@ -328,7 +328,10 @@ export async function migrateFromLocalStorage() {
 
     console.log(`Migrated ${backgrounds.length} backgrounds from localStorage to IndexedDB`);
 
-    // Keep localStorage as backup for now, but mark as migrated
+    // The media is in IndexedDB now. Keeping the multi-megabyte copy in localStorage would
+    // eat its quota and break later settings writes, so replace it with the count.
+    localStorage.removeItem('customBackground');
+    localStorage.setItem('customBackgroundCount', String(backgrounds.length));
     localStorage.setItem('customBackgroundMigrated', 'true');
 
     return true;

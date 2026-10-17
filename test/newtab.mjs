@@ -1129,3 +1129,102 @@ test('round-24: filters follow the background, backups record an empty gallery, 
   const custom = read('features/background/options/Custom.jsx');
   assert.equal((custom.match(/EventBus\.emit\('refresh', 'backgroundrefresh'\)/g) || []).length, 2);
 });
+
+test('importSettings restores uploaded backgrounds atomically and rolls back on failure', async (t) => {
+  let esbuild;
+  try {
+    esbuild = await import(pathToFileURL(path.join(root, 'newtab/node_modules/esbuild/lib/main.js')).href);
+  } catch {
+    return t.skip('newtab dependencies are not installed');
+  }
+  const fakes = {
+    'utils/customBackgroundDB': `
+      export const db = { rows: [], nextId: 1, failAddAt: -1, adds: 0, unreadable: false };
+      export const getBackgroundCount = async () => { if (db.unreadable) throw new Error('db'); return db.rows.length; };
+      export const getAllBackgroundsWithMetadata = async () => db.rows.map((r) => ({ ...r }));
+      export const clearAllBackgrounds = async () => { db.rows = []; };
+      export const addBackground = async (r) => {
+        if (db.adds++ === db.failAddAt) throw new Error('quota');
+        db.rows.push({ ...r, id: db.nextId++ });
+      };`,
+    'react-toastify': 'export const toast = (m) => { (globalThis.__toasts ||= []).push(m); };',
+    'config/variables': 'export default { getMessage: (k) => k, stats: { postEvent() {} } };',
+  };
+  const plugin = {
+    name: 'fakes',
+    setup(build) {
+      build.onResolve({ filter: /^(utils\/customBackgroundDB|react-toastify|config\/variables)$/ }, (a) => ({ path: a.path, namespace: 'fake' }));
+      build.onLoad({ filter: /.*/, namespace: 'fake' }, (a) => ({ contents: fakes[a.path], loader: 'js' }));
+    },
+  };
+  const out = await esbuild.build({
+    stdin: {
+      contents: "export { importSettings } from 'utils/settings/import'; export { BACKGROUNDS_BACKUP_KEY } from 'utils/settings/export'; export { db } from 'utils/customBackgroundDB';",
+      resolveDir: nt(), loader: 'js',
+    },
+    bundle: true, write: false, format: 'esm', nodePaths: [nt()], platform: 'node', plugins: [plugin],
+  });
+  const mod = await import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
+
+  const realLs = globalThis.localStorage;
+  const realTimeout = globalThis.setTimeout;
+  const realWindow = globalThis.window;
+  const store = memoryStorage();
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: store });
+  globalThis.window = { location: { reload() { globalThis.__reloads = (globalThis.__reloads || 0) + 1; } } };
+  globalThis.setTimeout = (fn) => { fn(); return 0; };
+  try {
+    const K = mod.BACKGROUNDS_BACKUP_KEY;
+    const backup = (rows) => JSON.stringify({ theme: 'dark', [K]: rows });
+    mod.db.rows = [{ id: 1, url: 'data:old-1' }, { id: 2, url: 'data:old-2' }];
+    mod.db.nextId = 3;
+
+    // failure part-way: the old gallery is back, nothing else is imported, no success
+    mod.db.adds = 0; mod.db.failAddAt = 1;
+    globalThis.__toasts = []; globalThis.__reloads = 0;
+    const failed = await mod.importSettings(backup([{ id: 9, url: 'data:new-1' }, { url: 'data:new-2' }, { url: 'data:new-3' }]));
+    assert.equal(failed, false);
+    assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:old-1', 'data:old-2']);
+    assert.equal(store.getItem('theme'), null, 'settings were not applied');
+    assert.deepEqual(globalThis.__toasts, ['toasts.error'], 'no success toast');
+    assert.equal(globalThis.__reloads, 0);
+
+    // success replaces the gallery and applies settings
+    mod.db.adds = 0; mod.db.failAddAt = -1; globalThis.__toasts = [];
+    const ok = await mod.importSettings(backup([{ id: 9, url: 'data:new-1' }, { url: 'data:new-2' }]));
+    assert.equal(ok, true);
+    assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:new-1', 'data:new-2']);
+    assert.equal(store.getItem('theme'), 'dark');
+    assert.ok(globalThis.__toasts.includes('toasts.imported'));
+    assert.equal(globalThis.__reloads, 1);
+
+    // an explicit empty list clears the gallery; no list leaves it alone
+    await mod.importSettings(backup([]));
+    assert.deepEqual(mod.db.rows, []);
+    mod.db.rows = [{ id: 5, url: 'data:keep' }];
+    await mod.importSettings(JSON.stringify({ theme: 'light' }));
+    assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep']);
+
+    // an unreadable current gallery aborts instead of being wiped
+    mod.db.unreadable = true;
+    assert.equal(await mod.importSettings(backup([{ url: 'data:x' }])), false);
+    mod.db.unreadable = false;
+    assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep']);
+  } finally {
+    globalThis.setTimeout = realTimeout;
+    if (realWindow === undefined) delete globalThis.window; else globalThis.window = realWindow;
+    if (realLs === undefined) delete globalThis.localStorage;
+    else Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: realLs });
+  }
+});
+
+test('round-25: video remounts per url, migration drops the localStorage copy, Navbar tracks background state', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  assert.match(read('features/background/components/BackgroundVideo.jsx'), /key=\{url\}/);
+  const db = read('utils/customBackgroundDB.js');
+  assert.match(db, /localStorage\.removeItem\('customBackground'\);\s*localStorage\.setItem\('customBackgroundCount'/);
+  const nav = read('features/navbar/Navbar.jsx');
+  assert.match(nav, /\[backgroundEnabled, setBackgroundEnabled\] = useState/);
+  assert.match(nav, /setBackgroundEnabled\(localStorage\.getItem\('background'\) === 'true'\)/);
+  assert.doesNotMatch(nav, /const backgroundEnabled = localStorage/);
+});

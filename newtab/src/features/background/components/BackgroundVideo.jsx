@@ -24,6 +24,8 @@ function BackgroundVideo({ url, filterStyle }) {
 
   return (
     <video
+      // Changing a child <source> does not restart loading, so a new url needs a new element.
+      key={url}
       autoPlay
       muted={muted}
       loop={loop}

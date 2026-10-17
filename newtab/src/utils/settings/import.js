@@ -1,6 +1,11 @@
 import { toast } from 'react-toastify';
 import variables from 'config/variables';
-import { addBackground, clearAllBackgrounds } from 'utils/customBackgroundDB';
+import {
+  addBackground,
+  clearAllBackgrounds,
+  getAllBackgroundsWithMetadata,
+  getBackgroundCount,
+} from 'utils/customBackgroundDB';
 import { BACKGROUNDS_BACKUP_KEY } from './export';
 
 /**
@@ -11,26 +16,22 @@ import { BACKGROUNDS_BACKUP_KEY } from './export';
 export async function importSettings(e, initial = false) {
   const { [BACKGROUNDS_BACKUP_KEY]: backgrounds, ...content } = JSON.parse(e);
 
-  Object.keys(content).forEach((key) => {
-    localStorage.setItem(key, content[key]);
-  });
-
-  // Uploaded images / videos live in IndexedDB; the backup replaces what is there.
+  // Uploaded images / videos live in IndexedDB; the backup replaces what is there. This goes
+  // first and is all-or-nothing: if it fails the current gallery is put back and nothing else
+  // is imported, rather than reporting success for a half-restored profile.
   if (Array.isArray(backgrounds)) {
     try {
-      await clearAllBackgrounds();
-      for (const background of backgrounds) {
-        if (background && typeof background.url === 'string') {
-          // a stored id would collide with the auto-assigned ones
-          const { id: _id, ...record } = background;
-          await addBackground(record);
-        }
-      }
+      await replaceBackgrounds(backgrounds);
     } catch (error) {
       console.error('Could not restore uploaded backgrounds:', error);
       toast(variables.getMessage('toasts.error'));
+      return false;
     }
   }
+
+  Object.keys(content).forEach((key) => {
+    localStorage.setItem(key, content[key]);
+  });
 
   toast(variables.getMessage('toasts.imported'));
   // don't show achievements on welcome
@@ -41,4 +42,32 @@ export async function importSettings(e, initial = false) {
   // Widgets, theme and the settings controls hold the old values in state; a reload (after
   // the toast has had a moment to show) is what applies the imported ones.
   setTimeout(() => window.location.reload(), 1200);
+  return true;
+}
+
+const withoutId = ({ id: _id, ...record }) => record; // ids are assigned again
+
+async function replaceBackgrounds(incoming) {
+  const records = incoming
+    .filter((background) => background && typeof background.url === 'string')
+    .map(withoutId);
+
+  // getBackgroundCount() rejects on failure; the all-records helper would hide it as [].
+  const count = await getBackgroundCount();
+  const previous = count > 0 ? (await getAllBackgroundsWithMetadata()).map(withoutId) : [];
+  if (previous.length !== count) throw new Error('current gallery could not be read');
+
+  try {
+    await clearAllBackgrounds();
+    for (const record of records) await addBackground(record);
+  } catch (error) {
+    // Roll back to what the user had.
+    try {
+      await clearAllBackgrounds();
+      for (const record of previous) await addBackground(record);
+    } catch (rollbackError) {
+      console.error('Rollback of the background gallery failed:', rollbackError);
+    }
+    throw error;
+  }
 }
