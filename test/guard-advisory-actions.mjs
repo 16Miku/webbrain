@@ -350,6 +350,54 @@ for (const build of ['chrome', 'firefox']) {
       }
     });
 
+    test(`${build}: chat-send-preconditions ${mode} mode: chat_send ${strict ? 'refuses a reply after unseen incoming' : 'sends after unseen incoming with a note'}`, async () => {
+      // The dedicated chat_send tool follows the same policy as the generic
+      // dispatch above.
+      const tab = 746;
+      const { agent, observed } = chatAgent(strict);
+      const baseline = { coverage: 'mounted_native_id_floor', complete: true, threadKey,
+        messageIds: ['telegram:k:123456:0:1', 'telegram:k:123456:0:2'] };
+      observed.nativeChatMessageBaseline = structuredClone(baseline);
+      observed.composer = { available: true, empty: true, ref: 'composer' };
+      agent._messageRecipientGuardBlock = async (_tab, _name, _args, _url, value) => {
+        Object.assign(value, { messageRecipientGuardRequired: true, messageRecipientBody: chatBody,
+          messageRecipientDispatchBinding: { token: 'fixture-one-use-token' },
+          messageRecipientNativeChatBaseline: structuredClone(baseline) });
+        return null;
+      };
+      const sent = [];
+      agent.executeTool = async (_tab, name, args) => {
+        sent.push({ name, args });
+        return { success: true, dispatched: true, verified: true, submitted: true };
+      };
+      await agent._observeChatWorkflow(tab);
+      observed.messages.push({ id: 'telegram:k:123456:0:2:rnext', direction: 'incoming', text: 'New fixture question' });
+      const guardAdvisories = [];
+      const result = await agent._sendChatWorkflow(tab, { thread_key: threadKey, composer_ref: 'composer', text: chatBody },
+        null, { guardAdvisories });
+      if (strict) {
+        assert.equal(result.reason, 'chat_observe_required');
+        assert.deepEqual(sent, []);
+        assert.deepEqual(guardsOf(guardAdvisories), []);
+      } else {
+        assert.notEqual(result.reason, 'chat_observe_required', JSON.stringify(result));
+        assert.deepEqual(sent.map(item => item.name), ['set_field'], 'the reply was sent');
+        assert.deepEqual(guardsOf(guardAdvisories), ['chat-send-preconditions']);
+      }
+      // A required user input (a one-time code here) still refuses.
+      const otp = chatAgent(strict);
+      otp.agent.executeTool = async () => assert.fail('nothing is sent while the page asks for user input');
+      otp.observed.composer = { available: true, empty: true, ref: 'composer' };
+      await otp.agent._observeChatWorkflow(tab);
+      otp.observed.messages.push({ id: 'telegram:k:123456:0:2:rnext', direction: 'incoming', text: 'New fixture question' });
+      otp.observed.userInput = { required: true, reason: 'otp' };
+      const otpAdvisories = [];
+      const refused = await otp.agent._sendChatWorkflow(tab, { thread_key: threadKey, composer_ref: 'composer', text: chatBody },
+        null, { guardAdvisories: otpAdvisories });
+      assert.equal(refused.noDispatch, true, JSON.stringify(refused));
+      assert.deepEqual(guardsOf(otpAdvisories), []);
+    });
+
     test(`${build}: chat-send-preconditions ${mode} mode keeps a one-time-code request blocking`, async () => {
       const tab = 745;
       const { agent, run, dispatched, observed } = chatAgent(strict);

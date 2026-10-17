@@ -5962,6 +5962,7 @@ test('model-callable chat tools bind the thread, send once, and require outgoing
     assert.equal(boundedView.newMessages.at(-1).truncated, true, `${label}: oversized chat delta was not marked truncated`);
     assert.equal(boundedView.deltaTruncated, true, `${label}: dropped chat delta entries were not disclosed`);
     const staleAgent = new AgentClass({});
+    staleAgent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
     staleAgent._persist = () => { throw new Error('stale preflight must not commit chat state'); };
     staleAgent._persistNow = async () => { throw new Error('stale preflight must not persist chat state'); };
     staleAgent.chatSessions.set(tabId, agent.chatSessions.get(tabId));

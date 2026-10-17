@@ -25835,7 +25835,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const prior = this.chatSessions.get(tabId) || createChatSession();
     const observed = advanceChatSession(prior, before);
     const workflow = () => this._chatWorkflowView(observed);
-    if (observed.newMessages.some(message => message.direction === 'incoming')) {
+    // chat-send-preconditions (quality), as in the generic dispatch: without
+    // Strict checks an unread incoming message sends with a note, which this
+    // call's result carries (a refusal later in the call drops it). A
+    // pending outbound or a required user input keeps refusing below
+    // (decideChatSend).
+    if (observed.newMessages.some(message => message.direction === 'incoming')
+        && !observed.session.pendingOutbound && !observed.session.userInput?.required
+        && !this._guardAdvisesFor(executionContext?.guardAdvisories, 'chat-send-preconditions',
+          'A new incoming message appeared since your last chat observation; this reply was sent without considering it. Read the conversation (chat_observe) before the next reply.')) {
       return {
         success: false,
         noDispatch: true,
