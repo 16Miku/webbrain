@@ -947,6 +947,7 @@ export default {
   "sp.mode.dev.title": "Gunakan alat sumber, gaya, dan debug halaman",
   "sp.mode.dev.confirm": "Mode Dev menambahkan alat sumber halaman, pemeriksaan gaya, pemeriksaan DOM/frame, dan debug di atas mode Aksi.\n\nGunakan untuk pekerjaan HTML/CSS, pengeditan halaman, dan pemecahan masalah. Mode ini diblokir untuk penyedia tingkat Ringkas.\n\nLanjutkan?",
   "sp.mode.dev.compact_blocked": "Mode Dev diblokir untuk penyedia tingkat Ringkas. {provider} saat ini berada di tingkat Ringkas; beralihlah ke penyedia tingkat Menengah/Penuh atau ubah tingkat prompt-nya.",
+  "sp.mode.webgpu.ask_only": "Model WebGPU di dalam browser hanya menjawab pertanyaan dalam mode Ask. Untuk memakai mode Act atau Dev, pilih penyedia lain di menu penyedia.",
   "sp.input.dev_placeholder": "Beri tahu apa yang perlu diperiksa atau diedit di halaman ini...",
   "sp.slash.remember": "Ingat preferensi pengguna",
   "sp.slash.show_memory": "Tampilkan memori pengguna yang tersimpan",

@@ -174,6 +174,7 @@ export default {
   'sp.mode.dev.title': "Sử dụng các công cụ nguồn, kiểu và gỡ lỗi trang",
   'sp.mode.dev.confirm': "Chế độ nhà phát triển bổ sung thêm nguồn trang, kiểm tra kiểu, kiểm tra DOM/khung và các công cụ gỡ lỗi bên trên chế độ Hành động.\n\nSử dụng nó cho công việc chỉnh sửa và khắc phục sự cố HTML/CSS/trang. Nó bị chặn đối với các nhà cung cấp cấp Compact.\n\nTiếp tục?",
   'sp.mode.dev.compact_blocked': "Chế độ nhà phát triển bị chặn đối với các nhà cung cấp cấp Nhỏ gọn. {provider} hiện ở dạng Nhỏ gọn; chuyển sang nhà cung cấp cấp trung/đầy đủ hoặc thay đổi cấp độ nhắc nhở của nhà cung cấp đó.",
+  'sp.mode.webgpu.ask_only': 'Các mô hình WebGPU trong trình duyệt chỉ trả lời câu hỏi ở chế độ Ask. Để dùng chế độ Act hoặc Dev, hãy chọn nhà cung cấp khác trong menu nhà cung cấp.',
 
   'sp.input.ask_placeholder': "Hỏi bất cứ điều gì về trang này...",
   'sp.input.placeholder_tip.help': "Sử dụng /help để tìm hiểu thêm về lệnh gạch chéo",

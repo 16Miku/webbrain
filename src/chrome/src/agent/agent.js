@@ -198,6 +198,12 @@ import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
 import { chromeProtectedPageFailure, chromeProtectedPageForUrl, isChromeProtectedPageDomTool } from '../chrome-protected-pages.js';
 import { shouldAutoGroupTabs } from '../tab-group-preference.js';
+import {
+  TINY_ASK_ACT_BLOCKED_MESSAGE, TINY_ASK_COMPACT_LINKED_MAX_CHARS, TINY_ASK_COMPACT_PAGE_MAX_CHARS,
+  TINY_ASK_COMPACT_SELECTION_MAX_CHARS, TINY_ASK_READ_MAX_CHARS, TINY_ASK_READ_WINDOW_CHARS, TINY_ASK_SYSTEM_PROMPT,
+  tinyAskLinkedUrl, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
+} from './tiny-ask.js';
+import { webgpuModelDisplayName } from '../providers/webgpu.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 // Shown when a per-minute token limit of unknown size gets its one retry on a
@@ -883,6 +889,9 @@ export class Agent extends LoopDetector {
     this._runProviderOverrides = new Map(); // tabId -> provider id for this run only
     this._standaloneChatRunTabs = new Set(); // tabIds using the provider-independent plain-chat boundary
     this._standaloneWebgpuRunTabs = new Set(); // tabIds using the compact, tool-free local-chat profile
+    this._tinyAskRunTabs = new Set(); // tabIds answering a side-panel Ask turn with an in-browser model (tiny-ask.js)
+    this._tinyAskCompactContext = new WeakMap(); // page-context block -> shorter text for the budget retry
+    this._tinyAskPageGrounded = new WeakSet(); // enriched tiny Ask messages that carry page or PDF text
     this._standaloneOfflineRagService = null;
     this.responseLanguagePolicies = new Map(); // tabId -> trusted, normalized language policy for the active run
     this.conversationIds = new Map(); // tabId -> stable conversationId (regenerated on clearConversation)
@@ -7202,6 +7211,7 @@ export class Agent extends LoopDetector {
         } : {}),
         standalone_chat_profile: this._standaloneChatRunTabs.has(tabId),
         standalone_webgpu_profile: this._standaloneWebgpuRunTabs.has(tabId),
+        tiny_ask_profile: this._tinyAskRunTabs.has(tabId),
       } : {}),
       image_detail: this.imageDetail,
       // The steps slider stores 0 for "unlimited", which the agent hydrates as
@@ -10740,12 +10750,138 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * mentioned earlier in the thread. The heavier screenshot context is still
    * limited to the first real user turn.
    */
+  // Page text for a tiny Ask turn, gathered window by window up to
+  // TINY_ASK_READ_MAX_CHARS so the excerpt can come from any part of a long
+  // page. PDF tabs come back from read_pdf through read_page's redirect.
+  async _readTinyAskPage(tabId) {
+    const parts = [];
+    let total = 0;
+    let offset = 0;
+    let incomplete = false;
+    for (let windowIndex = 0; windowIndex < Math.ceil(TINY_ASK_READ_MAX_CHARS / TINY_ASK_READ_WINDOW_CHARS); windowIndex += 1) {
+      let result;
+      try {
+        result = await this.executeTool(tabId, 'read_page', { offset, limit: TINY_ASK_READ_WINDOW_CHARS });
+      } catch (error) {
+        if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+        result = { success: false, error: String(error?.message || error) };
+      }
+      if (!result || result.success === false || result.error) {
+        if (!parts.length) return { unavailable: String(result?.error || 'read failed').slice(0, 120) };
+        incomplete = true;
+        break;
+      }
+      if (Array.isArray(result.pages)) {
+        const text = result.pages
+          .map((pageText, index) => String(pageText || '').trim()
+            ? `[Page ${(Number(result.fromPage) || 1) + index}]\n${String(pageText).trim()}` : '')
+          .filter(Boolean)
+          .join('\n\n');
+        return {
+          kind: 'pdf',
+          text: text.slice(0, TINY_ASK_READ_MAX_CHARS),
+          incomplete: result.truncated === true || (Number(result.totalPages) > Number(result.toPage))
+            || text.length > TINY_ASK_READ_MAX_CHARS,
+          ...(text.trim() ? {} : { unavailable: 'the PDF has no extractable text' }),
+        };
+      }
+      const text = typeof result.text === 'string' ? result.text : '';
+      parts.push(text);
+      total += text.length;
+      const next = Number(result.nextOffset);
+      if (result.hasMore !== true || !Number.isFinite(next) || next <= offset) break;
+      if (total >= TINY_ASK_READ_MAX_CHARS) { incomplete = true; break; }
+      offset = next;
+    }
+    return { kind: 'page', text: parts.join(''), incomplete };
+  }
+
+  // A tiny Ask turn carries a one-line trusted clock and the page (or PDF)
+  // text and selection, read by WebBrain before the single model call. Those
+  // blocks are ephemeral: the persisted turn keeps only the user's question.
+  async _enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata = {}, onUpdate = null) {
+    const { tabUrl: url, tabTitle: title } = await this._getTabUrlTitle(tabId);
+    let page = null;
+    let selection = '';
+    if (tinyAskPageReadable(url) || isPdfHandlerTabUrl(url)) {
+      onUpdate?.('thinking', { step: 0, note: 'Reading the page…' });
+      page = await this._readTinyAskPage(tabId);
+      if (page?.kind !== 'pdf') {
+        try {
+          const selected = await this.executeTool(tabId, 'get_selection', {});
+          selection = typeof selected?.text === 'string' ? selected.text : '';
+        } catch (error) {
+          if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+        }
+      }
+    } else if (url) {
+      page = { unavailable: 'a browser page WebBrain cannot read' };
+    }
+    const questionText = this._messageText(userMessage);
+    const linkedUrl = tinyAskLinkedUrl(questionText, url);
+    let linked = null;
+    if (linkedUrl) {
+      onUpdate?.('thinking', { step: 0, note: 'Reading the linked page…' });
+      let fetched;
+      try {
+        fetched = await this.executeTool(tabId, 'fetch_url', { url: linkedUrl, maxChars: 7000 });
+      } catch (error) {
+        if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+        fetched = { success: false, error: String(error?.message || error) };
+      }
+      const text = typeof fetched?.text === 'string' ? fetched.text
+        : (fetched?.json != null ? JSON.stringify(fetched.json) : '');
+      linked = fetched?.success === false || fetched?.error || !text.trim()
+        ? { url: linkedUrl, unavailable: String(fetched?.error || 'no readable text').slice(0, 120) }
+        : { url: linkedUrl, text, incomplete: fetched.hasMore === true };
+    }
+    let modelLabel = '';
+    try {
+      const provider = this._activeProvider(tabId);
+      modelLabel = webgpuModelDisplayName(provider?.model || provider?.config?.model || '');
+    } catch { /* The clock line is still useful without the model label. */ }
+    const runtimeLine = tinyAskRuntimeLine({ modelLabel });
+    const contextFor = (limits = {}) => [runtimeLine, tinyAskPageContext({
+      url,
+      title,
+      page,
+      selection,
+      linked,
+      question: questionText,
+      wrap: (kind, text) => this._wrapUntrusted(kind, text),
+      ...limits,
+    })].filter(Boolean).join('\n');
+    const block = { type: 'text', text: contextFor(), webbrainEphemeralPageContext: true };
+    // Rendered now, while the full text is at hand, so a budget retry can
+    // swap it in without cutting through an untrusted-content wrapper.
+    this._tinyAskCompactContext.set(block, contextFor({
+      pageMaxChars: TINY_ASK_COMPACT_PAGE_MAX_CHARS,
+      selectionMaxChars: TINY_ASK_COMPACT_SELECTION_MAX_CHARS,
+      linkedMaxChars: TINY_ASK_COMPACT_LINKED_MAX_CHARS,
+    }));
+    const question = Array.isArray(userMessage)
+      ? userMessage
+      : [{ type: 'text', text: typeof userMessage === 'string' ? userMessage : this._messageText(userMessage) }];
+    const enriched = {
+      role: 'user',
+      content: [block, ...question],
+      ...userAuthoredMetadata,
+    };
+    if (String(page?.text || '').trim() || String(selection || '').trim() || String(linked?.text || '').trim()) {
+      this._tinyAskPageGrounded.add(enriched);
+    }
+    return enriched;
+  }
+
   async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null, runOptions = {}, onUpdate = null) {
     const hasPriorUserTurn = messages.some(m => m.role === 'user');
     const selectionScoped = isSelectionSourceGrounding(runOptions?.sourceGrounding);
     const standaloneChat = runOptions?.standaloneChat === true;
     const userAuthoredMetadata = runOptions?.scheduledResume === true
       ? {} : { webbrainUserAuthoredText: this._messageText(userMessage) };
+    if (this._isTinyAskRun(runOptions)) {
+      return this._enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata, onUpdate);
+    }
     // Standalone is intentionally plain chat regardless of provider.
     // Do not add runtime state, recording/API guidance, tab metadata, adapter
     // notes, screenshots, or any other browser-derived context.
@@ -10924,11 +11060,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  _standaloneWikipediaPriorTopic(messages) {
+  _standaloneWikipediaPriorTopic(messages, marker = 'webbrainStandaloneChat') {
     if (!Array.isArray(messages)) return { topic: '', languageQuery: '' };
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
-      if (message?.role !== 'user' || message.webbrainStandaloneChat !== true) continue;
+      if (message?.role !== 'user' || message[marker] !== true) continue;
       const text = userMessageToText(message.content);
       if (!shouldRetrieveLocalWikipedia(text)) continue;
       const topic = localWikipediaSearchQuery(text);
@@ -11021,6 +11157,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _applyStandaloneWikipediaRag(enriched, userMessage, runOptions = {}, options = {}) {
     if (!this._isStandaloneWebgpuRun(runOptions)) return null;
+    // In tiny Ask the current page is the source. Offline references are
+    // looked up only when there is no page text to answer from.
+    if (this._isTinyAskRun(runOptions) && this._tinyAskPageGrounded.has(enriched)) {
+      return { attempted: false, status: 'skipped', matchCount: 0, archiveDates: [] };
+    }
     const query = typeof userMessage === 'string' ? userMessage : userMessageToText(userMessage);
     const multiSource = typeof options.apocalypseSearch !== 'function';
     if (!(multiSource
@@ -11031,7 +11172,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Carried on every result so the ungrounded fallback knows whether to use
     // the stronger health warning without re-parsing the question.
     const healthContext = isStandaloneEmergencyOrHealthQuery(query);
-    const prior = this._standaloneWikipediaPriorTopic(options.messages);
+    const prior = this._standaloneWikipediaPriorTopic(options.messages, this._standaloneHistoryMarker(runOptions));
     const priorTopic = prior.topic;
     const directQuery = localWikipediaSearchQuery(query);
     // Stop-word stripping can empty a query that still has a searchable topic in
@@ -11192,6 +11333,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const limit = Math.max(400, Number(limitChars) || STANDALONE_WEBGPU_RAG_RETRY_CHARS);
     let compacted = false;
     for (const block of enriched.content) {
+      const compactContext = block?.webbrainEphemeralPageContext === true
+        ? this._tinyAskCompactContext.get(block) : null;
+      if (compactContext != null) {
+        if (compactContext.length < String(block.text || '').length) {
+          block.text = compactContext;
+          compacted = true;
+        }
+        this._tinyAskCompactContext.delete(block);
+        continue;
+      }
       if (block?.webbrainEphemeralLocalWikipedia !== true) continue;
       const text = String(block.text || '');
       if (text.length <= limit) continue;
@@ -11206,7 +11357,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // gap becomes a caveat and the model still answers. The plan carries why the
   // grounding failed and whether the topic needs the stronger health warning.
   _standaloneOfflineGroundingGap(localWikipediaRag, runOptions = {}) {
-    if (!this._isStandaloneWebgpuRun(runOptions) || localWikipediaRag?.attempted !== true
+    // Tiny Ask answers from the page or the model; a missing archive is not a
+    // caveat there.
+    if (!this._isStandaloneWebgpuRun(runOptions) || this._isTinyAskRun(runOptions)
+        || localWikipediaRag?.attempted !== true
         || localWikipediaRag.status === 'matched') return null;
     const health = localWikipediaRag.healthContext === true;
     const status = STANDALONE_GAP_STATUSES.includes(localWikipediaRag.status)
@@ -11242,9 +11396,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     else if (Array.isArray(enriched.content)) enriched.content.push(block);
   }
 
+  // Tiny Ask has no archive caveat (see _standaloneOfflineGroundingGap), so a
+  // model that asked for a search it cannot have is told once to answer.
+  _appendTinyAskNoSearchPolicy(enriched) {
+    const block = {
+      type: 'text',
+      text: 'No search is available in this mode. Answer the question directly from the page text above and your own knowledge, without search markup.',
+      webbrainEphemeralLocalWikipedia: true,
+    };
+    if (typeof enriched.content === 'string') enriched.content = [{ type: 'text', text: enriched.content }, block];
+    else if (Array.isArray(enriched.content)) enriched.content.push(block);
+  }
+
   // The rewrite nudge must not point at references when the turn is ungrounded;
   // naming sources that were never attached is how the model invents them.
-  _standaloneIncompleteAnswerNudge(gap) {
+  _standaloneIncompleteAnswerNudge(gap, runOptions = {}) {
+    if (this._isTinyAskRun(runOptions)) {
+      return '[System recovery: The previous on-device response ended mid-sentence. Rewrite it as one complete, concise answer to the question, using the page text attached to it.]';
+    }
     const sourcePolicy = gap
       ? 'No offline references are attached, so answer from your own knowledge and do not cite or name any source.'
       : 'For factual claims, use only the Offline Wikipedia references attached to the original question; do not add model-memory facts.';
@@ -11280,23 +11449,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _standalonePersistedUserMessage(enriched, runOptions = {}) {
     if (!this._isStandaloneChatRun(runOptions)) return enriched;
+    const marker = this._standaloneHistoryMarker(runOptions);
     if (!Array.isArray(enriched?.content)) {
-      return { ...enriched, webbrainStandaloneChat: true };
+      return { ...enriched, [marker]: true };
     }
     const content = enriched.content
-      .filter(block => block?.webbrainEphemeralLocalWikipedia !== true)
+      .filter(block => block?.webbrainEphemeralLocalWikipedia !== true && block?.webbrainEphemeralPageContext !== true)
       .map(block => {
         if (!block || typeof block !== 'object') return block;
         const { webbrainEphemeralLocalWikipedia: _ephemeral, ...persisted } = block;
         return persisted;
       });
     if (content.length === 1 && content[0]?.type === 'text' && Object.keys(content[0]).length === 2) {
-      return { ...enriched, content: String(content[0].text || ''), webbrainStandaloneChat: true };
+      return { ...enriched, content: String(content[0].text || ''), [marker]: true };
     }
-    return { ...enriched, content, webbrainStandaloneChat: true };
+    return { ...enriched, content, [marker]: true };
   }
 
-  _messagesForStandaloneChatRun(messages, persistedUserMessage, enrichedUserMessage) {
+  _messagesForStandaloneChatRun(messages, persistedUserMessage, enrichedUserMessage, marker = 'webbrainStandaloneChat') {
     if (!Array.isArray(messages) || !persistedUserMessage) return [];
     const currentIndex = messages.indexOf(persistedUserMessage);
     if (currentIndex < 0) return [];
@@ -11305,12 +11475,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // standalone chat. Find the contiguous standalone segment containing the
     // current turn so page context and browser tool transcripts from the
     // sidepanel never cross this model boundary. The marker is persisted, so
-    // the boundary survives an MV3 service-worker restart.
+    // the boundary survives an MV3 service-worker restart. Tiny Ask turns use
+    // their own marker (webbrainTinyAsk), so each profile sees only its segment.
     let previousSidepanelUser = -1;
     for (let index = 1; index <= currentIndex; index += 1) {
       const message = messages[index];
       if (message?.role === 'user'
-          && message.webbrainStandaloneChat !== true
+          && message[marker] !== true
           && !this._isAgentInjectedUserMessage(message)) {
         previousSidepanelUser = index;
       }
@@ -11318,7 +11489,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let segmentStart = -1;
     for (let index = previousSidepanelUser + 1; index <= currentIndex; index += 1) {
       const message = messages[index];
-      if (message?.role === 'user' && message.webbrainStandaloneChat === true) {
+      if (message?.role === 'user' && message[marker] === true) {
         segmentStart = index;
         break;
       }
@@ -11332,6 +11503,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const source = message === persistedUserMessage ? enrichedUserMessage : message;
         const {
           webbrainStandaloneChat: _standalone,
+          webbrainTinyAsk: _tinyAsk,
           tool_calls: _toolCalls,
           tool_call_id: _toolCallId,
           responseItems: _responseItems,
@@ -22821,7 +22993,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._continuationTaskTokens.delete(tabId);
       this._taskTokens.set(tabId, `task_${secureRandomBase36Token(12)}`);
     }
-    const { tabUrl, tabTitle } = this._isStandaloneChatRun(runOptions)
+    // Tiny Ask reads the current page, so its trace keeps the page like Ask.
+    const { tabUrl, tabTitle } = this._isStandaloneChatRun(runOptions) && !this._isTinyAskRun(runOptions)
       ? { tabUrl: '', tabTitle: '' }
       : (tabInfo || await this._getTabUrlTitle(tabId));
     // Tracing must never break a run: a recorder failure returns null and the
@@ -25774,6 +25947,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         modelMessages,
         runOptions._standalonePersistedUserMessage,
         currentUserMessage,
+        this._standaloneHistoryMarker(runOptions),
       );
     }
     const selectionScoped = isSelectionSourceGrounding(runOptions?.sourceGrounding);
@@ -31353,6 +31527,72 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && String(runOptions?.providerId || '') === 'webgpu';
   }
 
+  // A side-panel Ask turn answered by an in-browser model. It runs on the
+  // standalone WebGPU machinery (one tool-free call, ephemeral evidence) but
+  // with the current page as its source; see tiny-ask.js.
+  _isTinyAskRun(runOptions = {}) {
+    return runOptions?.tinyAsk === true && this._isStandaloneWebgpuRun(runOptions);
+  }
+
+  _isInBrowserProvider(provider) {
+    return provider?.name === 'webgpu';
+  }
+
+  _providerForRunOptions(tabId, runOptions = {}) {
+    const requested = String(runOptions?.providerId || '').trim();
+    if (requested && typeof this.providerManager?.getProvider === 'function') {
+      return this.providerManager.getProvider(requested);
+    }
+    return this._activeProvider(tabId);
+  }
+
+  // Ask turns for an in-browser model become tiny Ask runs. Only the agent
+  // sets the flag: an incoming tinyAsk value is dropped, and standalone,
+  // selection-scoped and managed (cloud, bot memory) runs keep their own paths.
+  _withTinyAskRunOptions(tabId, mode, runOptions = {}) {
+    const { tinyAsk: _incoming, ...options } = runOptions || {};
+    if (mode !== 'ask' || options.standaloneChat === true || options.cloudRun || options.taskMemory
+        || isSelectionSourceGrounding(options.sourceGrounding) || this.selectionGroundingScopes?.has(tabId)) {
+      return options;
+    }
+    let provider = null;
+    try { provider = this._providerForRunOptions(tabId, options); } catch { return options; }
+    if (!this._isInBrowserProvider(provider)) return options;
+    return { ...options, standaloneChat: true, providerId: 'webgpu', tinyAsk: true };
+  }
+
+  // In-browser models only answer questions (tiny Ask): an Act or Dev run
+  // would re-prefill the full agent prompt and tool schemas on every step.
+  // Refused before enrichment, so no page read or classifier call runs.
+  _inBrowserActionTurn(tabId, mode, runOptions = {}) {
+    if (!this._isActionMode(mode) || this._isStandaloneChatRun(runOptions)) return false;
+    try { return this._isInBrowserProvider(this._activeProvider(tabId)); } catch { return false; }
+  }
+
+  async _refuseInBrowserActionTurn(tabId, messages, userMessage, onUpdate, runOptions = {}, attachments = []) {
+    const message = TINY_ASK_ACT_BLOCKED_MESSAGE;
+    if (Array.isArray(attachments) && attachments.length) {
+      const error = `${message} Attachments were not sent.`;
+      onUpdate('attachment_rejected', { error });
+      return error;
+    }
+    messages.push({
+      role: 'user',
+      content: userMessage,
+      ...(runOptions?.scheduledResume === true ? {} : { webbrainUserAuthoredText: this._messageText(userMessage) }),
+    });
+    messages.push({ role: 'assistant', content: message });
+    await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
+    onUpdate('warning', { message });
+    return message;
+  }
+
+  // The marker that keeps one run profile's turns together in history. The
+  // standalone window and tiny Ask never see each other's segments.
+  _standaloneHistoryMarker(runOptions = {}) {
+    return this._isTinyAskRun(runOptions) ? 'webbrainTinyAsk' : 'webbrainStandaloneChat';
+  }
+
   _effectiveRunMode(tabId, fallback = 'ask') {
     return this._runModeOverrides.get(tabId)
       || this.conversationModes.get(tabId)
@@ -31397,6 +31637,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * and on settings changes via _refreshSystemPrompts().
    */
   _buildSystemPrompt(mode, tabId = null) {
+    // Tiny Ask is also a standalone WebGPU run, so it is checked first.
+    if (tabId != null && this._tinyAskRunTabs.has(tabId)) {
+      const responseLanguagePolicy = this.responseLanguagePolicies.get(tabId);
+      return responseLanguagePolicy
+        ? `${TINY_ASK_SYSTEM_PROMPT}\n\n${formatResponseLanguagePolicyInstruction(responseLanguagePolicy, 'en', { form: 'brief' })}`
+        : TINY_ASK_SYSTEM_PROMPT;
+    }
     if (tabId != null && this._standaloneWebgpuRunTabs.has(tabId)) {
       const responseLanguagePolicy = this.responseLanguagePolicies.get(tabId);
       return responseLanguagePolicy
@@ -32411,6 +32658,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.responseLanguagePolicies.delete(tabId);
     this._standaloneChatRunTabs.delete(tabId);
     this._standaloneWebgpuRunTabs.delete(tabId);
+    this._tinyAskRunTabs.delete(tabId);
     this._continuationResponseLanguagePolicies.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.lastAutoScreenshotTs.delete(tabId);
@@ -49710,6 +49958,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async processMessage(tabId, userMessage, onUpdate = () => {}, mode = 'ask', attachments = [], runOptions = {}) {
+    runOptions = this._withTinyAskRunOptions(tabId, mode, runOptions);
     let runClaimed = false;
     let messageProcessingStarted = false;
     try {
@@ -49751,6 +50000,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const previousStandaloneWebgpuRun = this._standaloneWebgpuRunTabs.has(tabId);
     if (this._isStandaloneWebgpuRun(runOptions)) this._standaloneWebgpuRunTabs.add(tabId);
     else this._standaloneWebgpuRunTabs.delete(tabId);
+    const previousTinyAskRun = this._tinyAskRunTabs.has(tabId);
+    if (this._isTinyAskRun(runOptions)) this._tinyAskRunTabs.add(tabId);
+    else this._tinyAskRunTabs.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     const readCompletenessRunToken = await this._beginReadCompleteness(tabId, userMessage, runOptions);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
@@ -49808,6 +50060,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       else this._standaloneChatRunTabs.delete(tabId);
       if (previousStandaloneWebgpuRun) this._standaloneWebgpuRunTabs.add(tabId);
       else this._standaloneWebgpuRunTabs.delete(tabId);
+      if (previousTinyAskRun) this._tinyAskRunTabs.add(tabId);
+      else this._tinyAskRunTabs.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
       if (continuationResponseLanguagePolicyStored) {
         try { await this._persistNow(tabId); } catch {}
@@ -50080,6 +50334,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
     this._expireCurrentToolReasoning(messages);
+    if (this._inBrowserActionTurn(tabId, mode, runOptions)) {
+      return this._refuseInBrowserActionTurn(tabId, messages, userMessage, onUpdate, runOptions, attachments);
+    }
     // An ordinary attachment send is an explicit source change. End the
     // inherited selected-text scope before enrichment so a chip deliberately
     // preserved by the side panel can be used without re-selecting the file.
@@ -50145,7 +50402,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const visible = this._messagesForSourceGroundedRun(messages, runOptions, enriched, sourceBoundPriorMessages);
       const persistedUserMessage = runOptions?._standalonePersistedUserMessage;
       if (!standaloneChatRun || !persistedUserMessage) return visible;
-      return this._messagesForStandaloneChatRun(visible, persistedUserMessage, enriched);
+      return this._messagesForStandaloneChatRun(visible, persistedUserMessage, enriched,
+        this._standaloneHistoryMarker(runOptions));
     };
     const modelMessagesForRun = () => {
       const rawMessages = rawModelMessagesForRun();
@@ -51050,6 +51308,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               this._appendStandaloneUngroundedPolicy(enriched, standaloneGroundingGap);
               continue;
             }
+            if (this._isTinyAskRun(runOptions)) {
+              this._appendTinyAskNoSearchPolicy(enriched);
+              continue;
+            }
           }
         } else if (localSearchQueries.length) {
           result.content = runOptions.localWikipediaRag?.status === 'matched'
@@ -51446,7 +51708,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           standaloneIncompleteAnswerRecoveryAttempted = true;
           messages.push(this._withResponseItems({ role: 'assistant', content: result.content }, result.responseItems, result.reasoningContent, provider));
           messages.push(this._appOwnedUserMessage(
-            this._standaloneIncompleteAnswerNudge(standaloneGroundingGap),
+            this._standaloneIncompleteAnswerNudge(standaloneGroundingGap, runOptions),
             'standalone_answer_recovery',
           ));
           onUpdate('warning', { message: 'The on-device response ended mid-sentence; retrying once.' });
@@ -51584,6 +51846,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   /**
    * Process a message with streaming output.
    */  async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
+    runOptions = this._withTinyAskRunOptions(tabId, mode, runOptions);
     let runClaimed = false;
     try {
     await this._claimRunEntry(tabId, 'interactive', runOptions, onUpdate);
@@ -51624,6 +51887,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const previousStandaloneWebgpuRun = this._standaloneWebgpuRunTabs.has(tabId);
     if (this._isStandaloneWebgpuRun(runOptions)) this._standaloneWebgpuRunTabs.add(tabId);
     else this._standaloneWebgpuRunTabs.delete(tabId);
+    const previousTinyAskRun = this._tinyAskRunTabs.has(tabId);
+    if (this._isTinyAskRun(runOptions)) this._tinyAskRunTabs.add(tabId);
+    else this._tinyAskRunTabs.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     const readCompletenessRunToken = await this._beginReadCompleteness(tabId, userMessage, runOptions);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
@@ -51680,6 +51946,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       else this._standaloneChatRunTabs.delete(tabId);
       if (previousStandaloneWebgpuRun) this._standaloneWebgpuRunTabs.add(tabId);
       else this._standaloneWebgpuRunTabs.delete(tabId);
+      if (previousTinyAskRun) this._tinyAskRunTabs.add(tabId);
+      else this._tinyAskRunTabs.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
       if (continuationResponseLanguagePolicyStored) {
         try { await this._persistNow(tabId); } catch {}
@@ -51732,6 +52000,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
     this._expireCurrentToolReasoning(messages);
+    if (this._inBrowserActionTurn(tabId, mode, runOptions)) {
+      return this._refuseInBrowserActionTurn(tabId, messages, userMessage, onUpdate, runOptions);
+    }
     runOptions = this._selectionGroundedRunOptions(tabId, messages, runOptions);
     const costState = this._newCostRunState();
     this.currentCostState.set(tabId, costState);
@@ -51780,7 +52051,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const visible = this._messagesForSourceGroundedRun(messages, runOptions, enriched, sourceBoundPriorMessages);
       const persistedUserMessage = runOptions?._standalonePersistedUserMessage;
       if (!standaloneChatRun || !persistedUserMessage) return visible;
-      return this._messagesForStandaloneChatRun(visible, persistedUserMessage, enriched);
+      return this._messagesForStandaloneChatRun(visible, persistedUserMessage, enriched,
+        this._standaloneHistoryMarker(runOptions));
     };
     const modelMessagesForRun = () => {
       const rawMessages = rawModelMessagesForRun();
@@ -52404,6 +52676,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 onUpdate('text', { content: '', replace: true });
                 continue;
               }
+              if (this._isTinyAskRun(runOptions)) {
+                this._appendTinyAskNoSearchPolicy(enriched);
+                onUpdate('text', { content: '', replace: true });
+                continue;
+              }
             }
           } else if (localSearchQueries.length) {
             fullText = runOptions.localWikipediaRag?.status === 'matched'
@@ -52755,7 +53032,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             standaloneIncompleteAnswerRecoveryAttempted = true;
             messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
             messages.push(this._appOwnedUserMessage(
-              this._standaloneIncompleteAnswerNudge(standaloneGroundingGap),
+              this._standaloneIncompleteAnswerNudge(standaloneGroundingGap, runOptions),
               'standalone_answer_recovery',
             ));
             onUpdate('text', { content: '', replace: true });

@@ -947,6 +947,7 @@ export default {
   "sp.mode.dev.title": "Utiliser les outils de code source, de style et de débogage de page",
   "sp.mode.dev.confirm": "Le mode Dev ajoute au mode Action des outils de code source, d’inspection des styles, d’inspection du DOM/des cadres et de débogage.\n\nUtilisez-le pour les travaux HTML/CSS, la modification de pages et le dépannage. Il est bloqué pour les fournisseurs de niveau Compact.\n\nContinuer ?",
   "sp.mode.dev.compact_blocked": "Le mode Dev est bloqué pour les fournisseurs de niveau Compact. {provider} est actuellement en mode Compact ; passez à un fournisseur de niveau Intermédiaire/Complet ou modifiez son niveau d’invite.",
+  "sp.mode.webgpu.ask_only": "Les modèles WebGPU intégrés au navigateur répondent aux questions uniquement en mode Ask. Pour utiliser le mode Act ou Dev, choisissez un autre fournisseur dans le menu des fournisseurs.",
   "sp.input.dev_placeholder": "Indiquez ce qu’il faut inspecter ou modifier sur cette page...",
   "sp.slash.remember": "Mémoriser une préférence utilisateur",
   "sp.slash.show_memory": "Afficher la mémoire utilisateur enregistrée",

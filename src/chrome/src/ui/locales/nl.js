@@ -171,6 +171,7 @@ export default {
   'sp.mode.dev.title': 'Gebruik bron-, stijl- en pagina-debuggingtools',
   'sp.mode.dev.confirm': 'Ontwikkelaarsmodus voegt paginabron, stijlinspectie, DOM/frame-inspectie en debuggingtools toe bovenop de Handelingsmodus.\n\nGebruik het voor HTML/CSS/paginabewerking en probleemoplossing. Het is geblokkeerd voor Compact-niveau providers.\n\nDoorgaan?',
   'sp.mode.dev.compact_blocked': 'Ontwikkelaarsmodus is geblokkeerd voor Compact-niveau providers. {provider} is momenteel Compact; schakel over op een Mid/Full-niveau provider of wijzig het promptniveau.',
+  'sp.mode.webgpu.ask_only': 'WebGPU-modellen in de browser beantwoorden alleen vragen in de Ask-modus. Kies een andere provider in het providermenu om de Act- of Dev-modus te gebruiken.',
   'sp.input.ask_placeholder': 'Stel een vraag over deze pagina...',
   'sp.input.placeholder_tip.help': 'Gebruik /help voor meer informatie over slashcommando\'s',
   'sp.input.placeholder_tip.record': 'Zeg "neem deze pagina op" om de interactie van dit tabblad/venster op te slaan',
