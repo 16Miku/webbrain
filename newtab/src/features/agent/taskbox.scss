@@ -22,6 +22,11 @@
 }
 
 .taskBoxInput {
+  &:disabled {
+    cursor: progress;
+    opacity: 0.6;
+  }
+
   flex: 1;
   min-width: 0;
   border: none;

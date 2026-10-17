@@ -218,7 +218,8 @@ const QuickLinksOptions = () => {
           items={[
             { value: 'icon', text: variables.getMessage(`${QUICKLINKS_SECTION}.options.icon`) },
             {
-              value: 'text_only',
+              // Must match what QuickLinks.jsx renders (it checks for 'text').
+              value: 'text',
               text: variables.getMessage(`${QUICKLINKS_SECTION}.options.text_only`),
             },
             { value: 'metro', text: variables.getMessage(`${QUICKLINKS_SECTION}.options.metro`) },

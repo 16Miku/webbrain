@@ -51,8 +51,45 @@ export function buildHandoff({ text, mode, tabId, now = Date.now() }) {
  * still sees the user gesture. Resolves true once the panel has been asked to
  * open and the task is stored.
  */
+// A new tab page is the only writer of its tab's hand-off key, so remembering here
+// that one is still waiting is enough to stop a second submit from replacing it
+// while a cold side panel is still starting up.
+const CLAIM_TIMEOUT_MS = 120_000;
+const inFlight = new Map(); // tabId -> Promise that settles once the record is claimed
+
+export const isHandoffPending = (tabId) => inFlight.has(tabId);
+
+/** Resolves when the panel has claimed this tab's task (or after a timeout). */
+export function whenClaimed(tab = currentTab) {
+  return inFlight.get(tab?.id) ?? Promise.resolve();
+}
+
+function trackClaim(api, tabId) {
+  const key = handoffKey(tabId);
+  const claimed = new Promise((resolve) => {
+    let timer;
+    const listener = (changes, area) => {
+      if ((!area || area === 'local') && changes?.[key] && !changes[key].newValue) finish();
+    };
+    function finish() {
+      clearTimeout(timer);
+      api.storage.onChanged?.removeListener?.(listener);
+      inFlight.delete(tabId);
+      resolve();
+    }
+    timer = setTimeout(finish, CLAIM_TIMEOUT_MS);
+    api.storage.onChanged?.addListener?.(listener);
+    // It may already have been claimed between the write and now.
+    Promise.resolve(api.storage.local.get?.(key))
+      .then((found) => { if (!found?.[key]) finish(); })
+      .catch(() => {});
+  });
+  inFlight.set(tabId, claimed);
+}
+
 export function submitTask({ text, mode }, api = extApi(), tab = currentTab) {
   if (!api || tab?.id == null) return Promise.reject(new Error('Extension API unavailable'));
+  if (inFlight.has(tab.id)) return Promise.reject(new Error('Previous task is still being handed over'));
   const firefox = hasFirefoxSidebar();
   if (!firefox && !api.sidePanel?.open) return Promise.reject(new Error('Side panel API unavailable'));
 
@@ -75,6 +112,7 @@ export function submitTask({ text, mode }, api = extApi(), tab = currentTab) {
 
   return Promise.all([stored, opened]).then(
     () => {
+      trackClaim(api, tab.id);
       Promise.resolve(api.runtime.sendMessage({ type: 'WB_NEWTAB_PANEL_OPENED', tabId: tab.id })).catch(() => {});
       return true;
     },

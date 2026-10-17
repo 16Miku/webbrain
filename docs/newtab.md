@@ -18,8 +18,9 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
 
 1. In the submit handler (no `await` before it, to keep the user gesture) the page
    writes `{id, tabId, text, mode, createdAt}` to extension storage key
-   `wbNewtabHandoff:<tabId>` (one key per tab, so two new tab pages submitting at
-   once cannot overwrite each other) and opens the panel for that tab (Chrome
+   `wbNewtabHandoff:<tabId>` (one key per tab, so different tabs cannot overwrite each
+   other; within a tab the box stays disabled until the panel has claimed the task, so a
+   second submit cannot replace it either) and opens the panel for that tab (Chrome
    `sidePanel.setOptions` + `open({tabId})`; Firefox `sidebarAction.open()`). If the
    panel fails to open, the page removes its own record again, so a failed submit can
    never be picked up and sent later when the panel is opened by hand.

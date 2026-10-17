@@ -9,7 +9,7 @@ const nt = (...p) => path.join(root, 'newtab', 'src', ...p);
 const load = (file) => import(pathToFileURL(file).href);
 
 const { createNamespacedStorage, NAMESPACE_PREFIX } = await load(nt('lib/storage-namespace.js'));
-const { buildHandoff, toNavigableUrl, submitTask, handoffKey, HANDOFF_PREFIX } = await load(nt('features/agent/handoff.js'));
+const { buildHandoff, toNavigableUrl, submitTask, handoffKey, HANDOFF_PREFIX, isHandoffPending, whenClaimed } = await load(nt('features/agent/handoff.js'));
 const { getTitleFromUrl } = await load(nt('utils/links/getTitleFromUrl.js'));
 const { normalizeLinkUrl } = await load(nt('utils/links/normalizeLinkUrl.js'));
 
@@ -121,6 +121,60 @@ test('cleanup never removes a newer task written by another submit', async () =>
   });
   await assert.rejects(() => submitTask({ text: 'first', mode: 'ask' }, api, { id: 1 }));
   assert.equal(api._store.get(handoffKey(1))?.id, 'newer');
+});
+
+test('a second submit from the same tab waits until the first task has been claimed', async () => {
+  const store = new Map();
+  const listeners = [];
+  const api = {
+    storage: {
+      local: {
+        set: async (v) => { for (const [k, val] of Object.entries(v)) store.set(k, val); },
+        get: async (k) => (store.has(k) ? { [k]: store.get(k) } : {}),
+        remove: async (k) => { store.delete(k); },
+      },
+      onChanged: {
+        addListener: (fn) => listeners.push(fn),
+        removeListener: (fn) => { const i = listeners.indexOf(fn); if (i >= 0) listeners.splice(i, 1); },
+      },
+    },
+    sidePanel: { setOptions: async () => {}, open: async () => {} },
+    runtime: { sendMessage: async () => {} },
+  };
+  const tab = { id: 77 };
+  const claim = () => {
+    const key = handoffKey(77);
+    const oldValue = store.get(key);
+    store.delete(key);
+    [...listeners].forEach((fn) => fn({ [key]: { oldValue } }, 'local'));
+  };
+
+  await submitTask({ text: 'first', mode: 'ask' }, api, tab);
+  assert.equal(isHandoffPending(77), true);
+  const first = store.get(handoffKey(77));
+  await assert.rejects(() => submitTask({ text: 'second', mode: 'ask' }, api, tab), /still being handed over/);
+  assert.equal(store.get(handoffKey(77)).id, first.id, 'the first task was not replaced');
+
+  claim();
+  await whenClaimed(tab);
+  assert.equal(isHandoffPending(77), false);
+  assert.equal(listeners.length, 0, 'the storage listener is removed');
+
+  await submitTask({ text: 'second', mode: 'ask' }, api, tab);
+  assert.equal(store.get(handoffKey(77)).text, 'second');
+  claim();
+  await whenClaimed(tab);
+});
+
+test('quick link style option values match what the renderer checks', () => {
+  const options = readFileSync(nt('features/quicklinks/options/QuickLinksOptions.jsx'), 'utf8');
+  const renderer = readFileSync(nt('features/quicklinks/QuickLinks.jsx'), 'utf8');
+  const offered = [...options.slice(options.indexOf('name="quickLinksStyle"')).matchAll(/value: '([a-z_]+)'/g)]
+    .map((m) => m[1]).slice(0, 3);
+  assert.deepEqual(offered, ['icon', 'text', 'metro']);
+  for (const style of ['text', 'metro']) {
+    assert.match(renderer, new RegExp(`quickLinksStyle'\\)\\s*===\\s*'${style}'`));
+  }
 });
 
 test('link titles are derived locally and never fetched', async () => {

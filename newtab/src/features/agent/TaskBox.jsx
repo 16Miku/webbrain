@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MdArrowForward, MdChatBubbleOutline, MdSearch, MdSmartToy } from 'react-icons/md';
 import { wbT } from 'lib/wb-strings';
-import { canSearch, primeCurrentTab, runSearch, submitTask } from './handoff';
+import { canSearch, primeCurrentTab, runSearch, submitTask, whenClaimed } from './handoff';
 
 import './taskbox.scss';
 
@@ -22,6 +22,9 @@ function TaskBox() {
   const [mode, setMode] = useState(readMode);
   const [text, setText] = useState('');
   const [error, setError] = useState('');
+  // True from a successful submit until the side panel has taken the task, so a
+  // second task cannot replace it while a cold panel is still starting.
+  const [waiting, setWaiting] = useState(false);
   const inputRef = useRef(null);
 
   useEffect(() => {
@@ -32,14 +35,17 @@ function TaskBox() {
   const onSubmit = (event) => {
     event.preventDefault();
     const value = text.trim();
-    if (!value) return;
+    if (!value || waiting) return;
     setError('');
 
     // Both branches start synchronously inside the submit gesture.
     const run = mode === 'search' ? runSearch(value) : submitTask({ text: value, mode });
     run
       .then(() => {
-        if (mode !== 'search') setText('');
+        if (mode === 'search') return;
+        setText('');
+        setWaiting(true);
+        whenClaimed().then(() => setWaiting(false));
       })
       .catch(() => setError(wbT('wb.panel_failed')));
   };
@@ -57,9 +63,10 @@ function TaskBox() {
           spellCheck={false}
           placeholder={wbT(`wb.placeholder_${mode}`)}
           aria-label={wbT(`wb.placeholder_${mode}`)}
+          disabled={waiting}
           onChange={(event) => setText(event.target.value)}
         />
-        <button className="taskBoxGo" type="submit" aria-label={wbT('wb.go')} disabled={!text.trim()}>
+        <button className="taskBoxGo" type="submit" aria-label={wbT('wb.go')} disabled={waiting || !text.trim()}>
           <MdArrowForward />
         </button>
       </form>
