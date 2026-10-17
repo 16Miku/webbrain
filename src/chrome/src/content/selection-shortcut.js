@@ -441,6 +441,7 @@
           display:flex; flex:none; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-top:10px;
           color:var(--muted); font-size:13px; line-height:1.4;
         }
+        .card-notice { flex:none; margin-top:10px; color:var(--muted); font-size:13px; line-height:1.4; }
         .card-continue {
           padding:5px 11px; border:1px solid var(--border); border-radius:10px; background:transparent;
           color:var(--text); font-size:13px; font-weight:550; cursor:pointer;
@@ -558,6 +559,7 @@
           <span class="card-cut-text">This answer was cut off.</span>
           <button class="card-continue" type="button">Continue in side panel</button>
         </div>
+        <div class="card-notice" role="status" hidden></div>
         <div class="followup">
           <input class="followup-input" type="text" maxlength="2000" aria-label="Ask a follow-up" placeholder="Ask a follow-up">
           <button class="followup-send" type="button" aria-label="Send follow-up" disabled>
@@ -591,6 +593,7 @@
       cut: shadow.querySelector('.card-cut'),
       cutText: shadow.querySelector('.card-cut-text'),
       continueButton: shadow.querySelector('.card-continue'),
+      notice: shadow.querySelector('.card-notice'),
       followUp: shadow.querySelector('.followup-input'),
       send: shadow.querySelector('.followup-send'),
     };
@@ -925,6 +928,8 @@
     parts.text.hidden = status !== 'ready';
     parts.error.hidden = status !== 'error' || cutOffOnly;
     parts.cut.hidden = !((status === 'ready' || cutOffOnly) && cardState.truncated);
+    parts.notice.hidden = !(status === 'ready' && cardState.notice);
+    parts.notice.textContent = status === 'ready' ? cardState.notice : '';
     if (status === 'ready') renderAnswer(parts.text, cardState.text, kind !== 'translate');
     if (status === 'error') {
       parts.errorText.textContent = str('inlineFailed');
@@ -971,6 +976,7 @@
       quote: kind === 'translate' ? snapshot.text : '',
       text: '',
       truncated: false,
+      notice: '',
       error: '',
     };
     cardParts.followUp.value = '';
@@ -1028,6 +1034,7 @@
     cardState.status = 'loading';
     cardState.text = '';
     cardState.truncated = false;
+    cardState.notice = '';
     cardState.error = '';
     renderCard();
     try {
@@ -1047,6 +1054,9 @@
       }
       cardState.status = 'ready';
       cardState.text = answer;
+      // Something the person should know about the answer they are looking at, such as
+      // the cost allowance having been reached by this very request.
+      cardState.notice = typeof response?.notice === 'string' ? response.notice.slice(0, 300) : '';
     } catch (error) {
       if (requestId !== cardRequestId || !cardState) return;
       cardJobId = '';
@@ -1325,6 +1335,7 @@
       retryRect: cardParts && !cardParts.error.hidden ? rectOf('.card-retry') : null,
       cardTruncated: cardState?.truncated === true,
       cutNoticeText: cardParts && !cardParts.cut.hidden ? cardParts.cutText.textContent : '',
+      cardNotice: cardParts && !cardParts.notice.hidden ? cardParts.notice.textContent : '',
       continueRect: cardParts && !cardParts.cut.hidden ? rectOf('.card-continue') : null,
       continueLabel: cardParts && !cardParts.cut.hidden ? cardParts.continueButton.textContent : '',
       followUpPlaceholder: cardParts?.followUp.placeholder || '',

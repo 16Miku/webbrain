@@ -1770,6 +1770,11 @@ const INLINE_SELECTION_TIMEOUT_MS = 90_000;
 const inlineSelectionJobs = new Map();
 const INLINE_JOB_ID_PATTERN = /^[a-z0-9]{8,64}$/;
 
+// The allowance notice a call carries when it was the one to reach the limit.
+function inlineCostNotice(source) {
+  return typeof source?.costAllowanceMessage === 'string' ? source.costAllowanceMessage.slice(0, 300) : '';
+}
+
 async function answerInlineSelection(msg) {
   const messages = buildInlineSelectionMessages(msg.selectionText, msg.action, msg.language);
   if (!messages) return { ok: false, error: 'Invalid selection request.' };
@@ -1803,14 +1808,19 @@ async function answerInlineSelection(msg) {
     );
     const text = String(result?.content || '').trim();
     if (!text) return { ok: false, error: 'The model returned an empty answer.' };
-    return inlineAnswerWasCut(result, maxTokens) ? { ok: true, text, truncated: true } : { ok: true, text };
+    // The call that reaches the cost allowance still returns its answer; the card is told
+    // so it can say the next one will not run.
+    const notice = inlineCostNotice(result);
+    const answer = { ok: true, text, ...(notice ? { notice } : {}) };
+    return inlineAnswerWasCut(result, maxTokens) ? { ...answer, truncated: true } : answer;
   } catch (error) {
     if (inlineErrorWasCut(error)) {
       // The provider reported the output limit as an error. Show what it wrote, if
       // anything, and let the card hand the rest to the side panel.
       const partial = String(error.partialContent || '').trim();
+      const notice = inlineCostNotice(error);
       return partial
-        ? { ok: true, text: partial, truncated: true }
+        ? { ok: true, text: partial, truncated: true, ...(notice ? { notice } : {}) }
         : { ok: false, truncated: true, error: 'The answer was cut off before any text was produced.' };
     }
     return { ok: false, error: String(error?.message || error).slice(0, 300) };

@@ -52333,8 +52333,8 @@ test('inline card answers are one tool-less, bounded model call behind validated
     assert.match(body, /agent\._chatWithCostAllowance\(\s*provider,\s*messages,\s*\{ maxTokens, temperature: 0, signal: controller\.signal \},\s*agent\._newCostRunState\(\),/, `${prefix}: the call is bounded, abortable and goes through the cost allowance`);
     assert.match(body, /const maxTokens = inlineSelectionMaxTokens\(msg\.selectionText, msg\.action, provider\?\.maxOutputTokens, \{\s*contextWindow: provider\?\.contextWindow,\s*messages,\s*\}\);/, `${prefix}: the budget is sized to the selection, the provider's ceiling and the room its context window leaves after the prompt`);
     assert.match(body, /if \(maxTokens === 0\) \{\s*return \{ ok: false, truncated: true, error: [^}]*context window[^}]*\};\s*\}\s*const result = await agent\._chatWithCostAllowance/, `${prefix}: a prompt that fills the context window is handed to the side panel without a model call`);
-    assert.match(body, /inlineAnswerWasCut\(result, maxTokens\) \? \{ ok: true, text, truncated: true \}/, `${prefix}: a capped answer is flagged instead of passing as complete`);
-    assert.match(body, /catch \(error\) \{\s*if \(inlineErrorWasCut\(error\)\) \{[\s\S]*?\{ ok: true, text: partial, truncated: true \}[\s\S]*?\{ ok: false, truncated: true, error:/, `${prefix}: a provider that reports the output limit as an error still ends in the cut-off state`);
+    assert.match(body, /inlineAnswerWasCut\(result, maxTokens\) \? \{ \.\.\.answer, truncated: true \} : answer/, `${prefix}: a capped answer is flagged instead of passing as complete`);
+    assert.match(body, /catch \(error\) \{\s*if \(inlineErrorWasCut\(error\)\) \{[\s\S]*?\{ ok: true, text: partial, truncated: true, \.\.\.\(notice \? \{ notice \} : \{\}\) \}[\s\S]*?\{ ok: false, truncated: true, error:/, `${prefix}: a provider that reports the output limit as an error still ends in the cut-off state`);
 
     // A card that is closed, retried or retargeted cancels the paid call it no longer needs.
     assert.match(body, /const jobId = typeof msg\.jobId === 'string' && INLINE_JOB_ID_PATTERN\.test\(msg\.jobId\) \? msg\.jobId : '';\s*if \(jobId\) inlineSelectionJobs\.set\(jobId, controller\);/, `${prefix}: only well-formed job ids are tracked`);
@@ -52344,6 +52344,81 @@ test('inline card answers are one tool-less, bounded model call behind validated
     assert.doesNotMatch(body, /\btools\b|toolDefs|tool_choice/, `${prefix}: an in-page answer must not have tools`);
     assert.match(body, /controller\.abort\(/, `${prefix}: a hung provider must time out`);
     assert.match(body, /finally \{\s*clearTimeout\(timer\);/, `${prefix}: the timeout timer is always cleared`);
+  }
+});
+
+test('inline card answers tell the card when that request reached the cost allowance', async () => {
+  const NOTICE = 'Cloud cost allowance reached: total cloud/router usage is $5.00 against the $5.00 limit. Stopping before further cloud/router model calls.';
+  for (const prefix of ['src/chrome', 'src/firefox']) {
+    const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const helperStart = background.indexOf('function inlineCostNotice(source) {');
+    const start = background.indexOf('async function answerInlineSelection(msg) {');
+    assert.notEqual(helperStart, -1, `${prefix}: the notice helper is missing`);
+    assert.notEqual(start, -1, `${prefix}: inline answer handler missing`);
+    const source = background.slice(helperStart, background.indexOf('\n}\n', start) + 2);
+
+    const run = async ({ chat }) => {
+      const context = vm.createContext({
+        AbortController, setTimeout, clearTimeout, String, Map,
+        INLINE_SELECTION_TIMEOUT_MS: 1000,
+        INLINE_JOB_ID_PATTERN: /^[a-z0-9]{8,64}$/,
+        inlineSelectionJobs: new Map(),
+        buildInlineSelectionMessages: () => [{ role: 'user', content: 'x' }],
+        inlineSelectionMaxTokens: () => 500,
+        inlineAnswerWasCut: (result) => result?.finishReason === 'length',
+        inlineErrorWasCut: (error) => error?.incompleteReason === 'max_output_tokens',
+        providerManager: { providers: { size: 1 }, getActive: () => ({}) },
+        agent: { _newCostRunState: () => ({}), _chatWithCostAllowance: chat },
+      });
+      vm.runInContext(`${source}\nthis.answerInlineSelection = answerInlineSelection;`, context);
+      return JSON.parse(JSON.stringify(await context.answerInlineSelection({ selectionText: 'x', action: 'translate', language: 'fr' })));
+    };
+
+    assert.deepEqual(
+      await run({ chat: async () => ({ content: ' Bonjour ', costAllowanceMessage: NOTICE }) }),
+      { ok: true, text: 'Bonjour', notice: NOTICE },
+      `${prefix}: the request that reaches the allowance still returns its answer, with the notice`,
+    );
+    assert.deepEqual(
+      await run({ chat: async () => ({ content: 'Bonjour' }) }),
+      { ok: true, text: 'Bonjour' },
+      `${prefix}: an answer under the allowance carries no notice`,
+    );
+    assert.deepEqual(
+      await run({ chat: async () => ({ content: 'Bon', finishReason: 'length', costAllowanceMessage: NOTICE }) }),
+      { ok: true, text: 'Bon', notice: NOTICE, truncated: true },
+      `${prefix}: a capped answer keeps both the cut-off flag and the notice`,
+    );
+    assert.equal(
+      (await run({ chat: async () => ({ content: 'Bonjour', costAllowanceMessage: 'x'.repeat(900) }) })).notice.length,
+      300,
+      `${prefix}: the notice is bounded`,
+    );
+    assert.deepEqual(
+      await run({ chat: async () => ({ content: 'Bonjour', costAllowanceMessage: 42 }) }),
+      { ok: true, text: 'Bonjour' },
+      `${prefix}: only a text notice is passed on, and a malformed one does not cost the person their answer`,
+    );
+    assert.deepEqual(
+      await run({
+        chat: async () => {
+          throw Object.assign(new Error('Responses incomplete'), {
+            incompleteReason: 'max_output_tokens', partialContent: 'Half of it', costAllowanceMessage: NOTICE,
+          });
+        },
+      }),
+      { ok: true, text: 'Half of it', truncated: true, notice: NOTICE },
+      `${prefix}: a cut-off reported as an error that reached the allowance keeps its partial text and the notice`,
+    );
+    assert.deepEqual(
+      await run({
+        chat: async () => {
+          throw Object.assign(new Error('Responses incomplete'), { incompleteReason: 'max_output_tokens', partialContent: 'Half of it' });
+        },
+      }),
+      { ok: true, text: 'Half of it', truncated: true },
+      `${prefix}: and without reaching it there is no notice`,
+    );
   }
 });
 
@@ -54196,6 +54271,16 @@ test('an OpenAI Responses call that ends at the output limit is still metered', 
     );
     assert.match(text, /^Half of it/, `${label}: the partial text is still shown`);
     assert.equal(recorded.length, 1, `${label}: and the recovered call is counted once`);
+
+    // A call that is the one to reach the allowance says so on its error, as a completed one does on its result.
+    ({ agent, provider, recorded } = setup(incomplete({ input_tokens: 120, output_tokens: 800, total_tokens: 920 })));
+    agent._recordCostUsage = async () => 'Cloud cost allowance reached: total cloud/router usage is $5.00 against the $5.00 limit.';
+    const reached = await agent._chatWithCostAllowance(provider, messages, {}, agent._newCostRunState()).catch(error => error);
+    assert.match(reached.costAllowanceMessage, /^Cloud cost allowance reached/, `${label}: the limit being reached by an incomplete call is reported on the error`);
+    assert.equal(reached.partialContent, 'Half of it', `${label}: and the partial text is still on it`);
+    ({ agent, provider, recorded } = setup(incomplete({ input_tokens: 120, output_tokens: 800, total_tokens: 920 })));
+    const under = await agent._chatWithCostAllowance(provider, messages, {}, agent._newCostRunState()).catch(error => error);
+    assert.equal('costAllowanceMessage' in under, false, `${label}: below the limit the error carries no notice`);
 
     ({ agent, provider, recorded } = setup(incomplete(null)));
     await assert.rejects(agent._chatWithCostAllowance(provider, messages, {}, agent._newCostRunState()), /Responses incomplete/);

@@ -531,7 +531,10 @@ still stopped at the cap (finish reason, Anthropic `stop_reason` or Responses
 Responses reports the limit as an error, which the background treats the same way and
 answers with whatever text the provider returned) the response
 is flagged `truncated`, and the card says so and offers **Continue in side panel** instead
-of passing a cut-off translation off as complete. Continue sends the unfinished text as
+of passing a cut-off translation off as complete. The call that reaches the configured cost allowance still returns its answer (the
+background passes the allowance's own message as `notice`, from the result or, for a Responses
+cut-off, the error), and the card shows it under that answer, since the next card would otherwise
+fail with no warning. Continue sends the unfinished text as
 `continueFrom`; the background wraps it inside the selection's untrusted block (whole, up to the
 most a card can produce, because the side panel shows that block to the user) with a trusted request to resume from where it stops, because running the action again
 would meet the same output limit. A side-panel reply that is cut off again says so (the

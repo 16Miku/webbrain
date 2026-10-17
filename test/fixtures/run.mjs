@@ -2513,6 +2513,40 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
+  test(`${label}: a card answer says so when its request reached the cost allowance`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    const notice = 'Cloud cost allowance reached: total cloud/router usage is $5.00 against the $5.00 limit.';
+    await page.evaluate((text) => {
+      window.__selectionInlineHandler = async (message) => {
+        if (message.action === 'explain') return { ok: true, text: 'Plain explanation', notice: 42 };
+        if (message.action === 'translate') return { ok: true, text: 'Long notice answer', notice: 'n'.repeat(500) };
+        return { ok: true, text: 'Answer from the last allowed call', notice: text };
+      };
+    }, notice);
+    await openInlineCard(page, 'proofread');
+    let state = await waitForCardStatus(page, 'ready');
+    if (state.cardText !== 'Answer from the last allowed call' || state.cardNotice !== notice || state.cardError) {
+      throw new Error(`the answer should be shown together with the allowance notice: ${JSON.stringify(state)}`);
+    }
+    // The notice belongs to that answer: another card without one shows none.
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !window.__webbrainSelectionShortcut.getState().cardVisible);
+    await selectFixtureText(page);
+    await openInlineCard(page, 'explain');
+    state = await waitForCardStatus(page, 'ready');
+    if (state.cardText !== 'Plain explanation' || state.cardNotice) {
+      throw new Error(`a card whose answer has no usable notice must not show one: ${JSON.stringify(state)}`);
+    }
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !window.__webbrainSelectionShortcut.getState().cardVisible);
+    await selectFixtureText(page);
+    await openInlineCard(page, 'translate');
+    state = await waitForCardStatus(page, 'ready');
+    if (state.cardText !== 'Long notice answer' || state.cardNotice.length !== 300) {
+      throw new Error(`a notice is bounded: ${JSON.stringify(state)}`);
+    }
+  });
+
   test(`${label}: an older Translate answer never replaces a newer one`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     await page.evaluate(() => {
