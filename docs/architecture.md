@@ -522,7 +522,7 @@ cost allowance (90 s timeout) and returns the text. The output budget is sized t
 selection (at least 2,000 tokens; Translate and Proofread grow to about two tokens per
 character, up to 8,000) and never exceeds the provider's own output ceiling or the room its
 context window leaves after the prompt (estimated on the high side, since the provider's tokenizer
-is not available: a whole token per ASCII character, as dense text such as minified code or hashes can need, two per other character such as accented letters or CJK,
+is not available: a whole token per ASCII character, as dense text such as minified code or hashes can need, four per other character, the most a byte-level fallback spends on one code point (accented letters, CJK, emoji),
 plus a reserve), so a small local window is not sent a request it would reject. When the prompt
 leaves less than 256 tokens for the answer, the background makes no call and answers with the
 cut-off shape, so the card hands the selection to the side panel. If the reply
@@ -537,7 +537,7 @@ cut-off, the error), and the card shows it under that answer, since the next car
 fail with no warning. Continue sends the unfinished text as
 `continueFrom`; the background wraps it inside the selection's untrusted block (whole, up to the
 most a card can produce, because the side panel shows that block to the user) with a trusted request to resume from where it stops, because running the action again
-would meet the same output limit. A side-panel reply that is cut off again says so (the
+would meet the same output limit. A resumed Proofread gets its own instruction, without the ordinary request for one complete corrected version, so a model asked for only the remainder is not also asked to write the corrected text again. A side-panel reply that is cut off again says so (the
 response-only path appends a notice when the provider reports a length finish, WebGPU
 reports `outputTruncated`, or OpenAI Responses raises the limit as an error carrying
 `partialContent`, whose text is then shown), so a long remainder never passes as complete

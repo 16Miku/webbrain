@@ -283,12 +283,12 @@ const INLINE_FALLBACK_OUTPUT_CEILING = 4096;
 // provider's tokenizer is not available here, so the prompt is estimated per
 // character as a worst case, not as prose: an ASCII character at one whole token (minified
 // code, identifiers, hashes and other high-entropy text can take that, and prose takes far
-// less), anything else (accented Latin, CJK, Indic, Arabic, Cyrillic, emoji) at two, which
-// covers byte-level fallbacks. Over-counting only makes a tight window end in a flagged
-// cut-off or a hand-off to the side panel instead of a refused request. Chat-template
-// tokens are covered by the reserve.
+// less), anything else (accented Latin, CJK, Indic, Arabic, Cyrillic, emoji) at four, the
+// most a byte-level fallback spends on one code point (its UTF-8 bytes). Over-counting only
+// makes a tight window end in a flagged cut-off or a hand-off to the side panel instead of a
+// refused request. Chat-template tokens are covered by the reserve.
 const INLINE_ASCII_TOKENS_PER_CHAR = 1;
-const INLINE_OTHER_TOKENS_PER_CHAR = 2;
+const INLINE_OTHER_TOKENS_PER_CHAR = 4;
 const INLINE_ASCII_RANGE_END = 0x80;
 const INLINE_PROMPT_TOKEN_RESERVE = 128;
 const INLINE_MIN_ANSWER_TOKENS = 256;
@@ -390,13 +390,23 @@ export function buildFollowUpSelectionText(selectionText, priorAction, priorAnsw
 export const INLINE_CONTINUE_PARTIAL_MAX_CHARS = INLINE_CARD_ANSWER_MAX_CHARS;
 const INLINE_CONTINUE_NOTE = ' An earlier attempt at this stopped partway; the text it produced is included after the selection. Continue it from exactly where it stops and give only the missing remainder, without repeating anything already written.';
 
+// Proofread's own instruction asks for one complete corrected version. Sent beside a request
+// to give only the missing remainder, a model can satisfy the first by starting the corrected
+// text over, which leaves the person with it twice. A resumed run therefore gets an instruction
+// that describes the work without the whole-deliverable demand.
+const INLINE_CONTINUATION_INSTRUCTIONS = Object.freeze({
+  proofread: 'Proofread this selected text, tying every claimed error to exact selected wording and distinguishing actual errors from optional style suggestions. If the earlier text stopped inside the corrected version, carry that version on rather than starting it again.',
+});
+
 export function buildContinuationSelectionPrompt(selectionText, action, partialAnswer, language = '') {
   const actionId = String(action || '').trim();
   const label = INLINE_FOLLOW_UP_LABELS[actionId];
   const selection = String(selectionText || '').trim();
   const partial = String(partialAnswer || '').trim();
   if (!label || !selection || !partial) return '';
-  const instruction = selectionActionInstruction(actionId, '', language);
+  const instruction = Object.prototype.hasOwnProperty.call(INLINE_CONTINUATION_INSTRUCTIONS, actionId)
+    ? `${INLINE_CONTINUATION_INSTRUCTIONS[actionId]}${responseLanguageInstruction(language)}`
+    : selectionActionInstruction(actionId, '', language);
   if (!instruction) return '';
   const kept = partial.length > INLINE_CONTINUE_PARTIAL_MAX_CHARS
     ? `…${partial.slice(-INLINE_CONTINUE_PARTIAL_MAX_CHARS)}`

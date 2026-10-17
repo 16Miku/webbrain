@@ -52207,6 +52207,18 @@ test('a cut-off card answer is resumed in the side panel, not run again', () => 
     assert.doesNotMatch(longPrompt, /START-/, `${label}: the head of a long unfinished answer is dropped`);
     assert.match(longPrompt, /\[Unfinished proofreading result of the text above\./);
 
+    // Resuming a Proofread must not also ask for the whole corrected version again.
+    const resumedProofread = buildContinuation('Some text with an eror.', 'proofread', 'Errors: "eror" should be "error". Corrected: Some text with an', 'en');
+    const resumedTrusted = resumedProofread.slice(0, resumedProofread.indexOf('<untrusted_page_content id="'));
+    assert.doesNotMatch(resumedTrusted, /one complete corrected version|First verify|select the complete passage/, `${label}: a resumed Proofread must not be told to produce the whole corrected version`);
+    assert.match(resumedTrusted, /^Proofread this selected text, tying every claimed error to exact selected wording/, `${label}: it is still a proofreading task`);
+    assert.match(resumedTrusted, /carry that version on rather than starting it again/, `${label}: a stop inside the corrected version is picked up there`);
+    assert.match(resumedTrusted, /Continue it from exactly where it stops and give only the missing remainder, without repeating anything already written\./, `${label}: the remainder is all that is asked for`);
+    assert.match(buildContinuation('Some text.', 'proofread', 'Partial.', 'de').slice(0, 600), /Respond in German/, `${label}: the reply language still follows the card`);
+    assert.equal(buildContinuation('Some text.', 'proofread', 'Partial.', 'xx').includes('Respond in'), false, `${label}: an unknown language adds no language rule`);
+    assert.match(buildSelectionPrompt('Some text.', 'proofread', '', 'en'), /provide one complete corrected version/, `${label}: the ordinary Proofread request is unchanged`);
+    assert.match(buildContinuation('Some text.', 'explain', 'Partial.', 'en'), /^Explain this selected text in plain language\./, `${label}: other actions keep their ordinary instruction`);
+
     // Nothing to resume, or nothing it can resume: no prompt, so the background rejects the request.
     assert.equal(buildContinuation('Some text.', 'translate', '   ', 'de'), '');
     assert.equal(buildContinuation('', 'translate', 'partial', 'de'), '');
@@ -52468,11 +52480,13 @@ test('inline card token budget follows the selection and never exceeds the provi
     const cjk = (chars) => [{ role: 'system', content: 'x'.repeat(500) }, { role: 'user', content: '漢'.repeat(chars) }];
     assert.equal(budget('漢'.repeat(4000), 'translate', 16_000, { contextWindow: 4096, messages: cjk(4000) }), 0,
       `${label}: a 4,000-character CJK selection does not fit a 4k window and is handed off`);
-    assert.equal(budget('漢'.repeat(1000), 'translate', 16_000, { contextWindow: 4096, messages: cjk(1000) }), 4096 - 128 - 500 - 2000,
-      `${label}: a shorter one gets the window minus a two-token-per-character prompt`);
+    assert.equal(budget('漢'.repeat(500), 'translate', 16_000, { contextWindow: 4096, messages: cjk(500) }), 4096 - 128 - 500 - 2000,
+      `${label}: a shorter one gets the window minus a four-token-per-character prompt`);
+    assert.equal(budget('漢'.repeat(1000), 'translate', 16_000, { contextWindow: 4096, messages: cjk(1000) }), 0,
+      `${label}: a thousand CJK characters can need four tokens each and leave nothing for the answer`);
     assert.equal(budget('漢'.repeat(4000), 'translate', 16_000, { contextWindow: 131_072, messages: cjk(4000) }), 8000,
       `${label}: a large window still allows the full answer`);
-    assert.equal(budget('Привет'.repeat(300), 'translate', 16_000, { contextWindow: 4096, messages: [{ role: 'user', content: 'Привет'.repeat(300) }] }), 4096 - 128 - 3600,
+    assert.equal(budget('Привет'.repeat(150), 'translate', 16_000, { contextWindow: 4096, messages: [{ role: 'user', content: 'Привет'.repeat(150) }] }), 4096 - 128 - 3600,
       `${label}: Cyrillic is counted as non-Latin text too`);
     // High-entropy ASCII (hashes, minified code, identifiers) is not prose: a token per character.
     const hashes = '0123456789abcdef'.repeat(250);
@@ -52480,9 +52494,12 @@ test('inline card token budget follows the selection and never exceeds the provi
       `${label}: 4,000 characters of hex do not fit a 4k window, so the card hands them to the side panel`);
     assert.equal(budget(hashes, 'translate', 16_000, { contextWindow: 8192, messages: [{ role: 'user', content: hashes }] }), 8192 - 128 - 4000,
       `${label}: an 8k window keeps back a token per character of the prompt`);
-    assert.equal(budget('é'.repeat(300), 'translate', 16_000, { contextWindow: 1000, messages: [{ role: 'user', content: 'é'.repeat(300) }] }), 1000 - 128 - 600,
-      `${label}: accented letters can take two tokens, so they are counted as such`);
-    assert.equal(budget('😀'.repeat(10), 'translate', 16_000, { contextWindow: 500, messages: [{ role: 'user', content: '😀'.repeat(10) }] }), 500 - 128 - 20,
+    assert.equal(budget('é'.repeat(150), 'translate', 16_000, { contextWindow: 1000, messages: [{ role: 'user', content: 'é'.repeat(150) }] }), 1000 - 128 - 600,
+      `${label}: accented letters can fall back to bytes, so they are counted at the most a code point can take`);
+    const emoji = '😀'.repeat(1000);
+    assert.equal(budget(emoji, 'translate', 16_000, { contextWindow: 4096, messages: [{ role: 'user', content: emoji }] }), 0,
+      `${label}: a thousand emoji or rare characters can fill a 4k window by themselves and are handed to the side panel`);
+    assert.equal(budget('😀'.repeat(10), 'translate', 16_000, { contextWindow: 500, messages: [{ role: 'user', content: '😀'.repeat(10) }] }), 500 - 128 - 40,
       `${label}: an astral character counts once, not as two UTF-16 units`);
     assert.equal(budget(longText, 'translate', 16_000, { contextWindow: undefined, messages: prompt(3500) }), 6000,
       `${label}: an unknown window is not guessed at`);
