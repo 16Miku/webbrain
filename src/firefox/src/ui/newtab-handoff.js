@@ -77,6 +77,7 @@ export function createNewtabHandoff({
   const startedAt = now();
   let ready = false;
   let startupAllowanceMs = 0;
+  let startedUpAt = -Infinity; // when start() ran; tasks created before it were delayed by the startup
   let consuming = false;
   let rerun = false;
   let retryTimer = null;
@@ -179,9 +180,7 @@ export function createNewtabHandoff({
     consuming = true;
     // Anything that could not be saved earlier gets another try before storage is read.
     for (const record of unsaved.slice()) await stashRecord(record);
-    // Only the first attempt after start() gets the startup allowance.
-    const allowance = startupAllowanceMs + (heldAllowanceMs.get(Number(tabId)) ?? 0);
-    startupAllowanceMs = 0;
+    const heldAllowance = heldAllowanceMs.get(Number(tabId)) ?? 0;
     // The shared composer belongs to whichever tab is active now. If the user switches
     // tabs while storage is being read or written, this tab's task must not be applied
     // to the other tab's composer; the switch's own consume() picks up the right one.
@@ -207,8 +206,12 @@ export function createNewtabHandoff({
       });
     };
     try {
-      const accept = (record) =>
-        normalizeNewtabHandoff(record, now(), NEWTAB_HANDOFF_MAX_AGE_MS + allowance);
+      // Every task typed before the panel finished starting was delayed by that startup, whichever
+      // tab it belongs to and whichever tab is looked at first.
+      const accept = (record) => {
+        const delayedByStartup = Number(record?.createdAt) <= startedUpAt ? startupAllowanceMs : 0;
+        return normalizeNewtabHandoff(record, now(), NEWTAB_HANDOFF_MAX_AGE_MS + delayedByStartup + heldAllowance);
+      };
       let stored = (await storage.get(primaryKey))?.[primaryKey];
       let handoff = stored == null ? null : accept(stored);
       // A stale or malformed primary record is left where it is: the new tab replaces it once
@@ -331,6 +334,7 @@ export function createNewtabHandoff({
       Math.max(0, now() - startedAt),
       NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS,
     );
+    startedUpAt = now();
     ready = true;
     return consume();
   }

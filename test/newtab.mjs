@@ -602,6 +602,46 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(sends.includes('task A2'), true, 'the waiting task is still accepted');
   });
 
+  test(`${browser}: the startup delay is credited to every tab's task, not just the first one looked at`, async () => {
+    const store = {
+      [newtabHandoffKey(3)]: { id: 'T3', tabId: 3, text: 'task three', mode: 'act', createdAt: 100_500 },
+      [newtabHandoffKey(4)]: { id: 'T4', tabId: 4, text: 'task four', mode: 'act', createdAt: 100_600 },
+    };
+    const state = { tabId: 3, clock: 100_000 };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => state.tabId,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => {},
+      now: () => state.clock,
+    });
+    state.clock = 150_000; // a cold panel took 50 s to restore its chat; both tasks are ~50 s old
+    await handoff.start();
+    assert.equal(input.value, 'task three');
+    state.tabId = 4;
+    input.value = '';
+    await handoff.consume();
+    assert.equal(input.value, 'task four', "the second tab's equally old task is accepted too");
+    // a task typed after startup gets no such credit
+    store[newtabHandoffKey(3)] = { id: 'late', tabId: 3, text: 'late', mode: 'act', createdAt: 150_100 };
+    state.clock = 190_000; // 40 s old, more than the ordinary 30 s
+    state.tabId = 3;
+    input.value = '';
+    await handoff.consume();
+    assert.equal(input.value, '', 'a task created after startup uses the ordinary window');
+  });
+
   test(`${browser}: a declined send never refills another tab's composer; the task goes back to its own tab`, async () => {
     const key3 = newtabHandoffKey(3);
     const store = { [key3]: { id: 'r1', tabId: 3, text: 'for tab three', mode: 'ask', createdAt: 99_000 } };
