@@ -14600,12 +14600,27 @@ function normalizeAgentMode(mode) {
   return mode === 'act' || mode === 'dev' ? mode : 'ask';
 }
 
+// In-browser (WebGPU) models answer questions in Ask mode only. The agent
+// enforces this too; checking here keeps the toggle from switching first.
+async function inBrowserProviderBlocksMode() {
+  try {
+    const tierInfo = await sendToBackground('get_active_prompt_tier');
+    if (tierInfo?.providerId !== 'webgpu') return false;
+    addMessage('system', systemHtml(tSystemHtml('sp.mode.webgpu.ask_only')));
+    return true;
+  } catch {
+    // A stale lookup must not block the toggle; the agent still refuses.
+    return false;
+  }
+}
+
 async function ensureActMode() {
   if (isSelectionGroundedForTab(currentTabId)) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return false;
   }
   if (agentMode === 'act') return true;
+  if (await inBrowserProviderBlocksMode()) return false;
   if (autoModeSelection) return true;
   setMode('act');
   return true;
@@ -14617,6 +14632,7 @@ async function ensureDevMode() {
     return false;
   }
   if (agentMode === 'dev') return true;
+  if (await inBrowserProviderBlocksMode()) return false;
   try {
     const tierInfo = await sendToBackground('get_active_prompt_tier');
     if (tierInfo?.tier === 'compact') {

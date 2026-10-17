@@ -44,12 +44,14 @@ const actionModeForTier = (mode, tier) => (mode === 'dev' && tier === 'compact' 
 // The route that run state alone determines, or null when the turn needs
 // the decision model or the main model to choose.
 export function autoModeHardRoute({
-  trustedContinuation = false, previousMode = null, standaloneChat = false,
+  trustedContinuation = false, previousMode = null, inBrowserModel = false, standaloneChat = false,
   selectionScoped = false, cloudRun = false, attachments = [], tier = '', text = '',
 } = {}) {
   if (trustedContinuation) {
     return { mode: actionModeForTier(isRunMode(previousMode) ? previousMode : 'ask', tier), source: 'continuation' };
   }
+  // An in-browser model only answers questions (a tiny Ask run).
+  if (inBrowserModel) return { mode: 'ask', source: 'in_browser_model' };
   if (standaloneChat) return { mode: 'ask', source: 'standalone' };
   if (selectionScoped) return { mode: 'ask', source: 'selection_scope' };
   if (carriesUntrustedText(text)) return { mode: 'ask', source: 'page_text' };

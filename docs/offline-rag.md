@@ -8,8 +8,8 @@ field-reference documents covering medical, survival, education, and
 communication topics.
 
 Standalone WebGPU chat has no tools. Retrieved passages are injected into the
-prompt first; the selected local text model (LFM2.5 2.6B by default, or opt-in
-Bonsai 27B) answers from that evidence or says it cannot.
+prompt first; the selected WebGPU text model (Compass Tiny v2.1 by default, or
+a Ternary Bonsai 2 preset) answers from that evidence or says it cannot.
 
 ## What's new
 
@@ -33,7 +33,7 @@ Bonsai 27B) answers from that evidence or says it cannot.
 - **Reciprocal Rank Fusion.** Lexical and semantic results are combined via
   reciprocal rank fusion, then diversified to limit redundancy (max 8 passages,
   max 2 per document). On-device WebGPU chat also caps injected evidence at
-  about 900 tokens so the local model can finish its answer.
+  about 1,800 tokens so the local model can finish its answer.
 - **Local citation readers.** Wikipedia citations open `wikipedia-reader.html`.
   Emergency Box passage citations open `emergency-text.html` after re-hashing
   the plaintext document. When the matching Emergency Box PDF is installed,

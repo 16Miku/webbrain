@@ -9,9 +9,9 @@ publics couvrant des domaines médicaux, de survie, d'éducation et de
 communication.
 
 Le chat WebGPU autonome n'a aucun outil. Les passages récupérés sont d'abord
-injectés dans le prompt ; le modèle de texte local sélectionné (LFM2.5 2.6B par
-défaut, ou Bonsai 27B en option) répond à partir de ces preuves ou indique
-qu'il ne peut pas.
+injectés dans le prompt ; le modèle de texte WebGPU sélectionné (Compass Tiny
+v2.1 par défaut, ou un préréglage Ternary Bonsai 2) répond à partir de ces
+preuves ou indique qu'il ne peut pas.
 
 ## Nouveautés
 
@@ -38,7 +38,7 @@ qu'il ne peut pas.
 - **Fusion réciproque des classements.** Les résultats lexicaux et sémantiques
   sont combinés par fusion réciproque, puis diversifiés pour limiter la
   redondance (max 8 passages, max 2 par document). Le chat WebGPU sur
-  l'appareil plafonne aussi les preuves injectées à environ 900 jetons pour que
+  l'appareil plafonne aussi les preuves injectées à environ 1 800 jetons pour que
   le modèle local puisse terminer sa réponse.
 - **Lecteurs de citations locaux.** Les citations Wikipedia ouvrent
   `wikipedia-reader.html`. Les citations de passages Emergency Box ouvrent
