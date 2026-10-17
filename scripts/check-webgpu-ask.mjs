@@ -206,3 +206,5 @@ try {
   if (server.listening) server.close();
 }
 console.log(`${result.passed ?? 0}/${result.tasks.length} tasks passed in ${Math.round(result.totalSeconds || 0)} s: ${output}`);
+// Keep-alive fixture sockets must not hold the process open after the report.
+process.exit(process.exitCode ?? 0);
