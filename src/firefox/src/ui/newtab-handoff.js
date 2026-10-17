@@ -29,6 +29,10 @@
 
 export const NEWTAB_HANDOFF_PREFIX = 'wbNewtabHandoff:';
 export const newtabHandoffKey = (tabId) => `${NEWTAB_HANDOFF_PREFIX}${tabId}`;
+// A task the panel has to hand back (its tab lost focus mid-send, ...) goes to a key only the
+// panel writes. Reusing the new tab's key could overwrite a newer task stored there meanwhile,
+// and chrome.storage has no compare-and-set to guard that.
+export const newtabHandoffRetryKey = (tabId) => `${NEWTAB_HANDOFF_PREFIX}retry:${tabId}`;
 export const NEWTAB_HANDOFF_MAX_AGE_MS = 30_000;
 export const NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS = 120_000;
 export const NEWTAB_HANDOFF_MAX_TEXT = 4000;
@@ -109,7 +113,9 @@ export function createNewtabHandoff({
       return false;
     }
     retries = 0;
-    const key = newtabHandoffKey(Number(tabId));
+    const primaryKey = newtabHandoffKey(Number(tabId));
+    const retryKey = newtabHandoffRetryKey(Number(tabId));
+    let key = primaryKey;
     consuming = true;
     // Only the first attempt after start() gets the startup allowance.
     const allowance = startupAllowanceMs;
@@ -118,16 +124,20 @@ export function createNewtabHandoff({
     // tabs while storage is being read or written, this tab's task must not be applied
     // to the other tab's composer; the switch's own consume() picks up the right one.
     const sameTab = () => Number(getCurrentTabId()) === Number(tabId);
-    // Put a record back only if nothing newer took its place: the new tab unlocks as soon as a
-    // record is removed and may already have stored the next task under the same key.
-    const restoreIfEmpty = async (record) => {
+    // Hand a task back for when this tab is shown again, without touching the key the new tab
+    // writes to (it unlocks as soon as a record is removed and may already hold the next task).
+    const stashForLater = async (record) => {
       try {
-        const current = (await storage.get(key))?.[key];
-        if (current == null) await storage.set?.({ [key]: record });
+        const current = (await storage.get(retryKey))?.[retryKey];
+        if (current == null) await storage.set?.({ [retryKey]: record });
       } catch { /* best effort */ }
     };
     try {
-      const stored = (await storage.get(key))?.[key];
+      let stored = (await storage.get(primaryKey))?.[primaryKey];
+      if (stored == null && sameTab()) {
+        stored = (await storage.get(retryKey))?.[retryKey];
+        key = retryKey;
+      }
       if (stored == null || !sameTab()) return false;
       const handoff = normalizeNewtabHandoff(stored, now(), NEWTAB_HANDOFF_MAX_AGE_MS + allowance);
       if (!handoff) {
@@ -141,7 +151,7 @@ export function createNewtabHandoff({
       if (!sameTab()) {
         // Switched during the removal: put the record back for when this tab is shown again.
         handled.delete(handoff.id);
-        await restoreIfEmpty(stored);
+        await stashForLater(stored);
         return false;
       }
 
@@ -194,7 +204,7 @@ export function createNewtabHandoff({
             } else {
               // The user moved to another tab while the send was being declined, and the
               // composer now belongs to that tab. Hand the task back for its own tab instead.
-              restoreIfEmpty({ ...stored, id: `${handoff.id}-retry`, createdAt: now() });
+              stashForLater({ ...stored, id: `${handoff.id}-retry`, createdAt: now() });
             }
           });
       }
@@ -224,7 +234,11 @@ export function createNewtabHandoff({
     onChanged?.addListener((changes, area) => {
       if (area && area !== 'local') return;
       const tabId = getCurrentTabId();
-      if (tabId != null && changes?.[newtabHandoffKey(Number(tabId))]?.newValue) consume();
+      if (tabId == null) return;
+      if (
+        changes?.[newtabHandoffKey(Number(tabId))]?.newValue ||
+        changes?.[newtabHandoffRetryKey(Number(tabId))]?.newValue
+      ) consume();
     });
     // The record can arrive just before an already-loaded panel becomes visible
     // (the new tab writes it, then opens the panel). consume() skips hidden

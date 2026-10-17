@@ -268,7 +268,7 @@ test('the only remaining fetch in the new tab source loads the chosen background
 });
 
 for (const browser of ['chrome', 'firefox']) {
-  const { normalizeNewtabHandoff, createNewtabHandoff, newtabHandoffKey, NEWTAB_HANDOFF_PREFIX } =
+  const { normalizeNewtabHandoff, createNewtabHandoff, newtabHandoffKey, newtabHandoffRetryKey, NEWTAB_HANDOFF_PREFIX } =
     await load(path.join(root, 'src', browser, 'src/ui/newtab-handoff.js'));
 
   test(`${browser}: handoff normalisation rejects stale, malformed or oversized records`, () => {
@@ -351,7 +351,8 @@ for (const browser of ['chrome', 'firefox']) {
       await handoff.start();
       assert.deepEqual(sent, [], 'nothing was sent into the other tab');
       assert.equal(input.value, '', "the other tab's composer was not touched");
-      assert.equal(store[key3]?.id, 'r1', "the old tab's record is still waiting");
+      // a read-time switch leaves the record where it was; a removal-time switch hands it back
+      assert.equal((store[key3] ?? store[newtabHandoffRetryKey(3)])?.id, 'r1', "the old tab's record is still waiting");
       // back on tab 3 the task is applied
       state.tabId = 3;
       await handoff.consume();
@@ -389,8 +390,8 @@ for (const browser of ['chrome', 'firefox']) {
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(input.value, '', "tab 4's composer stays empty");
-    assert.equal(store[key3]?.text, 'for tab three', 'the task is waiting for tab 3 again');
-    assert.equal(store[key3].id, 'r1-retry');
+    assert.equal(store[newtabHandoffRetryKey(3)]?.text, 'for tab three', 'the task is waiting for tab 3 again');
+    assert.equal(store[newtabHandoffRetryKey(3)].id, 'r1-retry');
   });
 
   test(`${browser}: a declined send keeps a draft typed meanwhile and adds the task below it`, async () => {
@@ -454,6 +455,36 @@ for (const browser of ['chrome', 'firefox']) {
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(store[key3].id, 'B', 'the newer task is kept');
+    assert.equal(store[newtabHandoffRetryKey(3)].id, 'A-retry', 'and the declined one is kept beside it');
+  });
+
+  test(`${browser}: a task handed back to its tab is applied when that tab is shown again, and the slot is cleared`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const retry3 = newtabHandoffRetryKey(3);
+    const store = { [retry3]: { id: 'A-retry', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_900 } };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    const sent = [];
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => { sent.push(input.value); input.value = ''; },
+      now: () => 100_000,
+    });
+    await handoff.start();
+    assert.deepEqual(sent, ['task A']);
+    assert.equal(retry3 in store, false);
+    assert.equal(key3 in store, false);
   });
 
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });

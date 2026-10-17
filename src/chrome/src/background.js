@@ -1658,7 +1658,9 @@ async function sweepStaleNewtabHandoffs() {
 // anything left over from a previous browser session is dropped on every start of
 // the background (top level runs at browser start and when the worker wakes).
 chrome.tabs.onRemoved.addListener((closedTabId) => {
-  chrome.storage.local.remove(`wbNewtabHandoff:${closedTabId}`).catch(() => {});
+  chrome.storage.local
+    .remove([`wbNewtabHandoff:${closedTabId}`, `wbNewtabHandoff:retry:${closedTabId}`])
+    .catch(() => {});
 });
 sweepStaleNewtabHandoffs();
 
