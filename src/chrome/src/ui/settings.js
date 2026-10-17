@@ -241,15 +241,20 @@ const decisionKeyDrafts = new Map();
 let previousDecisionProvider = 'openrouter';
 // Decision providers that run locally and need no API key.
 const LOCAL_DECISION_PROVIDERS = ['local', 'webgpu_d1', 'webgpu_chat'];
+// In-browser decision providers with a fixed model and no API key.
+const FIXED_WEBGPU_DECISION_PROVIDERS = ['webgpu_d1', 'webgpu_chat'];
 // The in-browser chat model's decision mode has a fixed model and a note.
+// Runs after d1-settings.js on load and on every provider change, so it
+// owns the locked state for both fixed providers.
 function syncWebgpuDecisionProvider() {
   const selected = decisionProviderInput?.value === 'webgpu_chat';
+  const fixed = FIXED_WEBGPU_DECISION_PROVIDERS.includes(decisionProviderInput?.value);
   const note = document.getElementById('webgpu-decision-note');
   if (note) note.hidden = !selected;
   if (selected) decisionModelInput.value = WEBGPU_CHAT_DECISION_MODEL;
-  // Restore both controls when another provider is chosen.
-  if (decisionModelInput) decisionModelInput.readOnly = selected;
-  if (systemOneApiKeyInput) systemOneApiKeyInput.disabled = selected;
+  // Lock both controls for D1 and the chat model; restore them otherwise.
+  if (decisionModelInput) decisionModelInput.readOnly = fixed;
+  if (systemOneApiKeyInput) systemOneApiKeyInput.disabled = fixed;
 }
 
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
@@ -1644,6 +1649,7 @@ if (btnClearSystemOne) {
     updateSystemOneThresholdLabels();
     await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     await refreshD1Settings();
+    syncWebgpuDecisionProvider();
     showSystemOneResult('ok', t('st.captcha.cleared'));
   });
 }

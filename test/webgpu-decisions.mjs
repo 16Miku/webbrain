@@ -304,10 +304,19 @@ test('in-browser decisions get their own timeout unless a caller sets a shorter 
   }
 });
 
-test('Settings restores the model and key fields after leaving the chat-model provider', async () => {
+test('Settings locks the model and key fields for both fixed in-browser providers and restores them otherwise', async () => {
   const settings = await readFile(new URL('../src/chrome/src/ui/settings.js', import.meta.url), 'utf8');
   const sync = settings.slice(settings.indexOf('function syncWebgpuDecisionProvider'), settings.indexOf('const systemOneApiKeyInput'));
-  assert.match(sync, /decisionModelInput\.readOnly = selected;/);
-  assert.match(sync, /systemOneApiKeyInput\.disabled = selected;/);
+  assert.match(settings, /const FIXED_WEBGPU_DECISION_PROVIDERS = \['webgpu_d1', 'webgpu_chat'\];/);
+  assert.match(sync, /const fixed = FIXED_WEBGPU_DECISION_PROVIDERS\.includes\(decisionProviderInput\?\.value\);/);
+  assert.match(sync, /decisionModelInput\.readOnly = fixed;/);
+  assert.match(sync, /systemOneApiKeyInput\.disabled = fixed;/);
   assert.doesNotMatch(sync, /= true;/, 'nothing is locked only one way');
+  // d1-settings.js also sets these fields for D1 only; the sync must run after it.
+  const awaited = [...settings.matchAll(/await refreshD1Settings\(\);\n\s*(\S+)/g)].map(match => match[1]);
+  assert.deepEqual(awaited, ['syncWebgpuDecisionProvider();', 'syncWebgpuDecisionProvider();'], 'load and Clear re-sync after D1');
+  const change = settings.slice(settings.indexOf("decisionProviderInput?.addEventListener('change'"));
+  assert.match(change.slice(0, change.indexOf('});')), /syncWebgpuDecisionProvider\(\);/);
+  assert.ok(settings.indexOf('initD1Settings(sendToBackground)') < settings.indexOf("decisionProviderInput?.addEventListener('change'"),
+    "D1's change listener is registered first, so this one runs last");
 });
