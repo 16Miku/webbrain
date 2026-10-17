@@ -433,6 +433,13 @@ context is larger; the browser defaults limit cache growth. Each model has its
 own download and readiness state. Changing models preserves already downloaded
 files, and switching back can reuse them.
 
+In-browser models answer questions only. In the side panel, each Ask turn
+makes one tool-free call. WebBrain first reads the current page, the
+selection, a PDF tab and any page linked in the question, then sends that text
+with a short prompt (tiny Ask, see [`docs/webgpu-models.md`](webgpu-models.md)).
+Act and Dev mode are refused for this provider; choose another provider for
+browser actions. The standalone chat window keeps its own page-free profile.
+
 - [`webbrain-one/webbrain-compass-tiny-v2.1`](https://huggingface.co/webbrain-one/webbrain-compass-tiny-v2.1)
   (`q4f16`, about 1.87 GB across two external-data shards), WebBrain's Compass
   Tiny v2.1 fine-tune of MiniCPM5-2B for Compact tool routing. It runs greedy
