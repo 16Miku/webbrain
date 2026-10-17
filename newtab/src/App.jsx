@@ -7,15 +7,22 @@ import { loadSettings, moveSettings } from 'utils/settings';
 import EventBus from 'utils/eventbus';
 import variables from 'config/variables';
 import { TranslationProvider } from 'contexts/TranslationContext';
+import { rawStorage } from 'lib/storage-namespace';
 
-const useAppSetup = () => {
+const useAppSetup = (onDefaultsApplied) => {
   useEffect(() => {
     // First run (or a wiped store): write the defaults, then reload once so
     // every widget reads them. Namespaced storage keeps this from touching
     // WebBrain's own keys.
     if (!localStorage.getItem('firstRun')) {
       moveSettings();
-      window.location.reload();
+      if (rawStorage) {
+        window.location.reload();
+      } else {
+        // Storage is only in memory (blocked site data / some private windows), so a
+        // reload would start from empty again, forever. Re-mount with the defaults instead.
+        onDefaultsApplied?.();
+      }
     }
 
     loadSettings();
@@ -62,13 +69,18 @@ const App = () => {
     return () => EventBus.off('refresh', handleRefresh);
   }, []);
 
-  useAppSetup();
+  // Bumped once when defaults were written without a reload; remounts the widgets so they read them.
+  const [setupKey, setSetupKey] = useState(0);
+  useAppSetup(() => {
+    setSetupKey((key) => key + 1);
+    setShowBackground(localStorage.getItem('background') === 'true');
+  });
 
   const languagecode = localStorage.getItem('language') || 'en_GB';
 
   return (
     <TranslationProvider initialLanguage={languagecode}>
-      {showBackground && <Background />}
+      {showBackground && <Background key={setupKey} />}
       <ToastContainer
         position="top-center"
         autoClose={toastDisplayTime}
@@ -76,7 +88,7 @@ const App = () => {
         closeOnClick
         pauseOnFocusLoss
       />
-      <div id="center">
+      <div id="center" key={setupKey}>
         <Widgets />
         <Modals />
       </div>

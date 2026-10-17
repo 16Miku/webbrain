@@ -1015,3 +1015,20 @@ test('round-17: maximise and effect controls handle video backgrounds; dismissin
   const ql = read('features/quicklinks/options/QuickLinksOptions.jsx');
   assert.match(ql, /onRequestClose=\{\(\) => \{[^}]*setEdit\(false\);\s*setEditData\(''\);/);
 });
+
+test('videoCheck accepts a File MIME type as well as data URLs and extensions', async () => {
+  const { default: videoCheck } = await load(nt('features/background/api/videoCheck.js'));
+  for (const yes of ['video/mp4', 'video/webm', 'video/ogg', 'data:video/mp4;base64,AAA', 'https://x/a.webm']) {
+    assert.equal(videoCheck(yes), true, yes);
+  }
+  for (const no of ['image/png', 'image/jpeg', 'data:image/png;base64,AAA', '']) {
+    assert.equal(videoCheck(no), false, no);
+  }
+});
+
+test('first run does not reload forever when storage is only in memory', () => {
+  const app = readFileSync(nt('App.jsx'), 'utf8');
+  assert.match(app, /import \{ rawStorage \} from 'lib\/storage-namespace'/);
+  assert.match(app, /if \(rawStorage\) \{\s*window\.location\.reload\(\);\s*\} else \{[\s\S]*onDefaultsApplied/);
+  assert.match(app, /key=\{setupKey\}/);
+});

@@ -6,6 +6,7 @@
 export default function videoCheck(url) {
   return (
     url.startsWith('data:video/') ||
+    url.startsWith('video/') || // a File's MIME type (video/mp4, video/webm, video/ogg)
     url.endsWith('.mp4') ||
     url.endsWith('.webm') ||
     url.endsWith('.ogg')
