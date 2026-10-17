@@ -75,6 +75,10 @@ Three modes control what the agent is allowed to do:
 | **Act** | Clicks, types, navigates, uploads, downloads, fills forms.             |
 | **Dev** | Adds page source, styles, console, network, and reversible page edits. |
 
+WebBrain picks the mode for each message: it stays in Ask unless your message
+asks it to do something in the browser. Start a message with `/ask`, `/act` or
+`/dev` to choose the mode yourself.
+
 ## Pick a model
 
 **WebBrain Compass 1.0** is the default and needs no API key or local setup.
@@ -201,9 +205,9 @@ Chrome side panel shortcuts work when the WebBrain side panel has focus.
 | Shortcut                        | What it does                                                                 |
 | ------------------------------- | ---------------------------------------------------------------------------- |
 | `Ctrl+/` or `Cmd+/`             | Focus the input                                                              |
-| `Ctrl+Shift+A` or `Cmd+Shift+A` | Switch to Ask mode                                                           |
-| `Ctrl+Shift+X` or `Cmd+Shift+X` | Switch to Act mode                                                           |
-| `Ctrl+Shift+D` or `Cmd+Shift+D` | Switch to Dev mode                                                           |
+| `Ctrl+Shift+A` or `Cmd+Shift+A` | Start the message with `/ask`                                                |
+| `Ctrl+Shift+X` or `Cmd+Shift+X` | Start the message with `/act`                                                |
+| `Ctrl+Shift+D` or `Cmd+Shift+D` | Start the message with `/dev`                                                |
 | `Escape`                        | Stop the active run, unless it is only dismissing slash-command autocomplete |
 | `Escape` twice                  | Stop an active recording from WebBrain or browser pages                      |
 
