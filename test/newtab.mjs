@@ -836,3 +836,25 @@ test('chrome agent treats the extension new tab page as a browser new tab', () =
   const fn = src.slice(src.indexOf('function isBrowserNewTabUrl'), src.indexOf('function isBrowserNewTabUrl') + 700);
   assert.match(fn, /runtime\.getURL\('newtab\/index\.html'\)/);
 });
+
+test('a background refresh requested mid-load is not dropped (latest request wins)', () => {
+  const src = readFileSync(nt('features/background/hooks/useBackgroundLoader.js'), 'utf8');
+  assert.doesNotMatch(src, /isLoadingRef/);
+  assert.match(src, /requestRef\.current/);
+  assert.match(src, /await getBackgroundData\(\);\s*if \(isStale\(\)\) return;/);
+});
+
+test('PreferencesWrapper subscribes to toggle in an effect and unsubscribes', () => {
+  const src = readFileSync(nt('components/Layout/Settings/PreferencesWrapper/PreferencesWrapper.jsx'), 'utf8');
+  assert.match(src, /useEffect\(/);
+  assert.match(src, /EventBus\.off\('toggle', handleToggle\)/);
+  // the only subscription lives inside the effect body
+  assert.equal((src.match(/EventBus\.on\('toggle'/g) || []).length, 1);
+  assert.ok(src.indexOf("EventBus.on('toggle'") > src.indexOf('useEffect('));
+});
+
+test('enabling quick links refreshes the widget tree so the widget mounts', () => {
+  const src = readFileSync(nt('features/quicklinks/options/QuickLinksOptions.jsx'), 'utf8');
+  assert.match(src, /setting="quicklinksenabled"\s*category="widgets"/);
+  assert.doesNotMatch(src, /element="\.quicklinks-container"/);
+});

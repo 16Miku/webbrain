@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Row, Content, Action } from 'components/Layout/Settings/Item';
 import variables from 'config/variables';
 import Slider from '../../../Form/Settings/Slider/Slider';
@@ -9,11 +9,16 @@ import EventBus from 'utils/eventbus';
 const PreferencesWrapper = ({ children, ...props }) => {
   const [shown, setShown] = useState(localStorage.getItem(props.setting) === 'true');
 
-  EventBus.on('toggle', (setting) => {
-    if (setting === props.setting) {
-      setShown(!shown);
-    }
-  });
+  useEffect(() => {
+    const handleToggle = (setting) => {
+      // Header has already written the new value to storage.
+      if (setting === props.setting) {
+        setShown(localStorage.getItem(props.setting) === 'true');
+      }
+    };
+    EventBus.on('toggle', handleToggle);
+    return () => EventBus.off('toggle', handleToggle);
+  }, [props.setting]);
 
   return (
     <div className={shown ? 'preferences' : 'preferencesInactive'}>

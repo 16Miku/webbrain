@@ -249,8 +249,7 @@ const QuickLinksOptions = () => {
       <Header
         title={variables.getMessage(`${QUICKLINKS_SECTION}.title`)}
         setting="quicklinksenabled"
-        category="quicklinks"
-        element=".quicklinks-container"
+        category="widgets"
         zoomSetting="zoomQuicklinks"
         visibilityToggle={true}
       />
