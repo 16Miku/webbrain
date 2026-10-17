@@ -1407,3 +1407,14 @@ test('round-32: closing or normally opening the settings modal drops stale deep-
   const src = readFileSync(nt('features/misc/modals/Modals.jsx'), 'utf8');
   assert.match(src, /setMainModal\(action\);[^}]*setDeepLinkData\(null\);/);
 });
+
+test('round-33: tooltip description sits on the focusable control; initial settings sync keeps the deep-link route', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  const tip = read('components/Elements/Tooltip/Tooltip.jsx');
+  assert.match(tip, /cloneElement\(children, \{ 'aria-describedby': tooltipId \}\)/);
+  assert.match(tip, /<span id=\{tooltipId\} role="tooltip"/);
+  assert.doesNotMatch(tip, /Math\.random/);
+  assert.doesNotMatch(tip, /<div[^>]*aria-describedby/);
+  const tabs = read('components/Elements/MainModal/backend/Tabs.jsx');
+  assert.match(tabs, /onSectionChange\(currentTab, currentName, \{ fromHistory: true \}\)/);
+});

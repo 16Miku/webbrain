@@ -1,12 +1,21 @@
-import { useState, memo, useRef } from 'react';
+import { useState, memo, useRef, useId, isValidElement, cloneElement } from 'react';
 import { useFloating, flip, offset, shift } from '@floating-ui/react-dom';
 import './tooltip.scss';
+
+const VISUALLY_HIDDEN = {
+  position: 'absolute',
+  width: '1px',
+  height: '1px',
+  overflow: 'hidden',
+  clip: 'rect(0 0 0 0)',
+  whiteSpace: 'nowrap',
+};
 
 function Tooltip({ children, title, style, placement, subtitle }) {
   const [showTooltip, setShowTooltip] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [reference, setReference] = useState(null);
-  const tooltipId = useRef(`tooltip-${Math.random()}`);
+  const tooltipId = `tooltip-${useId().replace(/:/g, '')}`;
   const closeTimeout = useRef(null);
 
   const {
@@ -76,9 +85,17 @@ function Tooltip({ children, title, style, placement, subtitle }) {
         onFocus={handleFocus}
         onBlur={handleBlur}
         ref={setReference}
-        aria-describedby={tooltipId.current}
       >
-        {children}
+        {/* The focusable control (not this wrapper) carries the description, and the id it points
+            at always exists: a visually hidden copy of the text, since the visible tooltip is only
+            mounted while shown. */}
+        {isValidElement(children) && !children.props['aria-describedby']
+          ? cloneElement(children, { 'aria-describedby': tooltipId })
+          : children}
+        <span id={tooltipId} role="tooltip" style={VISUALLY_HIDDEN}>
+          {title}
+          {subtitle ? ` ${subtitle}` : ''}
+        </span>
       </div>
       {(showTooltip || isClosing) && (
         <span

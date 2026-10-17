@@ -64,7 +64,8 @@ const Tabs = ({
   // Notify parent of initial section on mount
   useEffect(() => {
     if (onSectionChange && currentTab) {
-      onSectionChange(currentTab, currentName);
+      // Not a user navigation: opening at #settings/<section>/<sub> must keep that route.
+      onSectionChange(currentTab, currentName, { fromHistory: true });
     }
   }, []);
 
