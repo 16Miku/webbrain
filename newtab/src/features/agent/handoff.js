@@ -33,6 +33,9 @@ export async function primeCurrentTab() {
   } catch {
     currentTab = null;
   }
+  // A reload empties the in-memory lock while an earlier task may still be waiting for a
+  // cold panel, so pick it up again from storage; otherwise the next submit would replace it.
+  if (currentTab?.id != null) await adoptPendingHandoff(extApi(), currentTab.id);
   return currentTab;
 }
 
@@ -75,8 +78,25 @@ export function whenClaimed(tab = currentTab) {
   return inFlight.get(tab?.id)?.promise ?? Promise.resolve();
 }
 
+/** Re-takes the lock for a record this tab wrote before the page was reloaded. */
+export async function adoptPendingHandoff(api, tabId, now = Date.now()) {
+  if (!api?.storage?.local?.get || inFlight.has(tabId)) return false;
+  const key = handoffKey(tabId);
+  let record;
+  try {
+    record = (await api.storage.local.get(key))?.[key];
+  } catch {
+    return false;
+  }
+  if (!record || inFlight.has(tabId)) return false;
+  const remaining = CLAIM_TIMEOUT_MS - (now - Number(record.createdAt || 0));
+  if (!(remaining > 0)) return false;
+  releaseWhenClaimed(api, tabId, lockTab(tabId), remaining);
+  return true;
+}
+
 /** After a successful write: release the lock once the record has been removed. */
-function releaseWhenClaimed(api, tabId, release) {
+function releaseWhenClaimed(api, tabId, release, timeoutMs = CLAIM_TIMEOUT_MS) {
   const key = handoffKey(tabId);
   let timer;
   const listener = (changes, area) => {
@@ -87,7 +107,7 @@ function releaseWhenClaimed(api, tabId, release) {
     api.storage.onChanged?.removeListener?.(listener);
     release();
   }
-  timer = setTimeout(finish, CLAIM_TIMEOUT_MS);
+  timer = setTimeout(finish, timeoutMs);
   api.storage.onChanged?.addListener?.(listener);
   // It may already have been claimed between the write and now.
   Promise.resolve(api.storage.local.get?.(key))

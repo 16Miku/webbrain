@@ -51,6 +51,15 @@ const App = () => {
     if (storedBackground === 'true') {
       setShowBackground(true);
     }
+
+    // Hide/Show in the background settings: mount or unmount the background without a reload.
+    const handleRefresh = (data) => {
+      if (data === 'background') {
+        setShowBackground(localStorage.getItem('background') === 'true');
+      }
+    };
+    EventBus.on('refresh', handleRefresh);
+    return () => EventBus.off('refresh', handleRefresh);
   }, []);
 
   useAppSetup();

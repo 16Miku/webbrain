@@ -81,7 +81,6 @@ const BackgroundOptions = memo(({ currentSubSection, onSubSectionChange, section
         title={variables.getMessage('modals.main.settings.sections.background.title')}
         setting="background"
         category="background"
-        element="#backgroundImage"
         visibilityToggle={true}
       />
     );

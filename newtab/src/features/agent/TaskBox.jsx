@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MdArrowForward, MdChatBubbleOutline, MdSearch, MdSmartToy } from 'react-icons/md';
 import { wbT } from 'lib/wb-strings';
-import { canSearch, primeCurrentTab, runSearch, submitTask, whenClaimed } from './handoff';
+import { canSearch, isHandoffPending, primeCurrentTab, runSearch, submitTask, whenClaimed } from './handoff';
 
 import './taskbox.scss';
 
@@ -30,8 +30,17 @@ function TaskBox() {
   const submittingRef = useRef(false);
 
   useEffect(() => {
-    primeCurrentTab();
+    let alive = true;
+    // After a reload an earlier task may still be waiting for the panel; keep the box
+    // locked until it has been taken, like right after a submit.
+    primeCurrentTab().then((tab) => {
+      if (alive && tab?.id != null && isHandoffPending(tab.id)) {
+        setWaiting(true);
+        whenClaimed(tab).then(() => alive && setWaiting(false));
+      }
+    });
     if (localStorage.getItem('taskBoxFocus') !== 'false') inputRef.current?.focus();
+    return () => { alive = false; };
   }, []);
 
   const onSubmit = (event) => {

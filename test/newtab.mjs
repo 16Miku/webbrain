@@ -9,7 +9,7 @@ const nt = (...p) => path.join(root, 'newtab', 'src', ...p);
 const load = (file) => import(pathToFileURL(file).href);
 
 const { createNamespacedStorage, NAMESPACE_PREFIX } = await load(nt('lib/storage-namespace.js'));
-const { buildHandoff, toNavigableUrl, submitTask, handoffKey, HANDOFF_PREFIX, isHandoffPending, whenClaimed } = await load(nt('features/agent/handoff.js'));
+const { buildHandoff, toNavigableUrl, submitTask, handoffKey, HANDOFF_PREFIX, isHandoffPending, whenClaimed, adoptPendingHandoff } = await load(nt('features/agent/handoff.js'));
 const { getTitleFromUrl } = await load(nt('utils/links/getTitleFromUrl.js'));
 const { normalizeLinkUrl } = await load(nt('utils/links/normalizeLinkUrl.js'));
 
@@ -913,4 +913,50 @@ test('the date widget rolls over to a new day and the drag handler ignores a nul
   assert.match(date, /clearInterval\(dayTimer\)/);
   const overview = readFileSync(nt('features/misc/sections/Overview.jsx'), 'utf8');
   assert.match(overview, /if \(over && active\.id !== over\.id\)/);
+});
+
+test('after a page reload a still-pending record keeps its lock, so a second submit cannot replace it', async () => {
+  const store = new Map();
+  const listeners = [];
+  const api = {
+    storage: {
+      local: {
+        get: async (k) => (store.has(k) ? { [k]: store.get(k) } : {}),
+        set: async (o) => Object.entries(o).forEach(([k, v]) => store.set(k, v)),
+        remove: async (k) => store.delete(k),
+      },
+      onChanged: { addListener: (fn) => listeners.push(fn), removeListener: (fn) => listeners.splice(listeners.indexOf(fn), 1) },
+    },
+    sidePanel: { setOptions: async () => {}, open: async () => {} },
+    runtime: { sendMessage: async () => {} },
+  };
+  const tabId = 123;
+  const now = Date.now();
+  // nothing stored: nothing to adopt
+  assert.equal(await adoptPendingHandoff(api, tabId, now), false);
+  // an expired record is not adopted
+  store.set(handoffKey(tabId), { id: 'old', tabId, text: 'x', mode: 'ask', createdAt: now - 200_000 });
+  assert.equal(await adoptPendingHandoff(api, tabId, now), false);
+  assert.equal(isHandoffPending(tabId), false);
+  // a fresh record written by the previous page instance is
+  store.set(handoffKey(tabId), { id: 'fresh', tabId, text: 'first', mode: 'ask', createdAt: now - 5_000 });
+  assert.equal(await adoptPendingHandoff(api, tabId, now), true);
+  assert.equal(isHandoffPending(tabId), true);
+  await assert.rejects(() => submitTask({ text: 'second', mode: 'ask' }, api, { id: tabId }), /still being handed over/);
+  assert.equal(store.get(handoffKey(tabId)).id, 'fresh');
+  // the panel claims it -> released
+  const key = handoffKey(tabId);
+  store.delete(key);
+  listeners.slice().forEach((fn) => fn({ [key]: { oldValue: {} } }, 'local'));
+  await whenClaimed({ id: tabId });
+  assert.equal(isHandoffPending(tabId), false);
+  assert.equal(listeners.length, 0);
+});
+
+test('Show on a background that was off at load mounts it without a reload', () => {
+  const app = readFileSync(nt('App.jsx'), 'utf8');
+  assert.match(app, /data === 'background'[\s\S]{0,120}setShowBackground\(localStorage\.getItem\('background'\) === 'true'\)/);
+  assert.match(app, /EventBus\.off\('refresh', handleRefresh\)/);
+  const opts = readFileSync(nt('features/background/options/BackgroundOptions.jsx'), 'utf8');
+  assert.doesNotMatch(opts, /element="#backgroundImage"/);
 });
