@@ -188,17 +188,9 @@ export function formatSelectionPromptForDisplay(promptText) {
   return instruction ? `${instruction}\n\n${selectedBlock}` : selectedBlock;
 }
 
-export function buildSelectionPrompt(
-  selectionText,
-  action,
-  question = '',
-  language = '',
-  sourceGrounding = SELECTION_ONLY_SOURCE_GROUNDING,
-) {
-  const actionId = String(action || '').trim();
-  const normalizedSourceGrounding = normalizeSelectionSourceGrounding(sourceGrounding);
-  if (!normalizedSourceGrounding) return '';
-  if (normalizedSourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING && actionId !== 'custom') return '';
+// The trusted instruction for one selection action, or '' when the action, its
+// question or its translation language is not valid.
+function selectionActionInstruction(actionId, question, language) {
   let instruction = Object.prototype.hasOwnProperty.call(SELECTION_SHORTCUT_ACTIONS, actionId)
     ? SELECTION_SHORTCUT_ACTIONS[actionId]
     : '';
@@ -216,6 +208,21 @@ export function buildSelectionPrompt(
   } else if (instruction) {
     instruction += responseLanguageInstruction(language);
   }
+  return instruction;
+}
+
+export function buildSelectionPrompt(
+  selectionText,
+  action,
+  question = '',
+  language = '',
+  sourceGrounding = SELECTION_ONLY_SOURCE_GROUNDING,
+) {
+  const actionId = String(action || '').trim();
+  const normalizedSourceGrounding = normalizeSelectionSourceGrounding(sourceGrounding);
+  if (!normalizedSourceGrounding) return '';
+  if (normalizedSourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING && actionId !== 'custom') return '';
+  const instruction = selectionActionInstruction(actionId, question, language);
   if (!instruction) return '';
   return wrapSelectedPageText(selectionText, instruction, normalizedSourceGrounding);
 }
@@ -330,6 +337,29 @@ export function buildFollowUpSelectionText(selectionText, priorAction, priorAnsw
   const answer = String(priorAnswer || '').trim().slice(0, INLINE_FOLLOW_UP_ANSWER_MAX_CHARS);
   if (!label || !answer) return selection;
   return `${selection}\n\n[Earlier ${label} of the text above, shown to the user in WebBrain's page card. It may contain mistakes.]\n${answer}`;
+}
+
+// A card answer that hit the output limit is finished in the side panel by
+// resuming it, not by running the whole action again: a second full run meets the
+// same limit. The unfinished text is model output derived from untrusted page
+// text, so it travels inside the selection's untrusted block, and only its end is
+// kept because that is where the answer has to pick up.
+export const INLINE_CONTINUE_PARTIAL_MAX_CHARS = 6000;
+const INLINE_CONTINUE_NOTE = ' An earlier attempt at this stopped partway; the text it produced is included after the selection. Continue it from exactly where it stops and give only the missing remainder, without repeating anything already written.';
+
+export function buildContinuationSelectionPrompt(selectionText, action, partialAnswer, language = '') {
+  const actionId = String(action || '').trim();
+  const label = INLINE_FOLLOW_UP_LABELS[actionId];
+  const selection = String(selectionText || '').trim();
+  const partial = String(partialAnswer || '').trim();
+  if (!label || !selection || !partial) return '';
+  const instruction = selectionActionInstruction(actionId, '', language);
+  if (!instruction) return '';
+  const kept = partial.length > INLINE_CONTINUE_PARTIAL_MAX_CHARS
+    ? `…${partial.slice(-INLINE_CONTINUE_PARTIAL_MAX_CHARS)}`
+    : partial;
+  const withPartial = `${selection}\n\n[Unfinished ${label} of the text above. It stops partway and may contain mistakes.]\n${kept}`;
+  return wrapSelectedPageText(withPartial, `${instruction}${INLINE_CONTINUE_NOTE}`, SELECTION_ONLY_SOURCE_GROUNDING);
 }
 
 const CONTEXT_MENU_PENDING_PREFIX = 'contextMenuPrompt:';

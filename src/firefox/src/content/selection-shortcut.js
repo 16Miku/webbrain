@@ -1044,11 +1044,15 @@
     });
   }
 
-  // A cut-off answer is finished in the side panel, where the reply is not capped.
+  // A cut-off answer is finished in the side panel, where the reply is not capped. The
+  // panel picks up from the unfinished text; running the action again would reach the
+  // same limit. With no text to resume from, it starts the action over.
   function continueInPanel() {
     if (!cardState?.truncated) return;
     const { kind, target } = cardState;
-    submitSelection(kind, '', kind === 'translate' ? target : interfaceLanguage);
+    submitSelection(kind, '', kind === 'translate' ? target : interfaceLanguage, {
+      continueFrom: cardState.text || '',
+    });
   }
 
   // Forget the card without touching the bar; a request still in flight is cancelled and ignored.
@@ -1130,6 +1134,8 @@
       ...(action === 'custom' && extra.priorAnswer
         ? { priorAction: extra.priorAction, priorAnswer: extra.priorAnswer }
         : {}),
+      // The unfinished text of a cut-off card answer, so the side panel resumes it.
+      ...(action !== 'custom' && extra.continueFrom ? { continueFrom: extra.continueFrom } : {}),
       language: action === 'custom' ? undefined : (language || interfaceLanguage),
     };
     submitting = true;

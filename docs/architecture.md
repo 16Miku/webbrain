@@ -526,7 +526,10 @@ still stopped at the cap (finish reason, Anthropic `stop_reason` or Responses
 Responses reports the limit as an error, which the background treats the same way and
 answers with whatever text the provider returned) the response
 is flagged `truncated`, and the card says so and offers **Continue in side panel** instead
-of passing a cut-off translation off as complete. Each call carries a job id, and a card
+of passing a cut-off translation off as complete. Continue sends the unfinished text as
+`continueFrom`; the background wraps it inside the selection's untrusted block (keeping its
+end) with a trusted request to resume from where it stops, because running the action again
+would meet the same output limit. Each call carries a job id, and a card
 that is closed, retried or retargeted sends `WB_SELECTION_SHORTCUT_INLINE_CANCEL` so the
 background aborts the paid request it no longer needs (for the in-browser WebGPU models the
 provider also sends `webgpu-chat-cancel`, and the offscreen worker interrupts the running

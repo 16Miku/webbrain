@@ -2406,8 +2406,11 @@ for (const [label, sourcePath, manualOpen] of [
         || handoff.state.cardVisible || handoff.cancels > 1) {
       throw new Error(`continuing should hand the same translation to the side panel: ${JSON.stringify(handoff)}`);
     }
+    if (handoff.message.continueFrom !== 'Partial translate answer') {
+      throw new Error(`continuing should carry the unfinished text so the panel resumes it: ${JSON.stringify(handoff.message)}`);
+    }
 
-    // A complete answer shows no notice.
+    // A complete answer shows no notice, and a follow-up never carries a resume text.
     await openInlineCard(page, 'explain');
     state = await waitForCardStatus(page, 'ready');
     if (state.cardTruncated || state.continueRect || state.cutNoticeText) {

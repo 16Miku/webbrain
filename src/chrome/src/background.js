@@ -73,6 +73,7 @@ import {
   SELECTION_ONLY_SOURCE_GROUNDING,
   SELECTION_TRANSLATION_LANGUAGES,
   buildContextMenuPrompt,
+  buildContinuationSelectionPrompt,
   buildFollowUpSelectionText,
   buildFullContextSelectionPrompt,
   buildInlineSelectionMessages,
@@ -1836,7 +1837,13 @@ function queueSelectionShortcutPrompt(msg, tab, sendResponse) {
   const selectionText = selectionAction === 'custom'
     ? buildFollowUpSelectionText(msg.selectionText, msg.priorAction, msg.priorAnswer)
     : msg.selectionText;
-  const text = includePageContext
+  // A cut-off card answer resumes where it stopped instead of running the action again,
+  // which would meet the same output limit.
+  const resumesCutOffAnswer = selectionAction !== 'custom'
+    && typeof msg.continueFrom === 'string' && msg.continueFrom.trim() !== '';
+  const text = resumesCutOffAnswer
+    ? buildContinuationSelectionPrompt(msg.selectionText, selectionAction, msg.continueFrom.slice(-20000), msg.language)
+    : includePageContext
     ? buildFullContextSelectionPrompt(selectionText, msg.question)
     : buildSelectionPrompt(
       selectionText,
