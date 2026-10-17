@@ -529,7 +529,7 @@ of passing a cut-off translation off as complete. Each call carries a job id, an
 that is closed, retried or retargeted sends `WB_SELECTION_SHORTCUT_INLINE_CANCEL` so the
 background aborts the paid request it no longer needs (for the in-browser WebGPU models the
 provider also sends `webgpu-chat-cancel`, and the offscreen worker interrupts the running
-generation or drops a queued one; those workers report `outputTruncated` when an answer used
+generation or drops a queued one, and the offscreen host remembers a cancel that arrives while the request is still being routed to a worker, so the generation never starts; those workers report `outputTruncated` when an answer used
 its token budget, since they have no finish reason); the card also claims its request id
 before it waits for the language bundle, so a double click starts only one call. Selections
 over 4,000 characters skip the card and use the side-panel flow. The card draws the answer as DOM

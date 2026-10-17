@@ -67048,7 +67048,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'concurrent WebGPU model starts are not serialized around the cross-runtime transfer check');
   assert.match(host, /message\.type === 'webgpu-download-start'[\s\S]*?startExclusiveTextDownload\(message\)/);
   assert.match(host, /isBitgpuTextModel\(message\.model, message\.runtime\)/);
-  assert.match(host, /if \(!isBitgpuTextModel\(message\.model, message\.runtime\)\) \{\s*await ensureVisionWorker\(\);/);
+  assert.match(host, /if \(message\.type !== 'webgpu-chat-cancel' && !isBitgpuTextModel\(message\.model, message\.runtime\)\) \{\s*await ensureVisionWorker\(\);/);
   assert.doesNotMatch(host, /sendVisionWorkerMessage\('download-text'[\s\S]*?\.catch\(\(\) => \{\}\)/);
   assert.match(host, /'webgpu-download-pause'/);
   assert.match(host, /'webgpu-download-stop'/);
@@ -67422,9 +67422,15 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
     const workers = [];
     const workerMessages = [];
     const runtimeMessages = [];
+    const heldInits = [];
 
     const drain = async () => {
       for (let pass = 0; pass < 12; pass++) await Promise.resolve();
+    };
+    const releaseInit = async () => {
+      behavior.holdInit = false;
+      while (heldInits.length) heldInits.shift()();
+      await drain();
     };
     const fakeSetTimeout = (callback, delay = 0, ...args) => {
       const id = nextTimerId++;
@@ -67477,6 +67483,10 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
         if (type === 'init') {
           if (behavior.hangInitCount > 0) {
             behavior.hangInitCount--;
+            return;
+          }
+          if (behavior.holdInit) {
+            heldInits.push(() => this.emit({ id, ok: true }));
             return;
           }
           this.emit({ id, ok: true });
@@ -67601,7 +67611,7 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
     const dispatch = (message) => new Promise((resolve) => {
       assert.equal(listener(message, {}, resolve), true);
     });
-    return { behavior, workers, workerMessages, runtimeMessages, dispatch, advance, drain };
+    return { behavior, workers, workerMessages, runtimeMessages, dispatch, advance, drain, releaseInit };
   }
 
   const removal = createHarness({ textRemovalDelay: 60_000 });
@@ -67782,6 +67792,78 @@ test('vision inference host enforces deadlines and recreates poisoned workers', 
   assert.ok(queuedStop.workerMessages.some(({ message }) => (
     message.type === 'stop-vision-download' && message.payload?.targetsQueued === true
   )), 'queued Stop must preserve the worker fast path after pause dequeues the preload');
+
+  // A cancel that lands while the chat is still being routed (worker booting) must stick:
+  // the worker has no request to stop yet, so the host remembers it and never hands the chat over.
+  const earlyCancel = createHarness({ holdInit: true });
+  const earlyChat = earlyCancel.dispatch({
+    type: 'webgpu-chat',
+    model: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+    requestKey: 'card-routing-0001',
+    messages: [{ role: 'user', content: 'Translate this' }],
+  });
+  await earlyCancel.drain();
+  assert.equal(earlyCancel.workerMessages.some(({ message }) => message.type === 'text-chat'), false,
+    'the chat must still be waiting for the worker to initialize');
+  const earlyCancelAck = await earlyCancel.dispatch({ type: 'webgpu-chat-cancel', requestKey: 'card-routing-0001' });
+  assert.equal(earlyCancelAck.ok, true);
+  await earlyCancel.releaseInit();
+  const earlyResult = await earlyChat;
+  assert.equal(earlyResult.ok, false, 'a chat cancelled while routing must fail instead of generating');
+  assert.match(earlyResult.error, /cancel/i);
+  assert.equal(earlyCancel.workerMessages.some(({ message }) => message.type === 'text-chat'), false,
+    'a chat cancelled while routing must never reach the worker');
+
+  // A cancel only addresses workers that already exist; it must never boot one.
+  const idleCancel = createHarness();
+  const idleAck = await idleCancel.dispatch({ type: 'webgpu-chat-cancel', requestKey: 'card-idle-0001' });
+  assert.equal(idleAck.ok, true);
+  assert.equal(idleCancel.workers.length, 0, 'a cancel must not start a worker just to cancel nothing');
+
+  // A cancel for one card must not affect another card routed at the same time.
+  const siblings = createHarness({ holdInit: true });
+  const cancelledSibling = siblings.dispatch({
+    type: 'webgpu-chat',
+    model: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+    requestKey: 'card-routing-0002',
+    messages: [{ role: 'user', content: 'one' }],
+  });
+  const liveSibling = siblings.dispatch({
+    type: 'webgpu-chat',
+    model: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+    requestKey: 'card-routing-0003',
+    messages: [{ role: 'user', content: 'two' }],
+  });
+  await siblings.drain();
+  await siblings.dispatch({ type: 'webgpu-chat-cancel', requestKey: 'card-routing-0002' });
+  await siblings.releaseInit();
+  assert.equal((await cancelledSibling).ok, false);
+  await siblings.drain();
+  const posted = siblings.workerMessages.filter(({ message }) => message.type === 'text-chat');
+  assert.ok(posted.every(({ message }) => message.payload.requestKey === 'card-routing-0003'),
+    'only the card that was not cancelled may reach the worker');
+  assert.equal(posted.length, 1);
+  assert.ok(liveSibling, 'the other card keeps its pending request');
+
+  // Control: an uncancelled chat is dispatched with its key, and a later cancel reaches the worker.
+  const control = createHarness({ holdInit: true });
+  const controlChat = control.dispatch({
+    type: 'webgpu-chat',
+    model: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+    requestKey: 'card-routing-0004',
+    messages: [{ role: 'user', content: 'three' }],
+  });
+  await control.drain();
+  await control.releaseInit();
+  await control.drain();
+  const controlPosted = control.workerMessages.find(({ message }) => message.type === 'text-chat');
+  assert.equal(controlPosted?.message.payload.requestKey, 'card-routing-0004');
+  await controlChat;
+  await control.dispatch({ type: 'webgpu-chat-cancel', requestKey: 'card-routing-0004' });
+  assert.ok(control.workerMessages.some(({ message }) => (
+    message.type === 'cancel-text' && message.payload.requestKey === 'card-routing-0004'
+  )), 'a cancel after dispatch must still be forwarded to the worker');
+  assert.equal(control.workerMessages.filter(({ message }) => message.type === 'text-chat').length, 1);
 });
 
 test('Vision Model removal deletes only its cache entries', async () => {
