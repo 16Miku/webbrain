@@ -1,5 +1,5 @@
 import variables from 'config/variables';
-import { memo, useState, useCallback } from 'react';
+import { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { useT } from 'contexts';
 
 import { MdCropFree } from 'react-icons/md';
@@ -13,6 +13,7 @@ import {
 const Maximise = memo(({ fontSize }) => {
   const t = useT();
   const [hidden, setHidden] = useState(false);
+  const hiddenRef = useRef(false);
 
   // Maximise shows the background without its effects; restoring puts them back.
   // Image effects live on #backgroundFilterOverlay (see useBackgroundEvents) and a video
@@ -34,6 +35,18 @@ const Maximise = memo(({ fontSize }) => {
     }
   }, []);
 
+  // The control can unmount while maximised (View or Background switched off in Settings,
+  // which stays reachable). Put the page back, or the widgets would stay hidden.
+  useEffect(
+    () => () => {
+      if (!hiddenRef.current) return;
+      const widgets = document.getElementById('widgets');
+      if (widgets) widgets.style.display = 'flex';
+      setEffects(true);
+    },
+    [setEffects],
+  );
+
   const maximise = useCallback(() => {
     // hide widgets
     const widgets = document.getElementById('widgets');
@@ -41,11 +54,13 @@ const Maximise = memo(({ fontSize }) => {
     if (!hidden) {
       if (widgets) widgets.style.display = 'none';
       setHidden(true);
+      hiddenRef.current = true;
       setEffects(false);
       variables.stats.postEvent('feature', 'Background maximise');
     } else {
       if (widgets) widgets.style.display = 'flex';
       setHidden(false);
+      hiddenRef.current = false;
       setEffects(true);
       variables.stats.postEvent('feature', 'Background unmaximise');
     }

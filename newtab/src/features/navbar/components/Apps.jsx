@@ -59,8 +59,8 @@ const Apps = ({ appsRef, floatRef, position, xPosition, yPosition }) => {
       <button
         className="navbarButton"
         onMouseEnter={handleShowApps}
-        onFocus={handleHideApps}
-        onBlur={handleShowApps}
+        onFocus={handleShowApps}
+        onBlur={handleHideApps}
         ref={appsRef}
         style={{ fontSize: zoomFontSize }}
       >

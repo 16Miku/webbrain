@@ -1071,3 +1071,12 @@ test('round-20: todo focus handlers, vertical colour resets, padded date reorder
   assert.doesNotMatch(date, /day = dateMonth|month = dateDay|year = dateDay/);
   assert.match(read('features/time/Clock.jsx'), /setFinalSeconds\(''\)/);
 });
+
+test('round-21: Apps popup closes on blur; Maximise restores the page when it unmounts', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  assert.match(read('features/navbar/components/Apps.jsx'), /onFocus=\{handleShowApps\}\s*onBlur=\{handleHideApps\}/);
+  const max = read('features/navbar/components/Maximise.jsx');
+  assert.match(max, /useEffect\(\s*\(\) => \(\) => \{\s*if \(!hiddenRef\.current\) return;/);
+  assert.match(max, /hiddenRef\.current = true/);
+  assert.match(max, /hiddenRef\.current = false/);
+});
