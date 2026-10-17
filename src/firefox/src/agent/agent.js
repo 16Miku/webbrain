@@ -4852,6 +4852,37 @@ export class Agent extends LoopDetector {
     return (this._guardRunState(tabId).outcomeDowngrades?.size || 0) > 0;
   }
 
+  // native-chat-receipt-not-durable for a plain final. A plain final in an
+  // Act or Dev run is the model's own success claim, and without Strict
+  // checks it can end a run where done would have run this check: a chat
+  // message sent in this run is read back in the conversation and its
+  // receipt saved first, or a resumed run could send it again. Returns the
+  // refusal when the receipt cannot be saved, otherwise null. A send the
+  // conversation cannot confirm is left to the evidence checks, as for done.
+  async _plainFinalChatReceiptBlock(tabId) {
+    if (!this._isActionMode(this._effectiveRunMode(tabId))) return null;
+    if (!this.completionInvariants.get(tabId)?.lastAction?.chatDeliveryBinding
+        && !this.chatSessions.get(tabId)?.completionReceipt) return null;
+    let pageUrl = '';
+    try { pageUrl = await this._currentUrl(tabId); } catch {}
+    const evidence = await this._freshNativeChatTerminalEvidence(tabId, pageUrl || '');
+    if (!evidence) return null;
+    const guard = this._planExecutionGuards.get(tabId);
+    if (guard) guard.nativeChatDeliveryEvidence = evidence;
+    const saved = await this._persistNow(tabId);
+    if (saved === true || saved?.ok === true) return null;
+    return { receiptNotDurable: true,
+      error: 'The verified chat delivery receipt could not be saved. Do not send the message again. Retry once storage is available by calling done; if it still cannot be saved, finish with outcome "partial" and say so.' };
+  }
+
+  // A plain final the receipt check refused twice (or at the step limit)
+  // ends the run as partial: the model's text and why it is not a success.
+  _chatReceiptPartialFinal(content) {
+    const base = repairAssistantDisplayText(String(content || '')).trimEnd();
+    const why = 'WebBrain could not save the record that the message was delivered, so this run did not end as a success. Check the conversation before sending it again.';
+    return base ? `${base}\n\n${why}` : why;
+  }
+
   // Adds the "WebBrain could not verify everything" line, if any, to the
   // answer of an accepted completion. _guardRunState first drops a previous
   // run's caveats.
@@ -43879,6 +43910,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let structuredOutputRecoveryAttempted = false;
     let autoModeEscalationRefusals = 0;
     let completionPlainFinalRecoveryAttempted = 0;
+    let plainFinalReceiptRefusals = 0;
     let forceCompletionVerificationTurn = false;
     let allowCompletionFailureTurn = false;
     let forceCompletionDoneAfterVerification = false;
@@ -44103,6 +44135,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         forceCompletionDoneAfterVerification = false;
         forceCompletionDoneTurn = false;
         completionPlainFinalRecoveryAttempted = 0;
+        plainFinalReceiptRefusals = 0;
       }
       if (steeringOutcome?.terminal) {
         if (steeringOutcome.capture) {
@@ -44844,6 +44877,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: finalResponse });
         break;
       }
+      // A plain final is the model's own success claim: a chat message sent
+      // in this run is confirmed and its receipt saved first, as done does
+      // (native-chat-receipt-not-durable). Two refusals, or the step budget,
+      // end the run as partial, never as a success.
+      const plainFinalReceiptBlock = await this._plainFinalChatReceiptBlock(tabId);
+      if (plainFinalReceiptBlock) {
+        if (plainFinalReceiptRefusals >= 2 || steps >= this.maxSteps) {
+          finalResponse = this._chatReceiptPartialFinal(result.content);
+          _traceStatus = 'partial';
+          messages.push({ role: 'assistant', content: finalResponse });
+          onUpdate('text', { content: finalResponse, replace: true });
+          onUpdate('warning', { message: 'Run ended without a saved chat delivery receipt.' });
+          onUpdate('run_status', { status: 'partial', message: finalResponse });
+          break;
+        }
+        plainFinalReceiptRefusals++;
+        messages.push(this._withResponseItems({ role: 'assistant', content: result.content }, result.responseItems, result.reasoningContent, provider));
+        messages.push(this._appOwnedUserMessage(plainFinalReceiptBlock.error, 'chat_receipt'));
+        onUpdate('text', { content: '', replace: true });
+        onUpdate('warning', { message: 'The chat delivery receipt is not saved yet; continuing.' });
+        this._persist(tabId);
+        continue;
+      }
       // Preserve provider text before display repairs and local notices.
       shareRawResponse = String(result.content ?? '');
       const repairedFinalContent = repairAssistantDisplayText(result.content);
@@ -45305,6 +45361,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let emptyOutputRecoveryAttempted = false;
     let compressionPlaceholderRecoveryAttempted = false;
     let completionPlainFinalRecoveryAttempted = 0;
+    let plainFinalReceiptRefusals = 0;
     let forceCompletionVerificationTurn = false;
     let allowCompletionFailureTurn = false;
     let forceCompletionDoneAfterVerification = false;
@@ -45373,6 +45430,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         forceCompletionDoneAfterVerification = false;
         forceCompletionDoneTurn = false;
         completionPlainFinalRecoveryAttempted = 0;
+        plainFinalReceiptRefusals = 0;
       }
       if (steeringOutcome?.terminal) {
         if (steeringOutcome.capture) {
@@ -46022,6 +46080,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('warning', { message: visibleFailure });
           this._persist(tabId);
           return finish(visibleFailure, planOnlyDecision.status || 'plan_only_output');
+        }
+        // A plain final is the model's own success claim: a chat message sent
+        // in this run is confirmed and its receipt saved first, as done does
+        // (native-chat-receipt-not-durable). Two refusals, or the step budget,
+        // end the run as partial, never as a success.
+        const plainFinalReceiptBlock = await this._plainFinalChatReceiptBlock(tabId);
+        if (plainFinalReceiptBlock) {
+          if (plainFinalReceiptRefusals >= 2 || steps >= this.maxSteps) {
+            const partialText = this._chatReceiptPartialFinal(fullText);
+            messages.push({ role: 'assistant', content: partialText });
+            onUpdate('text', { content: partialText, replace: true });
+            onUpdate('warning', { message: 'Run ended without a saved chat delivery receipt.' });
+            onUpdate('run_status', { status: 'partial', message: partialText });
+            this._persist(tabId);
+            closeTraceStep({ ok: true });
+            return finish(partialText, 'partial');
+          }
+          plainFinalReceiptRefusals++;
+          messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
+          messages.push(this._appOwnedUserMessage(plainFinalReceiptBlock.error, 'chat_receipt'));
+          onUpdate('text', { content: '', replace: true });
+          onUpdate('warning', { message: 'The chat delivery receipt is not saved yet; continuing.' });
+          this._persist(tabId);
+          continue;
         }
         // Streaming text is still the provider's raw completion at this point.
         shareRawResponse = fullText;

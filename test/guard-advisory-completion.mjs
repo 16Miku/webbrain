@@ -273,6 +273,57 @@ for (const build of ['chrome', 'firefox']) {
         }
       }
     });
+
+    test(`${label}: a plain final after a chat send saves the delivery receipt first`, async () => {
+      // A plain final ends a run where done would have saved the receipt
+      // (native-chat-receipt-not-durable), so it runs the same check.
+      for (const save of ['saved', 'fails', 'no send']) {
+        const tab = nextTab++;
+        let n = 0;
+        let receiptSave = false;
+        const evidenceReads = [];
+        const agent = loopAgent(Agent, async () => {
+          n++;
+          if (n === 1) return call('send', 'click_ax', { ref_id: 'ref_save' });
+          // The click was a native chat send bound to its delivery.
+          const state = agent.completionInvariants.get(tab);
+          if (save !== 'no send' && state && !state.lastAction?.chatDeliveryBinding) {
+            agent.completionInvariants.set(tab, { ...state, lastAction: { ...(state.lastAction || {}), chatDeliveryBinding: { token: 'chat-1' } } });
+          }
+          return { content: 'Sent the reply.' };
+        });
+        agent._freshNativeChatTerminalEvidence = async () => {
+          evidenceReads.push(n);
+          receiptSave = true;
+          return { threadKey: 'dom:telegram:k:123456:0', messageId: 'telegram:k:123456:0:5' };
+        };
+        agent._persistNow = async () => {
+          const failing = receiptSave && save === 'fails';
+          receiptSave = false;
+          return failing ? { ok: false } : { ok: true };
+        };
+        const runStatuses = [];
+        let finished = null;
+        const onUpdate = (type, data) => { if (type === 'run_status') runStatuses.push(data?.status); };
+        const options = { detachedRequestId: `guard-${tab}`, onRunFinished: status => { finished = status; } };
+        const result = streaming
+          ? await agent.processMessageStream(tab, 'Reply to the owned chat.', onUpdate, 'act', options)
+          : await agent.processMessage(tab, 'Reply to the owned chat.', onUpdate, 'act', [], options);
+        if (save === 'saved') {
+          assert.ok(evidenceReads.length >= 1, `${label}: the delivery was not read back before the run ended`);
+          assert.equal(finished, 'done', `${label}: a saved receipt keeps the plain final`);
+          assert.ok(String(result).startsWith('Sent the reply.'));
+        } else if (save === 'fails') {
+          assert.equal(evidenceReads.length, 3, `${label}: two refusals, then the run ends`);
+          assert.equal(finished, 'partial', `${label}: a run without a saved receipt ended as a success`);
+          assert.deepEqual(runStatuses, ['partial']);
+          assert.match(String(result), /could not save the record that the message was delivered/);
+        } else {
+          assert.deepEqual(evidenceReads, [], `${label}: a run without a chat send read the conversation`);
+          assert.equal(finished, 'done');
+        }
+      }
+    });
   }
 
   test(`${build}: each untraced run gets its own one refusal per guard`, async () => {
