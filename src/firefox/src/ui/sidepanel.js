@@ -1127,11 +1127,11 @@ let currentAssistantEl = null;
 let verboseMode = false;
 let compactProgressVisible = true;
 let agentMode = 'ask'; // 'ask' | 'act' | 'dev'
-// Settings → Mode selection, Automatic unless set to Manual. In Automatic the
-// toggle is hidden, the composer sends "auto" and the agent routes each turn
-// (src/*/src/agent/auto-mode.js); slash commands and the mode shortcuts
-// choose a mode for one message. The standalone window always stays in Ask.
-let autoModeSelection = !isStandaloneWindow;
+// Mode selection is always Automatic: the composer sends "auto" and the agent
+// routes each turn (src/*/src/agent/auto-mode.js); slash commands and the
+// mode shortcuts choose a mode for one message. The standalone window always
+// stays in Ask.
+const autoModeSelection = !isStandaloneWindow;
 let abortRequested = false;
 const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
@@ -1989,25 +1989,6 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.composerDeliveryMode) return;
   composerDeliveryMode = changes.composerDeliveryMode.newValue === 'steer' ? 'steer' : 'queue';
   syncSendButtonState();
-});
-
-function applyModeSelection(value) {
-  autoModeSelection = value !== 'manual' && !isStandaloneWindow;
-  document.documentElement.dataset.modeSelection = autoModeSelection ? 'auto' : 'manual';
-  // A mode pinned before switching to Automatic must not linger in the
-  // composer styling; Automatic chooses per turn.
-  if (autoModeSelection && agentMode !== 'ask') setMode('ask');
-  else {
-    updateActWarning();
-    resetInputPlaceholderRotation();
-  }
-}
-browser.storage.local.get('modeSelection').then((stored) => {
-  applyModeSelection(stored.modeSelection);
-}).catch(() => {});
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes.modeSelection) return;
-  applyModeSelection(changes.modeSelection.newValue);
 });
 
 function enqueueTabChatOperation(tabId, fn) {

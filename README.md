@@ -77,8 +77,7 @@ Three modes control what the agent is allowed to do:
 
 WebBrain picks the mode for each message: it stays in Ask unless your message
 asks it to do something in the browser. Start a message with `/ask`, `/act` or
-`/dev` to choose yourself, or set Settings → General → Mode selection to Manual
-to bring back the Ask, Act and Dev buttons.
+`/dev` to choose the mode yourself.
 
 ## Pick a model
 
@@ -206,9 +205,9 @@ Chrome side panel shortcuts work when the WebBrain side panel has focus.
 | Shortcut                        | What it does                                                                 |
 | ------------------------------- | ---------------------------------------------------------------------------- |
 | `Ctrl+/` or `Cmd+/`             | Focus the input                                                              |
-| `Ctrl+Shift+A` or `Cmd+Shift+A` | Choose Ask mode (Automatic adds `/ask` to your message)                      |
-| `Ctrl+Shift+X` or `Cmd+Shift+X` | Choose Act mode (Automatic adds `/act` to your message)                      |
-| `Ctrl+Shift+D` or `Cmd+Shift+D` | Choose Dev mode (Automatic adds `/dev` to your message)                      |
+| `Ctrl+Shift+A` or `Cmd+Shift+A` | Start the message with `/ask`                                                |
+| `Ctrl+Shift+X` or `Cmd+Shift+X` | Start the message with `/act`                                                |
+| `Ctrl+Shift+D` or `Cmd+Shift+D` | Start the message with `/dev`                                                |
 | `Escape`                        | Stop the active run, unless it is only dismissing slash-command autocomplete |
 | `Escape` twice                  | Stop an active recording from WebBrain or browser pages                      |
 

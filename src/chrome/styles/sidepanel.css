@@ -3058,9 +3058,9 @@ html[data-standalone="true"] #header #btn-history {
   margin-bottom: 8px;
 }
 
-/* Settings -> Mode selection is Automatic unless set to Manual. The agent
-   routes each turn, so the Ask/Act/Dev row shows only in Manual. */
-html:not([data-mode-selection="manual"]) .composer-control-row {
+/* Mode selection is always Automatic: the agent routes each turn, so the
+   Ask/Act/Dev row never shows. */
+.composer-control-row {
   display: none;
 }
 

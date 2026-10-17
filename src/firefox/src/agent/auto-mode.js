@@ -1,13 +1,13 @@
 // Automatic mode selection.
 //
-// With Settings -> Mode selection set to Automatic, the side panel sends a
-// turn with mode "auto" instead of asking the user to pick Ask, Act or Dev.
-// The agent routes it:
+// The side panel sends each turn with mode "auto" instead of asking the user
+// to pick Ask, Act or Dev. The agent routes it:
 //
 //   1. Run state alone decides when it can: a continuation keeps its run's
-//      mode; a selected-text scope, the standalone window and a message that
-//      carries page text (a selection shortcut with page context) stay in
-//      Ask; and a video attachment, which can only be uploaded, needs Act.
+//      mode; an in-browser model's turn (a tiny Ask), a selected-text scope,
+//      the standalone window and a message that carries page text (a
+//      selection shortcut with page context) stay in Ask; and a video
+//      attachment, which can only be uploaded, needs Act.
 //   2. Otherwise the decision model answers the `run_mode` question while the
 //      page context is gathered. The turn waits for it at most
 //      AUTO_MODE_ROUTE_GRACE_MS after that context is ready.

@@ -530,51 +530,6 @@ function extract(text, name) {
   return text.slice(start, end + 2);
 }
 
-test('chrome: switching to Automatic during a Dev run keeps its capture until the run ends', () => {
-  const panel = source('chrome', 'ui/sidepanel.js');
-  const sent = [];
-  const classList = { toggle() {}, remove() {} };
-  const context = vm.createContext({
-    agentMode: 'dev', autoModeSelection: false, isStandaloneWindow: false, devDiagnosticsDrainDeferred: false,
-    processingTabs: new Set([7]), failedConversationClearRecoveryTabs: new Set(), currentTabId: 7, isProcessing: true,
-    document: { documentElement: { dataset: {} } },
-    modeAskBtn: { classList }, modeActBtn: { classList }, modeDevBtn: { classList }, inputArea: { classList },
-    modeToggleHighlight: { classList }, positionModeHighlight() {}, updateActWarning() {}, resetInputPlaceholderRotation() {},
-    syncSelectionScopeRestoreAvailability() {}, sameTabId: (a, b) => Number(a) === Number(b),
-    sendToBackground: (type, payload) => { sent.push(`${type} ${JSON.stringify(payload)}`); return Promise.resolve(); },
-  });
-  for (const name of ['normalizeAgentMode', 'setMode', 'applyModeSelection', 'setTabProcessing', 'drainDeferredDevDiagnostics']) {
-    vm.runInContext(extract(panel, name), context);
-  }
-  const drain = 'disable_dev_diagnostics {"all":true}';
-
-  context.applyModeSelection('auto');
-  assert.equal(context.agentMode, 'ask', 'the composer leaves Dev at once');
-  assert.deepEqual(sent, [], 'the active run keeps its console and network history');
-  context.setTabProcessing(7, false);
-  assert.deepEqual(sent, [drain], 'drained once the panel has no run left');
-  context.setTabProcessing(7, false);
-  assert.deepEqual(sent, [drain], 'drained only once');
-
-  sent.length = 0;
-  context.applyModeSelection('manual');
-  context.setMode('dev');
-  context.applyModeSelection('auto');
-  assert.deepEqual(sent, [drain], 'with no run active the drain is immediate');
-
-  sent.length = 0;
-  context.applyModeSelection('manual');
-  context.setMode('dev');
-  context.setTabProcessing(7, true);
-  context.applyModeSelection('auto');
-  context.applyModeSelection('manual');
-  context.setMode('dev');
-  context.setTabProcessing(7, false);
-  assert.deepEqual(sent, [], 'choosing Dev again before the run ends cancels the owed drain');
-  context.setMode('ask');
-  assert.deepEqual(sent, [drain], 'leaving Dev by hand still drains at once');
-});
-
 for (const build of BUILDS) {
   const panel = source(build, 'ui/sidepanel.js');
 
@@ -645,26 +600,12 @@ for (const build of BUILDS) {
     assert.deepEqual([...context.keys.auto], [context.keys.ask[0], 'sp.input.act_placeholder', ...context.keys.ask.slice(1)], 'Automatic keeps each build\'s Ask tips');
   });
 
-  test(`${build}: Automatic is the default and hides the mode row through the document state`, () => {
+  test(`${build}: mode selection is always Automatic outside the standalone window`, () => {
     const css = readFileSync(new URL(`../src/${build}/styles/sidepanel.css`, import.meta.url), 'utf8');
-    // Hidden until the panel knows the setting is Manual, so Automatic never flashes the row.
-    assert.match(css, /html:not\(\[data-mode-selection="manual"\]\) \.composer-control-row \{\s*display: none;/);
-    assert.match(panel, /let autoModeSelection = !isStandaloneWindow;/);
-    assert.match(panel, /storage\.local\.get\('modeSelection'\)/);
-    const dataset = {};
-    const context = vm.createContext({
-      isStandaloneWindow: false, autoModeSelection: true, agentMode: 'ask', processingTabs: new Set(),
-      devDiagnosticsDrainDeferred: false, document: { documentElement: { dataset } },
-      setMode() {}, updateActWarning() {}, resetInputPlaceholderRotation() {},
-    });
-    vm.runInContext(extract(panel, 'applyModeSelection'), context);
-    for (const [stored, expected] of [[undefined, 'auto'], ['auto', 'auto'], ['manual', 'manual'], ['anything', 'auto']]) {
-      context.applyModeSelection(stored);
-      assert.deepEqual([dataset.modeSelection, context.autoModeSelection], [expected, expected === 'auto'], String(stored));
-    }
-    context.isStandaloneWindow = true;
-    context.applyModeSelection(undefined);
-    assert.deepEqual([dataset.modeSelection, context.autoModeSelection], ['manual', false], 'the standalone window stays in Ask');
+    assert.match(panel, /const autoModeSelection = !isStandaloneWindow;/);
+    assert.doesNotMatch(panel, /modeSelection|applyModeSelection/, 'no stored choice can turn Automatic off');
+    // The Ask/Act/Dev row never shows; its rule follows the base layout rule it overrides.
+    assert.ok(css.lastIndexOf('.composer-control-row {\n  display: none;') > css.indexOf('.composer-control-row {\n  display: flex;'));
   });
 
   test(`${build}: the background restarts a hand-off under the same request and reports the routed mode`, () => {
@@ -689,27 +630,16 @@ for (const build of BUILDS) {
     assert.equal(journal.get(5).mode, 'act');
   });
 
-  test(`${build}: Mode selection is a portable setting, Automatic by default, in every language`, async () => {
-    const settingsHtml = source(build, 'ui/settings.html');
-    assert.match(settingsHtml, /<select id="select-mode-selection"[^>]*>\s*<option value="auto"[^>]*><\/option>\s*<option value="manual"[^>]*><\/option>/);
-    const settingsJs = source(build, 'ui/settings.js');
-    assert.match(settingsJs, /modeSelectionSelect\.value = stored\.modeSelection === 'manual' \? 'manual' : 'auto';/);
-    assert.match(settingsJs, /const modeSelection = modeSelectionSelect\.value === 'manual' \? 'manual' : 'auto';/);
-    assert.match(settingsJs, /storage\.local\.set\(\{ modeSelection \}\)/);
+  test(`${build}: Settings, config transfer and the locales carry no mode selection`, async () => {
+    assert.doesNotMatch(source(build, 'ui/settings.html'), /mode-selection|mode_selection/);
+    assert.doesNotMatch(source(build, 'ui/settings.js'), /modeSelection|mode-selection/);
     const config = await import(`../src/${build}/src/config-transfer.js`);
-    assert.equal(config.DEFAULT_CONFIG_SETTINGS.modeSelection, 'auto');
-    assert.ok(config.CONFIG_STORAGE_KEYS.includes('modeSelection'));
+    assert.equal('modeSelection' in config.DEFAULT_CONFIG_SETTINGS, false);
+    assert.equal(config.CONFIG_STORAGE_KEYS.includes('modeSelection'), false);
     const directory = new URL(`../src/${build}/src/ui/locales/`, import.meta.url);
-    const english = (await import(new URL('en.js', directory))).default;
     for (const file of readdirSync(directory).filter(name => name.endsWith('.js'))) {
       const catalog = (await import(new URL(file, directory))).default;
-      for (const key of ['label', 'desc', 'manual', 'auto']) {
-        const value = catalog[`st.display.mode_selection.${key}`];
-        assert.equal(typeof value, 'string', `${file} missing ${key}`);
-        assert.ok(value.trim(), `${file} left ${key} empty`);
-      }
-      if (file !== 'en.js') assert.notEqual(catalog['st.display.mode_selection.desc'], english['st.display.mode_selection.desc'], `${file} left the description in English`);
-      assert.match(catalog['st.display.mode_selection.desc'], /\/ask[\s\S]*\/act[\s\S]*\/dev/, `${file} names the one-message commands`);
+      assert.deepEqual(Object.keys(catalog).filter(key => key.startsWith('st.display.mode_selection.')), [], file);
     }
   });
 }
