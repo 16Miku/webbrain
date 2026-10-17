@@ -718,12 +718,7 @@ const ASK_PLACEHOLDER_KEYS = [
   'sp.input.placeholder_tip.help',
 ];
 // Automatic mode answers questions and takes actions, so it rotates both.
-const AUTO_PLACEHOLDER_KEYS = [
-  'sp.input.ask_placeholder',
-  'sp.input.act_placeholder',
-  'sp.input.placeholder_tip.help',
-  'sp.input.placeholder_tip.record',
-];
+const AUTO_PLACEHOLDER_KEYS = [ASK_PLACEHOLDER_KEYS[0], 'sp.input.act_placeholder', ...ASK_PLACEHOLDER_KEYS.slice(1)];
 const PERMISSION_REMINDER_PLACEHOLDER_KEY = 'sp.input.placeholder_tip.skip_permissions';
 let pendingAnswerSelection = null;
 let selectionAskActionRefreshFrame = null;
@@ -1456,7 +1451,8 @@ const {
 } = createContextMenuPromptHandler({
   getCurrentTabId: () => currentTabId,
   getIsProcessing: () => isProcessing || isConversationClearInProgress(),
-  getAgentMode: () => agentMode,
+  // "auto" makes context-menu and selection prompts send as Ask, as in Manual.
+  getAgentMode: () => (autoModeSelection ? 'auto' : agentMode),
   setMode,
   getInputEl: () => inputEl,
   autoResizeInput,
@@ -7216,7 +7212,8 @@ function retryPayloadFromButton(btn) {
   const text = String(btn?.dataset?.retryText || '').trim();
   if (!text) return null;
   const displayText = String(btn?.dataset?.retryDisplayText || text).trim() || text;
-  const mode = ['ask', 'act', 'dev', 'auto'].includes(btn.dataset.retryMode)
+  const mode = ['ask', 'act', 'dev'].includes(btn.dataset.retryMode)
+      || (btn.dataset.retryMode === 'auto' && autoModeSelection)
     ? btn.dataset.retryMode
     : agentMode;
   const retryId = btn.dataset.retryId || '';
@@ -7334,7 +7331,8 @@ function retryPayloadForRunAssistant(assistantEl) {
   return {
     text,
     displayText,
-    mode: ['ask', 'act', 'dev', 'auto'].includes(assistantEl?.dataset.runMode)
+    mode: ['ask', 'act', 'dev'].includes(assistantEl?.dataset.runMode)
+        || (assistantEl?.dataset.runMode === 'auto' && autoModeSelection)
       ? assistantEl.dataset.runMode
       : agentMode,
     apiMutationsAllowed: assistantEl?.dataset.retryApiMutationsAllowed === 'true',
@@ -12296,6 +12294,8 @@ function openSubscribeUrl(url) {
 // button's dataset so it survives chat-history restore (messagesEl.innerHTML),
 // where the click closure is lost and rebindSubscribeButtons re-attaches it.
 function renderSubscribeError(textEl, content, resumeMode = '', quota = null, continuation = {}) {
+  // An automatic send resumes in the mode its run was routed to.
+  if (resumeMode === 'auto') resumeMode = '';
   const parsed = parseSubscribeError(content);
   let metadata = quota;
   if (!metadata && textEl.dataset?.quota) {

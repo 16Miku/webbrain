@@ -117,8 +117,9 @@ asks the configured decision model one `run_mode` question: the text of that
 message, the previous turn's mode and the user's earlier task in the
 conversation. No page text, title, address or screenshot is included, and the
 question is asked only when a message is sent, never while it is typed. Without
-a decision model nothing extra is sent: the turn starts in Ask and the active
-model may hand it to Act itself.
+a decision model the turn starts in Ask; only when the active model asks to
+hand the turn to Act or Dev is the same page-free question sent to the active
+model to confirm it.
 
 The optional experimental **D1 FP32 WebGPU** decision provider has no inference
 endpoint or API key. Its bounded text/JSON state, questions and inline screenshots

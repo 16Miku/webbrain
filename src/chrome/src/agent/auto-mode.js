@@ -5,15 +5,18 @@
 // The agent routes it:
 //
 //   1. Run state alone decides when it can: a continuation keeps its run's
-//      mode, a selected-text scope and the standalone window stay in Ask, and
-//      a video attachment, which can only be uploaded, needs Act.
+//      mode; a selected-text scope, the standalone window and a message that
+//      carries page text (a selection shortcut with page context) stay in
+//      Ask; and a video attachment, which can only be uploaded, needs Act.
 //   2. Otherwise the decision model answers the `run_mode` question while the
 //      page context is gathered. The turn waits for it at most
 //      AUTO_MODE_ROUTE_GRACE_MS after that context is ready.
 //   3. Without a sure answer the turn starts in Ask, read-only. The main
-//      model can call `request_action_mode`, quoting the user's own words,
-//      and WebBrain restarts the same turn in Act or Dev, whose planner gate
-//      reads the request again before any action.
+//      model can call `request_action_mode`, quoting the user's own words.
+//      Because that model has read the page, the hand-off counts only when
+//      the same `run_mode` question, asked again without any page content,
+//      also answers act or dev. WebBrain then restarts the same turn in Act
+//      or Dev, whose planner gate reads the request again before any action.
 //
 // Uncertainty never selects an action mode, and nothing read from a page
 // can: the route reads only the user's words and WebBrain's own run state.
@@ -30,6 +33,11 @@ export const REQUEST_ACTION_MODE_TOOL_NAME = 'request_action_mode';
 
 export const isRunMode = mode => RUN_MODES.includes(mode);
 
+// Page text wrapped into a message (selection shortcuts with page context)
+// is not the user's own words, so such a message is never routed.
+const UNTRUSTED_BLOCK = /<untrusted_page_content\b/i;
+export const carriesUntrustedText = text => UNTRUSTED_BLOCK.test(String(text ?? ''));
+
 // Compact-tier providers cannot run Dev; their nearest action mode is Act.
 const actionModeForTier = (mode, tier) => (mode === 'dev' && tier === 'compact' ? 'act' : mode);
 
@@ -37,13 +45,14 @@ const actionModeForTier = (mode, tier) => (mode === 'dev' && tier === 'compact' 
 // the decision model or the main model to choose.
 export function autoModeHardRoute({
   trustedContinuation = false, previousMode = null, standaloneChat = false,
-  selectionScoped = false, cloudRun = false, attachments = [], tier = '',
+  selectionScoped = false, cloudRun = false, attachments = [], tier = '', text = '',
 } = {}) {
   if (trustedContinuation) {
     return { mode: actionModeForTier(isRunMode(previousMode) ? previousMode : 'ask', tier), source: 'continuation' };
   }
   if (standaloneChat) return { mode: 'ask', source: 'standalone' };
   if (selectionScoped) return { mode: 'ask', source: 'selection_scope' };
+  if (carriesUntrustedText(text)) return { mode: 'ask', source: 'page_text' };
   // Managed Cloud runs always name their mode; an unnamed one stays read-only.
   if (cloudRun) return { mode: 'ask', source: 'cloud_run' };
   if ((Array.isArray(attachments) ? attachments : []).some(att => att?.kind === 'video')) {
@@ -138,6 +147,8 @@ const spaced = value => String(value ?? '').normalize('NFC').replace(/\s+/g, ' '
 // The action mode a `request_action_mode` call asks for, when it is backed
 // by an exact quotation of the user's own request; null otherwise. A quote
 // shorter than six characters (or than the whole request) does not count.
+// This only proves the words are the user's: the caller must still confirm
+// the hand-off with `confirmedEscalationMode`.
 export function acceptModeEscalation(args, requestText, { tier = '' } = {}) {
   const parsed = parseArgs(args);
   const requested = parsed?.mode;
@@ -146,4 +157,12 @@ export function acceptModeEscalation(args, requestText, { tier = '' } = {}) {
   if (!accepted) return null;
   if (accepted.evidence.length < Math.min(6, spaced(requestText).length)) return null;
   return { mode: actionModeForTier(requested, tier), evidence: accepted.evidence };
+}
+
+// The mode a hand-off may use once the page-free `run_mode` answer is known:
+// null unless that answer is act or dev. Dev needs both to ask for Dev.
+export function confirmedEscalationMode(requested, choice, { tier = '' } = {}) {
+  const confirmed = autoModeForChoice(choice, { tier });
+  if (!requested || confirmed === 'ask') return null;
+  return requested.mode === 'dev' && confirmed === 'dev' ? 'dev' : 'act';
 }

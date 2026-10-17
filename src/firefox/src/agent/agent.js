@@ -12,7 +12,7 @@ import { installPageFeedback, beforePageAgentDispatch, hasPageAgentDispatchOwner
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText, systemOneStateBytes } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
-import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
+import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
@@ -21800,7 +21800,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // Starts an automatically routed turn. Run state alone decides when it
   // can; otherwise the turn starts as Ask and is routed while its page
   // context is gathered (_routeAutoRunMode, _settleAutoModeRun).
-  _beginAutoModeRun(tabId, attachments, runOptions = {}, onUpdate = () => {}) {
+  _beginAutoModeRun(tabId, userMessage, attachments, runOptions = {}, onUpdate = () => {}) {
     const previousMode = this.conversationModes.get(tabId) || null;
     let tier = '';
     try { tier = this._resolvePromptTier(this._activeProvider(tabId)); } catch {}
@@ -21812,6 +21812,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       cloudRun: runOptions?.cloudRun === true,
       attachments,
       tier,
+      text: this._messageText(userMessage),
     });
     if (hard) {
       onUpdate('run_mode', { mode: hard.mode, source: hard.source });
@@ -21822,21 +21823,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode } } };
   }
 
-  // The decision model's `run_mode` answer for a routed turn. It reads only
-  // the user's words and run state, never asks the main model, and never
-  // rejects: without a sure answer the turn starts read-only.
-  async _routeAutoRunMode(tabId, messages, userMessage, previousMode = null) {
-    const startedAt = Date.now();
-    try {
-      const binding = this._activeTaskBinding(messages || []);
-      const page = {
+  // The `run_mode` question of a routed turn, read before the turn joins the
+  // conversation: the user's words, the previous turn's mode and the earlier
+  // task, never page content.
+  _autoModeQuestion(messages, userMessage, previousMode = null) {
+    const binding = this._activeTaskBinding(messages || []);
+    return {
+      request: this._messageText(userMessage),
+      page: {
         previous_mode: isRunMode(previousMode) ? previousMode : 'none',
         current_task: binding.index >= 0 ? String(binding.requestText || binding.text || '') : '',
-      };
-      const verdict = await this._semanticDecision(tabId, 'run_mode', {
-        request: this._messageText(userMessage),
-        page,
-      }, { mainModel: false });
+      },
+    };
+  }
+
+  // The decision model's `run_mode` answer for a routed turn. It never asks
+  // the main model and never rejects: without a sure answer the turn starts
+  // read-only.
+  async _routeAutoRunMode(tabId, question) {
+    const startedAt = Date.now();
+    try {
+      const verdict = await this._semanticDecision(tabId, 'run_mode', question, { mainModel: false });
       const tier = this._resolvePromptTier(this._activeProvider(tabId));
       return {
         mode: autoModeForChoice(verdict.choice, { tier }),
@@ -21881,26 +21888,59 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  // An accepted `request_action_mode` call of a routed Ask turn: its quote
-  // must come from the user's own words, never from generated page context.
-  _autoModeEscalation(tabId, toolCalls, enriched, provider = null) {
+  // Reads a `request_action_mode` call of a routed Ask turn. Its quote must
+  // come from the user's own words; and because the calling model has read
+  // the page, the page-free `run_mode` question must also answer act or dev
+  // (a sure decision-model "answer" from routing is reused from the cache).
+  // Returns { accepted: { mode, evidence } } or { refusal: text }.
+  async _autoModeEscalation(tabId, toolCalls, enriched, provider, question, messages) {
     const call = (toolCalls || []).find(item => item?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME);
-    if (!call) return null;
     const request = typeof enriched?.webbrainUserAuthoredText === 'string'
       ? enriched.webbrainUserAuthoredText
       : this._plannerUserAuthoredText(enriched);
-    return acceptModeEscalation(call.function?.arguments, request, { tier: this._resolvePromptTier(provider) });
+    const tier = this._resolvePromptTier(provider);
+    const requested = acceptModeEscalation(call?.function?.arguments, request, { tier });
+    if (!requested) {
+      return { refusal: 'request_action_mode was refused: `evidence` must quote the words of the user\'s latest message that ask for the action, exactly as written. Answer the request read-only if you can.' };
+    }
+    // A correction applied during this turn lives after the turn, which the
+    // restart replaces.
+    const turnIndex = messages.lastIndexOf(enriched);
+    if (turnIndex >= 0 && messages.slice(turnIndex + 1).some(message => message?.webbrainSteering)) {
+      return { refusal: 'request_action_mode was refused because the user corrected the request during this turn. Answer the corrected request read-only; the user can send it again to have it done.' };
+    }
+    const verdict = await this._semanticDecision(tabId, 'run_mode', question || { request, page: {} }, { provider });
+    const mode = confirmedEscalationMode(requested, verdict.choice, { tier });
+    if (!mode) {
+      return { refusal: 'request_action_mode was refused: read on its own, the user\'s request does not ask for browser actions. Answer it read-only.' };
+    }
+    return { accepted: { mode, evidence: requested.evidence } };
   }
 
-  // Removes the current turn, which a hand-off replaces with an action run.
-  _rollbackTurnForModeEscalation(messages, enriched) {
-    let index = messages.lastIndexOf(enriched);
-    const text = enriched?.webbrainUserAuthoredText;
-    if (index < 0 && typeof text === 'string' && text) {
-      index = messages.findLastIndex(message => message?.role === 'user' && message.webbrainUserAuthoredText === text);
-    }
-    if (index > 0) messages.splice(index);
-    return index > 0;
+  // The conversation and per-tab turn state before a routed turn gathers its
+  // context. A hand-off restores it, so the action run that replaces the
+  // turn starts from the same state: approved plans, site notes, the API
+  // note, the follow-up allowance and the durable-turn marker included.
+  _autoModeTurnSnapshot(tabId, messages) {
+    const entry = (map) => (map.has(tabId) ? { value: map.get(tabId) } : null);
+    return {
+      messages: messages.slice(),
+      lastSeenAdapter: entry(this.lastSeenAdapter),
+      submittedRunRequestId: entry(this.submittedRunRequestIds),
+      apiAllowedInjected: this.apiAllowedInjected.has(tabId),
+      plannerFollowUpSkip: this.plannerFollowUpSkipTabs.has(tabId),
+    };
+  }
+
+  _restoreAutoModeTurn(tabId, messages, snapshot) {
+    if (!snapshot) return;
+    const restore = (map, entry) => (entry ? map.set(tabId, entry.value) : map.delete(tabId));
+    const toggle = (set, on) => (on ? set.add(tabId) : set.delete(tabId));
+    messages.splice(0, messages.length, ...snapshot.messages);
+    restore(this.lastSeenAdapter, snapshot.lastSeenAdapter);
+    restore(this.submittedRunRequestIds, snapshot.submittedRunRequestId);
+    toggle(this.apiAllowedInjected, snapshot.apiAllowedInjected);
+    toggle(this.plannerFollowUpSkipTabs, snapshot.plannerFollowUpSkip);
   }
 
   // The action mode a routed turn handed itself to, read once by the caller
@@ -42107,7 +42147,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._hydrate(tabId);
     this._pendingModeEscalations.delete(tabId);
     if (mode === AUTO_MODE) {
-      ({ mode, runOptions } = this._beginAutoModeRun(tabId, attachments, runOptions, onUpdate));
+      ({ mode, runOptions } = this._beginAutoModeRun(tabId, userMessage, attachments, runOptions, onUpdate));
     } else if (runOptions?.modeEscalation && isRunMode(mode)) {
       runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation' } };
       onUpdate('run_mode', { mode, source: 'escalation' });
@@ -42200,6 +42240,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return stopped;
     } finally {
       if (runClaimed) {
+        // A routed turn stopped before its mode was chosen leaves the
+        // conversation's mode as it found it.
+        if (this._autoModeRoutePendingTabs.has(tabId) && isRunMode(runOptions?.autoModeRouting?.previousMode)) {
+          this.conversationModes.set(tabId, runOptions.autoModeRouting.previousMode);
+        }
         this._autoModeEscalationTabs.delete(tabId);
         this._autoModeRoutePendingTabs.delete(tabId);
         try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
@@ -42449,9 +42494,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.permissions.beginTurn(tabId);
     // An automatically routed turn asks the decision model while its page
     // context is gathered below (see auto-mode.js).
-    const autoModeRoute = runOptions?.autoModeRouting
-      ? this._routeAutoRunMode(tabId, messages, userMessage, runOptions.autoModeRouting.previousMode)
+    const autoModeQuestion = runOptions?.autoModeRouting
+      ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode)
       : null;
+    const autoModeRoute = autoModeQuestion ? this._routeAutoRunMode(tabId, autoModeQuestion) : null;
 
     // Resolve model-bound local vision metadata before enrichment captures a
     // screenshot or attachment validation consults provider.supportsVision.
@@ -42469,6 +42515,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._selectionGroundingPriorMessageSet(tabId, messages)
       : null;
 
+    // What a hand-off restores before an action run replaces this turn.
+    const autoModeTurnStart = autoModeRoute ? this._autoModeTurnSnapshot(tabId, messages) : null;
     // What a short turn does is read while the page context is gathered.
     const userTurnKind = this._userTurnKind(tabId, messages, userMessage, mode, runOptions,
       selectionOnly || standaloneChatRun);
@@ -43351,11 +43399,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       if (mode === 'ask' && this._autoModeEscalationTabs.has(tabId)
           && result.toolCalls?.some(call => call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME)) {
-        const escalation = this._autoModeEscalation(tabId, result.toolCalls, enriched, provider);
+        const handoff = await this._autoModeEscalation(tabId, result.toolCalls, enriched, provider, autoModeQuestion, messages);
+        const escalation = handoff.accepted;
         if (escalation) {
-          // The caller restarts this turn in the requested mode. Drop the turn
-          // so the action run records the request once.
-          this._rollbackTurnForModeEscalation(messages, enriched);
+          // The caller restarts this turn in the requested mode, from the
+          // state the turn started with, so the request is recorded once.
+          this._restoreAutoModeTurn(tabId, messages, autoModeTurnStart);
           this._pendingModeEscalations.set(tabId, escalation);
           onUpdate('text', { content: '', replace: true });
           _traceStatus = 'mode_escalated';
@@ -43365,8 +43414,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           await this._persistNow(tabId);
           return (finalResponse = '');
         }
-        // Without the user's own words behind it the hand-off is refused and
-        // the turn stays read-only; a second refusal withdraws the tool.
+        // A refused hand-off leaves the turn read-only and tells the model why;
+        // a second refusal withdraws the tool.
         autoModeEscalationRefusals += 1;
         if (autoModeEscalationRefusals >= 2) this._autoModeEscalationTabs.delete(tabId);
         messages.push(this._withResponseItems({
@@ -43379,7 +43428,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             role: 'tool',
             tool_call_id: call.id,
             content: JSON.stringify(call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME
-              ? { success: false, error: 'request_action_mode was refused: `evidence` must quote the words of the user\'s latest message that ask for the action, exactly as written. Answer the request read-only if you can.' }
+              ? { success: false, error: handoff.refusal }
               : { success: false, skipped: true, dispatched: false, noDispatch: true, error: 'Skipped because request_action_mode was called in the same response. Repeat this call if you still need it.' }),
           });
         }

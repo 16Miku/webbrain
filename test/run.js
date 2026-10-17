@@ -64859,7 +64859,8 @@ test('Chrome Dev diagnostics start on both run paths and stop when Dev mode ends
   const streamingPath = agentSource.slice(streamingStart);
   assert.match(standardPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
   assert.match(streamingPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
-  assert.match(agentSource, /if \(lastMode === 'dev'\) void cdpClient\.disableDevDiagnostics\(tabId\)/);
+  // An automatically routed turn defers the drain until its mode is chosen (test/auto-mode.mjs).
+  assert.match(agentSource, /if \(lastMode === 'dev' && !this\._autoModeRoutePendingTabs\.has\(tabId\)\) void cdpClient\.disableDevDiagnostics\(tabId\)/);
   assert.match(backgroundSource, /case 'disable_dev_diagnostics':/);
   assert.match(backgroundSource, /disabled: await agent\.disableDevDiagnostics\(tabId\)/);
   assert.match(backgroundSource, /msg\.all === true[\s\S]*disabled: await agent\.disableAllDevDiagnostics\(\)/);
