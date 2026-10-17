@@ -419,6 +419,39 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(doneResult?.outcome, 'success', `${build}: missing evidence alone must not downgrade the outcome`);
   });
 
+  test(`${build}: a chat run's success accepted over a decided check ends with the chat partial contract`, async () => {
+    const { chatRunEndedNotice, createChatSession } = await import(`../src/${build}/src/agent/chat-workflow.js`);
+    for (const decided of [true, false]) {
+      const h = batchAgent(Agent);
+      h.agent.chatSessions.set(h.tab, createChatSession({ threadKey: 'dom:telegram:k:123456:0' }));
+      if (decided) {
+        // Text went into a formatting toolbar: the check knows the claim is wrong.
+        h.agent._richTextToolbarGuard.completionAction = () => ({ name: 'type_ax', ref_id: 'ref_bold' });
+      } else {
+        // Only missing evidence: the page was not read again.
+        h.agent.completionInvariants.set(h.tab, { ...invariant.createCompletionInvariantState('chat'), hadAction: true,
+          verificationDebt: true, sequence: 1, lastAction: { name: 'click_ax', sequence: 1 } });
+      }
+      const done = ['done', { summary: 'Replied in the chat.', outcome: 'success' }];
+      assert.equal((await h.batch([done])).action, 'continue', `${build}: the first completion gets its note`);
+      const updates = [];
+      const accepted = await h.batch([done], updates);
+      assert.equal(accepted.action, 'return');
+      const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
+      if (decided) {
+        assert.equal(doneResult?.outcome, 'partial', `${build}: a success over a decided check was not downgraded`);
+        assert.equal(doneResult?.runEnded, true, `${build}: a downgraded chat completion must end the chat run`);
+        assert.equal(doneResult?.autoResumeScheduled, false, `${build}: a downgraded chat completion must not auto-resume`);
+        assert.ok(String(doneResult?.summary).includes(chatRunEndedNotice()), `${build}: the chat run-ended notice is missing`);
+      } else {
+        assert.equal(doneResult?.outcome, 'success', `${build}: missing evidence alone must not downgrade a chat success`);
+        assert.equal(doneResult?.runEnded, undefined);
+        assert.equal(doneResult?.autoResumeScheduled, undefined);
+        assert.ok(!String(doneResult?.summary).includes(chatRunEndedNotice()));
+      }
+    }
+  });
+
   test(`${build}: a done with no outcome is advised once, then accepted as partial`, async () => {
     for (const strict of [false, true]) {
       const h = batchAgent(Agent, { strict });

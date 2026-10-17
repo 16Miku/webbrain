@@ -16630,6 +16630,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { action: 'continue' };
         }
         if (!scheduledResume) await cancelPendingResumes();
+        if (!scheduledResume && toolResult.outcome === 'success'
+            && this._completionOutcomeDowngraded(tabId)) {
+          // Accepted over a guard that knows the claim is wrong: end the run,
+          // but as partial so schedules and watches do not count a success.
+          // Before the chat ending below, so a chat run gets the same
+          // partial contract (runEnded, no auto-resume, the notice).
+          toolResult.outcome = 'partial';
+        }
         if (!scheduledResume && runOptions?.scheduledRun !== true && this.chatSessions.has(tabId)
             && ['partial', 'failed'].includes(toolResult.outcome)) {
           toolResult.runEnded = true;
@@ -16638,12 +16646,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const notice = chatRunEndedNotice(this.responseLanguagePolicies.get(tabId)?.framing_locale || runOptions?.locale);
             toolResult.summary = (toolResult.summary || partialAssistantText || '') + '\n\n' + notice;
           }
-        }
-        if (!scheduledResume && toolResult.outcome === 'success'
-            && this._completionOutcomeDowngraded(tabId)) {
-          // Accepted over a guard that knows the claim is wrong: end the run,
-          // but as partial so schedules and watches do not count a success.
-          toolResult.outcome = 'partial';
         }
         onUpdate('tool_result', { name: fnName, result: toolResult });
         this._doneBlockCount.delete(tabId);
