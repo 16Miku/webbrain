@@ -1531,6 +1531,14 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     assert.equal(await mod.importSettings(JSON.stringify({
       customEvents: '[]', messages: '["hi"]', applinks: '[{"name":"a","url":"https://a.test","key":"k1"}]', order: '["time"]', todo: '[]', favourite: 'null',
     })), true);
+    // colour favourites must parse as a CSS background where the browser can tell
+    globalThis.CSS = { supports: (_p, v) => /^(#|rgb|linear-gradient)/.test(v) };
+    try {
+      assert.equal(await mod.importSettings(JSON.stringify({ favourite: '{"type":"random_colour","url":"not-a-colour"}' })), false);
+      assert.equal(await mod.importSettings(JSON.stringify({ favourite: '{"type":"random_gradient","url":"linear-gradient(red, blue)"}' })), true);
+    } finally {
+      delete globalThis.CSS;
+    }
     for (const tz of ['auto', 'Europe/Istanbul', 'UTC']) {
       assert.equal(await mod.importSettings(JSON.stringify({ timezone: tz })), true, tz);
     }
@@ -1727,11 +1735,12 @@ test('round-43: todo delete icon is a keyboard control', () => {
   assert.match(todo, /<MdDelete\s+role="button"\s+tabIndex=\{0\}/);
 });
 
-test('round-46: the stale-record sweep understands the retry queue', () => {
+test('round-46/49: the stale-record sweep leaves the panel-owned retry slot alone and re-checks before deleting', () => {
   for (const [file, api] of [['src/chrome/src/background.js', 'chrome'], ['src/firefox/src/background.js', 'browser']]) {
     const src = readFileSync(path.join(root, file), 'utf8');
-    assert.match(src, /Array\.isArray\(all\[key\]\) \? all\[key\] : \[all\[key\]\]/, file);
-    assert.match(src, /entries\.some\(\(entry\) => Number\(entry\?\.createdAt\) > cutoff\)/, file);
+    assert.match(src, /!key\.startsWith\('wbNewtabHandoff:retry:'\)/, file);
+    assert.match(src, /Look again just before deleting/, file);
+    assert.match(src, /onStartup\?\.addListener\?\.\(async \(\) => \{\s*try \{[\s\S]*wbNewtabHandoff:retry:/, file);
   }
 });
 

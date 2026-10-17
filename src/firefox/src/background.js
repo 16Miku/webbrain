@@ -1397,22 +1397,38 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 // This drops any that were never claimed (the tab was closed first).
 async function sweepStaleNewtabHandoffs() {
   try {
-    const all = await browser.storage.local.get(null);
     // Past the longest age the panel still accepts (150 s), so nothing claimable is removed.
     const cutoff = Date.now() - 180_000;
-    const stale = Object.keys(all).filter(
-      (key) => {
-        if (!key.startsWith('wbNewtabHandoff:')) return false;
-        // The panel's retry slot holds a list; it is stale once none of its tasks is still claimable.
-        const entries = Array.isArray(all[key]) ? all[key] : [all[key]];
-        return !entries.some((entry) => Number(entry?.createdAt) > cutoff);
-      },
-    );
-    if (stale.length) await browser.storage.local.remove(stale);
+    const staleKeys = (all) =>
+      Object.keys(all).filter(
+        // The panel's retry slot (`wbNewtabHandoff:retry:<tabId>`) is written by the panel
+        // while it is alive, so it is not judged from a snapshot: it goes with its tab, or
+        // at browser start.
+        (key) => key.startsWith('wbNewtabHandoff:') && !key.startsWith('wbNewtabHandoff:retry:') &&
+          !(Number(all[key]?.createdAt) > cutoff),
+      );
+    const stale = staleKeys(await browser.storage.local.get(null));
+    if (!stale.length) return;
+    // Look again just before deleting: a fresh task may have been stored since the snapshot.
+    const fresh = await browser.storage.local.get(stale);
+    const confirmed = staleKeys(fresh);
+    if (confirmed.length) await browser.storage.local.remove(confirmed);
   } catch {
     // best effort
   }
 }
+
+// Handed-back tasks (retry slots) from a previous browser session belong to tabs that no
+// longer exist.
+browser.runtime.onStartup?.addListener?.(async () => {
+  try {
+    const all = await browser.storage.local.get(null);
+    const retryKeys = Object.keys(all).filter((key) => key.startsWith('wbNewtabHandoff:retry:'));
+    if (retryKeys.length) await browser.storage.local.remove(retryKeys);
+  } catch {
+    // best effort
+  }
+});
 
 // A tab that closes before its panel claimed the task takes the task with it, and
 // anything left over from a previous browser session is dropped on every start of

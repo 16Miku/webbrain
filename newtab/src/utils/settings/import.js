@@ -120,6 +120,13 @@ export function normalizeLinks(content) {
   return content;
 }
 
+// A colour / gradient favourite is applied as `background: <url>`; an invalid value leaves the
+// new tab blank. Where the browser can say whether it parses, ask it.
+const isCssBackground = (value) =>
+  isString(value) &&
+  value.trim() !== '' &&
+  (typeof CSS === 'undefined' || typeof CSS.supports !== 'function' || CSS.supports('background', value));
+
 /** Returns a reason when the backup would leave the new tab unable to load, else null. */
 export function validateSettings(content) {
   for (const [key, value] of Object.entries(content)) {
@@ -156,7 +163,7 @@ export function validateSettings(content) {
       if (favourite !== null) {
         // Colour / gradient favourites keep a CSS value in url; photos need a loadable address.
         const isColour = favourite.type === 'random_colour' || favourite.type === 'random_gradient';
-        const usable = isColour ? isString(favourite.url) && favourite.url.trim() !== '' : isBackgroundUrl(favourite.url);
+        const usable = isColour ? isCssBackground(favourite.url) : isBackgroundUrl(favourite.url);
         if (!usable) return 'favourite has no usable url';
       }
     } catch {
