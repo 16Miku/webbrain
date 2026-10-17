@@ -5,18 +5,20 @@
  * (`wbNewtabHandoff:<tabId>`, so two submissions can never overwrite each other)
  * and opens this panel from its own click handler. The panel claims the record
  * only if it is fresh and addressed to the tab it is showing:
- *   - Ask: the task is filled in and sent (Ask is read-only). If a run is already
- *     active in that tab it is queued behind it, exactly like pressing Send then.
- *     If the panel declines to send (plan review pending, state refresh, ...) the
- *     text stays in the composer for the user to send.
- *     If the composer already holds a different draft (the user's own, or an
- *     unconfirmed Act task) nothing is overwritten, the mode is left as it is, and
- *     nothing is sent: the task is added below the draft for the user to review
- *     and send.
- *   - Act: the task is filled in and the panel switches to Act, but nothing is
- *     sent. Act always needs the user's own Enter in the panel.
+ *   - Ask and Act: the task is filled in and sent straight away, pinned to the mode the
+ *     user chose in the new tab (`__mode`), so automatic mode selection cannot change it.
+ *     Act therefore starts acting without a further Enter (the new tab warns about this).
+ *     Act is first checked for eligibility (`ensureActMode`: selected-text scope, Ask-only
+ *     in-browser providers); if it is blocked the text is left in the composer, unsent, and
+ *     the mode is untouched. Plan before Act still applies when it is enabled.
+ *     If a run is already active in that tab the task is queued behind it, with its pinned
+ *     mode, exactly like pressing Send then. If the panel declines to send (plan review
+ *     pending, state refresh, ...) the text stays in the composer for the user to send.
+ *     If the composer already holds a different draft (the user's own, or an unsent task)
+ *     nothing is overwritten, the mode is left as it is, and nothing is sent: the task is
+ *     added below the draft for the user to review and send.
  *
- * A second hand-off is held back while an earlier Ask is still being sent (its text
+ * A second hand-off is held back while an earlier task is still being sent (its text
  * is still sitting in the composer): filling the composer again would make that
  * send see a changed draft and drop it.
  *

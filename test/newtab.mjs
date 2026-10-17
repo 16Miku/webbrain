@@ -2695,3 +2695,9 @@ test('round-83: ensureActMode can answer eligibility without switching the panel
   // already in Act: the eligibility query still looks at the provider (WebGPU is Ask-only)
   assert.match(chrome, /if \(agentMode === 'act' && switchMode\) return true;\s*if \(await inBrowserProviderBlocksMode\(\)\) return false;/);
 });
+
+test('round-85: the handoff module contract says Act is sent immediately', () => {
+  const src = readFileSync(path.join(root, 'src', 'chrome', 'src/ui/newtab-handoff.js'), 'utf8');
+  assert.doesNotMatch(src, /Act always needs the user's own Enter/);
+  assert.match(src, /Ask and Act: the task is filled in and sent straight away/);
+});
