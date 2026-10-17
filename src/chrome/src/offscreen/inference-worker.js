@@ -257,6 +257,9 @@ export async function refreshBonsai2DecoderGraph(modelId, {
   }
   const fetcher = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : nativeFetch;
   if (!fetcher) return 'unavailable';
+  // Known offline (Apocalypse Mode): load the cached graph now and retry on a
+  // later load instead of waiting for the network deadline.
+  if (globalThis.navigator?.onLine === false) return 'unavailable';
   checkedBonsai2DecoderGraphs.add(modelId);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

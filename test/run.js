@@ -67610,6 +67610,23 @@ test('Bonsai 2 Vision worker replaces only a stale cached decoder graph', async 
     assert.ok(Date.now() - started < 2000, 'a stalled refresh must not hold up model loading');
     assert.equal(entries.get(otherUrl), 'scan graph');
 
+    const knownOffline = await fresh('known-offline');
+    const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    let fetchCalls = 0;
+    globalThis.fetch = async () => { fetchCalls++; return new Response('chunked graph'); };
+    try {
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: false } });
+      assert.equal(await knownOffline.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'unavailable');
+      assert.equal(fetchCalls, 0, 'a known-offline worker must not wait on the network');
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true } });
+      assert.equal(await knownOffline.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'updated',
+        'a refresh skipped while offline is retried once the worker is online');
+    } finally {
+      if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor);
+      else delete globalThis.navigator;
+    }
+    entries.set(otherUrl, 'scan graph');
+
     const current = await fresh('current');
     entries.set(otherUrl, 'chunked graph');
     assert.equal(await current.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'current');

@@ -75,11 +75,13 @@ def _require(condition, message):
         raise ValueError(f"Prefill evidence rejected: {message}")
 
 
-def verify_prefill_evidence(reports, graph_sha256):
+def verify_prefill_evidence(reports, graph_sha256, chunk_tokens):
     """Check attached reports and return the verified ones by kind.
 
     Raises on an unknown report kind or any failed comparison, so a bundle can
-    never be sealed with evidence that contradicts its model card.
+    never be sealed with evidence that contradicts its model card. CPU parity
+    must cover the rewrite's own chunk size: a prompt ending exactly on a chunk
+    boundary and one spanning several chunks (which exercises the prefix scan).
     """
     verified = {}
     for report in reports:
@@ -89,8 +91,13 @@ def verify_prefill_evidence(reports, graph_sha256):
             rows = list(report.get("fresh_prefill") or [])
             continuation = report.get("continuation_from_cache")
             _require(rows and continuation, "CPU report needs fresh prefills and a cached continuation")
-            _require(any(row["tokens"] % 128 == 0 for row in rows) and any(row["tokens"] > 128 for row in rows),
-                     "CPU report must cover a chunk boundary and a multi-chunk prompt")
+            if "chunk_tokens" in report:
+                _require(int(report["chunk_tokens"]) == chunk_tokens, "CPU report used a different chunk size")
+            _require(any(row["tokens"] % chunk_tokens == 0 for row in rows)
+                     and any(row["tokens"] > chunk_tokens for row in rows),
+                     f"CPU report must cover a {chunk_tokens}-token chunk boundary and a multi-chunk prompt")
+            _require(int(continuation.get("new_tokens", 0)) > chunk_tokens,
+                     f"CPU continuation must span more than one {chunk_tokens}-token chunk")
             for row in rows + [continuation]:
                 _require(row.get("top1_equal") is True, f"top-1 differs ({row})")
                 _require(row.get("finite") is True, f"non-finite outputs ({row})")
@@ -122,8 +129,17 @@ def verify_prefill_evidence(reports, graph_sha256):
     return verified
 
 
+def rewritten_chunk_tokens(graph_path):
+    """Chunk size of a graph produced by this tool (the cumsum mask is CxC)."""
+    model = onnx.load(graph_path, load_external_data=False)
+    for tensor in model.graph.initializer:
+        if tensor.name == "/webbrain/chunked_gdn/triu1":
+            return int(tensor.dims[0])
+    raise ValueError(f"{graph_path} was not rewritten by chunk_gdn_prefill.py")
+
+
 def model_card_section(reports, graph_sha256, chunk_tokens=128):
-    verified = verify_prefill_evidence(reports, graph_sha256)
+    verified = verify_prefill_evidence(reports, graph_sha256, chunk_tokens)
     text = MODEL_CARD_INTRO.format(chunk=chunk_tokens) + "\n"
     if CPU_EVIDENCE_KIND in verified:
         text += ("`chunked-prefill-validation.json` records CPU comparisons with the original\n"

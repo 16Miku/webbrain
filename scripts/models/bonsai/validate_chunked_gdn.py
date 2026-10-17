@@ -27,7 +27,7 @@ import numpy as np
 import onnxruntime as ort
 from tokenizers import Tokenizer
 
-from chunk_gdn_prefill import CPU_EVIDENCE_KIND
+from chunk_gdn_prefill import CPU_EVIDENCE_KIND, rewritten_chunk_tokens
 
 TEXT = (
     "The nested set model is a technique for representing nested set collections in relational databases. "
@@ -119,13 +119,22 @@ def main():
     p.add_argument("--rewritten", type=Path, required=True)
     p.add_argument("--embed", type=Path, required=True)
     p.add_argument("--tokenizer", type=Path, required=True)
-    # Cover one token, both sides of the 128-token chunk boundary and a multi-chunk prompt.
-    p.add_argument("--lengths", default="2,127,128,129,700")
+    p.add_argument("--lengths", help="comma-separated prompt lengths; default covers one token, both sides "
+                                     "of the graph's chunk boundary and a multi-chunk prompt")
     p.add_argument("--output", type=Path)
     args = p.parse_args()
 
+    chunk = rewritten_chunk_tokens(args.rewritten)
+    lengths = ([int(x) for x in args.lengths.split(",")] if args.lengths
+               else [2, chunk - 1, chunk, chunk + 1, 5 * chunk + 60])
+    # The cached prefix and the continuation both cross chunk boundaries.
+    cached, continued = chunk + 22, 2 * chunk + 44
+    needed = max(max(lengths) + 1, cached + continued)
     tok = Tokenizer.from_file(str(args.tokenizer))
-    ids = tok.encode(TEXT * 8).ids
+    repeats = 1
+    while len(ids := tok.encode(TEXT * repeats).ids) < needed:
+        repeats *= 2
+    ids = ids[:needed]
     embed = session(args.embed)
     emb_in = embed.get_inputs()[0].name
     all_embeds = embed.run(None, {emb_in: np.array([ids], np.int64)})[0]
@@ -143,7 +152,8 @@ def main():
         "continuation_from_cache": None,
     }
 
-    for S in [int(x) for x in args.lengths.split(",")]:
+    report["chunk_tokens"] = chunk
+    for S in lengths:
         e = all_embeds[:, :S]
         a, ta = run(orig, e, empty_cache(orig), 0)
         b, tb = run(new, e, empty_cache(new), 0)
@@ -160,15 +170,15 @@ def main():
         print(json.dumps({k: r[k] for k in ("tokens", "last_logits_max_abs_diff", "last_logits_scale", "top1_equal", "kl_original_to_rewritten",
                                               "worst_cache_rel_err", "worst_cache_name", "decode_step_top1_equal", "cpu_seconds_original", "cpu_seconds_rewritten")}))
 
-    # continuation: 150 tokens of cache from the original graph, then 300 more tokens through both
-    head = all_embeds[:, :150]
+    # continuation: a cache from the original graph, then more tokens through both
+    head = all_embeds[:, :cached]
     a0, _ = run(orig, head, empty_cache(orig), 0)
     cache = to_cache(a0)
-    tail = all_embeds[:, 150:450]
-    a, _ = run(orig, tail, cache, 150)
-    b, _ = run(new, tail, cache, 150)
+    tail = all_embeds[:, cached:cached + continued]
+    a, _ = run(orig, tail, cache, cached)
+    b, _ = run(new, tail, cache, cached)
     r = compare(a, b)
-    report["continuation_from_cache"] = {"cached_tokens": 150, "new_tokens": 300, **r}
+    report["continuation_from_cache"] = {"cached_tokens": cached, "new_tokens": continued, **r}
     print(json.dumps({"continuation": {k: r[k] for k in ("last_logits_max_abs_diff", "top1_equal", "kl_original_to_rewritten", "worst_cache_rel_err")}}))
     if args.output:
         args.output.write_text(json.dumps(report, indent=2))
