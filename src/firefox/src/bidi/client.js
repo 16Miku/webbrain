@@ -6,6 +6,30 @@ import { beforePageAgentDispatch, validateNativePageDispatch } from '../agent/pa
 const REQUEST_NOT_SENT = new WeakSet();
 const notSent = error => { if (error && typeof error === 'object') REQUEST_NOT_SENT.add(error); return error; };
 export const isBidiRequestNotSentError = error => !!error && typeof error === 'object' && REQUEST_NOT_SENT.has(error);
+// What a failed settled readback of trusted typing says about the field.
+// The companion names the reader that compared the value. A native <input>
+// or <textarea>'s exact value, or an editor's own model (DraftJS,
+// ProseMirror), read as another value is known: the field holds another
+// value, and a batched submit must not run on it (browser-batch.js
+// textWriteRefuted). An editor's rendered text (innerText), or a field that
+// could not be read, leaves the agent's policy to decide whether that is a
+// failure (Strict checks) or a noted, unverified success. An older companion
+// names no reader: a native field is then known by its exact value.
+function trustedTypingReadback(readback, fieldMeta) {
+  if (!readback || typeof readback !== 'object') {
+    const nativeField = !!fieldMeta && fieldMeta.contentEditable !== true
+      && ['input', 'textarea'].includes(String(fieldMeta.tag || '').toLowerCase());
+    return nativeField
+      ? { unverified: { reason: 'readback_mismatch', reader: 'exact' }, readbackExact: true }
+      : { unverified: { reason: 'readback_mismatch', reader: 'unknown' } };
+  }
+  const reader = readback.compared === true ? readback.reader : null;
+  if (reader === 'exact' || reader === 'semantic') return { unverified: { reason: 'readback_mismatch', reader }, readbackExact: true };
+  if (reader === 'rendered') return { unverified: { reason: 'readback_mismatch', reader }, readbackExact: false };
+  if (readback.compared === true) return { unverified: { reason: 'readback_unproven', reader: 'unknown' } };
+  return { unverified: { reason: readback.reason === 'element_replaced' ? 'element_replaced' : 'readback_unavailable', reader: 'none' },
+    readbackExact: false };
+}
 export class FirefoxBidiClient {
   constructor(api) { this.apiOverride = api; this.pending = new Map(); this.runs = new Map(); this.captures = new Map(); this.sequence = 0; this.connectionEpoch = 0; }
   get api() { return this.apiOverride || globalThis.browser; }
@@ -210,21 +234,10 @@ export class FirefoxBidiClient {
         deadlineAt: message.actionDeadlineAt || 0,
       }, { onDispatch });
       // The companion answers verified:false only from its settled readback
-      // after trusted typing went out. A native <input> or <textarea> it
-      // reads back by its exact value, so there a mismatch is known: the
-      // field holds another value, and a batched submit must not run on it
-      // (browser-batch.js textWriteRefuted). A contenteditable editor it
-      // reads through the editor's model or, failing that, its rendered text
-      // (innerText), so there the agent's policy decides whether that is a
-      // failure (Strict checks) or a noted, unverified success.
-      const meta = prepared.fieldMeta || null;
-      const exactValue = !!meta && meta.contentEditable !== true
-        && ['input', 'textarea'].includes(String(meta.tag || '').toLowerCase());
+      // after trusted typing went out (trustedTypingReadback).
       const unverified = (action === 'type' || action === 'field') && performed?.success === false
         && performed.dispatched === true && performed.verified === false && !performed.unverified
-        ? (exactValue
-          ? { unverified: { reason: 'readback_mismatch', reader: 'exact' }, readbackExact: true }
-          : { unverified: { reason: 'readback_mismatch', reader: 'unknown' } })
+        ? trustedTypingReadback(performed.readback, prepared.fieldMeta)
         : {};
       return { ...metadata, ...performed, ...unverified, ...(prepared.rect ? { rect: prepared.rect } : {}), ...(prepared._filePickerGuardId ? { _filePickerGuardId: prepared._filePickerGuardId } : {}) };
     } catch (error) {

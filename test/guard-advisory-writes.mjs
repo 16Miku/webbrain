@@ -862,6 +862,45 @@ test('firefox: a trusted BiDi mismatch in a native input or textarea is known an
   }
 });
 
+test('firefox: the companion names the reader of a trusted BiDi readback; an editor model read as another value ends the batch', async () => {
+  // An exact or semantic (DraftJS, ProseMirror) reading of another value is
+  // known; a rendered one, or a field that could not be read, is not.
+  const { Agent, batch } = builds.find(item => item.build === 'firefox');
+  const tab = 79;
+  const editor = { tag: 'div', type: 'div', contentEditable: true, name: 'post' };
+  const input = { tag: 'input', type: 'text', contentEditable: false, name: 'title' };
+  for (const [label, fieldMeta, readback, unverified, readbackExact, known, note] of [
+    ['semantic', editor, { compared: true, reader: 'semantic' }, { reason: 'readback_mismatch', reader: 'semantic' }, true, true,
+      /reads back a different value/],
+    ['exact', input, { compared: true, reader: 'exact' }, { reason: 'readback_mismatch', reader: 'exact' }, true, true,
+      /reads back a different value/],
+    ['rendered', editor, { compared: true, reader: 'rendered' }, { reason: 'readback_mismatch', reader: 'rendered' }, false, false,
+      /only reads back its rendered layout/],
+    ['replaced', editor, { compared: false, reason: 'element_replaced' }, { reason: 'element_replaced', reader: 'none' }, false, false,
+      /re-rendered before it could be read back/],
+    ['unreadable', input, { compared: false, reason: 'readback_unavailable' }, { reason: 'readback_unavailable', reader: 'none' }, false, false,
+      /editor could not be read back\./],
+    ['no reader', input, { compared: true }, { reason: 'readback_unproven', reader: 'unknown' }, undefined, false,
+      /could not be read back exactly/],
+  ]) {
+    const client = new FirefoxBidiClient({ tabs: { sendMessage: async () => ({ bidiPrepared: true, fieldMeta, url: scope.pageUrl }) } });
+    client.runs.set(tab, { runId: 'run-1', bound: true });
+    client.bindRun = async () => {};
+    client.perform = async () => ({ success: false, dispatched: true, verified: false, submitted: false, outcomeUnknown: true,
+      retryable: false, readback, error: 'Trusted typing did not match the requested value; inspect before another write.' });
+    const result = await client.sendContent(tab, { target: 'content', action: 'set_field', params: { ...args } });
+    assert.deepEqual(result.unverified, unverified, label);
+    assert.equal(result.readbackExact, readbackExact, label);
+    const agent = setup(Agent);
+    const advisory = await agent._finalizeTextMutationResult(tabId, 'set_field', args, result);
+    assert.equal(advisory.success, true, label);
+    assert.equal(advisory.unverifiedWrite, true, label);
+    assert.match(advisoryOf(advisory, 'text-write-readback-unverified')?.note || '', note, label);
+    assert.equal(batch.textWriteRefuted(advisory), known, label);
+    assert.equal(batch.browserBatchResultStatus({ role: 'tool', content: JSON.stringify(advisory) }).failed, known, label);
+  }
+});
+
 // The real content-script readback handlers, run against a minimal DOM.
 function functionSource(source, name) {
   let start = source.indexOf(`function ${name}(`);
