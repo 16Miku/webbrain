@@ -3190,9 +3190,12 @@ export class Agent extends LoopDetector {
     // activation may use an existing binding. Anything else must split into
     // a plain write (verified on its own) followed by a separate click.
     // github-commit-split-write-required (quality): when the action does look
-    // like the commit and the verified file and message binding a commit click
-    // would need is in place, Strict checks off lets it run with a note; the
-    // committed raw file is then checked against that binding after the commit.
+    // like the commit and the verified file binding a commit click would need
+    // is in place, Strict checks off lets it run with a note; the committed
+    // raw file is then checked against that binding after the commit. A
+    // requested commit message is proven only before the commit
+    // (commitMessageVerified), and this action could rewrite it while it
+    // commits, so while the request names one the action keeps refusing.
     // An inconclusive detection is the cannot-decide case and keeps refusing,
     // and so does a missing binding (github-commit-evidence-binding).
     if (name !== 'click' && name !== 'click_ax' && name !== 'iframe_click') {
@@ -3200,11 +3203,13 @@ export class Agent extends LoopDetector {
         const pageUrl = await this._currentUrl(tabId);
         await this._refreshGithubTextReplacementProofs(tabId, pageUrl);
         const binding = this._workflowSubmitBindingForAttempt(tabId, pageUrl, {}, detectedSubmit);
-        if (binding?.metadataRequirementsIncomplete !== true && binding?.githubFileCommit
+        const messageRequested = (Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [])
+          .some(requirement => requirement?.field === 'commit_message');
+        if (binding?.metadataRequirementsIncomplete !== true && binding?.githubFileCommit && !messageRequested
             && this._guardAdvisesFor(advisories, 'github-commit-split-write-required',
               name === 'execute_js'
-                ? 'This script may change the editor or commit message while it commits, so the earlier verified file and message proofs do not cover it. It ran anyway; read the committed file and commit message back before reporting success.'
-                : 'This action can change field values while it submits the commit, so the earlier verified file and message proofs do not cover it. It ran anyway; read the committed file and commit message back before reporting success.')) {
+                ? 'This script may change the editor while it commits, so the earlier verified file proof does not cover it. It ran anyway; the committed file is checked against that proof after the commit.'
+                : 'This action can change field values while it submits the commit, so the earlier verified file proof does not cover it. It ran anyway; the committed file is checked against that proof after the commit.')) {
           return null;
         }
       }

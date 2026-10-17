@@ -42,6 +42,12 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
     an exact reader reads back as a different value is reported the same
     way, but it ends a batch: the next action is planned once the model has
     seen it.
+  - A GitHub commit sent by an action that can also rewrite the fields
+    (`set_field` with a submit, Enter, `execute_js`) goes through with a note
+    when the verified file binding covers it: the committed file is checked
+    after the commit. While the request names a commit message, which is
+    proven only before the commit, it is still refused, and the commit takes
+    a separate click.
   - A quality guard whose `onCannotDecide` is `ask` asks the user when it
     cannot verify a consequential step, such as a commit or a post. Where
     that guard has no card, it refuses.

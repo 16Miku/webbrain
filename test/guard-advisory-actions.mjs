@@ -585,7 +585,7 @@ for (const build of ['chrome', 'firefox']) {
   }
 
   // ── github-commit-split-write-required ──────────────────────────────────
-  function githubCommitAgent(strict, { bound = true } = {}) {
+  function githubCommitAgent(strict, { bound = true, message = false } = {}) {
     const agent = new Agent({ getVisionProvider: async () => null });
     agent.strictGuards = strict;
     const tab = nextTab++;
@@ -597,7 +597,9 @@ for (const build of ['chrome', 'firefox']) {
     agent._refreshGithubTextReplacementProofs = async () => {};
     // The verified file and commit-message binding a commit click would use.
     agent._workflowSubmitBindingForAttempt = () => (bound
-      ? { githubFileCommit: { repository: 'example/repo', branch: 'main', path: 'docs/plan.md' } }
+      ? { githubFileCommit: { repository: 'example/repo', branch: 'main', path: 'docs/plan.md',
+        ...(message ? { commitMessageVerified: true } : {}) },
+      metadataRequirements: message ? [{ field: 'commit_message', value: 'Fix typo' }] : [] }
       : { metadataRequirementsIncomplete: true });
     return { agent, tab };
   }
@@ -625,6 +627,25 @@ for (const build of ['chrome', 'firefox']) {
         { ref_id: 'ref_message', text: 'Fix typo', submit: true }, { isSubmit: true, host: 'github.com' }, null, advisories);
       assert.equal(block.splitWriteRequired, true);
       assert.deepEqual(advisories, []);
+    });
+
+    test(`${build}: github-commit-split-write-required ${mode} mode keeps a commit-with-write refused while the request names a commit message`, async () => {
+      // The requested message is proven only before the commit; an action
+      // that can rewrite it while it commits cannot use that proof.
+      const { agent, tab } = githubCommitAgent(strict, { message: true });
+      for (const [name, args, detected] of [
+        ['set_field', { ref_id: 'ref_message', text: 'Fix typo', submit: true }, { isSubmit: true, host: 'github.com' }],
+        ['press_keys', { key: 'Enter' }, { isSubmit: true, host: 'github.com' }],
+      ]) {
+        const advisories = [];
+        const block = await agent._workflowPreSubmitDispatchBlock(tab, name, args, detected, null, advisories);
+        assert.equal(block?.splitWriteRequired, true, name);
+        assert.deepEqual(advisories, [], name);
+      }
+      // A plain click on the commit control still uses the binding.
+      const advisories = [];
+      assert.equal(await agent._workflowPreSubmitDispatchBlock(tab, 'click_ax', { ref_id: 'ref_commit' },
+        { isSubmit: true, host: 'github.com' }, null, advisories), null);
     });
 
     test(`${build}: github-commit-split-write-required ${mode} mode keeps an inconclusive script refused`, async () => {
