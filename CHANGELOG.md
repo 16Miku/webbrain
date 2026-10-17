@@ -6,6 +6,9 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+### Added
+- New tab page: WebBrain now provides a new tab with a clock, quick links, bundled backgrounds and a WebBrain box (Ask, Act or Search). Ask runs in the side panel straight away; Act opens the panel with your task filled in and waits for you to press Enter. Based on Mue (BSD-3-Clause), with all of Mue's network calls and telemetry removed. Adds the `search` permission. See `docs/newtab.md`.
+
 ### Fixed
 - Stopping a task while WebBrain was waiting for page navigation to settle now stops it immediately. The pending settle step previously kept waiting and could let the run continue after you chose Stop.
 - Mastodon: replying to toots in a narrow window no longer posts the same reply several times and stops before the next toot. There, a toot's Reply button opens the composer at /publish, and after posting Mastodon goes back to the previous column by itself. WebBrain took both page changes for something you did, so it reported each click's outcome as unknown; the agent then concluded its reply had not been posted, wrote it again, and never reached the next toot. In Chrome, a page's own Back is now told apart from your browser's Back button: the page a click opens counts as that click's verified effect, and a click after which the page goes back by itself counts as delivered, to be checked on the page. The Mastodon notes now cover replies (start with the prefilled @mentions once, check the reply under the toot before any retry) and stay active on Favourites, Bookmarks and the other columns. Firefox still treats a page's own Back as yours until its Back button reporting is verified.

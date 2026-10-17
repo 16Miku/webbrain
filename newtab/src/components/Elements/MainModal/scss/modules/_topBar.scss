@@ -1,0 +1,147 @@
+@use 'scss/variables' as *;
+
+.modalTopBar {
+  position: relative;
+  flex-shrink: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem 1.5rem;
+  // width: 100%;
+
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+
+  @include themed {
+    background-color: t($modal-background);
+    border-bottom: 1px solid t($modal-sidebarActive);
+  }
+
+  .topBarLeft {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 1rem;
+
+    .navigationButtons {
+      display: flex;
+      gap: 0.25rem;
+
+      .navButton {
+        display: grid;
+        place-items: center;
+        padding: 0.5rem;
+        border-radius: 8px;
+        cursor: pointer;
+        border: none;
+        background: none;
+        transition: 0.3s;
+
+        @include themed {
+          color: t($color);
+        }
+
+        svg {
+          font-size: 1.2rem;
+        }
+
+        &:hover:not(:disabled) {
+          @include themed {
+            background: t($modal-sidebarActive);
+          }
+        }
+
+        &:disabled {
+          opacity: 0.3;
+          cursor: not-allowed;
+        }
+      }
+    }
+
+    .topBarLogo {
+      height: 32px;
+      width: auto;
+    }
+
+    .breadcrumbs {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      font-size: 0.95rem;
+      font-weight: 500;
+
+      .breadcrumb-segment {
+        display: flex;
+        align-items: center;
+        // gap: 0.5rem;
+      }
+
+      .breadcrumb-item {
+        @include themed {
+          color: t($subColor);
+        }
+        white-space: nowrap;
+        transition: opacity 0.2s;
+      }
+
+      .breadcrumb-clickable {
+        cursor: pointer;
+
+        &:hover {
+          opacity: 0.7;
+          text-decoration: underline;
+        }
+      }
+
+      .breadcrumb-separator {
+        @include themed {
+          color: t($subColor);
+        }
+        opacity: 0.5;
+        font-size: 1.2rem;
+        margin: 0 0.25rem;
+      }
+
+      .breadcrumb-current {
+        @include themed {
+          color: t($color);
+        }
+        font-weight: 600;
+      }
+    }
+  }
+
+  .topBarRight {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-shrink: 0;
+
+    .topBarNavigation {
+      display: flex;
+      flex-flow: row;
+      gap: 0.5rem;
+    }
+
+    .closeModal {
+      display: grid;
+      place-items: center;
+      padding: 0.4em;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: 0.5s;
+      flex-shrink: 0;
+
+      svg {
+        font-size: 1.5em;
+      }
+
+      &:hover {
+        @include themed {
+          background: t($modal-sidebarActive);
+        }
+      }
+    }
+  }
+}

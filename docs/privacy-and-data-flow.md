@@ -439,6 +439,16 @@ new target is a password field), but it can never downgrade that protection.
 If deterministic replay cannot safely continue, a fallback Agent receives only
 saved metadata and must ask the user again for any still-needed value.
 
+### New Tab Page
+
+The new tab page (`docs/newtab.md`) makes no network requests of its own: backgrounds
+are bundled, there are no fonts, favicons, weather, quotes or analytics requests, and
+no error reporting. Its settings, quick links and uploaded backgrounds stay in the
+browser under a separate `wbnt:` prefix. Text typed into its box is held briefly in
+extension storage to hand it to the side panel and removed once claimed (or after
+30 seconds). **Search** mode uses the browser's own default search engine, so a
+query typed there goes to that engine as it would from the address bar.
+
 ### Settings
 
 Provider configs (API keys, base URLs, model selections) are stored in `chrome.storage.local`. API keys are in plaintext — this is a personal-computer tool and the storage is sandboxed by the browser. The extension has no mechanism to exfiltrate these keys.

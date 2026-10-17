@@ -1,0 +1,18 @@
+@use 'scss/variables' as *;
+
+.lightBoxModal {
+  margin: auto;
+  max-width: 60%;
+  background: none !important;
+  box-shadow: none !important;
+
+  img {
+    height: auto;
+    width: 100%;
+  }
+
+  .closeModal {
+    color: #fff;
+    text-shadow: 0 0 20px rgb(0 0 0 / 30%);
+  }
+}

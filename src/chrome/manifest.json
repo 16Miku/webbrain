@@ -24,8 +24,12 @@
     "privateNetworkAccess",
     "tabCapture",
     "clipboardWrite",
-    "clipboardRead"
+    "clipboardRead",
+    "search"
   ],
+  "chrome_url_overrides": {
+    "newtab": "newtab/index.html"
+  },
   "host_permissions": [
     "<all_urls>",
     "http://localhost/*",

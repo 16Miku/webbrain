@@ -26,6 +26,7 @@ import {
 } from './ui-scale.js';
 import { buildRecommendedActions, shouldShowRecommendedActions } from './recommended-actions.js';
 import { createContextMenuPromptHandler } from './context-menu-prompts.js';
+import { createNewtabHandoff } from './newtab-handoff.js';
 import {
   formatSelectionPromptForDisplay,
   normalizeSelectionAction,
@@ -1587,6 +1588,20 @@ const {
     if (tabId == null || sameTabId(currentTabId, tabId)) renderQueuedComposerMessages();
   },
 });
+// A task typed into the WebBrain new tab arrives through extension storage:
+// Ask runs immediately, Act is only pre-filled for the user to confirm.
+const newtabHandoff = createNewtabHandoff({
+  storage: chrome.storage.local,
+  onChanged: chrome.storage.onChanged,
+  getCurrentTabId: () => currentTabId,
+  getIsProcessing: () => isProcessing || isConversationClearInProgress(),
+  getIsDocumentVisible: () => document.visibilityState !== 'hidden',
+  setMode,
+  getInputEl: () => inputEl,
+  autoResizeInput,
+  sendMessage,
+});
+newtabHandoff.watch();
 // Completion notification + success celebration. Default on; togglable via Settings.
 let notifySoundEnabled = true;
 let completionConfettiEnabled = true;
@@ -5145,6 +5160,7 @@ async function init() {
   refreshRecommendedActions();
   await consumePendingContextMenuPrompt();
   drainQueuedContextMenuPrompts();
+  await newtabHandoff.consume();
 
   // Reflect initial verbose state in the button.
   if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);

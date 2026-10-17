@@ -1,0 +1,729 @@
+{
+  "tabname": "علامة تبويب جديدة",
+  "widgets": {
+    "greeting": {
+      "morning": "صباح الخير",
+      "afternoon": "مساء الخير",
+      "evening": "ليلة سعيدة",
+      "christmas": "عيد ميلاد مجيد",
+      "newyear": "سنة جديدة سعيدة",
+      "halloween": "هالوين سعيد",
+      "birthday": "عيد ميلاد سعيد"
+    },
+    "background": {
+      "credit": "الصورة بواسطة",
+      "unsplash": "على Unsplash",
+      "information": "معلومات",
+      "download": "تنزيل",
+      "downloads": "التنزيلات",
+      "views": "المشاهدات",
+      "likes": "الإعجابات",
+      "location": "الموقع",
+      "camera": "الكاميرا",
+      "resolution": "الدقة",
+      "source": "المصدر",
+      "category": "الفئة",
+      "exclude": "عدم العرض مرة أخرى",
+      "exclude_confirm": "هل أنت متأكد من أنك لا تريد رؤية هذه الصورة مجددًا؟\nملاحظة: إذا لم تعجبك صور فئة \"{category}\"، يمكنك إلغاء تحديد الفئة في إعدادات مصدر الخلفية.",
+      "confirm": "تأكيد"
+    },
+    "search": "بحث",
+    "quicklinks": {
+      "new": "رابط جديد",
+      "edit": "تعديل الرابط",
+      "name": "الاسم",
+      "url": "الرابط",
+      "icon": "الأيقونة (اختياري)",
+      "add": "إضافة",
+      "name_error": "يجب إدخال الاسم",
+      "url_error": "يجب إدخال الرابط"
+    },
+    "date": {
+      "week": "الأسبوع"
+    },
+    "weather": {
+      "not_found": "غير موجود",
+      "meters": "{amount} متر",
+      "extra_information": "معلومات إضافية",
+      "feels_like": "الإحساس بدرجة حرارة {amount}"
+    },
+    "quote": {
+      "link_tooltip": "فتح على ويكيبيديا",
+      "share": "مشاركة",
+      "copy": "نسخ",
+      "favourite": "إضافة إلى المفضلة",
+      "unfavourite": "إزالة من المفضلة"
+    },
+    "navbar": {
+      "tooltips": {
+        "refresh": "تحديث"
+      },
+      "notes": {
+        "title": "الملاحظات",
+        "placeholder": "اكتب هنا"
+      },
+      "todo": {
+        "title": "المهام",
+        "pin": "تثبيت",
+        "add": "إضافة",
+        "no_todos": "لا توجد مهام"
+      },
+      "apps": {
+        "title": "التطبيقات",
+        "no_apps": "لم يتم العثور على روابط تطبيقات"
+      }
+    }
+  },
+  "modals": {
+    "main": {
+      "title": "الخيارات",
+      "loading": "جارٍ التحميل...",
+      "file_upload_error": "الملف يتجاوز 2 ميغابايت",
+      "navbar": {
+        "settings": "الإعدادات",
+        "library": "الإضافات",
+        "discover": "السوق"
+      },
+      "error_boundary": {
+        "title": "خطأ",
+        "message": "فشل تحميل هذا المكون من Mue",
+        "report_error": "إرسال تقرير الخطأ",
+        "sent": "تم الإرسال!",
+        "refresh": "تحديث"
+      },
+      "settings": {
+        "enabled": "مفعّل",
+        "open_knowledgebase": "فتح قاعدة المعرفة",
+        "additional_settings": "إعدادات إضافية",
+        "reminder": {
+          "title": "تنبيه",
+          "message": "لتطبيق جميع التغييرات، يجب تحديث الصفحة."
+        },
+        "sections": {
+          "header": {
+            "more_info": "معلومات إضافية",
+            "report_issue": "الإبلاغ عن مشكلة",
+            "enabled": "اختر ما إذا كنت تريد إظهار هذا العنصر",
+            "size": "شريط التمرير للتحكم في حجم العنصر"
+          },
+          "time": {
+            "title": "الوقت",
+            "format": "التنسيق",
+            "type": "النوع",
+            "type_subtitle": "اختر عرض الوقت بتنسيق رقمي، تناظري، أو نسبة اكتمال اليوم",
+            "digital": {
+              "title": "رقمي",
+              "subtitle": "تغيير مظهر الساعة الرقمية",
+              "seconds": "الثواني",
+              "twentyfourhour": "24 ساعة",
+              "twelvehour": "12 ساعة",
+              "zero": "إضافة صفر"
+            },
+            "analogue": {
+              "title": "تناظري",
+              "subtitle": "تغيير مظهر الساعة التناظرية",
+              "second_hand": "عقرب الثواني",
+              "minute_hand": "عقرب الدقائق",
+              "hour_hand": "عقرب الساعات",
+              "hour_marks": "علامات الساعات",
+              "minute_marks": "علامات الدقائق",
+              "round_clock": "خلفية دائرية"
+            },
+            "percentage_complete": "نسبة الاكتمال",
+            "vertical_clock": {
+              "title": "ساعة عمودية",
+              "change_hour_colour": "تغيير لون نص الساعات",
+              "change_minute_colour": "تغيير لون نص الدقائق",
+              "change_second_colour": "تغيير لون نص الثواني"
+            }
+          },
+          "date": {
+            "title": "التاريخ",
+            "week_number": "رقم الأسبوع",
+            "day_of_week": "يوم الأسبوع",
+            "datenth": "ترتيب التاريخ",
+            "type": {
+              "short": "قصير",
+              "long": "طويل",
+              "subtitle": "اختر عرض التاريخ بصيغة طويلة أو قصيرة"
+            },
+            "type_settings": "إعدادات العرض وتنسيق نوع التاريخ المحدد",
+            "short_date": "تاريخ قصير",
+            "short_format": "تنسيق قصير",
+            "long_format": "تنسيق طويل",
+            "short_separator": {
+              "title": "فاصل قصير",
+              "dots": "نقاط",
+              "dash": "شرطة",
+              "gaps": "فراغات",
+              "slashes": "شرطات مائلة"
+            }
+          },
+          "quote": {
+            "title": "الاقتباس",
+            "additional": "إعدادات أخرى لتخصيص نمط عنصر الاقتباس",
+            "author_link": "رابط المؤلف",
+            "author_details": "تفاصيل المؤلف",
+            "custom": "اقتباس مخصص",
+            "custom_subtitle": "قم بتعيين اقتباساتك المخصصة",
+            "no_quotes": "لا توجد اقتباسات",
+            "author": "المؤلف",
+            "custom_buttons": "الأزرار",
+            "custom_author": "مؤلف مخصص",
+            "author_img": "إظهار صورة المؤلف",
+            "add": "إضافة اقتباس",
+            "source_subtitle": "اختر مصدر الاقتباسات",
+            "buttons": {
+              "title": "الأزرار",
+              "subtitle": "اختر الأزرار التي ستظهر على الاقتباس",
+              "copy": "نسخ",
+              "tweet": "تغريد",
+              "favourite": "إضافة إلى المفضلة"
+            }
+          },
+          "greeting": {
+            "title": "التحية",
+            "events": "الأحداث",
+            "events_description": "التحكم في أحداث Mue مثل أعياد الميلاد.",
+            "enable_events": "إظهار رسائل في الأيام الخاصة",
+            "default": "رسالة التحية الافتراضية",
+            "name": "الاسم للتحية",
+            "birthday": "عيد الميلاد",
+            "birthday_subtitle": "إظهار رسالة عيد ميلاد سعيد في عيد ميلادك",
+            "birthday_age": "عمر عيد الميلاد",
+            "birthday_date": "تاريخ عيد الميلاد",
+            "additional": "إعدادات عرض التحية",
+            "custom": "أحداث مخصصة",
+            "event_name": "اسم الحدث",
+            "day": "اليوم",
+            "month": "الشهر",
+            "no_events": "لا توجد أحداث",
+            "no_events_description": "أضف بعض الأحداث",
+            "add_event": "إضافة حدث"
+          },
+          "background": {
+            "title": "الخلفية",
+            "transition": "انتقال التدرج",
+            "photo_information": "إظهار معلومات الصورة",
+            "show_map": "إظهار خريطة الموقع في معلومات الصورة إذا كانت متاحة",
+            "categories": "الفئات",
+            "buttons": {
+              "title": "الأزرار",
+              "view": "التكبير",
+              "favourite": "إضافة إلى المفضلة",
+              "download": "تنزيل"
+            },
+            "effects": {
+              "title": "التأثيرات",
+              "subtitle": "إضافة تأثيرات لصور الخلفية",
+              "blur": "ضبط التمويه",
+              "brightness": "ضبط السطوع",
+              "filters": {
+                "title": "فلتر الخلفية",
+                "amount": "كمية الفلتر",
+                "grayscale": "التدرج الرمادي",
+                "sepia": "سيبيا",
+                "invert": "عكس",
+                "saturate": "التشبع",
+                "contrast": "التباين"
+              }
+            },
+            "type": {
+              "title": "النوع",
+              "api": "واجهة برمجية",
+              "custom_image": "صورة مخصصة",
+              "custom_colour": "لون/تدرج مخصص",
+              "random_colour": "لون عشوائي",
+              "random_gradient": "تدرج عشوائي"
+            },
+            "unsplash": {
+              "title": "مجموعات Unsplash",
+              "subtitle": "اختر المجموعة (المجموعات) التي تريد استخدامها للخلفية",
+              "id": "معرفات المجموعات",
+              "id_subtitle": "أدخل قائمة مفصولة بفواصل لمعرفات Unsplash"
+            },
+            "source": {
+              "title": "المصدر",
+              "subtitle": "اختر مصدر صور الخلفية",
+              "api": "واجهة برمجية للخلفية",
+              "custom_background": "خلفية مخصصة",
+              "custom_colour": "لون خلفية مخصص",
+              "upload": "رفع",
+              "add_colour": "إضافة لون",
+              "add_background": "إضافة خلفية",
+              "drop_to_upload": "اسحب للرفع",
+              "formats": "الصيغ المتاحة: {list}",
+              "select": "أو اختر",
+              "add_url": "إضافة رابط",
+              "disabled": "معطل",
+              "loop_video": "تكرار الفيديو",
+              "mute_video": "كتم الفيديو",
+              "quality": {
+                "title": "الجودة",
+                "original": "الأصلية",
+                "high": "جودة عالية",
+                "normal": "جودة عادية",
+                "datasaver": "توفير البيانات"
+              },
+              "custom_title": "الصور المخصصة",
+              "custom_description": "اختر الصور من جهازك المحلي",
+              "remove": "إزالة الصورة",
+              "delete_selected": "Delete {count} Selected",
+              "uploading": "Uploading {current} of {total}...",
+              "images": "images",
+              "tag_images": "Tag Images",
+              "tag_description": "Add {count} images to a folder (optional)",
+              "folder_name": "Folder Name",
+              "folder_placeholder": "Leave empty for no folder",
+              "storage_info": "Storage Information",
+              "storage_description": "Mue uses browser storage to save your custom images. The current limit is approximately 4.85MB for all settings and images combined.",
+              "storage_current": "Current usage: {used} of {total} ({percent}%)",
+              "sort": {
+                "date_newest": "Date Added (Newest)",
+                "date_oldest": "Date Added (Oldest)",
+                "name_asc": "Name (A-Z)",
+                "name_desc": "Name (Z-A)",
+                "size_small": "File Size (Smallest)",
+                "size_large": "File Size (Largest)"
+              }
+            },
+            "display": "العرض",
+            "display_subtitle": "تغيير طريقة تحميل الخلفية ومعلومات الصور",
+            "api": "إعدادات الواجهة البرمجية",
+            "api_subtitle": "خيارات الحصول على صورة من خدمة خارجية (واجهة برمجية)"
+          },
+          "search": {
+            "title": "البحث",
+            "additional": "خيارات إضافية لعرض ووظائف عنصر البحث",
+            "search_engine": "محرك البحث",
+            "search_engine_subtitle": "اختر محرك البحث لاستخدامه في شريط البحث",
+            "custom": "رابط بحث مخصص",
+            "autocomplete": "الإكمال التلقائي",
+            "autocomplete_provider": "مزود الإكمال التلقائي",
+            "autocomplete_provider_subtitle": "محرك البحث لنتائج القائمة المنسدلة للإكمال التلقائي",
+            "voice_search": "البحث الصوتي",
+            "dropdown": "قائمة البحث المنسدلة",
+            "focus": "التركيز عند فتح علامة التبويب",
+            "chrome_policy_warning": "In version 7.2, the ability to choose your search engine within Mue was removed to comply with new Chrome Web Store guidelines. Mue now uses your browser's default search engine. You can change this in Chrome Settings."
+          },
+          "weather": {
+            "title": "الطقس",
+            "location": "الموقع",
+            "auto": "تلقائي",
+            "widget_type": "نوع العنصر",
+            "temp_format": {
+              "title": "تنسيق درجة الحرارة",
+              "celsius": "مئوية",
+              "fahrenheit": "فهرنهايت",
+              "kelvin": "كلفن"
+            },
+            "extra_info": {
+              "title": "معلومات إضافية",
+              "show_location": "إظهار الموقع",
+              "show_description": "إظهار الوصف",
+              "weather_description": "وصف الطقس",
+              "cloudiness": "الغيوم",
+              "humidity": "الرطوبة",
+              "visibility": "الرؤية",
+              "wind_speed": "سرعة الرياح",
+              "wind_direction": "اتجاه الرياح",
+              "min_temp": "الحد الأدنى لدرجة الحرارة",
+              "max_temp": "الحد الأقصى لدرجة الحرارة",
+              "atmospheric_pressure": "الضغط الجوي"
+            },
+            "options": {
+              "basic": "أساسي",
+              "standard": "قياسي",
+              "expanded": "موسع",
+              "custom": "مخصص"
+            },
+            "custom_settings": "إعدادات مخصصة"
+          },
+          "quicklinks": {
+            "title": "الروابط السريعة",
+            "additional": "إعدادات إضافية لعرض ووظائف الروابط السريعة",
+            "open_new": "فتح في علامة تبويب جديدة",
+            "tooltip": "تلميح",
+            "text_only": "إظهار النص فقط",
+            "add_link": "إضافة رابط",
+            "no_quicklinks": "لا توجد روابط سريعة",
+            "edit": "تعديل",
+            "style": "النمط",
+            "options": {
+              "icon": "أيقونة",
+              "text_only": "نص فقط",
+              "metro": "ميترو"
+            },
+            "styling": "التصميم",
+            "styling_description": "تخصيص مظهر الروابط السريعة"
+          },
+          "message": {
+            "title": "الرسالة",
+            "add": "إضافة رسالة",
+            "messages": "الرسائل",
+            "text": "النص",
+            "no_messages": "لا توجد رسائل",
+            "add_some": "أضف بعض الرسائل.",
+            "content": "محتوى الرسالة"
+          },
+          "appearance": {
+            "title": "المظهر",
+            "style": {
+              "title": "نمط العنصر",
+              "description": "اختر بين النمطين، القديم (مفعل لمستخدمي ما قبل الإصدار 7.0) أو التصميم الحديث الأنيق.",
+              "legacy": "قديم",
+              "new": "جديد"
+            },
+            "theme": {
+              "title": "السمة",
+              "description": "تغيير سمة عناصر ونوافذ Mue",
+              "auto": "تلقائي",
+              "light": "فاتح",
+              "dark": "داكن"
+            },
+            "navbar": {
+              "title": "شريط التنقل",
+              "widgets": "عناصر شريط التنقل",
+              "notes": "الملاحظات",
+              "refresh": "تحديث",
+              "refresh_subtitle": "اختر ما يتم تحديثه عند النقر على زر التحديث",
+              "hover": "العرض عند التمرير",
+              "additional": "تعديل نمط شريط التنقل والأزرار المعروضة",
+              "refresh_options": {
+                "none": "لا شيء",
+                "page": "الصفحة"
+              },
+              "apps_subtitle": "إنشاء اختصارات لمواقعك الأخرى المستخدمة بشكل متكرر."
+            },
+            "font": {
+              "title": "الخط",
+              "description": "تغيير الخط المستخدم في Mue",
+              "custom": "خط مخصص",
+              "google": "استيراد من Google Fonts",
+              "weight": {
+                "title": "وزن الخط",
+                "thin": "رفيع",
+                "extra_light": "خفيف جدًا",
+                "light": "خفيف",
+                "normal": "عادي",
+                "medium": "متوسط",
+                "semi_bold": "شبه غامق",
+                "bold": "غامق",
+                "extra_bold": "غامق جدًا"
+              },
+              "style": {
+                "title": "نمط الخط",
+                "normal": "عادي",
+                "italic": "مائل",
+                "oblique": "مائل غير منتظم"
+              }
+            },
+            "accessibility": {
+              "title": "إمكانية الوصول",
+              "description": "جعل Mue مريحًا ومتاحًا",
+              "animations": "الرسوم المتحركة",
+              "text_shadow": {
+                "title": "ظل نص العنصر",
+                "new": "جديد",
+                "old": "قديم",
+                "none": "بدون"
+              },
+              "widget_zoom": "تكبير العنصر",
+              "toast_duration": "مدة الإشعار",
+              "milliseconds": "ميلي ثانية"
+            }
+          },
+          "order": {
+            "title": "ترتيب العناصر"
+          },
+          "advanced": {
+            "title": "متقدم",
+            "offline_mode": "وضع عدم الاتصال",
+            "offline_subtitle": "عند التفعيل، سيتم تعطيل جميع الطلبات إلى الخدمات عبر الإنترنت.",
+            "data": "البيانات",
+            "data_description": "اختر تصدير إعدادات Mue إلى جهازك، استيراد ملف إعدادات موجود، أو إعادة تعيين الإعدادات إلى قيمها الافتراضية",
+            "data_subtitle": "إدارة بياناتك على Mue.",
+            "reset_modal": {
+              "title": "تحذير",
+              "question": "هل تريد إعادة تعيين Mue؟",
+              "information": "سيؤدي هذا إلى حذف جميع البيانات. إذا كنت ترغب في الاحتفاظ ببياناتك وتفضيلاتك، يرجى تصديرها أولاً.",
+              "cancel": "إلغاء"
+            },
+            "customisation": "التخصيص",
+            "custom_css": "CSS مخصص",
+            "custom_css_subtitle": "تخصيص تصميم Mue باستخدام أوراق الأنماط المتتالية (CSS).",
+            "custom_js": "JS مخصص",
+            "tab_name": "اسم علامة التبويب",
+            "tab_name_subtitle": "تغيير اسم علامة التبويب التي تظهر في متصفحك",
+            "timezone": {
+              "title": "المنطقة الزمنية",
+              "subtitle": "اختر منطقة زمنية من القائمة بدلاً من الافتراضي التلقائي من جهازك",
+              "automatic": "تلقائي"
+            },
+            "experimental_warning": "يرجى ملاحظة أن فريق Mue لا يمكنه تقديم الدعم إذا كان وضع التجربة مفعلاً. يرجى تعطيله أولاً ومعرفة ما إذا كانت المشكلة مستمرة قبل التواصل مع الدعم.",
+            "preview_data_disabled": {
+              "title": "إعدادات البيانات معطلة",
+              "description": "إعدادات البيانات معطلة في وضع المعاينة. يرجى الخروج من وضع المعاينة لاستخدام هذه الميزة."
+            }
+          },
+          "stats": {
+            "title": "الإحصائيات",
+            "sections": {
+              "tabs_opened": "علامات التبويب المفتوحة",
+              "backgrounds_favourited": "الخلفيات المفضلة",
+              "backgrounds_downloaded": "الخلفيات التي تم تنزيلها",
+              "quotes_favourited": "الاقتباسات المفضلة",
+              "quicklinks_added": "الروابط السريعة المضافة",
+              "settings_changed": "الإعدادات التي تم تغييرها",
+              "addons_installed": "الإضافات المثبتة"
+            },
+            "usage": "إحصائيات الاستخدام",
+            "achievements": "الإنجازات",
+            "achievement_unlocked": "تم فتح الإنجاز: {name}",
+            "unlocked": "{count} مفتوح",
+            "locked": "مغلق",
+            "clear_modal": {
+              "question": "هل تريد مسح إحصائياتك؟",
+              "information": "سيؤدي هذا إلى مسح جميع الإنجازات وإحصائيات الاستخدام."
+            }
+          },
+          "experimental": {
+            "title": "تجريبي",
+            "warning": "هذه الإعدادات لم يتم اختبارها/تنفيذها بالكامل وقد لا تعمل بشكل صحيح!",
+            "developer": "المطور"
+          },
+          "language": {
+            "title": "اللغة",
+            "quote": "لغة الاقتباس",
+            "search": "Search languages...",
+            "current": "Current",
+            "use_system": "Use system language",
+            "locale_formatting": "Format numbers for your language"
+          },
+          "changelog": {
+            "title": "سجل التغييرات",
+            "by": "بواسطة {author}"
+          },
+          "about": {
+            "title": "حول",
+            "version": {
+              "title": "الإصدار",
+              "checking_update": "التحقق من التحديث",
+              "update_available": "تحديث متاح",
+              "no_update": "لا توجد تحديثات متاحة",
+              "offline_mode": "لا يمكن التحقق من التحديث في وضع عدم الاتصال",
+              "error": {
+                "title": "فشل الحصول على معلومات التحديث",
+                "description": "حدث خطأ"
+              }
+            },
+            "contact_us": "تواصل معنا",
+            "support_mue": "دعم Mue",
+            "support_subtitle": "بما أن Mue مجاني بالكامل، نحن نعتمد على التبرعات لتغطية فواتير الخادم وتمويل التطوير",
+            "support_donate": "التبرع",
+            "form_button": "نموذج",
+            "resources_used": {
+              "title": "الموارد المستخدمة",
+              "bg_images": "صور خلفية غير متصلة"
+            },
+            "contributors": "المساهمون",
+            "supporters": "الداعمون",
+            "no_supporters": "لا يوجد داعمون لـ Mue حاليًا",
+            "photographers": "المصورون",
+            "curators": "مبدعو الإضافات"
+          }
+        },
+        "buttons": {
+          "reset": "إعادة تعيين",
+          "import": "استيراد",
+          "export": "تصدير",
+          "cancel": "Cancel",
+          "continue": "Continue",
+          "close": "Close"
+        }
+      },
+      "marketplace": {
+        "title": "Marketplace",
+        "by": "بواسطة {author}",
+        "all": "الكل",
+        "learn_more": "معرفة المزيد",
+        "photo_packs": "حزم الصور",
+        "quote_packs": "حزم الاقتباسات",
+        "preset_settings": "إعدادات مسبقة",
+        "no_items": "لا توجد عناصر في هذه الفئة",
+        "collection": "مجموعة",
+        "explore_collection": "استكشاف المجموعة",
+        "add_all": "إضافة الكل إلى Mue",
+        "collections": "المجموعات",
+        "cant_find": "لا تجد ما تبحث عنه؟",
+        "knowledgebase_one": "قم بزيارة",
+        "knowledgebase_two": "قاعدة المعرفة",
+        "knowledgebase_three": "لإنشاء ما يناسبك.",
+        "installing": "جارٍ التثبيت",
+        "product": {
+          "overview": "نظرة عامة",
+          "information": "معلومات",
+          "last_updated": "آخر تحديث",
+          "description": "الوصف",
+          "details": "التفاصيل",
+          "more_from_curator": "المزيد من {name}",
+          "show_more": "إظهار المزيد",
+          "show_less": "إظهار أقل",
+          "show_all": "إظهار الكل",
+          "showing": "يتم العرض",
+          "no_images": "عدد الصور",
+          "no_quotes": "عدد الاقتباسات",
+          "version": "الإصدار",
+          "created_by": "أنشأها",
+          "updated_at": "تم التحديث في",
+          "part_of": "جزء من",
+          "explore": "استكشاف",
+          "buttons": {
+            "addtomue": "إضافة إلى Mue",
+            "remove": "إزالة",
+            "update_addon": "تحديث الإضافة",
+            "back": "رجوع",
+            "report": "الإبلاغ",
+            "not_available_preview": "غير متاح في المعاينة"
+          },
+          "not_in_language": "هذه الإضافة غير متوفرة بلغتك",
+          "third_party_api": "تستخدم هذه الإضافة واجهة برمجية تابعة لجهة خارجية",
+          "sideload_warning": "تم تثبيت هذه الإضافة جانبيًا.",
+          "setting": "الإعداد",
+          "value": "القيمة"
+        },
+        "offline": {
+          "title": "يبدو أنك غير متصل",
+          "description": "يرجى الاتصال بالإنترنت"
+        }
+      },
+      "addons": {
+        "added": "تمت الإضافة",
+        "check_updates": "التحقق من التحديثات",
+        "no_updates": "لا توجد تحديثات متاحة",
+        "updates_available": "تحديثات متاحة {amount}",
+        "empty": {
+          "title": "فارغ",
+          "description": "لم يتم تثبيت أي إضافات"
+        },
+        "sideload": {
+          "title": "التثبيت الجانبي",
+          "description": "تثبيت إضافة Mue غير موجودة في السوق من جهازك",
+          "failed": "فشل التثبيت الجانبي للإضافة",
+          "errors": {
+            "no_name": "لم يتم تقديم اسم",
+            "no_author": "لم يتم تقديم مؤلف",
+            "no_type": "لم يتم تقديم نوع",
+            "invalid_photos": "كائن الصور غير صالح",
+            "invalid_quotes": "كائن الاقتباسات غير صالح"
+          }
+        },
+        "sort": {
+          "title": "ترتيب",
+          "newest": "المثبتة (الأحدث)",
+          "a_z": "أبجدي (أ-ي)",
+          "recently_updated": "Recently Updated"
+        },
+        "create": {
+          "title": "إنشاء",
+          "moved_title": "تم نقل إنشاء الإضافة!",
+          "moved_description": "بعد تحديث 7.1، تم نقل إنشاء الإضافات الآن إلى واجهة الويب",
+          "moved_button": "قريبًا..."
+        }
+      }
+    },
+    "update": {
+      "title": "تحديث",
+      "offline": {
+        "title": "غير متصل",
+        "description": "لا يمكن الحصول على سجلات التحديث في وضع عدم الاتصال"
+      },
+      "error": {
+        "title": "خطأ",
+        "description": "تعذر الاتصال بالخادم"
+      }
+    },
+    "welcome": {
+      "tip": "نصيحة سريعة",
+      "sections": {
+        "intro": {
+          "title": "مرحبًا بك في Mue Tab",
+          "description": "شكرًا لتثبيت Mue، نأمل أن تستمتع بتجربتك مع إضافتنا.",
+          "notices": {
+            "discord_title": "انضم إلى Discord الخاص بنا",
+            "discord_description": "تحدث مع مجتمع Mue والمطورين",
+            "discord_join": "انضم",
+            "github_title": "ساهم عبر GitHub",
+            "github_description": "أبلغ عن الأخطاء، أضف ميزات، أو تبرع",
+            "github_open": "فتح"
+          }
+        },
+        "language": {
+          "title": "اختر لغتك",
+          "description": "يمكن عرض Mue باللغات المدرجة أدناه. يمكنك أيضًا إضافة ترجمات جديدة عبر"
+        },
+        "theme": {
+          "title": "اختر سمة",
+          "description": "Mue متاح بسمة فاتحة وداكنة، أو يمكن ضبطها تلقائيًا بناءً على سمة نظامك.",
+          "tip": "استخدام إعداد التلقائي سيتبع السمة المستخدمة على جهازك. ستؤثر هذه الإعدادات على النوافذ وبعض العناصر المعروضة على الشاشة، مثل الطقس والملاحظات."
+        },
+        "style": {
+          "title": "اختر نمطًا",
+          "description": "يوفر Mue حاليًا خيارًا بين النمط القديم والنمط الحديث الجديد.",
+          "legacy": "قديم",
+          "modern": "حديث"
+        },
+        "settings": {
+          "title": "استيراد الإعدادات",
+          "description": "هل تقوم بتثبيت Mue على جهاز جديد؟ يمكنك استيراد إعداداتك القديمة!",
+          "tip": "يمكنك تصدير إعداداتك القديمة بالانتقال إلى علامة التبويب المتقدمة في إعداد Mue القديم. ثم انقر على زر التصدير لتنزيل ملف JSON. يمكنك رفع هذا الملف هنا لنقل إعداداتك وتفضيلاتك من تثبيت Mue السابق."
+        },
+        "privacy": {
+          "title": "خيارات الخصوصية",
+          "description": "فعّل الإعدادات لحماية خصوصيتك بشكل أكبر مع Mue.",
+          "offline_mode_description": "تفعيل وضع عدم الاتصال سيعطل جميع الطلبات إلى أي خدمة. سيؤدي ذلك إلى تعطيل الخلفيات عبر الإنترنت، الاقتباسات عبر الإنترنت، السوق، الطقس، الروابط السريعة، سجل التغييرات، وبعض معلومات علامة التبويب 'حول'.",
+          "links": {
+            "title": "الروابط",
+            "privacy_policy": "سياسة الخصوصية",
+            "source_code": "الكود المصدري"
+          }
+        },
+        "final": {
+          "title": "الخطوة الأخيرة",
+          "description": "تجربتك مع Mue Tab على وشك البدء.",
+          "changes": "التغييرات",
+          "changes_description": "لتغيير الإعدادات لاحقًا، انقر على أيقونة الإعدادات في الزاوية العلوية اليمنى من علامة التبويب.",
+          "imported": "تم استيراد {amount} إعدادات"
+        }
+      },
+      "buttons": {
+        "next": "التالي",
+        "preview": "معاينة",
+        "previous": "السابق",
+        "close": "إغلاق",
+        "finish": "إنهاء"
+      },
+      "preview": {
+        "description": "أنت حاليًا في وضع المعاينة. سيتم إعادة تعيين الإعدادات عند إغلاق علامة التبويب.",
+        "continue": "متابعة الإعداد"
+      }
+    },
+    "share": {
+      "copy_link": "نسخ الرابط",
+      "email": "البريد الإلكتروني"
+    }
+  },
+  "toasts": {
+    "quote": "تم نسخ الاقتباس",
+    "notes": "تم نسخ الملاحظات",
+    "reset": "تم إعادة التعيين بنجاح",
+    "installed": "تم التثبيت بنجاح",
+    "uninstalled": "تم الإزالة بنجاح",
+    "updated": "تم التحديث بنجاح",
+    "error": "حدث خطأ ما",
+    "imported": "تم الاستيراد بنجاح",
+    "no_storage": "مساحة التخزين غير كافية",
+    "link_copied": "تم نسخ الرابط",
+    "stats_reset": "تم إعادة تعيين الإحصائيات"
+  }
+}
