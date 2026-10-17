@@ -4,6 +4,7 @@ import { MdExpandMore, MdCheck, MdRefresh } from 'react-icons/md';
 import { toast } from 'react-toastify';
 
 import EventBus from 'utils/eventbus';
+import { onActivateKey } from 'utils/keyboard';
 
 import './Dropdown.scss';
 import { showReloadReminder } from 'utils/reminder';
@@ -43,7 +44,10 @@ const Dropdown = memo((props) => {
 
       if (!props.noSetting) {
         localStorage.setItem(props.name, newValue);
-        localStorage.setItem(props.name2, props.value2);
+        // Only dropdowns that drive a second setting pass name2 / value2.
+        if (props.name2 !== undefined && props.name2 !== null) {
+          localStorage.setItem(props.name2, props.value2);
+        }
       }
 
       if (props.onChange) {
@@ -130,7 +134,13 @@ const Dropdown = memo((props) => {
       {label && (
         <div className="dropdown-header">
           <label className="dropdown-label">{label}</label>
-          <span className="dropdown-reset" onClick={resetItem}>
+          <span
+ className="dropdown-reset"
+ onClick={resetItem}
+ onKeyDown={onActivateKey(resetItem)}
+ role="button"
+ tabIndex={0}
+ >
             <MdRefresh />
             {variables.getMessage('modals.main.settings.buttons.reset')}
           </span>

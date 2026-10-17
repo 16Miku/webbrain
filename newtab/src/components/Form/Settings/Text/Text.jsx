@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import { MdRefresh } from 'react-icons/md';
 
 import EventBus from 'utils/eventbus';
+import { onActivateKey } from 'utils/keyboard';
 
 import './Text.scss';
 import { showReloadReminder } from 'utils/reminder';
@@ -56,7 +57,13 @@ const Text = memo((props) => {
           {title && (
             <div className="text-field-header">
               <label className="text-field-label">{title}</label>
-              <span className="text-field-reset" onClick={resetItem}>
+              <span
+ className="text-field-reset"
+ onClick={resetItem}
+ onKeyDown={onActivateKey(resetItem)}
+ role="button"
+ tabIndex={0}
+ >
                 <MdRefresh />
                 {variables.getMessage('modals.main.settings.buttons.reset')}
               </span>
@@ -75,7 +82,13 @@ const Text = memo((props) => {
           {title && (
             <div className="text-field-header">
               <label className="text-field-label">{title}</label>
-              <span className="text-field-reset" onClick={resetItem}>
+              <span
+ className="text-field-reset"
+ onClick={resetItem}
+ onKeyDown={onActivateKey(resetItem)}
+ role="button"
+ tabIndex={0}
+ >
                 <MdRefresh />
                 {variables.getMessage('modals.main.settings.buttons.reset')}
               </span>

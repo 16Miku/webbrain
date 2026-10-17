@@ -4,6 +4,7 @@ import { toast } from 'react-toastify';
 import { MdRefresh } from 'react-icons/md';
 
 import EventBus from 'utils/eventbus';
+import { onActivateKey } from 'utils/keyboard';
 
 import './Slider.scss';
 import { showReloadReminder } from 'utils/reminder';
@@ -84,7 +85,13 @@ const SliderComponent = memo((props) => {
     <div className="slider-container">
       <div className="slider-header">
         <span className="slider-value">{Number(value)}</span>
-        <span className="slider-reset" onClick={resetItem}>
+        <span
+ className="slider-reset"
+ onClick={resetItem}
+ onKeyDown={onActivateKey(resetItem)}
+ role="button"
+ tabIndex={0}
+ >
           <MdRefresh />
           {variables.getMessage('modals.main.settings.buttons.reset')}
         </span>

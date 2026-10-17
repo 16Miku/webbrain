@@ -1643,6 +1643,11 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     await mod.importSettings(JSON.stringify({ theme: 'light' }));
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep']);
 
+    // a widget listed twice would render twice and break drag-and-drop ordering
+    assert.equal(await mod.importSettings(JSON.stringify({ order: JSON.stringify(['time', 'time']) })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ order: JSON.stringify(['time', 'date']) })), true);
+    store.setItem('theme', 'light');
+
     // a truncated / foreign file is reported and changes nothing
     globalThis.__toasts = [];
     for (const bad of ['{"theme": "da', '[1,2]', 'null', '"str"']) {
@@ -1967,4 +1972,17 @@ test('round-58: CSS url() values are quoted and escaped', () => {
   assert.equal(cssUrl('a"b\\c'), 'url("a\\"b\\\\c")');
   assert.equal(cssUrl('a\nb'), 'url("a\\a b")');
   assert.doesNotMatch(src, /`url\(\$\{/, 'no raw url(${...}) left');
+});
+
+test('round-59: reset actions are keyboard-operable; Dropdown only writes a paired setting it was given', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  for (const [f, cls] of [
+    ['components/Form/Settings/Slider/Slider.jsx', 'slider-reset'],
+    ['components/Form/Settings/Dropdown/Dropdown.jsx', 'dropdown-reset'],
+    ['components/Form/Settings/Text/Text.jsx', 'text-field-reset'],
+  ]) {
+    assert.match(read(f), new RegExp(`className="${cls}"\\s+onClick=\\{resetItem\\}\\s+onKeyDown=\\{onActivateKey\\(resetItem\\)\\}\\s+role="button"\\s+tabIndex=\\{0\\}`), f);
+  }
+  const dd = read('components/Form/Settings/Dropdown/Dropdown.jsx');
+  assert.match(dd, /props\.name2 !== undefined && props\.name2 !== null\) \{\s*localStorage\.setItem\(props\.name2, props\.value2\)/);
 });

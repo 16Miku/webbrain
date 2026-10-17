@@ -145,6 +145,9 @@ export function validateSettings(content) {
     }
     if (!Array.isArray(list)) return `${key} is not a list`;
     if (!list.every(isValidEntry)) return `${key} has an entry of the wrong shape`;
+    if (key === 'order' && new Set(list).size !== list.length) {
+      return 'order lists a widget more than once';
+    }
     if (KEYED_LISTS.includes(key) && new Set(list.map((e) => String(e.key))).size !== list.length) {
       return `${key} has entries that share a key`;
     }
