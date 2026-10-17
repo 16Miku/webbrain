@@ -243,6 +243,7 @@ test('Chrome controlled-field trusted typing survives its focus-created formatti
       window.readProseMirrorText = () => null;
       window.isDraftJsEditor = () => false;
       window.readDraftJsText = () => null;
+      window.readCodeMirrorText = () => null;
       window.readEmptyCaretText = () => null;
       window._stableFieldSelector = el => '#' + el.id;
       window._setFieldValueMatches = (actual, prefix, text, clear) => actual === (clear ? '' : prefix) + text;
@@ -413,7 +414,7 @@ async function installContentEditableFallback(page, build) {
   assert.ok(insertion, 'Exercise the real contenteditable fallback with the real monitor');
   const caretReceipts = source.match(/^  const _nativeChatEmptyCaretReceipts = new WeakMap\(\);$/m)?.[0];
   assert.ok(caretReceipts, 'Exercise the private production native-chat caret receipt state');
-  const readers = ['readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText', '_nativeChatCaretContext', '_sameNativeChatCaretContext',
+  const readers = ['readProseMirrorText', 'readCodeMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText', '_nativeChatCaretContext', '_sameNativeChatCaretContext',
     '_singleEditableCaretBreak', '_rememberNativeChatEmptyCaret', '_nativeChatCaretValueIsEmpty', '_editableTextValue'].map(name => {
     const reader = source.match(new RegExp(`^  function ${name}\\([\\s\\S]*?^  }`, 'm'))?.[0];
     assert.ok(reader, `Exercise the production ${name} readback used by native editor insertion`);

@@ -5078,6 +5078,30 @@
     return children.map(read).join('\n');
   }
 
+  // CodeMirror 6 (GitHub's file editor) renders one .cm-line block per
+  // document line, and an empty line holds only a placeholder BR. innerText
+  // turns each block boundary and each such BR into separate newlines, so
+  // every blank line reads back doubled and an exact write can never verify.
+  // Read the rendered lines as the document's lines. The empty-document
+  // placeholder is not text. Any other widget, a viewport gap or a child that
+  // is not a line means the rendered DOM cannot establish the whole document.
+  function readCodeMirrorText(el) {
+    if (!el?.isContentEditable || !el.classList?.contains('cm-content')) return null;
+    const children = Array.from(el.childNodes).filter(node => !(node.nodeType === 3 && !node.nodeValue));
+    if (!children.length || !children.every(node => node.nodeType === 1 && node.classList?.contains('cm-line'))) return null;
+    let complete = true;
+    const read = node => {
+      if (node.nodeType === 3) return node.nodeValue || '';
+      if (node.nodeType !== 1) return '';
+      if (node.tagName === 'BR' || (node.tagName === 'IMG' && node.classList?.contains('cm-widgetBuffer'))) return '';
+      if (node.classList?.contains('cm-placeholder')) return '';
+      if (node.getAttribute('contenteditable') === 'false') { complete = false; return ''; }
+      return Array.from(node.childNodes).map(read).join('');
+    };
+    const text = children.map(read).join('\n');
+    return complete ? text : null;
+  }
+
   function readEmptyCaretText(el) {
     // A sole BR can be either a browser caret or an authored literal LF.
     // Generic DOM shape cannot establish which; keep its rendered value.
@@ -5360,7 +5384,8 @@
   }
 
   function _editableTextValue(el) {
-    const semantic = isDraftJsEditor(el) ? readDraftJsText(el) : (readProseMirrorText(el) ?? readEmptyCaretText(el));
+    const semantic = isDraftJsEditor(el) ? readDraftJsText(el)
+      : (readProseMirrorText(el) ?? readCodeMirrorText(el) ?? readEmptyCaretText(el));
     // Only a successful explicit native-chat delete may certify this exact
     // caret node as empty. Generic editors and authored LF/BR keep raw readback.
     return semantic !== null ? semantic : _nativeChatCaretValueIsEmpty(el) ? ''
@@ -9920,7 +9945,7 @@
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
           const verified = selectExpected !== null
             ? actual === selectExpected
-            : _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null));
+            : _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable, (readProseMirrorText(el) !== null || readCodeMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null));
           const fallbackAttempted = false;
           if (!verified) {
             return failure(
@@ -10126,7 +10151,7 @@
             { ref_id, verified: false, fieldMeta, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false },
           );
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-          const verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null));
+          const verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable, (readProseMirrorText(el) !== null || readCodeMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null));
           const fallbackAttempted = false;
           let nativeSubmitAttempted = false;
           let submissionOutcomeUnknown = false;
@@ -10447,7 +10472,7 @@
                   expectedPrefix,
                   verifiesAppend ? appendText : expected,
                   !verifiesAppend,
-                  el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null),
+                  el.isContentEditable, (readProseMirrorText(el) !== null || readCodeMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null),
                 ),
             actual: actual.slice(0, 200),
             fieldMeta: _fieldMeta(el),
@@ -10513,7 +10538,7 @@
           return {
             success: true,
             ...(typeof expected === 'string' ? {
-              verified: _setFieldValueMatches(value, '', expected, true, el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null)),
+              verified: _setFieldValueMatches(value, '', expected, true, el.isContentEditable, (readProseMirrorText(el) !== null || readCodeMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null)),
             } : {}),
             valueLength: value.length,
             valueSha256,
