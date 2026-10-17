@@ -181,7 +181,16 @@ export function createNewtabHandoff({
             // box, so make sure the text is still sitting in the composer.
             if (sent) return;
             if (sameTab()) {
-              if (!String(input.value || '').trim()) fill();
+              const current = String(input.value || '').trim();
+              if (!current) {
+                fill();
+              } else if (!current.includes(handoff.text)) {
+                // The user typed something else while the send was pending: keep their draft and
+                // put the task below it (the record is gone, so this is the only copy left).
+                input.value = `${current}\n\n${handoff.text}`;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                autoResizeInput();
+              }
             } else {
               // The user moved to another tab while the send was being declined, and the
               // composer now belongs to that tab. Hand the task back for its own tab instead.

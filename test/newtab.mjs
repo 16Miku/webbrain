@@ -393,6 +393,36 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(store[key3].id, 'r1-retry');
   });
 
+  test(`${browser}: a declined send keeps a draft typed meanwhile and adds the task below it`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'A', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_000 } };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => { input.value = 'my own draft'; await gate; return false; },
+      now: () => 100_000,
+    });
+    await handoff.start();
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(input.value, 'my own draft\n\ntask A');
+  });
+
   test(`${browser}: a declined send does not overwrite a newer task stored for the same tab`, async () => {
     const key3 = newtabHandoffKey(3);
     const store = { [key3]: { id: 'A', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_000 } };
@@ -1530,4 +1560,9 @@ test('round-42: background cards and todo checkboxes work from the keyboard; nes
   assert.match(read('components/Layout/Settings/Section/Section.jsx'), /event\.stopPropagation\(\)/);
   const todo = read('features/navbar/components/Todo.jsx');
   assert.match(todo, /role="checkbox"[\s\S]*aria-checked[\s\S]*tabIndex=\{0\}[\s\S]*onKeyDown/);
+});
+
+test('round-43: todo delete icon is a keyboard control', () => {
+  const todo = readFileSync(nt('features/navbar/components/Todo.jsx'), 'utf8');
+  assert.match(todo, /<MdDelete\s+role="button"\s+tabIndex=\{0\}/);
 });

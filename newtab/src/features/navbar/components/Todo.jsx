@@ -245,7 +245,18 @@ function Todo({ todoRef, floatRef, position, xPosition, yPosition }) {
                               'modals.main.marketplace.product.buttons.remove',
                             )}
                           >
-                            <MdDelete onClick={() => updateTodo('remove', index)} />
+                            <MdDelete
+                              role="button"
+                              tabIndex={0}
+                              aria-label={t('modals.main.marketplace.product.buttons.remove')}
+                              onClick={() => updateTodo('remove', index)}
+                              onKeyDown={(event) => {
+                                if (event.key === ' ' || event.key === 'Enter') {
+                                  event.preventDefault();
+                                  updateTodo('remove', index);
+                                }
+                              }}
+                            />
                           </Tooltip>
                           <DragHandle {...attributes} {...listeners} />
                         </div>
