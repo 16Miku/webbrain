@@ -235,7 +235,7 @@ Le mode Ask ignore le niveau du fournisseur et reste en lecture seule. Le mode A
 | Fournisseur | Mécanisme |
 |---|---|
 | Compatible OpenAI | Regex sur le nom du modèle (`gpt-4o`, `gpt-5`, `claude-3`, `claude-sonnet-4`, `gemini-2.0-flash`, etc.) |
-| DeepSeek | La famille `deepseek-flash` (y compris les alias retirés `deepseek-v4-flash`) est multimodale ; `deepseek-v4-pro` et les identifiants de la génération V3 sont textuels |
+| DeepSeek | La famille `deepseek-flash` (y compris les alias retirés `deepseek-v4-flash` et les instantanés datés des routeurs comme `deepseek-v4.1-flash-1017`) est multimodale ; `deepseek-v4-pro` et les identifiants de la génération V3 sont textuels |
 | Anthropic | Patterns `claude-(3\|sonnet-4\|opus-4)` |
 | Ollama | `POST /api/show` `capabilities`, avec replis historiques `projector_info` / `.vision.` |
 | llama.cpp | `GET /props` → `modalities.vision`, avec Automatique / Forcer / Désactivé |
@@ -261,12 +261,15 @@ Lorsque le fournisseur actif est Anthropic, l'agent convertit les messages au fo
 
 ### DeepSeek
 
-Le modèle livré est `deepseek-flash` (DeepSeek-V4.1-Flash). Les identifiants retirés
-`deepseek-v4-flash` et `deepseek-v4-flash-vision-exp` sont toujours servis par le même
-modèle et facturés comme Flash : ils conservent donc le support complet (contexte 1M,
-sortie 384K, entrée d'images). Tous les autres identifiants DeepSeek — y compris
-`deepseek-v4-pro`, retiré — restent sur un profil prudent (contexte 64K, sortie 8K,
-texte uniquement) au lieu d'hériter de capacités qu'ils n'ont peut-être pas.
+Le modèle livré est `deepseek-flash` (DeepSeek-V4.1-Flash, actualisé le 17 octobre
+2026 vers l'instantané `-1017`, sans changement d'API ni de tarif). Les identifiants
+retirés `deepseek-v4-flash` et `deepseek-v4-flash-vision-exp` sont toujours servis par
+le même modèle et facturés comme Flash, et les instantanés datés des routeurs tels que
+`deepseek/deepseek-v4.1-flash-1017` (OpenRouter) y renvoient également : ils conservent
+donc le support complet (contexte 1M, sortie 384K, entrée d'images). Tous les autres
+identifiants DeepSeek — y compris `deepseek-v4-pro`, retiré — restent sur un profil
+prudent (contexte 64K, sortie 8K, texte uniquement) au lieu d'hériter de capacités
+qu'ils n'ont peut-être pas.
 
 | Aspect | Comportement |
 |---|---|

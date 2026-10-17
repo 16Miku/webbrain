@@ -670,7 +670,7 @@ Ask mode ignores provider tier and stays read-only. Act mode uses the selected t
 | Provider            | Mechanism                                                                                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | OpenAI-compatible   | Regex against model name (`gpt-4o`, `gpt-5`, `claude-3`, `claude-sonnet-4`, `gemini-2.0-flash`, etc.)                                             |
-| DeepSeek            | The `deepseek-flash` family (including the retired `deepseek-v4-flash` aliases) is multimodal; `deepseek-v4-pro` and the V3-era ids are text-only |
+| DeepSeek            | The `deepseek-flash` family (including the retired `deepseek-v4-flash` aliases and dated router snapshot ids such as `deepseek-v4.1-flash-1017`) is multimodal; `deepseek-v4-pro` and the V3-era ids are text-only |
 | Anthropic           | `claude-(3\|sonnet-4\|opus-4)` patterns                                                                                                           |
 | Ollama              | `POST /api/show` `capabilities`, with legacy projector / `.vision.` metadata fallbacks; Auto / Force on / Off                                     |
 | llama.cpp           | `GET /props` → `modalities.vision`, with Auto / Force on / Off                                                                                    |
@@ -696,12 +696,14 @@ When the active provider is Anthropic, the agent converts OpenAI-format messages
 
 ### DeepSeek
 
-`deepseek-flash` (DeepSeek-V4.1-Flash) is the shipped model. The retired
+`deepseek-flash` (DeepSeek-V4.1-Flash, refreshed to the `-1017` snapshot on
+2026-10-17 with no API or price change) is the shipped model. The retired
 `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` ids still serve the same
-model and are billed as Flash, so they keep full support (1M context, 384K
-output, image input). Every other DeepSeek id — including the retired
-`deepseek-v4-pro` — stays on a conservative profile (64K context, 8K output,
-text-only) rather than inheriting capacities it may not have.
+model and are billed as Flash, and router snapshot ids such as OpenRouter's
+`deepseek/deepseek-v4.1-flash-1017` resolve to it too, so they keep full support
+(1M context, 384K output, image input). Every other DeepSeek id — including the
+retired `deepseek-v4-pro` — stays on a conservative profile (64K context, 8K
+output, text-only) rather than inheriting capacities it may not have.
 
 | Aspect             | Behaviour                                                                                                                                                                                                              |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

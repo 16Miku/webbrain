@@ -19,9 +19,11 @@ export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 export const DEEPSEEK_LEGACY_DEFAULT_BASE_URL = 'https://api.deepseek.com/v1';
 export const DEEPSEEK_ANTHROPIC_BASE_URL = 'https://api.deepseek.com/anthropic';
 
-// `deepseek-flash` (DeepSeek-V4.1-Flash) is the current model id. The retired
-// `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` ids still call the same
-// model and are billed as Flash, so they keep first-class handling.
+// `deepseek-flash` (DeepSeek-V4.1-Flash) is the current model id; DeepSeek has
+// served the -1017 snapshot behind it since 2026-10-17 with no API or price
+// change. The retired `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` ids
+// still call the same model and are billed as Flash, so they keep first-class
+// handling.
 export const DEEPSEEK_DEFAULT_MODEL = 'deepseek-flash';
 export const DEEPSEEK_LEGACY_DEFAULT_MODEL = 'deepseek-v4-flash';
 
@@ -47,13 +49,17 @@ export function isDeepSeekModel(model) {
 }
 
 /**
- * V4.1-Flash family: the current id plus every retired alias that resolves to
- * it. Only this family is multimodal — `deepseek-v4-pro` (DeepSeek-V4-Pro-0813)
- * and the V3-era chat/reasoner ids are text-only.
+ * V4.1-Flash family: the current id, every retired alias that resolves to it,
+ * and the dated snapshot ids routers publish (OpenRouter's
+ * `deepseek/deepseek-v4.1-flash-1017`). Only this family is multimodal —
+ * `deepseek-v4-pro` (DeepSeek-V4-Pro-0813) and the V3-era chat/reasoner ids are
+ * text-only.
  */
 export function isDeepSeekV41FlashModel(model) {
   const m = clean(model);
-  return m.includes('deepseek-flash') || m.includes('deepseek-v4-flash');
+  return m.includes('deepseek-flash')
+    || m.includes('deepseek-v4-flash')
+    || m.includes('deepseek-v4.1-flash');
 }
 
 /**

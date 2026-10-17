@@ -203,7 +203,7 @@ Ask 模式忽略提供商层级，保持只读。Act 模式使用所选层级的
 | 提供商 | 机制 |
 |---|---|
 | OpenAI 兼容 | 根据模型名称进行正则匹配（`gpt-4o`、`gpt-5`、`claude-3`、`claude-sonnet-4`、`gemini-2.0-flash` 等） |
-| DeepSeek | `deepseek-flash` 系列（含已退役的 `deepseek-v4-flash` 别名）支持多模态；`deepseek-v4-pro` 与 V3 时代标识为纯文本 |
+| DeepSeek | `deepseek-flash` 系列（含已退役的 `deepseek-v4-flash` 别名及路由器日期快照，如 `deepseek-v4.1-flash-1017`）支持多模态；`deepseek-v4-pro` 与 V3 时代标识为纯文本 |
 | Anthropic | `claude-(3\|sonnet-4\|opus-4)` 模式 |
 | Ollama | `POST /api/show` 的 `capabilities`，并兼容旧版 `projector_info` / `.vision.` 元数据 |
 | llama.cpp | `GET /props` → `modalities.vision`，支持自动 / 强制开启 / 关闭 |
@@ -227,8 +227,10 @@ Ask 模式忽略提供商层级，保持只读。Act 模式使用所选层级的
 
 ### DeepSeek
 
-出厂模型是 `deepseek-flash`（DeepSeek-V4.1-Flash）。已退役的 `deepseek-v4-flash` 与
-`deepseek-v4-flash-vision-exp` 仍由同一模型承接并按 Flash 计费，因此保留完整支持
+出厂模型是 `deepseek-flash`（DeepSeek-V4.1-Flash，2026 年 10 月 17 日更新为 `-1017`
+快照，API 与价格不变）。已退役的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp`
+仍由同一模型承接并按 Flash 计费；OpenRouter 等路由发布的日期快照
+（`deepseek/deepseek-v4.1-flash-1017`）同样指向该模型，因此保留完整支持
 （1M 上下文、384K 输出、图片输入）。其他 DeepSeek 标识（包括已退役的
 `deepseek-v4-pro`）保持保守配置（64K 上下文、8K 输出、纯文本），不会继承它未必具备
 的更大容量。

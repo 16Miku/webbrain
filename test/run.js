@@ -77103,6 +77103,11 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
         `${label}: retired flash aliases keep the V4.1-Flash capacities`,
       );
       assert.deepEqual(
+        deepSeekConfig.deepSeekModelCapabilities('deepseek/deepseek-v4.1-flash-1017'),
+        { contextWindow: 1000000, maxOutputTokens: 384000, vision: true },
+        `${label}: OpenRouter V4.1-Flash snapshots keep the full capacities`,
+      );
+      assert.deepEqual(
         deepSeekConfig.deepSeekModelCapabilities('deepseek-v4-pro'),
         { contextWindow: 65536, maxOutputTokens: 8192, vision: false },
         `${label}: retired and unknown DeepSeek ids stay conservative`,
@@ -77253,6 +77258,23 @@ test('DeepSeek Chat Completions uses native thinking, vision, streaming, and rep
         `${PM.name}: a router-hosted DeepSeek Flash model uses dedicated capability detection`,
       );
       assert.equal(routerFlash.supportsVision, true, `${PM.name}: router-hosted DeepSeek Flash aliases retain vision detection`);
+      const routerSnapshot = manager._createProvider('openrouter', {
+        type: 'openai',
+        category: 'router',
+        providerName: 'openrouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        model: 'deepseek/deepseek-v4.1-flash-1017',
+      });
+      assert.equal(
+        routerSnapshot.constructor.name,
+        'DeepSeekProvider',
+        `${PM.name}: the OpenRouter V4.1-Flash snapshot uses dedicated capability detection`,
+      );
+      assert.equal(
+        routerSnapshot.supportsVision,
+        true,
+        `${PM.name}: the OpenRouter V4.1-Flash snapshot stays multimodal`,
+      );
       const migrated = manager._migrateStoredProviderConfigs({
         deepseek: {
           model: 'deepseek-v4-flash',
