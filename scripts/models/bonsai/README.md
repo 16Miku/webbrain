@@ -77,9 +77,10 @@ checked against the bundle's graph hash and FP16 tolerances, and the model card
 states parity or timing results only for reports that pass; otherwise it says
 the evidence is pending, and a failing report stops the build. Browser evidence
 recorded against the previous graph is not carried over; rerun the WebGPU
-checks below on the new bundle. The worker replaces a stale cached graph for the two
-webbrain-one Vision repositories by SHA-256, so existing installs only
-download the new 3 MB graph file.
+checks below on the new bundle. For the two webbrain-one Vision repositories
+the worker compares the cached graph with a pinned SHA-256. Inference stays
+cache-only and keeps using a stale graph; an explicit download of the model
+replaces just the 3 MB graph file and keeps the cached weights.
 
 ## Runtime contract
 

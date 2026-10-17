@@ -229,10 +229,13 @@ async function sha256Hex(buffer) {
 
 /**
  * Make a cached Bonsai 2 Vision decoder graph the parallel-prefill revision.
- * Best effort: offline or unexpected responses keep the cached graph, which
- * still produces the same answers, only with slower prefill.
+ * Inference loads are cache-only, so they only detect a stale graph
+ * ('stale'); the replacement is fetched solely from explicit download flows
+ * (`allowNetwork`). Offline or unexpected responses keep the cached graph,
+ * which still produces the same answers, only with slower prefill.
  */
 export async function refreshBonsai2DecoderGraph(modelId, {
+  allowNetwork = false,
   expected = BONSAI2_DECODER_GRAPH_SHA256.get(modelId),
   timeoutMs = BONSAI2_DECODER_GRAPH_REFRESH_TIMEOUT_MS,
 } = {}) {
@@ -255,6 +258,8 @@ export async function refreshBonsai2DecoderGraph(modelId, {
   } catch {
     return 'unavailable';
   }
+  // Cache-only loads (inference) never download; an explicit download replaces it.
+  if (!allowNetwork) return 'stale';
   const fetcher = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : nativeFetch;
   if (!fetcher) return 'unavailable';
   // Known offline (Apocalypse Mode): load the cached graph now and retry on a
@@ -789,7 +794,10 @@ async function getVisionRuntime(modelId, dtype, device, {
       error.code = readiness === 'text' ? 'text_model_not_downloaded' : 'vision_model_not_downloaded';
       throw error;
     }
-    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) await refreshBonsai2DecoderGraph(modelId);
+    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)
+        && await refreshBonsai2DecoderGraph(modelId, { allowNetwork: !localFilesOnly }) === 'stale') {
+      console.info(`[webgpu] ${modelId}: the cached decoder graph predates parallel prefill; download the model again to update it.`);
+    }
     const library = await loadLibrary();
     const { AutoModelForImageTextToText, AutoProcessor } = library;
     if (!AutoModelForImageTextToText || !AutoProcessor) {
@@ -1121,6 +1129,10 @@ async function downloadTextModel(payload, { onStarted } = {}) {
   }
   await clearLegacyLfm25VlWrongPrecisionCache(modelId, dtype);
   if (await isTextModelReady(modelId, dtype)) {
+    // An explicit download of a cached model is the update path for its graph.
+    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
+      await refreshBonsai2DecoderGraph(modelId, { allowNetwork: true });
+    }
     if (payload?.requireTools === true) {
       const runtime = await getDownloadedTextRuntime(modelId, dtype, device, { localFilesOnly: true });
       assertToolCapableTextRuntime(runtime, modelId);
