@@ -74,14 +74,15 @@ try {
     }, preset.id);
     assert.ok((await page.locator('[data-webgpu-text-copy]').textContent()).includes(preset.label));
   }
-  await message('update_provider', { providerId: 'webgpu', config: { model: ids[1], contextWindow: 4096 } });
-  await page.waitForFunction(id => document.querySelector('[data-webgpu-text-preset]:checked')?.value === id, ids[1]);
+  // The loop above left the last preset selected; adopt a different one.
+  await message('update_provider', { providerId: 'webgpu', config: { model: ids[0], contextWindow: 4096 } });
+  await page.waitForFunction(id => document.querySelector('[data-webgpu-text-preset]:checked')?.value === id, ids[0]);
   assert.equal((await message('get_providers')).providers.webgpu.contextWindow, 4096,
     'polling must adopt an external Settings selection without overwriting its context budget');
   await page.setViewportSize({ width: 390, height: 900 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.deepEqual(errors, []);
-  console.log('PASS: installed MV3 Settings and Apocalypse offer five presets; saved capabilities/context/tier, external selection changes, normal provider selection, and mobile layout verified. Cache readiness was mocked; no inference performed.');
+  console.log('PASS: installed MV3 Settings and Apocalypse offer only the visible presets (hidden ones stay out of both pickers); saved capabilities/context/tier, external selection changes, normal provider selection, and mobile layout verified. Cache readiness was mocked; no inference performed.');
 } finally {
   await context?.close();
   const resolvedProfile = path.resolve(profile);

@@ -183,13 +183,25 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
 ]);
 // Keep legacy presets loadable without offering them for new selections.
 // Both Chrome pickers use this order; Firefox has no offscreen chat runtime.
-export const WEBGPU_SELECTABLE_MODEL_PRESETS = Object.freeze([
+// The Apocalypse Mode markup lists every preset here in the same order.
+export const WEBGPU_PICKER_MODEL_IDS = Object.freeze([
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   WEBGPU_BONSAI2_2B_MODEL_ID,
   WEBGPU_BONSAI2_4B_MODEL_ID,
   WEBGPU_BONSAI2_VL_2B_MODEL_ID,
   WEBGPU_BONSAI2_VL_4B_MODEL_ID,
-].map(id => WEBGPU_MODEL_PRESETS.find(preset => preset.id === id)));
+]);
+// Shipped and loadable, but not offered in the pickers yet. To show one again,
+// remove its id here. A saved selection still loads: Settings shows it as a
+// custom model, and Apocalypse Mode switches to an offered preset.
+export const WEBGPU_HIDDEN_MODEL_IDS = Object.freeze([
+  WEBGPU_BONSAI2_2B_MODEL_ID,
+  WEBGPU_BONSAI2_4B_MODEL_ID,
+  WEBGPU_BONSAI2_VL_4B_MODEL_ID,
+]);
+export const WEBGPU_SELECTABLE_MODEL_PRESETS = Object.freeze(WEBGPU_PICKER_MODEL_IDS
+  .filter(id => !WEBGPU_HIDDEN_MODEL_IDS.includes(id))
+  .map(id => WEBGPU_MODEL_PRESETS.find(preset => preset.id === id)));
 export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_COMPASS_TINY_V2_MODEL_ID} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`;
 // Chrome-only selection state. Keep this separate from the synced
 // `visionModel` endpoint so enabling the fallback never overwrites a user's

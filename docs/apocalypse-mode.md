@@ -20,8 +20,8 @@ from Hugging Face. The download continues in the background, but screenshot
 operations report its status and never wait for it. Wikipedia archives still
 require their own confirmation. The default local **text** model is Compass
 Tiny v2.1 (`webbrain-one/webbrain-compass-tiny-v2.1`, about 1.87 GB, 32k
-context window); the picker also offers the Ternary Bonsai 2 text and Vision
-presets. The selected model's download starts automatically when Apocalypse
+context window); the picker also offers Ternary Bonsai 2 2B Vision. The other
+Bonsai 2 presets ship but are hidden from the pickers for now. The selected model's download starts automatically when Apocalypse
 Mode is enabled. Once downloaded,
 Compass works without Apocalypse Mode enabled: it is selectable as a chat
 provider under Settings → Providers and through the standalone chat control.

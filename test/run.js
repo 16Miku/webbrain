@@ -1047,6 +1047,8 @@ const {
   WEBGPU_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
   WEBGPU_SELECTABLE_MODEL_PRESETS,
+  WEBGPU_PICKER_MODEL_IDS,
+  WEBGPU_HIDDEN_MODEL_IDS,
   WEBGPU_VISION_DTYPE,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_CONSENT_VERSION,
@@ -65626,12 +65628,26 @@ test('failed sensitive field-tool readbacks are annotated and redacted', () => {
 console.log('\nprovider categorization');
 
 test('Bonsai WebGPU presets preserve ordered selection and model-specific image capabilities', async () => {
-  const expectedIds = [WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_BONSAI2_2B_MODEL_ID, WEBGPU_BONSAI2_4B_MODEL_ID,
+  const pickerIds = [WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_BONSAI2_2B_MODEL_ID, WEBGPU_BONSAI2_4B_MODEL_ID,
     WEBGPU_BONSAI2_VL_2B_MODEL_ID, WEBGPU_BONSAI2_VL_4B_MODEL_ID];
-  assert.deepEqual(WEBGPU_SELECTABLE_MODEL_PRESETS.map(preset => preset.id), expectedIds);
+  assert.deepEqual(WEBGPU_PICKER_MODEL_IDS, pickerIds);
+  // Only Compass Tiny and Bonsai 2 2B Vision are offered for now; the rest
+  // stay shipped and loadable until they are shown again.
+  const offeredIds = [WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_BONSAI2_VL_2B_MODEL_ID];
+  assert.deepEqual(WEBGPU_SELECTABLE_MODEL_PRESETS.map(preset => preset.id), offeredIds);
+  assert.deepEqual(WEBGPU_HIDDEN_MODEL_IDS, [WEBGPU_BONSAI2_2B_MODEL_ID, WEBGPU_BONSAI2_4B_MODEL_ID, WEBGPU_BONSAI2_VL_4B_MODEL_ID]);
+  for (const id of WEBGPU_HIDDEN_MODEL_IDS) {
+    assert.equal(isSelectableWebgpuPreset(id), false, `${id} should be hidden from the pickers`);
+    assert.equal(isShippedWebgpuPreset(id), true, `${id} must stay shipped and loadable`);
+  }
   const html = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
-  assert.deepEqual([...html.matchAll(/<input[^>]+value="([^"]+)"[^>]*data-webgpu-text-preset/g)].map(match => match[1]), expectedIds,
-    'the Apocalypse radio choices must stay in the same order as the Settings suggestions');
+  assert.deepEqual([...html.matchAll(/<input[^>]+value="([^"]+)"[^>]*data-webgpu-text-preset/g)].map(match => match[1]), pickerIds,
+    'the Apocalypse radio markup must list every picker preset in the Settings order');
+  const apocalypseSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
+  const prune = apocalypseSource.indexOf("if (!isSelectableWebgpuPreset(input.value)) input.closest('.webgpu-text-preset')?.remove();");
+  assert.ok(prune > 0, 'Apocalypse Mode must drop the radios of hidden presets');
+  assert.ok(prune < apocalypseSource.indexOf("document.querySelectorAll('[data-webgpu-text-preset]').forEach((input) => {"),
+    'hidden radios must be dropped before listeners are attached');
   assert.equal(isSelectableWebgpuPreset(''), false);
   assert.equal(isSelectableWebgpuPreset(WEBGPU_BONSAI27_MODEL_ID), false);
   assert.equal(isShippedWebgpuPreset(WEBGPU_BONSAI27_MODEL_ID), true, 'saved legacy presets must remain loadable');
@@ -65640,7 +65656,7 @@ test('Bonsai WebGPU presets preserve ordered selection and model-specific image 
   manager.save = async () => {};
   manager.providers.set('webgpu', new WebGPUProvider(manager._defaultConfigs().webgpu));
   const messages = [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } }] }];
-  for (const preset of WEBGPU_SELECTABLE_MODEL_PRESETS) {
+  for (const preset of pickerIds.map(id => webgpuModelPreset(id))) {
     await manager.updateProvider('webgpu', { model: preset.id });
     const provider = manager.providers.get('webgpu');
     assert.equal(manager.getAll().webgpu.contextWindow, preset.contextWindow);
@@ -65705,16 +65721,16 @@ test('Apocalypse hydrates every selectable Bonsai preset and inspects sibling ca
     vm.runInContext(functions, context);
     await vm.runInContext('refreshWebgpuDownloadStatus({ probeSibling: true })', context);
     assert.equal(selectedId, preset.id, 'opening Apocalypse must preserve the selected Bonsai variant');
-    assert.equal(queried.length, 5);
+    assert.equal(queried.length, WEBGPU_SELECTABLE_MODEL_PRESETS.length);
     assert.deepEqual(new Set(queried), new Set(WEBGPU_SELECTABLE_MODEL_PRESETS.map(option => option.id)));
-    assert.equal(recorded.length, 4);
+    assert.equal(recorded.length, WEBGPU_SELECTABLE_MODEL_PRESETS.length - 1);
   }
 });
 
 test('Apocalypse ignores stale preset status while saving and retains the selected model after a failed download', async () => {
   const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
   const functions = source.slice(source.indexOf('async function ensureFixedWebgpuProvider('), source.indexOf('async function runWebgpuDownloadAction('));
-  const target = WEBGPU_BONSAI2_VL_4B_MODEL_ID;
+  const target = WEBGPU_BONSAI2_VL_2B_MODEL_ID;
   let selected = WEBGPU_COMPASS_TINY_V2_MODEL_ID;
   let saved = selected;
   let releaseOldStatus;

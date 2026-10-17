@@ -46,7 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | local | (modèle chargé) | Métadonnées auto / surcharge |
 | `gpt4all` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `local_openai_proxy` | `openai` | local | (requis) | Désactivée / bascule manuelle |
-| `webgpu` (Chromium) | `webgpu` | local | Compass Tiny v2.1 (préréglage unique) ; dépôt HF ONNX personnalisé expérimental | Non |
+| `webgpu` (Chromium) | `webgpu` | local | Compass Tiny v2.1 ; Ternary Bonsai 2 2B Vision ; dépôt HF ONNX personnalisé expérimental | Préréglage Bonsai Vision uniquement |
 | `azure_openai` | `azure_openai` | cloud | (déploiement) | Bascule manuelle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (ID de modèle) | Non |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Regex nom de modèle |
@@ -118,12 +118,16 @@ Entrées volontairement exclues : `github-models` (retrait de GitHub Models le
 ### Fournisseurs Locaux
 
 Sur Chromium, **WebGPU (dans le navigateur)** est un fournisseur local sans
-point de terminaison. Le sélecteur Apocalypse propose un préréglage embarqué
-unique : **Compass Tiny v2.1** (`q4f16`, environ 1,87 Go) via Transformers.js /
-ONNX, téléchargé à l’activation d’Apocalypse. Une fois en cache, Compass
-fonctionne sans qu’Apocalypse soit activé. Le fournisseur est texte seul, avec
-une fenêtre de contexte de 32k par défaut ; sur les GPU limités, réduisez-la
-dans Settings → Providers si nécessaire. Firefox n’expose pas cette carte.
+point de terminaison. Settings et le sélecteur Apocalypse proposent deux
+préréglages : **Compass Tiny v2.1** (par défaut, `q4f16`, environ 1,87 Go,
+texte seul, contexte de 32k) et **Ternary Bonsai 2 2B Vision** (environ
+1,45 Go, accepte les images, contexte de 16k), via Transformers.js / ONNX.
+Settings accepte aussi un dépôt Hugging Face personnalisé. Les autres
+préréglages Bonsai 2 sont livrés mais masqués des sélecteurs pour l’instant.
+Le modèle choisi est téléchargé à l’activation d’Apocalypse ; une fois en
+cache, il fonctionne sans qu’Apocalypse soit activé. Sur les GPU limités,
+réduisez la fenêtre de contexte dans Settings → Providers si nécessaire.
+Firefox n’expose pas cette carte.
 
 Les modèles dans le navigateur répondent seulement aux questions. Dans le
 panneau latéral, chaque tour Ask fait un seul appel sans outils : WebBrain lit

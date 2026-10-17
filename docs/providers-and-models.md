@@ -273,7 +273,7 @@ class BaseLLMProvider {
 | `gpt4all`            | `openai`       | local    | (loaded model)                                                     | Yes (default on)                |
 | `local_openai_proxy` | `openai`       | local    | (required)                                                         | Off / manual toggle             |
 | `unsloth`            | `openai`       | local    | (required)                                                         | Off / manual toggle             |
-| `webgpu` (Chromium)  | `webgpu`       | local    | Compass Tiny v2.1; Ternary Bonsai 2 2B / 4B, text or vision         | Bonsai Vision presets only      |
+| `webgpu` (Chromium)  | `webgpu`       | local    | Compass Tiny v2.1; Ternary Bonsai 2 2B Vision; custom HF repo       | Bonsai Vision presets only      |
 | `azure_openai`       | `azure_openai` | cloud    | (deployment)                                                       | Manual toggle                   |
 | `aws_bedrock`        | `aws_bedrock`  | cloud    | (model id)                                                         | No                              |
 | `openai`             | `openai`       | cloud    | `gpt-5.6-terra`                                                    | Model-name regex                |
@@ -418,14 +418,23 @@ duplicate request.
 ### Local Providers
 
 On Chromium, **WebGPU (In-browser)** is an endpoint-free local provider.
-Settings and Apocalypse Mode offer the same five presets, in this order:
+Settings and Apocalypse Mode offer the same two presets, in this order, and
+Settings also accepts a custom Hugging Face repository:
 
 | Model | Download | Images | Browser context |
 | --- | --- | --- | --- |
 | [Compass Tiny v2.1](https://huggingface.co/webbrain-one/webbrain-compass-tiny-v2.1) (default) | 1.87 GB, Q4/FP16 | No | 32k |
+| [Ternary Bonsai 2 2B Vision](https://huggingface.co/webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision) | 1.45 GB, Q2/FP16 | Yes | 16k |
+
+These presets ship but are hidden from the pickers for now
+(`WEBGPU_HIDDEN_MODEL_IDS` in `src/chrome/src/providers/webgpu.js`). A saved
+selection still loads: Settings shows it as a custom model, and Apocalypse Mode
+switches to an offered preset.
+
+| Model | Download | Images | Browser context |
+| --- | --- | --- | --- |
 | [Ternary Bonsai 2 2B](https://huggingface.co/danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU) | 787 MB, Q2/FP16 | No | 16k |
 | [Ternary Bonsai 2 4B](https://huggingface.co/Mike0021/Ternary-Bonsai-2-4B-text-ONNX) | 1.50 GB, Q2/FP16 | No | 16k |
-| [Ternary Bonsai 2 2B Vision](https://huggingface.co/webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision) | 1.45 GB, Q2/FP16 | Yes | 16k |
 | [Ternary Bonsai 2 4B Vision](https://huggingface.co/webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision) | 2.15 GB, Q2/FP16 | Yes | 16k |
 
 Download sizes are approximate and exclude GPU working memory. Bonsai's native

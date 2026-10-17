@@ -62,6 +62,11 @@ const elements = Object.fromEntries([
   'emergency-box-callout', 'emergency-gate-reason', 'emergency-box-link',
   'offline-answer-engine', 'offline-rag-readiness', 'rag-components',
 ].map(id => [id, document.getElementById(id)]));
+// The markup lists every picker preset; drop the ones not offered yet before
+// any selection or listener code sees them.
+for (const input of document.querySelectorAll('[data-webgpu-text-preset]')) {
+  if (!isSelectableWebgpuPreset(input.value)) input.closest('.webgpu-text-preset')?.remove();
+}
 if (elements['vision-model-card']) elements['vision-model-card'].hidden = !supportsWebgpuVision;
 if (elements['webgpu-provider-card']) elements['webgpu-provider-card'].hidden = !supportsWebgpuVision;
 if (elements['basic-wikipedia-card']) elements['basic-wikipedia-card'].hidden = !supportsWebgpuVision;
