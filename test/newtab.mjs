@@ -614,6 +614,35 @@ for (const browser of ['chrome', 'firefox']) {
     assert.deepEqual(Object.keys(store), []);
   });
 
+  test(`${browser}: a failed claim leaves the task deliverable on the next attempt`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'A', tabId: 3, text: 'task A', mode: 'act', createdAt: 99_500 } };
+    let failRemove = true;
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { if (failRemove) throw new Error('storage unavailable'); delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => {},
+      now: () => 100_000,
+    });
+    assert.equal(await handoff.start(), false);
+    assert.equal(input.value, '');
+    failRemove = false;
+    assert.equal(await handoff.consume(), true);
+    assert.equal(input.value, 'task A');
+  });
+
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
   const KEY = newtabHandoffKey(3);
 
@@ -1490,7 +1519,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     globalThis.__toasts = []; globalThis.__reloads = 0;
     mod.db.rows = [{ id: 1, url: 'data:keep' }];
     for (const bad of [
-      { customEvents: 'not-json' }, { messages: '{"a":1}' }, { applinks: '' }, { order: 'null' },
+      { customEvents: 'not-json' }, { messages: '{"a":1}' }, { applinks: '' }, { order: 'null' }, { order: '["__proto__"]' }, { order: '["time","nope"]' },
       { timezone: 'Not/AZone' }, { timezone: '' }, { favourite: '[1]' }, { favourite: '{}' }, { favourite: '{"url":"  "}' }, { favourite: '{"url":5}' }, { favourite: '{"url":"not-a-url"}' }, { favourite: '{"type":"photo","url":"data:text/plain,x"}' }, { theme: { nested: true } },
     ]) {
       assert.equal(await mod.importSettings(JSON.stringify({ ...bad, [K]: [{ url: 'data:image/png;base64,OTHER' }] })), false, JSON.stringify(bad));
@@ -1525,7 +1554,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // delete / drag-and-drop identify links by key: it must be present and unique
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"a","url":"https://a.test"}]' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ applinks: '[{"name":"a","url":"u","key":"k"},{"name":"b","url":"u","key":"k"}]' })), false);
-    assert.equal(globalThis.__toasts.length, 50);
+    assert.equal(globalThis.__toasts.length, 52);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({

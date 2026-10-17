@@ -176,7 +176,13 @@ export function createNewtabHandoff({
       if (handoff.tabId !== Number(tabId) || handled.has(handoff.id)) return false;
 
       handled.add(handoff.id);
-      await removeClaimed(stored);
+      try {
+        await removeClaimed(stored);
+      } catch (error) {
+        // Not claimed after all (storage refused): the record is still there, so it must stay claimable.
+        handled.delete(handoff.id);
+        throw error;
+      }
       if (!sameTab()) {
         // Switched during the removal: put the record back for when this tab is shown again.
         handled.delete(handoff.id);

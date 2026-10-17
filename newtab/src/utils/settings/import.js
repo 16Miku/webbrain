@@ -90,6 +90,9 @@ const isObject = (value) => value !== null && typeof value === 'object' && !Arra
 const isString = (value) => typeof value === 'string';
 // Delete and drag-and-drop identify these entries by `key`, so it has to be there (and unique).
 const hasKey = (e) => (isString(e.key) && e.key !== '') || Number.isFinite(e.key);
+// The widgets the new tab can order (features/misc/views/Widgets.jsx); anything else would be
+// looked up on a plain object, where "__proto__" yields an object React cannot render.
+const WIDGET_IDS = ['time', 'greeting', 'date', 'quicklinks', 'message'];
 const KEYED_LISTS = ['applinks', 'quicklinks'];
 // Links are rendered as hrefs, so they get the same http(s) policy as adding or editing one.
 const isLinkEntry = (e) =>
@@ -101,7 +104,7 @@ const JSON_ARRAY_ENTRIES = {
   customEvents: (e) => isObject(e) && isString(e.name) && Number.isFinite(e.month) && Number.isFinite(e.date),
   quicklinks: isLinkEntry,
   messages: isString,
-  order: isString,
+  order: (e) => WIDGET_IDS.includes(e),
   todo: (e) => isObject(e) && isString(e.value),
 };
 

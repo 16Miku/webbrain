@@ -53,7 +53,7 @@ const Widgets = () => {
   return (
     <WidgetsLayout>
       {order.map((element, key) => (
-        <Fragment key={key}>{widgets[element]}</Fragment>
+        <Fragment key={key}>{Object.hasOwn(widgets, element) ? widgets[element] : null}</Fragment>
       ))}
       {enabled('taskBox') && <TaskBox />}
       {enabled('recentChats') && <RecentChats />}
