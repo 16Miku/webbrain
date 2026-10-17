@@ -5352,8 +5352,21 @@ export class Agent extends LoopDetector {
   // Adds the "WebBrain could not verify everything" line, if any, to the
   // answer of an accepted completion. _guardRunState first drops a previous
   // run's caveats.
+  // The line a completion accepted over a guard's advice ends with, or ''.
+  _completionCaveatLine(tabId) {
+    return (this._guardRunState(tabId) && this._guardCaveatLine(tabId)) || '';
+  }
+
+  // Whether a done summary is the exact table its data_ref delivered: the
+  // complete JSON the data_ref contract promises, to which nothing is added.
+  _isExactTablePayload(tabId, args, summary) {
+    if (typeof args?.data_ref !== 'string' || !args.data_ref || typeof summary !== 'string') return false;
+    const record = this.readCompletenessStates.get(tabId)?.exactTableExports?.get(args.data_ref);
+    return typeof record?.summary === 'string' && record.summary === summary;
+  }
+
   _withCompletionCaveat(tabId, text) {
-    const line = this._guardRunState(tabId) && this._guardCaveatLine(tabId);
+    const line = this._completionCaveatLine(tabId);
     if (!line) return text;
     const base = String(text ?? '').trimEnd();
     return base ? `${base}\n\n${line}` : line;
@@ -16696,6 +16709,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             toolResult.summary = (toolResult.summary || partialAssistantText || '') + '\n\n' + notice;
           }
         }
+        // An exact table delivered from its data_ref stays the complete JSON
+        // its contract promises: a caveat travels beside it, on the done
+        // result and as a warning, never inside the payload.
+        const exactTablePayload = !scheduledResume && this._isExactTablePayload(tabId, fnArgs, toolResult.summary);
+        const payloadCaveat = exactTablePayload ? this._completionCaveatLine(tabId) : '';
+        if (payloadCaveat) toolResult.completionCaveat = payloadCaveat;
         onUpdate('tool_result', { name: fnName, result: toolResult });
         this._doneBlockCount.delete(tabId);
         rawDoneSummary = toolResult.summary || rawDoneSummary;
@@ -16704,7 +16723,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : this._appendProgressLedgerToFinal(tabId, repairedDoneSummary);
         // A completion accepted over a guard's advice tells the user what was
         // not verified. A scheduled resume is a pause, not a completion.
-        const finalResponse = scheduledResume ? deliveredSummary : this._withCompletionCaveat(tabId, deliveredSummary);
+        const finalResponse = scheduledResume || exactTablePayload ? deliveredSummary : this._withCompletionCaveat(tabId, deliveredSummary);
         if (repairedDoneSummary !== rawDoneSummary) {
           // Streaming providers may already have rendered the malformed summary
           // before the done call. Replace it so the visible bubble matches the
@@ -16713,6 +16732,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } else if (finalResponse !== deliveredSummary) {
           onUpdate('text', { content: finalResponse, replace: true });
         }
+        if (payloadCaveat) onUpdate('warning', { message: payloadCaveat });
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,

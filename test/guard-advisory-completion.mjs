@@ -681,6 +681,31 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: an exact table delivered over advice stays valid JSON; its caveat travels beside it`, async () => {
+    const askSchemas = new Map(getToolsForMode('ask', { tier: 'full' }).map(tool => [tool.function.name, tool.function.parameters]));
+    const h = batchAgent(Agent, { mode: 'ask', realDone: true, schemas: askSchemas });
+    const owner = { runToken: 'owned-run', current: () => true };
+    const table = { rowCount: 2, rows: [{ id: 'A' }, { id: 'B' }] };
+    const record = { dataRef: 'table_owned', runToken: 'owned-run', owner, args: { columns: ['id'] }, summary: JSON.stringify(table) };
+    h.agent.readCompletenessStates.set(h.tab, { runToken: 'owned-run', exactTableExports: new Map([['table_owned', record]]) });
+    h.agent._exactTableOwner = () => owner;
+    const realExecute = h.agent.executeTool.bind(h.agent);
+    h.agent.executeTool = async (tab, name, args, ...rest) => (name === 'extract_data'
+      ? { success: false, error: 'The source table changed.' } : realExecute(tab, name, args, ...rest));
+    const done = ['done', { summary: 'Full inventory.', data_ref: 'table_owned' }];
+    assert.equal((await h.batch([done])).action, 'continue', `${build}: the stale snapshot is refused once`);
+    const updates = [];
+    const accepted = await h.batch([done], updates);
+    assert.equal(accepted.action, 'return', `${build}: the second completion is accepted`);
+    assert.deepEqual(JSON.parse(accepted.value), table, `${build}: the answer is the exact table, nothing appended`);
+    const line = `${CAVEAT}The table on the page may have changed after it was extracted.`;
+    const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
+    assert.equal(doneResult?.completionCaveat, line, `${build}: the done result carries the caveat`);
+    assert.ok(updates.some(update => update.type === 'warning' && update.data.message === line), `${build}: the user sees it as a warning`);
+    assert.ok(!updates.some(update => update.type === 'text' && String(update.data.content).includes(CAVEAT)),
+      `${build}: no caveat in the answer text`);
+  });
+
   // ── Arithmetic tasks ───────────────────────────────────────────────────
   test(`${build}: an honest failure before any calculator attempt is refused once, then accepted`, async () => {
     for (const strict of [false, true]) {

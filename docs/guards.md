@@ -25,7 +25,10 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
     that refusal is its note. Each guard gets its own: when two apply, the
     second is checked once the first has advised. The next completion a guard
     would refuse is accepted, and the final answer ends with one line,
-    "WebBrain could not verify everything: …" (at most four items).
+    "WebBrain could not verify everything: …" (at most four items). An
+    exact table delivered from its `data_ref` stays the complete JSON its
+    contract promises: the line goes beside it, as a warning and as the
+    done result's `completionCaveat`.
   - A completion accepted over a guard that knows the claim is wrong (the
     completion judge's "not done", an unauthorized mutation, missing, failed
     or unfinished progress rows, unread pages of a whole thread the user
