@@ -132,6 +132,9 @@
       cursor: pointer;
       transition: 0.5s;
       flex-shrink: 0;
+      border: none;
+      background: transparent;
+      color: inherit;
 
       svg {
         font-size: 1.5em;

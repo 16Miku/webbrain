@@ -137,9 +137,14 @@ function ModalTopBar({
       </div>
       <div className="topBarRight">
         <Tooltip title={t('modals.welcome.buttons.close')} key="closeTooltip">
-          <span className="closeModal" onClick={onClose}>
+          <button
+            type="button"
+            className="closeModal"
+            onClick={onClose}
+            aria-label={t('modals.welcome.buttons.close')}
+          >
             <MdClose />
-          </span>
+          </button>
         </Tooltip>
       </div>
     </div>

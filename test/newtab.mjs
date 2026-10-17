@@ -1273,11 +1273,14 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     }
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[null]' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"x"}]' })), false);
-    assert.equal(globalThis.__toasts.length, 15);
+    // delete / drag-and-drop identify links by key: it must be present and unique
+    assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"a","url":"https://a.test"}]' })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ applinks: '[{"name":"a","url":"u","key":"k"},{"name":"b","url":"u","key":"k"}]' })), false);
+    assert.equal(globalThis.__toasts.length, 17);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({
-      customEvents: '[]', messages: '["hi"]', applinks: '[{"name":"a","url":"https://a.test"}]', order: '["time"]', todo: '[]', favourite: 'null',
+      customEvents: '[]', messages: '["hi"]', applinks: '[{"name":"a","url":"https://a.test","key":"k1"}]', order: '["time"]', todo: '[]', favourite: 'null',
     })), true);
 
     // a settings write that fails part-way (quota) rolls back both stores
@@ -1417,4 +1420,15 @@ test('round-33: tooltip description sits on the focusable control; initial setti
   assert.doesNotMatch(tip, /<div[^>]*aria-describedby/);
   const tabs = read('components/Elements/MainModal/backend/Tabs.jsx');
   assert.match(tabs, /onSectionChange\(currentTab, currentName, \{ fromHistory: true \}\)/);
+});
+
+test('round-34: keyed import lists, keyboard sections, named navbar buttons, forward-nav reopen, toast time, close button', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  assert.match(read('utils/settings/import.js'), /KEYED_LISTS[\s\S]*share a key/);
+  assert.match(read('components/Layout/Settings/Section/Section.jsx'), /role="button"[\s\S]*tabIndex=\{0\}[\s\S]*onKeyDown/);
+  assert.match(read('features/navbar/components/Todo.jsx'), /aria-label=\{t\('widgets\.navbar\.todo\.title'\)\}/);
+  assert.match(read('features/navbar/components/Apps.jsx'), /aria-label=\{variables\.getMessage\('widgets\.navbar\.apps\.title'\)\}/);
+  assert.match(read('features/misc/modals/Modals.jsx'), /addEventListener\('popstate', handlePopState\)/);
+  assert.match(read('App.jsx'), /setToastDisplayTime\(parseInt\(localStorage\.getItem\('toastDisplayTime'\)/);
+  assert.match(read('components/Elements/MainModal/components/ModalTopBar.jsx'), /<button\s+type="button"\s+className="closeModal"/);
 });

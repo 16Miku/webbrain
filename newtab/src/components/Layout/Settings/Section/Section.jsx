@@ -3,7 +3,20 @@ import React from 'react';
 
 function Section({ title, subtitle, icon, onClick, children }) {
   return (
-    <div className="moreSettings" onClick={onClick}>
+    <div
+      className="moreSettings"
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        // Only the card itself: keys pressed in a control inside it belong to that control.
+        if (event.target !== event.currentTarget) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick?.(event);
+        }
+      }}
+    >
       <div className="left">
         {icon}
         <div className="content">

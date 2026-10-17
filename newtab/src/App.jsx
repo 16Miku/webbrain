@@ -82,6 +82,8 @@ const App = () => {
   useAppSetup(() => {
     setSetupKey((key) => key + 1);
     setShowBackground(localStorage.getItem('background') === 'true');
+    // ToastContainer sits outside the remounted subtree and only read this on mount.
+    setToastDisplayTime(parseInt(localStorage.getItem('toastDisplayTime'), 10) || 2500);
   });
 
   const languagecode = localStorage.getItem('language') || 'en_GB';

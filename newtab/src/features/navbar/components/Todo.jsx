@@ -162,6 +162,7 @@ function Todo({ todoRef, floatRef, position, xPosition, yPosition }) {
         className="navbarButton"
         onMouseEnter={handleShowTodo}
         onFocus={handleShowTodo}
+        aria-label={t('widgets.navbar.todo.title')}
         ref={todoRef}
         style={{ fontSize: zoomFontSize }}
       >

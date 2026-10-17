@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Modal from 'react-modal';
 
 import { MainModal } from 'components/Elements';
@@ -10,6 +10,8 @@ import { parseDeepLink, shouldAutoOpenModal, updateHash } from 'utils/deepLinkin
 const Modals = () => {
   const [mainModal, setMainModal] = useState(false);
   const [deepLinkData, setDeepLinkData] = useState(null);
+  const mainModalOpen = useRef(false);
+  mainModalOpen.current = mainModal;
 
   useEffect(() => {
     if (shouldAutoOpenModal()) {
@@ -24,10 +26,21 @@ const Modals = () => {
       }
     };
 
+    // Back closes the modal (and unmounts its own popstate listener); Forward restores
+    // #settings/... while it is closed, so reopen it from here.
+    const handlePopState = () => {
+      if (!mainModalOpen.current && shouldAutoOpenModal()) {
+        setDeepLinkData(parseDeepLink());
+        setMainModal(true);
+      }
+    };
+
     EventBus.on('modal', handleModalOpen);
+    window.addEventListener('popstate', handlePopState);
 
     return () => {
       EventBus.off('modal', handleModalOpen);
+      window.removeEventListener('popstate', handlePopState);
     };
   }, []);
 

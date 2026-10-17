@@ -68,6 +68,7 @@ const Apps = ({ appsRef, floatRef, position, xPosition, yPosition }) => {
         className="navbarButton"
         onMouseEnter={handleShowApps}
         onFocus={handleShowApps}
+        aria-label={variables.getMessage('widgets.navbar.apps.title')}
         ref={appsRef}
         style={{ fontSize: zoomFontSize }}
       >

@@ -82,12 +82,15 @@ export async function importSettings(e, initial = false) {
 // write succeeds) but would crash the page on the next load, so check them up front.
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isString = (value) => typeof value === 'string';
+// Delete and drag-and-drop identify these entries by `key`, so it has to be there (and unique).
+const hasKey = (e) => (isString(e.key) && e.key !== '') || Number.isFinite(e.key);
+const KEYED_LISTS = ['applinks', 'quicklinks'];
 // key -> what every entry of the list must look like (the widgets read these fields unguarded)
 const JSON_ARRAY_ENTRIES = {
-  applinks: (e) => isObject(e) && isString(e.name) && isString(e.url),
+  applinks: (e) => isObject(e) && isString(e.name) && isString(e.url) && hasKey(e),
   backgroundExclude: isString,
   customEvents: (e) => isObject(e) && isString(e.name) && Number.isFinite(e.month) && Number.isFinite(e.date),
-  quicklinks: (e) => isObject(e) && isString(e.name) && isString(e.url),
+  quicklinks: (e) => isObject(e) && isString(e.name) && isString(e.url) && hasKey(e),
   messages: isString,
   order: isString,
   todo: (e) => isObject(e) && isString(e.value),
@@ -108,6 +111,9 @@ export function validateSettings(content) {
     }
     if (!Array.isArray(list)) return `${key} is not a list`;
     if (!list.every(isValidEntry)) return `${key} has an entry of the wrong shape`;
+    if (KEYED_LISTS.includes(key) && new Set(list.map((e) => String(e.key))).size !== list.length) {
+      return `${key} has entries that share a key`;
+    }
   }
   if ('favourite' in content && content.favourite !== 'null') {
     try {
