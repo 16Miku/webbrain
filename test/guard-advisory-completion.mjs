@@ -274,6 +274,45 @@ for (const build of ['chrome', 'firefox']) {
       }
     });
 
+    test(`${label}: a done accepted over a check that knows the task is not done ends the run as partial`, async () => {
+      // As for a plain final: the done's own outcome is downgraded, and the
+      // run reports partial too (trace status, run_status, onRunFinished).
+      for (const decided of [true, false]) {
+        const tab = nextTab++;
+        let n = 0;
+        const agent = loopAgent(Agent, async () => {
+          n++;
+          if (!decided && n === 1) return call('save', 'click_ax', { ref_id: 'ref_save' });
+          return call('done', 'done', { summary: 'Wrote the post.', outcome: 'success' });
+        });
+        if (decided) {
+          agent._richTextToolbarGuard.hasPending = () => true;
+          agent._richTextToolbarGuard.completionAction = () => ({ name: 'type_ax', ref_id: 'ref_bold' });
+        }
+        const runStatuses = [];
+        const doneOutcomes = [];
+        let finished = null;
+        const onUpdate = (type, data) => {
+          if (type === 'run_status') runStatuses.push(data?.status);
+          if (type === 'tool_result' && data?.name === 'done' && data.result?.done) doneOutcomes.push(data.result.outcome);
+        };
+        const options = { detachedRequestId: `guard-${tab}`, onRunFinished: status => { finished = status; } };
+        const result = streaming
+          ? await agent.processMessageStream(tab, 'Write the post.', onUpdate, 'act', options)
+          : await agent.processMessage(tab, 'Write the post.', onUpdate, 'act', [], options);
+        assert.ok(String(result).startsWith(`Wrote the post.\n\n${CAVEAT}`), `${label}: the done is accepted with its caveat`);
+        if (decided) {
+          assert.deepEqual(doneOutcomes, ['partial'], `${label}: the done's own outcome was not downgraded`);
+          assert.equal(finished, 'partial', `${label}: the run finished as a success over a check that knows it is not done`);
+          assert.deepEqual(runStatuses, ['partial'], `${label}: the scheduler did not hear the partial ending`);
+        } else {
+          assert.deepEqual(doneOutcomes, ['success']);
+          assert.equal(finished, 'done', `${label}: missing evidence alone must not downgrade the run`);
+          assert.deepEqual(runStatuses, []);
+        }
+      }
+    });
+
     test(`${label}: a plain final accepted over unfinished progress rows ends the run as partial`, async () => {
       for (const status of ['pending', 'acted']) {
         const tab = nextTab++;
@@ -493,6 +532,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(second.action, 'return');
     const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
     assert.equal(doneResult?.outcome, 'success', `${build}: missing evidence alone must not downgrade the outcome`);
+    assert.equal(second.endStatus, undefined, `${build}: missing evidence alone must not end the run as partial`);
   });
 
   test(`${build}: a chat run's success accepted over a decided check ends with the chat partial contract`, async () => {
@@ -566,6 +606,8 @@ for (const build of ['chrome', 'firefox']) {
       assert.ok(String(accepted.value).includes(`${CAVEAT}1 of 2 items in the task's progress list were not finished.`));
       const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
       assert.equal(doneResult?.outcome, 'partial', `${build} ${status}: a success with an item unfinished was not downgraded`);
+      assert.equal(accepted.status, undefined, `${build} ${status}: a correction can still reopen the done`);
+      assert.equal(accepted.endStatus, 'partial', `${build} ${status}: the run must end as partial too`);
     }
   });
 

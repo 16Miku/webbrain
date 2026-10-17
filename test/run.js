@@ -51004,7 +51004,10 @@ test('agent propagates status-bearing terminal tool-batch returns to callers', (
     ['firefox', 'src/firefox/src/agent/agent.js'],
   ]) {
     const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const emissions = source.match(/onUpdate\('run_status', \{ status: batchResult\.status, message: batchResult\.value \}\);/g) || [];
+    // A batch status, or the end status of a done downgraded to partial.
+    const statuses = source.match(/const endStatus = batchResult\.status \|\| batchResult\.endStatus;/g) || [];
+    const emissions = source.match(/onUpdate\('run_status', \{ status: endStatus, message: batchResult\.value \}\);/g) || [];
+    assert.equal(statuses.length, 2, `${label}: streaming and non-streaming terminal returns must both read the run status`);
     assert.equal(emissions.length, 2, `${label}: streaming and non-streaming terminal returns must both propagate run status`);
   }
 });

@@ -6866,7 +6866,7 @@ export class Agent extends LoopDetector {
           this._throwIfAborted(this._runAbortSignal(tabId));
           if (!current()) return null;
         }
-        return { content: result.value, status: 'done' };
+        return { content: result.value, status: result.endStatus || 'done' };
       }
     } catch (error) {
       if (this._checkAbort(tabId) || error?.name === 'AbortError' || this._isCostAllowanceError(error)) throw error;
@@ -14965,12 +14965,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // done_json is always a success claim; its result carries no outcome.
         const claimsSuccess = toolResult.outcome === 'success' || (fnName === 'done_json'
           && toolResult.doneJson === true && toolResult.cloudFailed !== true && toolResult.outcome === undefined);
+        let doneEndStatus = null;
         if (!scheduledResume && claimsSuccess && this._completionOutcomeDowngraded(tabId)) {
           // Accepted over a guard that knows the claim is wrong: end the run,
           // but as partial so schedules, watches and Cloud runs do not count a
           // success. Before the chat ending below, so a chat run gets the
           // same partial contract (runEnded, no auto-resume, the notice).
           toolResult.outcome = 'partial';
+          // The run itself ends as partial too (trace status, run_status,
+          // onRunFinished), as a plain final over such a guard does. Not a
+          // batch status: a correction that arrived meanwhile still reopens
+          // this done like any other.
+          doneEndStatus = 'partial';
         }
         if (!scheduledResume && runOptions?.scheduledRun !== true && this.chatSessions.has(tabId)
             && ['partial', 'failed'].includes(toolResult.outcome)) {
@@ -15034,7 +15040,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // rawSummary is the model-authored done text before the progress
         // ledger is appended for display; research sharing stores it as the
         // response instead of mislabeling local presentation as provider output.
-        return { action: 'return', value: finalResponse, rawSummary: rawDoneSummary };
+        return { action: 'return', value: finalResponse, rawSummary: rawDoneSummary,
+          ...(doneEndStatus ? { endStatus: doneEndStatus } : {}) };
       }
 
       // Loop detection — exact calls, semantic AX reads, and coordinates run
@@ -44617,9 +44624,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (typeof batchResult.rawSummary === 'string' && batchResult.rawSummary.trim()) {
             shareRawResponse = batchResult.rawSummary;
           }
-          if (batchResult.status) {
-            _traceStatus = batchResult.status;
-            onUpdate('run_status', { status: batchResult.status, message: batchResult.value });
+          const endStatus = batchResult.status || batchResult.endStatus;
+          if (endStatus) {
+            _traceStatus = endStatus;
+            onUpdate('run_status', { status: endStatus, message: batchResult.value });
           }
           return finalResponse;
         }
@@ -45854,10 +45862,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             if (typeof batchResult.rawSummary === 'string' && batchResult.rawSummary.trim()) {
               shareRawResponse = batchResult.rawSummary;
             }
-            if (batchResult.status) {
-              onUpdate('run_status', { status: batchResult.status, message: batchResult.value });
+            const endStatus = batchResult.status || batchResult.endStatus;
+            if (endStatus) {
+              onUpdate('run_status', { status: endStatus, message: batchResult.value });
             }
-            return finish(batchResult.value, batchResult.status);
+            return finish(batchResult.value, endStatus);
           }
           if (batchResult.action === 'deliver') {
             const recovery = await this._recoverDeliveryCheckpointTurn(
