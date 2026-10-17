@@ -1063,12 +1063,12 @@
       });
       if (requestId !== cardRequestId || !cardState) return;
       cardJobId = '';
-      let answer = typeof response?.text === 'string' ? response.text.trim() : '';
+      let answer = typeof response?.text === 'string' ? response.text : '';
       cardState.truncated = response?.truncated === true;
       // This also applies to a textless cut-off, where it warns that continuing
       // in the panel would be blocked by the exhausted allowance.
       cardState.notice = typeof response?.notice === 'string' ? response.notice.slice(0, 300) : '';
-      if (!response?.ok || !answer) {
+      if (!response?.ok || !answer.trim()) {
         throw new Error(typeof response?.error === 'string' && !cardState.truncated ? response.error : '');
       }
       if (answer.length > INLINE_ANSWER_MAX_CHARS) {

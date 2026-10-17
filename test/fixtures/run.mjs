@@ -2207,7 +2207,7 @@ for (const [label, sourcePath, manualOpen] of [
 
   test(`${label}: Proofread preserves whitespace-sensitive corrections`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
-    const correction = 'def example():\n    return {\n        "answer": 42,\n    }';
+    const correction = '    def example():\n    return {\n        "answer": 42,\n    }\n';
     await page.evaluate((text) => {
       window.__selectionInlineHandler = async () => ({ ok: true, text });
     }, correction);
