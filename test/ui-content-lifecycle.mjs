@@ -210,7 +210,7 @@ if (process.argv.includes('--dom')) for (const [engineName, engine] of Object.en
       const settleDelay = source.match(/^  const SET_FIELD_VERIFY_DELAY_MS = \d+;$/m)?.[0];
       assert.ok(settleDelay, 'Use the production page-handler render delay');
       const functions = [ownInputScope, caretReceipts, settleDelay].join('\n') + '\n' + [
-        'readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText',
+        'readProseMirrorText', 'readCodeMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText',
         '_nativeChatCaretContext', '_sameNativeChatCaretContext', '_singleEditableCaretBreak',
         '_rememberNativeChatEmptyCaret', '_nativeChatCaretValueIsEmpty', '_editableTextValue',
         '_insertContentEditableText', '_typeTextInner',

@@ -137,6 +137,7 @@ async function composeHost(page, tab, host) {
     window.readProseMirrorText = () => null;
     window.isDraftJsEditor = () => false;
     window.readDraftJsText = () => null;
+    window.readCodeMirrorText = () => null;
     window.readEmptyCaretText = () => null;
     window._stableFieldSelector = el => '#' + el.id;
     window._setFieldValueMatches = (actual, prefix, text, clear) => actual === (clear ? '' : prefix) + text;
