@@ -352,7 +352,7 @@ for (const browser of ['chrome', 'firefox']) {
       assert.deepEqual(sent, [], 'nothing was sent into the other tab');
       assert.equal(input.value, '', "the other tab's composer was not touched");
       // a read-time switch leaves the record where it was; a removal-time switch hands it back
-      assert.equal((store[key3] ?? store[newtabHandoffRetryKey(3)])?.id, 'r1', "the old tab's record is still waiting");
+      assert.equal((store[key3] ?? store[newtabHandoffRetryKey(3)]?.[0])?.id, 'r1', "the old tab's record is still waiting");
       // back on tab 3 the task is applied
       state.tabId = 3;
       await handoff.consume();
@@ -390,8 +390,8 @@ for (const browser of ['chrome', 'firefox']) {
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(input.value, '', "tab 4's composer stays empty");
-    assert.equal(store[newtabHandoffRetryKey(3)]?.text, 'for tab three', 'the task is waiting for tab 3 again');
-    assert.equal(store[newtabHandoffRetryKey(3)].id, 'r1-retry');
+    assert.equal(store[newtabHandoffRetryKey(3)]?.[0]?.text, 'for tab three', 'the task is waiting for tab 3 again');
+    assert.equal(store[newtabHandoffRetryKey(3)][0].id, 'r1-retry');
   });
 
   test(`${browser}: a declined send keeps a draft typed meanwhile and adds the task below it`, async () => {
@@ -455,13 +455,13 @@ for (const browser of ['chrome', 'firefox']) {
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(store[key3].id, 'B', 'the newer task is kept');
-    assert.equal(store[newtabHandoffRetryKey(3)].id, 'A-retry', 'and the declined one is kept beside it');
+    assert.equal(store[newtabHandoffRetryKey(3)][0].id, 'A-retry', 'and the declined one is kept beside it');
   });
 
   test(`${browser}: a task handed back to its tab is applied when that tab is shown again, and the slot is cleared`, async () => {
     const key3 = newtabHandoffKey(3);
     const retry3 = newtabHandoffRetryKey(3);
-    const store = { [retry3]: { id: 'A-retry', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_900 } };
+    const store = { [retry3]: [{ id: 'A-retry', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_900 }] };
     const input = { value: '', dispatchEvent() {}, focus() {} };
     const sent = [];
     const handoff = createNewtabHandoff({
@@ -485,6 +485,41 @@ for (const browser of ['chrome', 'firefox']) {
     assert.deepEqual(sent, ['task A']);
     assert.equal(retry3 in store, false);
     assert.equal(key3 in store, false);
+  });
+
+  test(`${browser}: handing a task back never discards one already waiting in the retry slot`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const retry3 = newtabHandoffRetryKey(3);
+    const store = {
+      [key3]: { id: 'B', tabId: 3, text: 'task B', mode: 'ask', createdAt: 99_500 },
+      [retry3]: [{ id: 'A-retry', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_900 }],
+    };
+    const state = { tabId: 3 };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => state.tabId,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => { input.value = ''; await gate; return false; },
+      now: () => 100_000,
+    });
+    await handoff.start(); // B (the primary record) is claimed first and sent
+    state.tabId = 4;
+    release();
+    for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(store[retry3].map((r) => r.id), ['A-retry', 'B-retry'], 'both tasks are kept');
   });
 
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });

@@ -82,6 +82,14 @@ export function createNewtabHandoff({
   // The Ask most recently handed to sendMessage, while its text may still be in
   // the composer waiting for the send's own checks to finish.
   let pendingSend = null;
+  // Writes to the retry slot (a list, written only by this panel) run one after another, so
+  // two hand-backs or a hand-back and a claim never overwrite each other.
+  let retrySlotWrites = Promise.resolve();
+  const serialRetryWrite = (fn) => {
+    retrySlotWrites = retrySlotWrites.then(fn, fn);
+    return retrySlotWrites;
+  };
+  const asList = (raw) => (Array.isArray(raw) ? raw : raw == null ? [] : [raw]);
 
   const sendStillHoldsComposer = () => {
     if (!pendingSend || pendingSend.settled) return false;
@@ -126,28 +134,39 @@ export function createNewtabHandoff({
     const sameTab = () => Number(getCurrentTabId()) === Number(tabId);
     // Hand a task back for when this tab is shown again, without touching the key the new tab
     // writes to (it unlocks as soon as a record is removed and may already hold the next task).
-    const stashForLater = async (record) => {
+    const stashForLater = (record) => serialRetryWrite(async () => {
       try {
-        const current = (await storage.get(retryKey))?.[retryKey];
-        if (current == null) await storage.set?.({ [retryKey]: record });
+        const queue = asList((await storage.get(retryKey))?.[retryKey]);
+        if (queue.some((entry) => entry?.id === record.id)) return;
+        await storage.set?.({ [retryKey]: [...queue, record] });
       } catch { /* best effort */ }
+    });
+    // Takes the record just read out of storage: the primary key is simply removed, the retry
+    // slot drops that one entry and keeps the others.
+    const removeClaimed = (record) => {
+      if (key !== retryKey) return storage.remove(key);
+      return serialRetryWrite(async () => {
+        const rest = asList((await storage.get(retryKey))?.[retryKey]).filter((entry) => entry?.id !== record?.id);
+        if (rest.length) await storage.set?.({ [retryKey]: rest });
+        else await storage.remove(retryKey);
+      });
     };
     try {
       let stored = (await storage.get(primaryKey))?.[primaryKey];
       if (stored == null && sameTab()) {
-        stored = (await storage.get(retryKey))?.[retryKey];
+        stored = asList((await storage.get(retryKey))?.[retryKey])[0];
         key = retryKey;
       }
       if (stored == null || !sameTab()) return false;
       const handoff = normalizeNewtabHandoff(stored, now(), NEWTAB_HANDOFF_MAX_AGE_MS + allowance);
       if (!handoff) {
-        await storage.remove(key);
+        await removeClaimed(stored);
         return false;
       }
       if (handoff.tabId !== Number(tabId) || handled.has(handoff.id)) return false;
 
       handled.add(handoff.id);
-      await storage.remove(key);
+      await removeClaimed(stored);
       if (!sameTab()) {
         // Switched during the removal: put the record back for when this tab is shown again.
         handled.delete(handoff.id);
