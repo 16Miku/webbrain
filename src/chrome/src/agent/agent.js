@@ -26277,7 +26277,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // A reply that stopped at the output limit is an error on some providers. The
       // side-panel answer still shows what was written, marked as cut off below.
       const partial = phase === 'response_only' ? cutOffPartialFromError(error) : '';
-      if (!partial) throw error;
+      if (!partial) {
+        // OpenAI Responses can spend the entire output budget on reasoning. If that
+        // same call exhausted the allowance, retain its notice rather than routing
+        // it through generic failure recovery, which does not preserve it.
+        if (phase === 'response_only'
+          && error?.costAllowanceMessage
+          && ['length', 'max_tokens', 'max_output_tokens', 'max_completion_tokens'].includes(String(error?.incompleteReason))) {
+          return `${RESPONSE_CUT_OFF_NOTICE.trim()}\n\n${error.costAllowanceMessage}`;
+        }
+        throw error;
+      }
       result = {
         content: Agent._stripReasoningTags(partial),
         toolCalls: [],
