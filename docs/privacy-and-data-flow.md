@@ -112,7 +112,7 @@ OpenRouter Decider with completion verification enabled once outsourcing is
 configured. Compass completion uses its managed Cloud decision route by default;
 an explicitly enabled and consented D1 selection changes that decision route only.
 
-With Settings → Mode selection set to Automatic, each turn the user sends also
+With Settings → Mode selection set to Automatic (the default), each turn the user sends also
 asks the configured decision model one `run_mode` question: the text of that
 message, the previous turn's mode and the user's earlier task in the
 conversation. No page text, title, address or screenshot is included, and the

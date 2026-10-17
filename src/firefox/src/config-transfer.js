@@ -27,7 +27,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   [UI_SCALE_STORAGE_KEY]: 100,
   verboseMode: false,
   composerDeliveryMode: 'queue',
-  modeSelection: 'manual',
+  modeSelection: 'auto',
   selectionShortcutEnabled: true,
   [AUTO_GROUP_TABS_KEY]: true,
   helpImproveWebBrain: true,

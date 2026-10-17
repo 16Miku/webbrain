@@ -60,7 +60,7 @@ for (const build of ['chrome', 'firefox']) {
       });
       await page.goto('http://history.test/');
       await page.addStyleTag({ content: await readFile(`src/${build}/styles/sidepanel.css`, 'utf8') });
-      await page.addStyleTag({ content: '#btn-history { position: fixed; bottom: 100px; right: 30px; }' });
+      await page.addStyleTag({ content: '#btn-history { position: fixed; top: 10px; right: 30px; }' });
       await page.addScriptTag({ type: 'module', content: `import * as store from '/src/ui/chat-history-store.js'; window.store = store;` });
       await page.waitForFunction(() => window.store);
       const abortResult = await page.evaluate(async () => {
@@ -135,6 +135,7 @@ for (const build of ['chrome', 'firefox']) {
         const historyPopover = document.getElementById('history-popover');
         const historyBtn = document.getElementById('btn-history');
         let historyPopoverRequest = 0, currentTabId = 42;
+        const uiScaleZoom = () => 1;
         const t = key => ({'sp.history.recover':'Recover','sp.history.recent':'Recent conversations for this URL','sp.providers.more':'More…'}[key] || key), getLocale = () => 'en';
         const sameTabId = (a,b) => a === b;
         const getTabInfoForHistory = async () => ({url: 'https://example.com/page'});
@@ -147,6 +148,12 @@ for (const build of ['chrome', 'firefox']) {
       await page.click('#btn-history');
       await page.waitForFunction(() => document.querySelectorAll('.history-popover-record').length === 5);
       assert.deepEqual(await page.locator('.history-popover-record strong').allTextContents(), [7,6,5,4,3].map(n => 'Conversation ' + n));
+      const placement = await page.evaluate(() => {
+        const button = document.querySelector('#btn-history').getBoundingClientRect();
+        const popover = document.querySelector('#history-popover').getBoundingClientRect();
+        return { below: popover.top >= button.bottom, inside: popover.left >= 0 && popover.right <= window.innerWidth, endAligned: Math.abs(popover.right - button.right) <= 1 };
+      });
+      assert.deepEqual(placement, { below: true, inside: true, endAligned: true }, 'History in the header opens below its button, end-aligned and inside the panel');
       if (process.env.HISTORY_SCREENSHOT && build === 'chrome') await page.screenshot({ path: process.env.HISTORY_SCREENSHOT });
       await page.locator('.history-popover-record button').first().click();
       assert.deepEqual(await page.evaluate(() => window.recovered), ['7',42,'https://example.com/page']);

@@ -704,21 +704,17 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   flex-shrink: 0;
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-  /* Keep the status-dot glued to the provider picker — don't let the
-     picker stretch across the header and park the dot next to language. */
-}
-
-.header-right {
+/* Display tools (language, scale, Settings, pop-out) sit at the start of the
+   header and the conversation actions (History, New chat) at its end. */
+.header-tools {
   display: flex;
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
+}
+
+.header-conversation {
+  margin-inline-start: auto;
 }
 
 .ui-scale-menu {
@@ -729,9 +725,10 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   position: absolute;
   z-index: 30;
   top: calc(100% + 7px);
-  /* Logical, so the popover opens inward from the trigger in RTL locales
+  /* The trigger sits at the start of the header: align the popover to the
+     trigger's start edge (logical, so RTL locales also open it inward)
      instead of off the panel edge. */
-  inset-inline-end: 0;
+  inset-inline-start: 0;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -745,9 +742,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 
 .ui-scale-popover.hidden { display: none; }
 
-/* Two ids: the generic `#header .header-right button:not(...)` rule below is
+/* Two ids: the generic `#header .header-tools button:not(...)` rule below is
    more specific than a class-based selector, and these chips live inside
-   .header-right. */
+   .header-tools. */
 #header #ui-scale-popover button {
   min-width: 28px;
   min-height: 28px;
@@ -759,7 +756,7 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   font: inherit;
 }
 
-/* The base rule above (two ids) outranks the generic `.header-right
+/* The base rule above (two ids) outranks the generic `.header-tools
    button:hover`, so these chips need their own hover to react at all. */
 #header #ui-scale-popover button:hover:not(:disabled) { background: var(--accent-dim); }
 #header #ui-scale-popover button:disabled { opacity: 0.45; cursor: default; }
@@ -1016,9 +1013,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   flex: 0 0 auto;
 }
 
-/* Two selectors deep: the generic `#header .header-right button:not(...)` rule
-   below outranks a bare class selector, and this trigger lives in .header-right. */
-#header .header-right button.language-picker-btn[aria-expanded="true"] {
+/* Two selectors deep: the generic `#header .header-tools button:not(...)` rule
+   below outranks a bare class selector, and this trigger lives in .header-tools. */
+#header .header-tools button.language-picker-btn[aria-expanded="true"] {
   color: var(--text-primary);
   background: var(--accent-dim);
 }
@@ -1036,13 +1033,20 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   background: var(--bg-input);
 }
 
+/* Opens inward from the start of the header. The menu itself is always
+   LTR, so its side follows the document direction explicitly. */
 .language-picker-menu {
-  right: 0;
-  left: auto;
+  left: 0;
+  right: auto;
   min-width: 224px;
   max-width: min(272px, calc(100vw / var(--ui-scale-zoom, 1) - 16px));
   max-height: min(352px, calc(60vh / var(--ui-scale-zoom, 1)));
   direction: ltr;
+}
+
+html[dir="rtl"] .language-picker-menu {
+  left: auto;
+  right: 0;
 }
 
 .language-picker-option {
@@ -1114,9 +1118,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   background: var(--border);
 }
 
-/* Icon buttons in the header-right cluster only. The language trigger is one
+/* Icon buttons in the header tools cluster only. The language trigger is one
    of them; its menu options keep their own option styling. */
-#header .header-right button:not(.language-picker-option) {
+#header .header-tools button:not(.language-picker-option) {
   background: none;
   border: none;
   color: var(--text-secondary);
@@ -1128,12 +1132,12 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   transition: color 0.2s, background 0.2s;
 }
 
-#header .header-right button:not(.language-picker-option):hover {
+#header .header-tools button:not(.language-picker-option):hover {
   color: var(--text-primary);
   background: var(--accent-dim);
 }
 
-#header .header-right button:not(.language-picker-option).active {
+#header .header-tools button:not(.language-picker-option).active {
   color: var(--accent);
   background: var(--accent-dim);
 }
@@ -2868,15 +2872,8 @@ html[data-standalone="true"] #header #btn-expand {
   display: none;
 }
 
-html[data-standalone="true"] #header #btn-clear {
-  width: 26px;
-  min-width: 26px;
-  height: 26px;
-  padding: 0;
-  justify-content: center;
-}
-
-html[data-standalone="true"] #header #btn-clear .conversation-action-label {
+/* Standalone chat has no History; New chat stays in the header. */
+html[data-standalone="true"] #header #btn-history {
   display: none;
 }
 
@@ -2887,14 +2884,10 @@ html[data-standalone="true"] #header #btn-clear .conversation-action-label {
   margin-bottom: 8px;
 }
 
-/* Settings -> Mode selection: Automatic. The agent routes each turn, so the
-   Ask/Act/Dev toggle is hidden and the conversation actions keep the row. */
-html[data-mode-selection="auto"] #mode-toggle {
+/* Settings -> Mode selection is Automatic unless set to Manual. The agent
+   routes each turn, so the Ask/Act/Dev row shows only in Manual. */
+html:not([data-mode-selection="manual"]) .composer-control-row {
   display: none;
-}
-
-html[data-mode-selection="auto"] .composer-control-row {
-  justify-content: flex-end;
 }
 
 #mode-toggle {
@@ -3044,15 +3037,58 @@ html[data-ui-scale="175"] .conversation-action-label {
   flex-shrink: 0;
 }
 
+/* Two rows: the message on top, then attach, the model picker and its
+   status, and mic and send at the end. */
 #input-wrapper {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 6px 8px;
+  padding: 8px 8px 6px;
   transition: border-color 0.2s;
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.composer-toolbar-spacer {
+  flex: 1 1 0;
+}
+
+/* The model picker stays quiet until hovered; its menu opens upward. */
+.composer-toolbar .provider-picker {
+  max-width: 220px;
+}
+
+.composer-toolbar .provider-picker-btn {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+  padding: 4px 6px;
+}
+
+.composer-toolbar .provider-picker-btn:hover,
+.composer-toolbar .provider-picker-btn[aria-expanded="true"] {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.composer-toolbar .provider-picker-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+html[dir="rtl"] .composer-toolbar .provider-picker-menu {
+  left: auto;
+  right: 0;
 }
 
 #input-wrapper:focus-within {
@@ -3269,8 +3305,8 @@ html[data-ui-scale="175"] .conversation-action-label {
 }
 
 #input-text-layer {
-  flex: 1;
   display: grid;
+  padding-inline: 4px;
   min-width: 0;
   position: relative;
 }
