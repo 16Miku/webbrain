@@ -549,6 +549,15 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(empty.input.value, 'y');
   });
 
+  test(`${browser}: Ask never overwrites an existing draft and is not sent over it`, async () => {
+    const h = await harness({ record: rec({ text: 'summarise this' }) });
+    h.input.value = 'my half-written email to Sam';
+    assert.equal(await h.handoff.consume(), true);
+    assert.equal(h.input.value, 'my half-written email to Sam\n\nsummarise this');
+    assert.equal(h.log.sent.length, 0, 'the combined text is left for the user to review and send');
+    assert.equal(KEY in h.store, false);
+  });
+
   test(`${browser}: manifest and background are wired`, () => {
     const manifest = JSON.parse(readFileSync(path.join(root, 'src', browser, 'manifest.json'), 'utf8'));
     assert.equal(manifest.chrome_url_overrides?.newtab, 'newtab/index.html');
@@ -716,4 +725,34 @@ test('EventBus.off removes the listener that was really registered', async () =>
 test('picking a colour refreshes the visible background even though the type is unchanged', () => {
   const hook = readFileSync(nt('features/background/hooks/useBackgroundEvents.js'), 'utf8');
   assert.match(hook, /type === 'colour'/);
+});
+
+test('the producer lock and the background sweep outlast the panel\'s accepted record age', async () => {
+  const { NEWTAB_HANDOFF_MAX_AGE_MS, NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS } =
+    await load(path.join(root, 'src/chrome/src/ui/newtab-handoff.js'));
+  const longest = NEWTAB_HANDOFF_MAX_AGE_MS + NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS;
+  const number = (text, re) => Number(re.exec(text)[1].replace(/_/g, ''));
+
+  const lock = number(readFileSync(nt('features/agent/handoff.js'), 'utf8'), /CLAIM_TIMEOUT_MS = ([\d_]+)/);
+  assert.ok(lock > longest, `producer lock ${lock} must exceed ${longest}`);
+  for (const b of ['chrome', 'firefox']) {
+    const bg = readFileSync(path.join(root, 'src', b, 'src/background.js'), 'utf8');
+    const cutoff = number(bg, /const cutoff = Date\.now\(\) - ([\d_]+);/);
+    assert.ok(cutoff > longest, `${b} sweep cutoff ${cutoff} must exceed ${longest}`);
+  }
+});
+
+test('the recent-chats switch refreshes the widgets', () => {
+  const src = readFileSync(nt('features/agent/TaskBoxOptions.jsx'), 'utf8');
+  assert.match(src, /<Switch name="recentChats" category="widgets"/);
+  assert.doesNotMatch(src, /element=/, 'a missing .other element made the switch bail out');
+});
+
+test('components unsubscribe the handler they registered', () => {
+  for (const file of [
+    'features/greeting/Greeting.jsx', 'features/navbar/components/Notes.jsx', 'features/navbar/Navbar.jsx',
+    'features/misc/views/Widgets.jsx', 'features/message/Message.jsx', 'features/time/Clock.jsx', 'features/time/Date.jsx',
+  ]) {
+    assert.doesNotMatch(readFileSync(nt(file), 'utf8'), /EventBus\.off\('refresh'\)/, file);
+  }
 });

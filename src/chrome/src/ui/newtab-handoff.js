@@ -9,10 +9,11 @@
  *     active in that tab it is queued behind it, exactly like pressing Send then.
  *     If the panel declines to send (plan review pending, state refresh, ...) the
  *     text stays in the composer for the user to send.
+ *     If the composer already holds a different draft (the user's own, or an
+ *     unconfirmed Act task) nothing is overwritten and nothing is sent: the task is
+ *     added below the draft for the user to review and send.
  *   - Act: the task is filled in and the panel switches to Act, but nothing is
- *     sent. Act always needs the user's own Enter in the panel. It never replaces
- *     what is already in the composer (an earlier unconfirmed Act draft, or the
- *     user's own text): the new task is added below it, where it can be reviewed.
+ *     sent. Act always needs the user's own Enter in the panel.
  *
  * A second hand-off is held back while an earlier Ask is still being sent (its text
  * is still sitting in the composer): filling the composer again would make that
@@ -127,11 +128,10 @@ export function createNewtabHandoff({
 
       setMode(handoff.mode);
       const input = getInputEl();
-      let composerText = handoff.text;
-      if (handoff.mode === 'act') {
-        const existing = String(input.value || '').trim();
-        if (existing && existing !== handoff.text) composerText = `${existing}\n\n${handoff.text}`;
-      }
+      // Never overwrite what is already in the composer. The task goes below it.
+      const existing = String(input.value || '').trim();
+      const keepsDraft = Boolean(existing) && existing !== handoff.text;
+      const composerText = keepsDraft ? `${existing}\n\n${handoff.text}` : handoff.text;
       const fill = () => {
         input.value = composerText;
         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -139,7 +139,7 @@ export function createNewtabHandoff({
       };
       fill();
       input.focus?.();
-      if (handoff.mode === 'ask' && !getIsBlocked()) {
+      if (handoff.mode === 'ask' && !getIsBlocked() && !keepsDraft) {
         // sendMessage reads the composer synchronously when called, so starting it
         // here captures this task. It is not awaited: a send can last a whole run,
         // and that must not hold up later hand-offs or the panel's own startup.

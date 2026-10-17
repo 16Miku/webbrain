@@ -51,6 +51,9 @@ export default class EventBus {
    * @param callback - The function that was passed to on()/once()/prepend().
    */
   static off(event, callback) {
+    // Without the function there is nothing specific to remove (and removing every
+    // subscriber of the event would break other components).
+    if (typeof callback !== 'function') return;
     const entries = this.listeners[event] || [];
     const matching = entries.filter(
       (entry) => entry.callback === callback || entry.listener === callback,

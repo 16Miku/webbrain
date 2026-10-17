@@ -51,7 +51,10 @@ export function buildHandoff({ text, mode, tabId, now = Date.now() }) {
 // while a cold side panel is still starting up. The lock is taken synchronously at
 // submit time (before the write or the panel-open settle) and released when the
 // panel has claimed the task, the submit failed, or CLAIM_TIMEOUT_MS passed.
-const CLAIM_TIMEOUT_MS = 120_000;
+// Must outlast the panel's longest accepted record age (30 s + up to 120 s of its own
+// startup, see src/*/src/ui/newtab-handoff.js), or a second submit could replace a
+// task the panel would still accept.
+const CLAIM_TIMEOUT_MS = 160_000;
 const inFlight = new Map(); // tabId -> { promise, release }
 
 function lockTab(tabId) {

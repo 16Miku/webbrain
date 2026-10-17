@@ -27,7 +27,7 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
 2. It then sends `WB_NEWTAB_PANEL_OPENED`. `background.js` accepts it only from the
    extension's own `newtab/index.html` tab, on Chrome adds the tab to the
    WebBrain group/`panelTabs` as the install page does. Records that are never claimed
-   are removed when their tab closes, and any older than two minutes are swept each time
+   are removed when their tab closes, and any older than three minutes are swept each time
    the background starts and on every submit.
 3. `src/ui/newtab-handoff.js` (identical in both extensions) in the side panel claims
    the record for the tab it is showing. It must be ≤ 4000 characters, mode
@@ -39,9 +39,10 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
    - **Ask** is filled in and sent. If a run is already active in that tab it is
      queued behind it, like pressing Send. If the panel declines to send (plan review
      pending, a refresh in progress) the text stays in the composer.
-   - **Act** is filled in with the panel switched to Act, and never sent. It never
-     replaces what is already in the composer (an earlier unconfirmed Act draft, or the
-     user's own text); the new task is added below it, where it can be reviewed.
+   - **Act** is filled in with the panel switched to Act, and never sent.
+   - Neither mode ever overwrites what is already in the composer (the user's own
+     draft, an unconfirmed Act task, a declined Ask). The new task is added below it
+     for review and, in that case, an Ask is not sent automatically.
    - A later hand-off is held back (retried every 150 ms, for up to about 30 s) while an
      earlier Ask's text is still in the composer waiting for its send to commit, so one
      task can never replace the other. The record stays in storage meanwhile.

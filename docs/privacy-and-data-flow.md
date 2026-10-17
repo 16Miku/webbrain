@@ -453,7 +453,7 @@ shown. Links without a custom icon use a local letter tile; nothing is looked up
 Its settings, quick links and uploaded backgrounds stay in the browser under a separate
 `wbnt:` prefix. Text typed into its box is held briefly in extension storage (one
 record per tab) to hand it to the side panel and removed once claimed; unclaimed
-records are removed after a couple of minutes. **Search** mode uses the browser's own
+records are removed after about three minutes. **Search** mode uses the browser's own
 default search engine, so a query typed there goes to that engine as it would from the
 address bar.
 

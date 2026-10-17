@@ -146,7 +146,7 @@ const Greeting = () => {
 
     EventBus.on('refresh', handleRefresh);
     return () => {
-      EventBus.off('refresh');
+      EventBus.off('refresh', handleRefresh);
       if (timerRef.current) {
         clearTimeout(timerRef.current);
       }

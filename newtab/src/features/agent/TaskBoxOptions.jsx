@@ -30,7 +30,8 @@ function TaskBoxOptions() {
       <Row final>
         <Content title={variables.getMessage('wb.settings_recent')} />
         <Action>
-          <Switch name="recentChats" element=".other" />
+          {/* category: Widgets listens for "widgets" refreshes and shows/hides the list. */}
+          <Switch name="recentChats" category="widgets" />
         </Action>
       </Row>
     </>

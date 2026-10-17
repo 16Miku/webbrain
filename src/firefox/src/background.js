@@ -1398,7 +1398,8 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 async function sweepStaleNewtabHandoffs() {
   try {
     const all = await browser.storage.local.get(null);
-    const cutoff = Date.now() - 120_000;
+    // Past the longest age the panel still accepts (150 s), so nothing claimable is removed.
+    const cutoff = Date.now() - 180_000;
     const stale = Object.keys(all).filter(
       (key) => key.startsWith('wbNewtabHandoff:') && !(Number(all[key]?.createdAt) > cutoff),
     );
