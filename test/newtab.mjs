@@ -11,6 +11,7 @@ const load = (file) => import(pathToFileURL(file).href);
 const { createNamespacedStorage, NAMESPACE_PREFIX } = await load(nt('lib/storage-namespace.js'));
 const { buildHandoff, toNavigableUrl, submitTask, HANDOFF_KEY } = await load(nt('features/agent/handoff.js'));
 const { getTitleFromUrl } = await load(nt('utils/links/getTitleFromUrl.js'));
+const { normalizeLinkUrl } = await load(nt('utils/links/normalizeLinkUrl.js'));
 
 function memoryStorage(seed = {}) {
   const map = new Map(Object.entries(seed));
@@ -135,6 +136,29 @@ test('link titles are derived locally and never fetched', async () => {
   }
 });
 
+test('link URLs are normalised the same way for add and edit', () => {
+  assert.equal(normalizeLinkUrl('example.com'), 'https://example.com');
+  assert.equal(normalizeLinkUrl('  http://example.com/x '), 'http://example.com/x');
+  assert.equal(normalizeLinkUrl('HTTPS://Example.com'), 'https://Example.com');
+  assert.equal(normalizeLinkUrl('javascript:alert(1)'), null);
+  assert.equal(normalizeLinkUrl('javascript:alert(1)//https://a.bc'), null);
+  assert.equal(normalizeLinkUrl('data:text/html,hi'), null);
+  assert.equal(normalizeLinkUrl('ftp://example.com'), null);
+  assert.equal(normalizeLinkUrl('nodots'), null);
+  assert.equal(normalizeLinkUrl(''), null);
+  assert.equal(normalizeLinkUrl(undefined), null);
+});
+
+test('editing a link uses the same normalisation as adding one', () => {
+  for (const file of ['features/quicklinks/options/QuickLinksOptions.jsx', 'features/navbar/options/AppsOptions.jsx']) {
+    const src = readFileSync(nt(file), 'utf8');
+    const start = src.indexOf('const editLink');
+    const edit = src.slice(start, start + 1500);
+    assert.match(src, /normalizeLinkUrl/, file);
+    assert.match(edit, /normalizeLinkUrl\(url\)/, `${file}: editLink must normalise`);
+  }
+});
+
 test('the only remaining fetch in the new tab source loads the chosen background image', () => {
   const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]);
@@ -161,10 +185,12 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(normalizeNewtabHandoff(null, now), null);
   });
 
-  function harness({ tabId = 3, processing = false, record }) {
+  function harness({ tabId = 3, processing = false, blocked = false, record, visible = true }) {
     const store = { [NEWTAB_HANDOFF_KEY]: record };
-    const log = { mode: null, sent: 0, value: '' };
+    const log = { mode: null, sent: [], value: '' };
     const input = { value: '', dispatchEvent() {}, focus() {} };
+    const listeners = [];
+    const state = { visible };
     const handoff = createNewtabHandoff({
       storage: {
         get: async (k) => (k in store ? { [k]: store[k] } : {}),
@@ -172,30 +198,33 @@ for (const browser of ['chrome', 'firefox']) {
       },
       getCurrentTabId: () => tabId,
       getIsProcessing: () => processing,
+      getIsBlocked: () => blocked,
+      getIsDocumentVisible: () => state.visible,
+      doc: { addEventListener: (type, fn) => { if (type === 'visibilitychange') listeners.push(fn); } },
       setMode: (m) => { log.mode = m; },
       getInputEl: () => input,
       autoResizeInput() {},
-      sendMessage: async () => { log.sent += 1; log.value = input.value; },
+      sendMessage: async (params) => { log.sent.push(params); log.value = input.value; },
       now: () => 100_000,
     });
-    return { handoff, store, log, input };
+    return { handoff, store, log, input, state, listeners };
   }
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
 
   test(`${browser}: Ask is sent automatically and the record is claimed once`, async () => {
     const h = harness({ record: rec() });
     assert.equal(await h.handoff.consume(), true);
-    assert.deepEqual([h.log.mode, h.log.sent, h.log.value], ['ask', 1, 'summarise']);
+    assert.deepEqual([h.log.mode, h.log.sent, h.log.value], ['ask', [undefined], 'summarise']);
     assert.equal(NEWTAB_HANDOFF_KEY in h.store, false);
     assert.equal(await h.handoff.consume(), false);
-    assert.equal(h.log.sent, 1);
+    assert.equal(h.log.sent.length, 1);
   });
 
   test(`${browser}: Act is pre-filled but never sent`, async () => {
     const h = harness({ record: rec({ mode: 'act', text: 'book a table' }) });
     assert.equal(await h.handoff.consume(), true);
     assert.equal(h.log.mode, 'act');
-    assert.equal(h.log.sent, 0);
+    assert.equal(h.log.sent.length, 0);
     assert.equal(h.input.value, 'book a table');
   });
 
@@ -203,18 +232,39 @@ for (const browser of ['chrome', 'firefox']) {
     const other = harness({ record: rec({ tabId: 99 }) });
     assert.equal(await other.handoff.consume(), false);
     assert.equal(NEWTAB_HANDOFF_KEY in other.store, true);
-    assert.equal(other.log.sent, 0);
+    assert.equal(other.log.sent.length, 0);
 
     const stale = harness({ record: rec({ createdAt: 1 }) });
     assert.equal(await stale.handoff.consume(), false);
     assert.equal(NEWTAB_HANDOFF_KEY in stale.store, false);
   });
 
-  test(`${browser}: Ask while the agent is busy fills the box without sending`, async () => {
+  test(`${browser}: Ask during an active run is queued behind it, not dropped`, async () => {
     const h = harness({ processing: true, record: rec() });
-    await h.handoff.consume();
-    assert.equal(h.log.sent, 0);
+    assert.equal(await h.handoff.consume(), true);
+    assert.deepEqual(h.log.sent, [{ __deliveryMode: 'queue' }]);
     assert.equal(h.input.value, 'summarise');
+    assert.equal(NEWTAB_HANDOFF_KEY in h.store, false);
+  });
+
+  test(`${browser}: Ask while the conversation is being cleared is only pre-filled`, async () => {
+    const h = harness({ blocked: true, record: rec() });
+    await h.handoff.consume();
+    assert.equal(h.log.sent.length, 0);
+    assert.equal(h.input.value, 'summarise');
+  });
+
+  test(`${browser}: a hidden panel claims the task as soon as it becomes visible`, async () => {
+    const h = harness({ visible: false, record: rec() });
+    h.handoff.watch();
+    assert.equal(await h.handoff.consume(), false);
+    assert.equal(NEWTAB_HANDOFF_KEY in h.store, true);
+    h.state.visible = true;
+    h.listeners.forEach((fn) => fn());
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(h.log.sent.length, 1);
+    assert.equal(NEWTAB_HANDOFF_KEY in h.store, false);
   });
 
   test(`${browser}: manifest and background are wired`, () => {

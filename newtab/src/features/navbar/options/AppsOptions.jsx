@@ -12,7 +12,7 @@ import { Button } from 'components/Elements';
 
 import { Row, Content, Action } from 'components/Layout/Settings/Item';
 
-import { getTitleFromUrl, isValidUrl } from 'utils/links';
+import { getTitleFromUrl, isValidUrl, normalizeLinkUrl } from 'utils/links';
 import { QuickLink } from 'features/quicklinks/options/QuickLink';
 
 function AppsOptions({ appsEnabled }) {
@@ -29,11 +29,9 @@ function AppsOptions({ appsEnabled }) {
   const addLink = async (name, url, icon) => {
     const data = JSON.parse(localStorage.getItem('applinks'));
 
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
-    }
+    url = normalizeLinkUrl(url);
 
-    if (url.length <= 0 || isValidUrl(url) === false) {
+    if (!url) {
       return setAppsModalInfo((oldState) => ({
         ...oldState,
         urlError: t('widgets.quicklinks.url_error'),
@@ -79,6 +77,23 @@ function AppsOptions({ appsEnabled }) {
   const editLink = async (og, name, url, icon) => {
     const data = JSON.parse(localStorage.getItem('applinks'));
     const dataobj = data.find((i) => i.key === og.key);
+    if (!dataobj) return;
+
+    url = normalizeLinkUrl(url);
+    if (!url) {
+      return setAppsModalInfo((oldState) => ({
+        ...oldState,
+        urlError: t('widgets.quicklinks.url_error'),
+      }));
+    }
+
+    if (icon.length > 0 && isValidUrl(icon) === false) {
+      return setAppsModalInfo((oldState) => ({
+        ...oldState,
+        iconError: t('widgets.quicklinks.icon_error'),
+      }));
+    }
+
     dataobj.name = name || (await getTitleFromUrl(url));
     dataobj.url = url;
     dataobj.icon = icon || '';

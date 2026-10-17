@@ -4,7 +4,8 @@
  * The new tab stores { id, tabId, text, mode, createdAt } under one storage
  * key and opens this panel from its own click handler. The panel claims the
  * record only if it is fresh and addressed to the tab it is showing:
- *   - Ask: the task is filled in and sent (Ask is read-only);
+ *   - Ask: the task is filled in and sent (Ask is read-only). If a run is already
+ *     active in that tab it is queued behind it, exactly like pressing Send then;
  *   - Act: the task is filled in and the panel switches to Act, but nothing is
  *     sent. Act always needs the user's own Enter in the panel.
  *
@@ -37,7 +38,9 @@ export function createNewtabHandoff({
   onChanged,
   getCurrentTabId,
   getIsProcessing,
+  getIsBlocked = () => false,
   getIsDocumentVisible = () => true,
+  doc = globalThis.document,
   setMode,
   getInputEl,
   autoResizeInput,
@@ -72,7 +75,9 @@ export function createNewtabHandoff({
       input.dispatchEvent(new Event('input', { bubbles: true }));
       autoResizeInput();
       input.focus?.();
-      if (handoff.mode === 'ask' && !getIsProcessing()) await sendMessage();
+      if (handoff.mode === 'ask' && !getIsBlocked()) {
+        await sendMessage(getIsProcessing() ? { __deliveryMode: 'queue' } : undefined);
+      }
       return true;
     } catch {
       return false;
@@ -85,6 +90,12 @@ export function createNewtabHandoff({
     onChanged?.addListener((changes, area) => {
       if (area && area !== 'local') return;
       if (changes?.[NEWTAB_HANDOFF_KEY]?.newValue) consume();
+    });
+    // The record can arrive just before an already-loaded panel becomes visible
+    // (the new tab writes it, then opens the panel). consume() skips hidden
+    // panels, so try again the moment this one is shown.
+    doc?.addEventListener?.('visibilitychange', () => {
+      if (getIsDocumentVisible()) consume();
     });
   }
 

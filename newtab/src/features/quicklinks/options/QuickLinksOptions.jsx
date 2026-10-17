@@ -12,7 +12,7 @@ import { SortableList } from './components';
 import { readQuicklinks } from './utils/quicklinksUtils';
 
 import EventBus from 'utils/eventbus';
-import { getTitleFromUrl, isValidUrl } from 'utils/links';
+import { getTitleFromUrl, isValidUrl, normalizeLinkUrl } from 'utils/links';
 
 const QuickLinksOptions = () => {
   const [items, setItems] = useState(readQuicklinks());
@@ -55,11 +55,8 @@ const QuickLinksOptions = () => {
   const addLink = async (name, url, icon) => {
     const data = readQuicklinks();
 
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
-    }
-
-    if (url.length <= 0 || isValidUrl(url) === false) {
+    url = normalizeLinkUrl(url);
+    if (!url) {
       setUrlError(variables.getMessage('widgets.quicklinks.url_error'));
       return;
     }
@@ -101,6 +98,17 @@ const QuickLinksOptions = () => {
     const data = readQuicklinks();
     const dataobj = data.find((i) => i.key === og.key);
     if (!dataobj) return;
+
+    url = normalizeLinkUrl(url);
+    if (!url) {
+      setUrlError(variables.getMessage('widgets.quicklinks.url_error'));
+      return;
+    }
+
+    if (icon.length > 0 && isValidUrl(icon) === false) {
+      setIconError(variables.getMessage('widgets.quicklinks.url_error'));
+      return;
+    }
 
     dataobj.name = name || (await getTitleFromUrl(url));
     dataobj.url = url;
