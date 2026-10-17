@@ -1027,6 +1027,37 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(agent._socialPublicationPrefetchReading?.size || 0, 0, 'no read is left in flight');
   });
 
+  test(`${browser}: a prefetch that only joins another run's caption reads stops waiting when its own run stops or ends`, async () => {
+    for (const end of ['run end', 'Stop']) {
+      const f = setup();
+      const { agent, tabId } = f;
+      const otherTab = tabId + 1;
+      agent._pageTextReading = () => null;
+      const reads = [];
+      agent._readPageTexts = (_tabId, kind) => new Promise(resolve => { reads.push({ kind, resolve }); });
+      const runA = new AbortController(), runB = new AbortController();
+      const binding = (signal, runId) => ({ signal, costState: null, current: () => !signal.aborted, runId });
+      // One run reads the caption; another tab's prefetch only joins its reads.
+      const first = agent._socialPublicationPrefetchReadings(tabId, ['Post'], f.pageUrl, null, binding(runA.signal, 'run-A'));
+      await until(() => reads.length === 2, `${end}: the first run reads the caption`);
+      let joinedSettled = false;
+      const joined = agent._socialPublicationPrefetchReadings(otherTab, ['Post'], f.pageUrl, null, binding(runB.signal, 'run-B'))
+        .then(value => { joinedSettled = true; return value; });
+      await settle();
+      assert.equal(reads.length, 2, `${end}: the caption is not asked twice`);
+      assert.equal(joinedSettled, false, `${end}: the joining prefetch waits for the read in flight`);
+      // The joining run stops or ends: its wait stops, while the read goes on.
+      if (end === 'Stop') runB.abort();
+      else agent._cancelSocialPublicationBackground(otherTab);
+      assert.deepEqual(await within(joined, `${end}: the joining prefetch stops waiting`), []);
+      assert.equal(agent._socialPublicationBackgroundAborts?.get(otherTab)?.size || 0, 0, `${end}: nothing is left to cancel`);
+      assert.equal(runA.signal.aborted, false, `${end}: the reading run is unaffected`);
+      for (const read of reads) read.resolve();
+      await within(first, `${end}: the reading run ends with its reads`);
+      assert.equal(agent._socialPublicationPrefetchReading?.size || 0, 0, `${end}: no read is left in flight`);
+    }
+  });
+
   test(`${browser}: the prefetch's caption reads belong to the run that started it`, async () => {
     const f = setup();
     const { agent, tabId } = f;

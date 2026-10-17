@@ -22231,6 +22231,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .filter(caption => caption && caption.length <= 200))];
     // A caption an earlier prefetch is still reading is not asked twice: its
     // read in flight is joined, so this prefetch ends with its answer too.
+    // The wait for it belongs to this prefetch's run like its own reads: that
+    // run's Stop, end or correction stops it, even when every caption is
+    // joined and the read belongs to another tab's run.
     const reading = this._socialPublicationPrefetchReading ||= new Map();
     const unread = kind => list.filter(caption => this._pageTextReading(kind, caption) === null);
     let guarded = false;
@@ -22241,7 +22244,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...unreadControls.map(caption => reading.get('message_control\u0000' + caption))].filter(Boolean))];
     const effects = unreadEffects.filter(caption => !reading.has('control_effect\u0000' + caption)).slice(0, 24);
     const controls = unreadControls.filter(caption => !reading.has('message_control\u0000' + caption)).slice(0, 48);
-    if (!effects.length && !controls.length) return Promise.allSettled(joined).then(() => []);
+    if (!effects.length && !controls.length && !joined.length) return Promise.resolve([]);
     const abort = this._socialPublicationBackgroundAbort(binding, tabId);
     const background = this._socialPublicationBackgroundCall(tabId, guard, binding, abort);
     // A correction or clarification cancels them with the contract and the
