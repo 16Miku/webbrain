@@ -52275,7 +52275,7 @@ test('inline card answers are one tool-less, bounded model call behind validated
     assert.match(body, /buildInlineSelectionMessages\(msg\.selectionText, msg\.action, msg\.language\)/, `${prefix}: the prompt comes from the validated builder`);
     assert.match(body, /if \(!messages\) return \{ ok: false/, `${prefix}: invalid requests are refused before any model call`);
     assert.match(body, /agent\._chatWithCostAllowance\(\s*provider,\s*messages,\s*\{ maxTokens, temperature: 0, signal: controller\.signal \},\s*agent\._newCostRunState\(\),/, `${prefix}: the call is bounded, abortable and goes through the cost allowance`);
-    assert.match(body, /const maxTokens = inlineSelectionMaxTokens\(msg\.selectionText, msg\.action, provider\?\.maxOutputTokens\);/, `${prefix}: the budget is sized to the selection and the provider's ceiling`);
+    assert.match(body, /const maxTokens = inlineSelectionMaxTokens\(msg\.selectionText, msg\.action, provider\?\.maxOutputTokens, \{\s*contextWindow: provider\?\.contextWindow,\s*messages,\s*\}\);/, `${prefix}: the budget is sized to the selection, the provider's ceiling and the room its context window leaves after the prompt`);
     assert.match(body, /inlineAnswerWasCut\(result, maxTokens\) \? \{ ok: true, text, truncated: true \}/, `${prefix}: a capped answer is flagged instead of passing as complete`);
     assert.match(body, /catch \(error\) \{\s*if \(inlineErrorWasCut\(error\)\) \{[\s\S]*?\{ ok: true, text: partial, truncated: true \}[\s\S]*?\{ ok: false, truncated: true, error:/, `${prefix}: a provider that reports the output limit as an error still ends in the cut-off state`);
 
@@ -52306,6 +52306,27 @@ test('inline card token budget follows the selection and never exceeds the provi
     assert.equal(budget('x'.repeat(1500), 'translate', undefined), 3000, `${label}: an unknown ceiling falls back to a safe default`);
     assert.equal(budget('x'.repeat(6000), 'translate', undefined), 4096, `${label}: the fallback ceiling stays conservative`);
     assert.equal(budget('x'.repeat(6000), 'translate', 'junk'), 4096, `${label}: a non-numeric ceiling is ignored`);
+
+    // The prompt shares the context window with the answer.
+    const prompt = (chars) => [{ role: 'system', content: 'x'.repeat(500) }, { role: 'user', content: 'x'.repeat(chars) }];
+    const longText = 'x'.repeat(3000);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 4096, messages: prompt(3500) }), 4096 - Math.ceil(4000 * 0.5) - 128,
+      `${label}: a 4k window leaves the answer only what the prompt does not use`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 131_072, messages: prompt(3500) }), 6000,
+      `${label}: a large window changes nothing`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 16_384, messages: prompt(3500) }), 6000,
+      `${label}: an ordinary local window changes nothing for a card-sized selection`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 2048, messages: prompt(3500) }), 256,
+      `${label}: the answer keeps a floor when the prompt alone nearly fills the window`);
+    assert.equal(budget('short', 'translate', 100, { contextWindow: 2048, messages: prompt(10) }), 100,
+      `${label}: a ceiling lower than the floor still wins`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: undefined, messages: prompt(3500) }), 6000,
+      `${label}: an unknown window is not guessed at`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 0 }), 6000, `${label}: a zero window is ignored`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 4096 }), 4096 - 128,
+      `${label}: with no messages only the reserve is kept back`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 4096, messages: [{ role: 'user', content: ['not a string'] }] }), 4096 - 128,
+      `${label}: non-text content is not counted`);
   }
 });
 

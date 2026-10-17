@@ -520,7 +520,9 @@ selection prompt (the selection inside its untrusted boundary, `selection_only` 
 behind a short fixed system message, then makes a single tool-less model call through the
 cost allowance (90 s timeout) and returns the text. The output budget is sized to the
 selection (at least 2,000 tokens; Translate and Proofread grow to about two tokens per
-character, up to 8,000) and never exceeds the provider's own output ceiling. If the reply
+character, up to 8,000) and never exceeds the provider's own output ceiling or the room its
+context window leaves after the prompt (counted at half a token per character, with a floor of
+256 tokens), so a small local window is not sent a request it would reject. If the reply
 still stopped at the cap (finish reason, Anthropic `stop_reason` or Responses
 `incomplete_details`, or token usage at the budget when no reason is reported; OpenAI
 Responses reports the limit as an error, which the background treats the same way and

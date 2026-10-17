@@ -278,14 +278,29 @@ export function buildInlineSelectionMessages(selectionText, action, language = '
 export const INLINE_ANSWER_MIN_TOKENS = 2000;
 export const INLINE_ANSWER_MAX_TOKENS = 8000;
 const INLINE_FALLBACK_OUTPUT_CEILING = 4096;
+// Room kept for the prompt in a small context window: backends that enforce
+// input + max_tokens <= window reject a request whose output budget ignores it. The
+// prompt is counted at half a token per character, which holds for CJK and Indic
+// text and over-counts Latin text, so a tight window is more likely to cut an answer
+// off (the card then offers the side panel) than to refuse it. Chat-template tokens
+// are covered by the reserve, and the answer keeps a floor so it is never starved.
+const INLINE_PROMPT_TOKENS_PER_CHAR = 0.5;
+const INLINE_PROMPT_TOKEN_RESERVE = 128;
+const INLINE_MIN_ANSWER_TOKENS = 256;
 
-export function inlineSelectionMaxTokens(selectionText, action, providerCeiling) {
+export function inlineSelectionMaxTokens(selectionText, action, providerCeiling, { contextWindow, messages } = {}) {
   const chars = String(selectionText || '').trim().length;
   const wanted = String(action || '').trim() === 'explain'
     ? INLINE_ANSWER_MIN_TOKENS
     : Math.max(INLINE_ANSWER_MIN_TOKENS, Math.min(INLINE_ANSWER_MAX_TOKENS, chars * 2));
   const limit = Math.floor(Number(providerCeiling));
-  return Math.min(wanted, limit > 0 ? limit : INLINE_FALLBACK_OUTPUT_CEILING);
+  const budget = Math.min(wanted, limit > 0 ? limit : INLINE_FALLBACK_OUTPUT_CEILING);
+  const window = Math.floor(Number(contextWindow));
+  if (!(window > 0)) return budget;
+  const promptChars = (Array.isArray(messages) ? messages : [])
+    .reduce((total, message) => total + (typeof message?.content === 'string' ? message.content.length : 0), 0);
+  const promptTokens = Math.ceil(promptChars * INLINE_PROMPT_TOKENS_PER_CHAR) + INLINE_PROMPT_TOKEN_RESERVE;
+  return Math.min(budget, Math.max(INLINE_MIN_ANSWER_TOKENS, window - promptTokens));
 }
 
 // Whether the model stopped because it ran out of output budget. Providers report

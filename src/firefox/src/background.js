@@ -1533,10 +1533,13 @@ async function answerInlineSelection(msg) {
   try {
     if (providerManager.providers.size === 0) await providerManager.load();
     const provider = providerManager.getActive();
-    // Sized to the selection and never above what the provider accepts; an answer
-    // that still hits the ceiling is flagged so the card can offer the side panel
+    // Sized to the selection and never above what the provider accepts, prompt
+    // included; an answer that still hits the ceiling is flagged so the card can offer the side panel
     // instead of presenting a cut-off translation as complete.
-    const maxTokens = inlineSelectionMaxTokens(msg.selectionText, msg.action, provider?.maxOutputTokens);
+    const maxTokens = inlineSelectionMaxTokens(msg.selectionText, msg.action, provider?.maxOutputTokens, {
+      contextWindow: provider?.contextWindow,
+      messages,
+    });
     const result = await agent._chatWithCostAllowance(
       provider,
       messages,
