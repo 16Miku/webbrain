@@ -18,6 +18,8 @@ import numpy as np
 import onnx
 import onnxruntime as ort
 from huggingface_hub import snapshot_download
+
+from chunk_gdn_prefill import MODEL_CARD_SECTION, rewrite_file
 from onnx import numpy_helper
 from safetensors import safe_open
 
@@ -228,10 +230,14 @@ def build(size, workspace, offline=False, skip_inference=False):
         raise ValueError("Vision graph and original model architectures differ")
     if config["text_config"]["hidden_size"] != config["vision_config"]["out_hidden_size"]:
         raise ValueError("Vision and language embedding dimensions differ")
-    for filename in ("decoder_model_merged_q2f16.onnx", "decoder_model_merged_q2f16.onnx_data",
-                     "embed_tokens_q2f16.onnx", "embed_tokens_q2f16.onnx_data"):
+    for filename in ("decoder_model_merged_q2f16.onnx_data", "embed_tokens_q2f16.onnx", "embed_tokens_q2f16.onnx_data"):
         source = text / "onnx" / filename
         link_or_copy(source, output / "onnx" / filename)
+    # Replace the token-sequential GatedDeltaNet Scan with the chunked prefill
+    # graph. Only the small graph file changes; the weights stay hardlinked.
+    language_graph = rewrite_file(text / "onnx" / "decoder_model_merged_q2f16.onnx",
+                                  output / "onnx" / "decoder_model_merged_q2f16.onnx")
+    print(f"{size}: rewrote {language_graph['gdn_layers_rewritten']} GatedDeltaNet prefill scans", flush=True)
     shutil.copy2(text / "tokenizer.json", output / "tokenizer.json")
     for filename in ("tokenizer_config.json", "preprocessor_config.json", "processor_config.json",
                      "generation_config.json", "chat_template.jinja"):
@@ -271,11 +277,19 @@ def build(size, workspace, offline=False, skip_inference=False):
         "source_vision_pack_sha256": source_pack_hash,
         "vision_tensor_count": len(records),
         "onnx_checker": "passed",
+        "language_graph": language_graph,
         "vision_inference": validation,
         "browser_image_inference": "Run scripts/check-bonsai-webgpu.mjs; this build check does not verify browser answers.",
         "tensor_mapping": records,
     }
     write_json(output / "export-validation.json", report)
+    write_json(output / "chunked-prefill-validation.json", {
+        "rewrite": language_graph,
+        "external_data_unchanged": "onnx/decoder_model_merged_q2f16.onnx_data",
+        "evidence": [],
+        "pending": "Compare with validate_chunked_gdn.py, time WebGPU prefill, and attach both reports "
+                   "(make_chunked_bundle.py --evidence) before publishing.",
+    })
     ocr_limit = (
         f"The {size} model omitted or confused characters in four-character OCR fixtures, "
         "including at a 1,024-visual-token budget. Failed OCR reports are retained "
@@ -295,7 +309,7 @@ tags: [onnx, webgpu, ternary, bonsai, vision, qwen3_5]
 Created using Bonsai by Prism ML. This is a modified ONNX packaging of Prism's
 Ternary Bonsai 2 {size}, for local text and image inference in WebBrain.
 
-The ternary language graphs and Hadamard transforms come unchanged from
+The ternary language weights and Hadamard transforms come unchanged from
 `danyalmalik/Ternary-Bonsai-2-{size}-ONNX-WebGPU`. The original Prism FP16 vision
 tower is exported into the compatible `onnx-community/Qwen3.5-{size}-ONNX`
 topology. All original vision tensors are mapped and checked after serialization;
@@ -325,7 +339,7 @@ optional check. {ocr_limit}
 Apache 2.0; see LICENSE and NOTICE.txt. Original context capacity is 262,144 tokens;
 WebBrain applies a smaller browser context budget. Model weights and processor
 files are downloaded once; inference runs locally.
-""", encoding="utf-8")
+""" + MODEL_CARD_SECTION, encoding="utf-8")
     total = seal_manifest(output)
     print(json.dumps({"output": str(output.resolve()), "vision_tensors": len(records),
                       "total_bytes": total, "vision_inference": validation}), flush=True)

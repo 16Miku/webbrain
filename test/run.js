@@ -67550,6 +67550,61 @@ test('Vision Model removal deletes only its cache entries', async () => {
   }
 });
 
+test('Bonsai 2 Vision worker replaces only a stale cached decoder graph', async () => {
+  const previousSelf = globalThis.self;
+  const previousCaches = globalThis.caches;
+  const previousFetch = globalThis.fetch;
+  const { createHash } = await import('node:crypto');
+  const sha = text => createHash('sha256').update(text).digest('hex');
+  const model = 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision';
+  const graphUrl = `https://huggingface.co/${model}/resolve/main/onnx/decoder_model_merged_q2f16.onnx`;
+  const dataUrl = `${graphUrl}_data`;
+  const makeCache = entries => ({
+    match: async url => entries.has(url) ? new Response(entries.get(url)) : undefined,
+    put: async (url, response) => { entries.set(url, Buffer.from(await response.arrayBuffer()).toString()); },
+  });
+  try {
+    globalThis.self = { addEventListener() {}, postMessage() {} };
+    const workerSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
+    for (const size of ['2B', '4B']) {
+      assert.match(workerSource, new RegExp(`'webbrain-one/Ternary-Bonsai-2-${size}-ONNX-WebGPU-Vision', '[0-9a-f]{64}'`),
+        `the ${size} Vision decoder graph must be pinned by SHA-256`);
+    }
+
+    const entries = new Map([[graphUrl, 'scan graph'], [dataUrl, 'weights']]);
+    const fetched = [];
+    globalThis.caches = { open: async () => makeCache(entries) };
+    globalThis.fetch = async (url, init) => { fetched.push([url, init?.cache]); return new Response('chunked graph'); };
+    const worker = await import(`${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?bonsai2-graph-refresh`);
+    assert.equal(await worker.refreshBonsai2DecoderGraph(model, { expected: sha('chunked graph') }), 'updated');
+    assert.equal(entries.get(graphUrl), 'chunked graph');
+    assert.equal(entries.get(dataUrl), 'weights', 'the unchanged weight file must stay cached');
+    assert.deepEqual(fetched, [[graphUrl, 'no-store']]);
+    assert.equal(await worker.refreshBonsai2DecoderGraph(model, { expected: sha('chunked graph') }), 'skipped',
+      'a verified graph is not re-hashed on every runtime load');
+    assert.equal(await worker.refreshBonsai2DecoderGraph('danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU'), 'skipped');
+
+    const other = 'webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision';
+    const otherUrl = `https://huggingface.co/${other}/resolve/main/onnx/decoder_model_merged_q2f16.onnx`;
+    entries.set(otherUrl, 'scan graph');
+    globalThis.fetch = async () => new Response('tampered graph');
+    assert.equal(await worker.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'unexpected');
+    assert.equal(entries.get(otherUrl), 'scan graph', 'an unverified response must not replace the cached graph');
+    globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+    assert.equal(await worker.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'unavailable');
+    assert.equal(entries.get(otherUrl), 'scan graph', 'offline loads keep the working cached graph');
+    entries.set(otherUrl, 'chunked graph');
+    assert.equal(await worker.refreshBonsai2DecoderGraph(other, { expected: sha('chunked graph') }), 'current');
+  } finally {
+    if (previousSelf === undefined) delete globalThis.self;
+    else globalThis.self = previousSelf;
+    if (previousCaches === undefined) delete globalThis.caches;
+    else globalThis.caches = previousCaches;
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
 test('Bonsai 2 worker keeps native rotary positions continuous for text and images', async () => {
   const previousSelf = globalThis.self;
   const ortSymbol = Symbol.for('onnxruntime');
