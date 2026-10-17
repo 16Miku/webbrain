@@ -1853,7 +1853,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // Selection-shortcut clicks originate in a content script. Keep this listener
 // synchronous until sidePanel.open() so Chrome preserves the originating user
 // gesture; prompt recovery storage can finish afterward.
-function queueSelectionShortcutPrompt(msg, tab, sendResponse, { panelOpened = false } = {}) {
+async function queueSelectionShortcutPromptAfterProviders(msg, tab, sendResponse, { panelOpened = false } = {}) {
   const selectionAction = normalizeSelectionAction(msg.action);
   const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
   const sourceGrounding = includePageContext
@@ -1862,8 +1862,8 @@ function queueSelectionShortcutPrompt(msg, tab, sendResponse, { panelOpened = fa
       ? SELECTION_CONTEXT_SOURCE_GROUNDING
       : SELECTION_ONLY_SOURCE_GROUNDING;
   // A follow-up typed in a page card carries that card's answer as context.
-  // The model's context window is known only once the providers have loaded; until then the
-  // run's own check decides.
+  // The provider metadata was loaded before this prompt was built, so its context
+  // window can trim the handoff before the side-panel run starts.
   const contextWindow = providerManager.providers.size > 0 ? providerManager.getActive()?.contextWindow : undefined;
   const selectionText = selectionAction === 'custom'
     ? buildFollowUpSelectionText(
@@ -1920,6 +1920,23 @@ function queueSelectionShortcutPrompt(msg, tab, sendResponse, { panelOpened = fa
     notifySidePanelOfContextMenuPrompt(payload);
     return { ok: true, queued: true, requiresManualOpen: false };
   })().then(sendResponse).catch((error) => {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: error?.message || String(error) });
+  });
+  return true;
+}
+
+function queueSelectionShortcutPrompt(msg, tab, sendResponse, { panelOpened = false } = {}) {
+  if (!tab?.id) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: 'Invalid selection shortcut request.' });
+    return false;
+  }
+  // This must stay in the message handler's synchronous turn, but prompt construction
+  // waits below for provider context-window metadata so handoffs are trimmed correctly.
+  openSidePanelForContextMenu(tab, { open: !panelOpened });
+  (async () => {
+    if (providerManager.providers.size === 0) await providerManager.load();
+    return queueSelectionShortcutPromptAfterProviders(msg, tab, sendResponse, { panelOpened: true });
+  })().catch((error) => {
     sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: error?.message || String(error) });
   });
   return true;

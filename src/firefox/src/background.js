@@ -1605,7 +1605,7 @@ browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // sidebarAction.open() gesture. Persist and notify the existing sidebar when
 // it is open; otherwise startup recovery will consume the prompt after the
 // user opens WebBrain manually.
-function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
+async function queueFirefoxSelectionShortcutPromptAfterProviders(msg, tab, sendResponse) {
   const selectionAction = normalizeSelectionAction(msg.action);
   const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
   const sourceGrounding = includePageContext
@@ -1614,8 +1614,8 @@ function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
       ? SELECTION_CONTEXT_SOURCE_GROUNDING
       : SELECTION_ONLY_SOURCE_GROUNDING;
   // A follow-up typed in a page card carries that card's answer as context.
-  // The model's context window is known only once the providers have loaded; until then the
-  // run's own check decides.
+  // The provider metadata was loaded before this prompt was built, so its context
+  // window can trim the handoff before the side-panel run starts.
   const contextWindow = providerManager.providers.size > 0 ? providerManager.getActive()?.contextWindow : undefined;
   const selectionText = selectionAction === 'custom'
     ? buildFollowUpSelectionText(
@@ -1671,6 +1671,20 @@ function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
     notifySidePanelOfContextMenuPrompt(payload);
     return { ok: true, queued: true, requiresManualOpen: true };
   })().then(sendResponse).catch((error) => {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: error?.message || String(error) });
+  });
+  return true;
+}
+
+function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
+  if (!tab?.id) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid selection shortcut request.' });
+    return false;
+  }
+  (async () => {
+    if (providerManager.providers.size === 0) await providerManager.load();
+    return queueFirefoxSelectionShortcutPromptAfterProviders(msg, tab, sendResponse);
+  })().catch((error) => {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: error?.message || String(error) });
   });
   return true;
