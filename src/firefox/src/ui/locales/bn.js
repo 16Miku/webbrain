@@ -109,6 +109,9 @@ export default {
   'install.mock.screen': 'স্ক্রিন',
   'install.cta.title': 'আপনি তৈরি হলেই শুরু করুন।',
   'install.scroll_hint': 'নিচে আরও ফিচার',
+  'install.chip.record': 'স্ক্রিন রেকর্ড',
+  'install.chip.shot': 'ফুল-পেজ স্ক্রিনশট',
+  'install.chip.dl': 'বাল্ক ডাউনলোড',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "সংযোগ বিচ্ছিন্ন",

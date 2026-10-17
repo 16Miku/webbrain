@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': 'Screen',
   'install.cta.title': 'Handa kapag handa ka na.',
   'install.scroll_hint': 'Mas maraming feature sa ibaba',
+  'install.chip.record': 'I-record ang screen',
+  'install.chip.shot': 'Full-page na screenshot',
+  'install.chip.dl': 'Maramihang pag-download',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} sa {total}',

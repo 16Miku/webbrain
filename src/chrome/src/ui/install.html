@@ -10,17 +10,6 @@
 </head>
 <body>
   <main class="install-page">
-    <header class="install-header">
-      <div class="brand">
-        <img src="../../icons/icon128.png" width="42" height="42" alt="">
-        <span>WebBrain</span>
-      </div>
-      <span class="status-chip">
-        <span class="status-dot" aria-hidden="true"></span>
-        <span data-i18n="install.ready">Ready</span>
-      </span>
-    </header>
-
     <section class="install-hero" aria-labelledby="install-title">
       <div class="install-copy">
         <p id="browser-label" class="eyebrow" aria-live="polite" data-i18n="install.checking">Checking your browser…</p>
@@ -68,6 +57,29 @@
           </figure>
         </div>
       </aside>
+
+      <nav class="quick-features" aria-label="Also built in" data-i18n-aria-label="install.more.eyebrow">
+        <a class="qf-chip qf-chip--apocalypse" href="#feature-apocalypse">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor" stroke="none"><path d="M10.5 9.402 7.5 4.206A9 9 0 0 1 16.5 4.206L13.5 9.402A3 3 0 0 0 10.5 9.402Z"/><path d="M10.5 9.402 7.5 4.206A9 9 0 0 1 16.5 4.206L13.5 9.402A3 3 0 0 0 10.5 9.402Z" transform="rotate(120 12 12)"/><path d="M10.5 9.402 7.5 4.206A9 9 0 0 1 16.5 4.206L13.5 9.402A3 3 0 0 0 10.5 9.402Z" transform="rotate(240 12 12)"/><circle cx="12" cy="12" r="1.7"/></g></svg>
+          <span data-i18n="ap.title">Apocalypse Mode</span>
+        </a>
+        <a class="qf-chip qf-chip--record" href="#feature-record">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.4" fill="currentColor" stroke="none"/></svg>
+          <span data-i18n="install.chip.record">Record screen</span>
+        </a>
+        <a class="qf-chip qf-chip--shot" href="#feature-shot">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="8" y="8" width="8" height="8" rx="1.5"/></svg>
+          <span data-i18n="install.chip.shot">Full-page screenshots</span>
+        </a>
+        <a class="qf-chip qf-chip--dl" href="#feature-dl">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/></svg>
+          <span data-i18n="install.chip.dl">Bulk downloads</span>
+        </a>
+        <a class="qf-chip qf-chip--more" href="#more">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg>
+          <span data-i18n="install.scroll_hint">More features below</span>
+        </a>
+      </nav>
     </section>
 
     <section class="more" id="more" aria-labelledby="more-title">
@@ -79,7 +91,7 @@
 
       <div class="bento">
         <!-- Apocalypse Mode -->
-        <article class="fcard fcard--apocalypse" data-reveal>
+        <article class="fcard fcard--apocalypse" id="feature-apocalypse" data-reveal>
           <div class="scene scene--ap" aria-hidden="true">
             <div class="mock ap-card">
               <div class="ap-head">
@@ -133,7 +145,7 @@
         </article>
 
         <!-- Full-page screenshots -->
-        <article class="fcard fcard--shot" data-reveal>
+        <article class="fcard fcard--shot" id="feature-shot" data-reveal>
           <div class="scene scene--shot" aria-hidden="true">
             <div class="mock shot-card">
               <span class="mock-label" data-i18n="sp.screenshot.full_page_alt">Full-page screenshot</span>
@@ -168,7 +180,7 @@
         </article>
 
         <!-- Bulk file downloads -->
-        <article class="fcard fcard--dl" data-reveal>
+        <article class="fcard fcard--dl" id="feature-dl" data-reveal>
           <div class="scene scene--dl" aria-hidden="true">
             <div class="mock dl-card">
               <span class="mock-label" data-i18n="install.mock.files">4 files · one task</span>
@@ -207,7 +219,7 @@
         </article>
 
         <!-- Video recording -->
-        <article class="fcard fcard--record" data-reveal>
+        <article class="fcard fcard--record" id="feature-record" data-reveal>
           <div class="scene scene--record" aria-hidden="true">
             <div class="mock rec-card">
               <div class="rec-top">
@@ -243,7 +255,7 @@
         </article>
 
         <!-- CAPTCHA assistance -->
-        <article class="fcard fcard--captcha" data-reveal>
+        <article class="fcard fcard--captcha" id="feature-captcha" data-reveal>
           <div class="scene scene--captcha" aria-hidden="true">
             <div class="mock cap-card">
               <span class="mock-label" data-i18n="st.tab.captcha">CAPTCHA</span>
@@ -276,7 +288,7 @@
         </article>
 
         <!-- SafeSocial -->
-        <article class="fcard fcard--safesocial" data-reveal>
+        <article class="fcard fcard--safesocial" id="feature-safesocial" data-reveal>
           <div class="scene scene--safe" aria-hidden="true">
             <div class="mock safe-card">
               <span class="mock-label">SafeSocial</span>
@@ -317,13 +329,6 @@
       </div>
     </section>
   </main>
-
-  <a class="scroll-cue" href="#more" data-scroll-cue hidden>
-    <span data-i18n="install.scroll_hint">More features below</span>
-    <span class="scroll-cue-arrow" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></svg>
-    </span>
-  </a>
 
   <script type="module" src="install.js"></script>
 </body>

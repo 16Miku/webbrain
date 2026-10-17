@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': 'Layar',
   'install.cta.title': 'Siap saat Anda siap.',
   'install.scroll_hint': 'Fitur lainnya di bawah',
+  'install.chip.record': 'Rekam layar',
+  'install.chip.shot': 'Screenshot halaman penuh',
+  'install.chip.dl': 'Unduhan massal',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} dari {total}',

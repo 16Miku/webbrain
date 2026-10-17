@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': 'الشاشة',
   'install.cta.title': 'جاهز متى كنت جاهزًا.',
   'install.scroll_hint': 'المزيد من الميزات أدناه',
+  'install.chip.record': 'تسجيل الشاشة',
+  'install.chip.shot': 'لقطات شاشة كاملة للصفحة',
+  'install.chip.dl': 'تنزيلات جماعية',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} من {total}',

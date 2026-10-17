@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': '화면',
   'install.cta.title': '준비되면 시작하세요.',
   'install.scroll_hint': '아래에 더 많은 기능',
+  'install.chip.record': '화면 녹화',
+  'install.chip.shot': '전체 페이지 스크린샷',
+  'install.chip.dl': '일괄 다운로드',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

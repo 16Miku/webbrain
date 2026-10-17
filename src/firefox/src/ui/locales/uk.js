@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': 'Екран',
   'install.cta.title': 'Починаймо, коли будете готові.',
   'install.scroll_hint': 'Більше можливостей нижче',
+  'install.chip.record': 'Запис екрана',
+  'install.chip.shot': 'Знімки всієї сторінки',
+  'install.chip.dl': 'Масове завантаження',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} з {total}',

@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': '屏幕',
   'install.cta.title': '准备好就开始。',
   'install.scroll_hint': '下方还有更多功能',
+  'install.chip.record': '录制屏幕',
+  'install.chip.shot': '整页截图',
+  'install.chip.dl': '批量下载',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

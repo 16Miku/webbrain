@@ -109,6 +109,9 @@ export default {
   'install.mock.screen': 'صفحه‌نمایش',
   'install.cta.title': 'هر وقت آماده بودید.',
   'install.scroll_hint': 'امکانات بیشتر در پایین',
+  'install.chip.record': 'ضبط صفحه',
+  'install.chip.shot': 'اسکرین‌شات تمام‌صفحه',
+  'install.chip.dl': 'دانلود گروهی',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "قطع شد",

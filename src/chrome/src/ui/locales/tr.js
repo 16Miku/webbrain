@@ -201,6 +201,9 @@ export default {
   'install.mock.screen': 'Ekran',
   'install.cta.title': 'Hazır olduğunda başla.',
   'install.scroll_hint': 'Aşağıda daha fazla özellik',
+  'install.chip.record': 'Ekran kaydı',
+  'install.chip.shot': 'Tam sayfa ekran görüntüleri',
+  'install.chip.dl': 'Toplu indirme',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

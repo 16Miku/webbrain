@@ -109,6 +109,9 @@ export default {
   'install.mock.screen': 'Màn hình',
   'install.cta.title': 'Sẵn sàng khi bạn sẵn sàng.',
   'install.scroll_hint': 'Thêm tính năng bên dưới',
+  'install.chip.record': 'Quay màn hình',
+  'install.chip.shot': 'Chụp toàn trang',
+  'install.chip.dl': 'Tải xuống hàng loạt',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "Đã ngắt kết nối",

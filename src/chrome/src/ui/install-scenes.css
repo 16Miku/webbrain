@@ -1407,11 +1407,17 @@
   translate: 0 0;
 }
 
-/* ───────────────────────── scroll cue ───────────────────────── */
+/* A pill that jumps to a card that has not been revealed yet measures it while
+   it is still 28px low, so leave room for the slide and it settles at the top. */
+.fcard {
+  scroll-margin-top: 28px;
+}
 
-/* The hero looks complete on a laptop-sized window, so a floating pill says the
-   page continues. install-motion.js shows it after a beat and retires it for
-   good once the visitor scrolls or clicks. */
+/* ───────────────────────── quick features ───────────────────────── */
+
+/* Pills at the bottom of the first screen: they say what is further down and
+   jump to it. On wide windows the row sticks to the bottom edge for as long as
+   the hero is on screen, so it stays visible however short the window is. */
 
 html {
   scroll-padding-top: 16px;
@@ -1423,85 +1429,86 @@ html {
   }
 }
 
-.scroll-cue {
-  position: fixed;
-  z-index: 30;
-  bottom: max(20px, env(safe-area-inset-bottom));
-  left: 50%;
+.quick-features {
+  grid-column: 1 / -1;
+  align-self: end;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.qf-chip {
+  --fc: var(--accent);
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 9px 8px 20px;
-  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line));
+  gap: 9px;
+  padding: 10px 18px 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--fc) 32%, var(--line));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
-  backdrop-filter: blur(16px) saturate(1.4);
-  box-shadow:
-    0 12px 36px color-mix(in srgb, var(--accent) 32%, transparent),
-    0 2px 8px color-mix(in srgb, #0a0d1f 24%, transparent);
+  background: color-mix(in srgb, var(--fc) 10%, color-mix(in srgb, var(--surface-strong) 86%, transparent));
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  backdrop-filter: blur(14px) saturate(1.3);
   color: var(--text);
   font-size: 14px;
   font-weight: 650;
   letter-spacing: -0.005em;
   text-decoration: none;
   white-space: nowrap;
-  opacity: 0;
-  translate: -50% 14px;
-  pointer-events: none;
   transition:
-    opacity 360ms ease,
-    translate 360ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    translate 180ms ease,
     border-color 160ms ease,
     background-color 160ms ease;
+  animation: rise 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 560ms backwards;
 }
 
-.scroll-cue[hidden] {
-  display: none;
-}
+.qf-chip:nth-child(2) { animation-delay: 630ms; }
+.qf-chip:nth-child(3) { animation-delay: 700ms; }
+.qf-chip:nth-child(4) { animation-delay: 770ms; }
+.qf-chip:nth-child(5) { animation-delay: 840ms; }
 
-.scroll-cue.is-visible {
-  opacity: 1;
-  translate: -50% 0;
-  pointer-events: auto;
-}
-
-.scroll-cue:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
-}
-
-.scroll-cue:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-
-.scroll-cue-arrow {
-  display: inline-grid;
+.qf-chip svg {
   flex: none;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  color: var(--accent);
-}
-
-.scroll-cue-arrow svg {
   width: 17px;
   height: 17px;
   fill: none;
-  stroke: currentColor;
-  stroke-width: 2.4;
+  stroke: var(--fc);
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
-.scroll-cue.is-visible .scroll-cue-arrow svg {
-  animation: cue-bob 1.6s ease-in-out 600ms infinite;
+.qf-chip--apocalypse { --fc: #f0a72f; }
+.qf-chip--record { --fc: #e5484d; }
+.qf-chip--shot { --fc: #5b8def; }
+.qf-chip--dl { --fc: #e0457b; }
+
+.qf-chip:hover {
+  translate: 0 -2px;
+  border-color: var(--fc);
+  background: color-mix(in srgb, var(--fc) 18%, color-mix(in srgb, var(--surface-strong) 90%, transparent));
 }
 
-@keyframes cue-bob {
+.qf-chip:focus-visible {
+  outline: 2px solid var(--fc);
+  outline-offset: 3px;
+}
+
+/* The last pill is the generic "keep scrolling" one, so it gets the accent and
+   a nudging arrow. */
+.qf-chip--more {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 20%, color-mix(in srgb, var(--surface-strong) 86%, transparent));
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.qf-chip--more svg {
+  stroke-width: 2.4;
+  animation: qf-bob 1.6s ease-in-out 1.4s infinite;
+}
+
+@keyframes qf-bob {
   0%,
   100% {
     translate: 0 -2px;
@@ -1512,12 +1519,32 @@ html {
   }
 }
 
+@media (min-width: 981px) {
+  .quick-features {
+    position: sticky;
+    bottom: 20px;
+    z-index: 20;
+  }
+}
+
+@media (max-width: 620px) {
+  .quick-features {
+    gap: 8px;
+  }
+
+  .qf-chip {
+    padding: 9px 15px 9px 12px;
+    font-size: 13px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .scroll-cue {
+  .qf-chip {
+    animation: none;
     transition: none;
   }
 
-  .scroll-cue.is-visible .scroll-cue-arrow svg {
+  .qf-chip--more svg {
     animation: none;
   }
 }

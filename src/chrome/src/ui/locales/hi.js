@@ -109,6 +109,9 @@ export default {
   'install.mock.screen': 'स्क्रीन',
   'install.cta.title': 'जब आप तैयार हों।',
   'install.scroll_hint': 'नीचे और सुविधाएँ',
+  'install.chip.record': 'स्क्रीन रिकॉर्ड',
+  'install.chip.shot': 'फ़ुल-पेज स्क्रीनशॉट',
+  'install.chip.dl': 'बल्क डाउनलोड',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "विच्छेदित",

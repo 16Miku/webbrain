@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': 'Pantalla',
   'install.cta.title': 'Cuando quieras.',
   'install.scroll_hint': 'Más funciones abajo',
+  'install.chip.record': 'Grabar pantalla',
+  'install.chip.shot': 'Capturas de página completa',
+  'install.chip.dl': 'Descargas masivas',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} de {total}',

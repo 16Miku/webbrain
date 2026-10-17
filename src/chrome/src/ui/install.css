@@ -90,60 +90,17 @@ kbd {
   flex-direction: column;
 }
 
-.install-header {
-  min-height: 88px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  border-bottom: 1px solid var(--line);
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-family: var(--display);
-  font-size: 16px;
-  font-weight: 760;
-  letter-spacing: -0.02em;
-}
-
-.brand img {
-  border-radius: 11px;
-}
-
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 11px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--success);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 14%, transparent);
-}
-
 .install-hero {
   flex: 1;
-  min-height: calc(100svh - 89px);
-  padding: clamp(54px, 8vh, 92px) 0 70px;
+  /* Fill the first screen: the next section starts at the fold and the feature
+     pills (last grid row) sit at the bottom of it. */
+  min-height: 100svh;
+  padding: clamp(40px, 7vh, 80px) 0 clamp(24px, 4vh, 40px);
   display: grid;
   grid-template-columns: minmax(280px, 0.72fr) minmax(540px, 1.45fr);
+  grid-template-rows: 1fr auto;
   align-items: center;
-  gap: clamp(42px, 6vw, 78px);
+  gap: clamp(24px, 4vh, 40px) clamp(42px, 6vw, 78px);
 }
 
 .install-copy {
@@ -572,8 +529,9 @@ body::after {
 
   .install-hero {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr;
     gap: 44px;
-    padding-top: 54px;
+    padding-top: 40px;
   }
 
   .install-copy {
@@ -594,12 +552,8 @@ body::after {
     width: min(100% - 24px, 560px);
   }
 
-  .install-header {
-    min-height: 76px;
-  }
-
   .install-hero {
-    padding: 44px 0 46px;
+    padding: 32px 0 28px;
     gap: 36px;
   }
 
@@ -631,10 +585,6 @@ body::after {
 }
 
 @media (max-width: 420px) {
-  .status-chip {
-    display: none;
-  }
-
   .open-panel-button {
     width: 100%;
   }

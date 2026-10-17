@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': '画面',
   'install.cta.title': '準備ができたら、どうぞ。',
   'install.scroll_hint': '下にさらに機能があります',
+  'install.chip.record': '画面録画',
+  'install.chip.shot': 'ページ全体のスクリーンショット',
+  'install.chip.dl': '一括ダウンロード',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

@@ -44128,9 +44128,9 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     const featureCards = ['apocalypse', 'shot', 'dl', 'record', 'captcha', 'safesocial']
       .filter((card) => label === 'chrome' || card !== 'record');
     assert.match(html, /<link rel="stylesheet" href="install-scenes\.css">/, `${label}: install page should load its feature-scene styles`);
-    assert.equal((html.match(/<article class="fcard fcard--\w+" data-reveal>/g) || []).length, featureCards.length, `${label}: install page should advertise every extra feature once`);
+    assert.equal((html.match(/<article class="fcard fcard--\w+" id="feature-\w+" data-reveal>/g) || []).length, featureCards.length, `${label}: install page should advertise every extra feature once`);
     for (const card of featureCards) {
-      assert.match(html, new RegExp(`<article class="fcard fcard--${card}" data-reveal>`), `${label}: ${card} feature card missing`);
+      assert.match(html, new RegExp(`<article class="fcard fcard--${card}" id="feature-${card}" data-reveal>`), `${label}: ${card} feature card missing`);
       assert.match(sceneCss, new RegExp(`\\.fcard--${card} \\{ --fc: #[0-9a-f]{6}; \\}`), `${label}: ${card} card should carry its own accent colour`);
     }
     assert.equal((html.match(/class="scene scene--\w+" aria-hidden="true"/g) || []).length, featureCards.length, `${label}: decorative feature mock-ups should be hidden from assistive tech`);
@@ -44149,13 +44149,39 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     assert.match(html, /\/screenshot --full-page|data-i18n-html="install\.shot\.body_html"/, `${label}: the screenshot card should show its command`);
     assert.match(html, /<button class="open-panel-button" type="button" data-open-panel-mirror disabled>/, `${label}: closing call-to-action should start disabled like the primary one`);
     assert.equal((html.match(/id="open-panel-button"/g) || []).length, 1, `${label}: only one primary panel-open button should exist`);
-    // The hero looks complete in a laptop-sized window, so a floating cue says the page continues.
-    assert.match(html, /<section class="more" id="more"/, `${label}: the cue needs a section to scroll to`);
-    assert.match(html, /<a class="scroll-cue" href="#more" data-scroll-cue hidden>[\s\S]*?data-i18n="install\.scroll_hint"[\s\S]*?<\/a>/, `${label}: scroll cue should start hidden, link to the next section and be localized`);
-    assert.match(css, /\.install-hero \{[^}]*min-height: calc\(100svh - 89px\);/, `${label}: the hero should fill the first screen so the next section starts at the fold`);
-    assert.match(sceneCss, /\.scroll-cue \{[\s\S]*?position: fixed;/, `${label}: scroll cue should float above the page`);
+    // The hero looks complete in a laptop-sized window, so a permanent row of pills says what is
+    // further down and jumps to it. The page has no header: people know which product they installed.
+    assert.match(html, /<section class="more" id="more"/, `${label}: the last pill needs a section to scroll to`);
+    assert.doesNotMatch(html, /install-header|class="brand"|status-chip|scroll-cue|data-scroll-cue/, `${label}: the install page should start with the hero, without a branded header or a floating cue`);
+    assert.doesNotMatch(css + sceneCss, /\.install-header|\.status-chip|\.brand\b|\.scroll-cue|cue-bob/, `${label}: styles for the removed header and floating cue should be gone`);
+    assert.match(html, /<nav class="quick-features" aria-label="Also built in" data-i18n-aria-label="install\.more\.eyebrow">/, `${label}: the pill row should be a labelled, localized navigation`);
+    const pillRow = html.match(/<nav class="quick-features"[\s\S]*?<\/nav>/)[0];
+    const pills = [...pillRow.matchAll(/<a class="qf-chip qf-chip--(\w+)" href="([^"]+)">([\s\S]*?)<\/a>/g)];
+    const expectedPills = [
+      ['apocalypse', '#feature-apocalypse', 'ap.title'],
+      ['record', '#feature-record', 'install.chip.record'],
+      ['shot', '#feature-shot', 'install.chip.shot'],
+      ['dl', '#feature-dl', 'install.chip.dl'],
+      ['more', '#more', 'install.scroll_hint'],
+    ].filter(([kind]) => label === 'chrome' || kind !== 'record');
+    assert.deepEqual(
+      pills.map((pill) => [pill[1], pill[2], pill[3].match(/data-i18n="([^"]+)"/)?.[1]]),
+      expectedPills,
+      `${label}: the pill row should list the headline features in order and end with "More features below"`,
+    );
+    for (const pill of pills) {
+      assert.match(html, new RegExp(`id="${pill[2].slice(1)}"`), `${label}: pill target ${pill[2]} must exist on the page`);
+    }
+    for (const kind of ['apocalypse', 'record', 'shot', 'dl']) {
+      assert.match(sceneCss, new RegExp(`\\.qf-chip--${kind} \\{ --fc: #[0-9a-f]{6}; \\}`), `${label}: ${kind} pill should be tinted like its card`);
+    }
+    assert.ok(pills.every((pill) => /<svg[^>]*aria-hidden="true"/.test(pill[3])), `${label}: pill icons are decorative`);
+    assert.match(css, /\.install-hero \{[^}]*min-height: 100svh;[^}]*grid-template-rows: 1fr auto;/, `${label}: the hero should fill the first screen with the pills on its last row`);
+    assert.match(sceneCss, /@media \(min-width: 981px\) \{\s*\.quick-features \{\s*position: sticky;\s*bottom: 20px;/, `${label}: on wide windows the pills should stay in view for as long as the hero is on screen`);
     assert.match(sceneCss, /@media \(prefers-reduced-motion: no-preference\) \{\s*html \{\s*scroll-behavior: smooth;/, `${label}: smooth scrolling should only apply when motion is allowed`);
-    assert.match(sceneCss, /@media \(prefers-reduced-motion: reduce\) \{\s*\.scroll-cue \{\s*transition: none;/, `${label}: scroll cue should not animate for reduced-motion visitors`);
+    assert.match(sceneCss, /@media \(prefers-reduced-motion: reduce\) \{\s*\.qf-chip \{\s*animation: none;/, `${label}: pills should not animate for reduced-motion visitors`);
+    assert.match(sceneCss, /\.fcard \{\s*scroll-margin-top: 28px;/, `${label}: pills that jump to an unrevealed card should leave room for its 28px reveal slide`);
+    assert.doesNotMatch(motionJs + installJs, /initializeScrollCue|data-scroll-cue/, `${label}: the floating scroll cue helper should be gone`);
     assert.match(installJs, /mirror\.addEventListener\('click', \(\) => openButton\.click\(\)\)/, `${label}: closing call-to-action should forward to the primary open action`);
     assert.doesNotMatch(motionJs, /\b(?:fetch|XMLHttpRequest|chrome\.|browser\.)/, `${label}: install motion helpers should stay purely presentational`);
     const installEnglish = (await import(pathToFileURL(path.join(ROOT, prefix, 'src/ui/locales/en.js')).href)).default;
@@ -44213,71 +44239,6 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     });
     assert.equal(reducedClasses.size, 0, `${label}: reduced-motion visitors should not get auto-rotating tabs`);
 
-    const cueHarness = ({ scrollY = 0, observer = true } = {}) => {
-      const timers = [];
-      const windowListeners = new Map();
-      const cueListeners = new Map();
-      const cueClasses = new Set();
-      let intersect = null;
-      const cue = {
-        hidden: true,
-        classList: { add: (name) => cueClasses.add(name), remove: (name) => cueClasses.delete(name) },
-        addEventListener: (type, fn) => cueListeners.set(type, fn),
-        removeEventListener: (type) => cueListeners.delete(type),
-      };
-      const win = {
-        scrollY,
-        IntersectionObserver: observer ? class { constructor(callback) { intersect = callback; } observe() {} disconnect() {} } : undefined,
-        setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
-        clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].fn = () => {}; },
-        requestAnimationFrame: (fn) => fn(),
-        addEventListener: (type, fn) => windowListeners.set(type, fn),
-        removeEventListener: (type) => windowListeners.delete(type),
-      };
-      const doc = { querySelector: (selector) => (selector === '[data-scroll-cue]' ? cue : {}) };
-      return { cue, cueClasses, cueListeners, win, doc, timers, windowListeners, inView: (value) => intersect([{ isIntersecting: value }]) };
-    };
-    {
-      const h = cueHarness();
-      motion.initializeScrollCue({ documentLike: h.doc, windowLike: h.win, delayMs: 1400 });
-      assert.equal(h.timers[0].ms, 1400, `${label}: the cue should wait a beat so the hero entrance finishes first`);
-      assert.equal(h.cue.hidden, true, `${label}: the cue should stay hidden until its delay has passed`);
-      h.timers[0].fn();
-      assert.equal(h.cue.hidden, false, `${label}: the cue should appear after the delay`);
-      assert.ok(h.cueClasses.has('is-visible'), `${label}: the cue should fade in`);
-      h.win.scrollY = 300;
-      h.windowListeners.get('scroll')();
-      assert.equal(h.cueClasses.has('is-visible'), false, `${label}: scrolling should retire the cue`);
-      h.timers.at(-1).fn();
-      assert.equal(h.cue.hidden, true, `${label}: a retired cue should leave the layout and the tab order`);
-      assert.equal(h.windowListeners.has('scroll'), false, `${label}: a retired cue should release its scroll listener`);
-    }
-    {
-      const h = cueHarness();
-      motion.initializeScrollCue({ documentLike: h.doc, windowLike: h.win });
-      h.inView(true);
-      h.timers[0].fn();
-      assert.equal(h.cueClasses.has('is-visible'), false, `${label}: the cue should never show when the next section is already on screen`);
-    }
-    {
-      const h = cueHarness({ scrollY: 900 });
-      motion.initializeScrollCue({ documentLike: h.doc, windowLike: h.win });
-      h.timers[0].fn();
-      assert.equal(h.cueClasses.has('is-visible'), false, `${label}: a restored scroll position past the hero should not summon the cue`);
-    }
-    {
-      const h = cueHarness();
-      motion.initializeScrollCue({ documentLike: h.doc, windowLike: h.win });
-      h.timers[0].fn();
-      h.cueListeners.get('click')();
-      assert.equal(h.cueClasses.has('is-visible'), false, `${label}: clicking the cue should retire it`);
-    }
-    {
-      const h = cueHarness({ observer: false });
-      motion.initializeScrollCue({ documentLike: h.doc, windowLike: h.win });
-      assert.equal(h.timers.length, 0, `${label}: without IntersectionObserver the cue should stay out of the way`);
-      assert.equal(h.cue.hidden, true, `${label}: without IntersectionObserver the cue should stay hidden`);
-    }
     for (const asset of [
       '02-tell-the-browser.png',
       '03-ask-any-page.png',
@@ -44507,7 +44468,7 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     const chromeLocale = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales', filename)).href)).default;
     const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales', filename)).href)).default;
     const installKeys = Object.keys(chromeLocale).filter((key) => key.startsWith('install.'));
-    assert.equal(installKeys.length, 61, `${filename}: install guide should translate every user-facing string`);
+    assert.equal(installKeys.length, 64, `${filename}: install guide should translate every user-facing string`);
     assert.ok(chromeLocale['install.showcase.ask.title'], `${filename}: Ask showcase headline should be translated`);
     assert.ok(chromeLocale['install.showcase.apocalypse.body'], `${filename}: Apocalypse showcase body should be translated`);
     for (const key of [
@@ -44515,6 +44476,7 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       'install.shot.title', 'install.shot.body_html', 'install.dl.title', 'install.dl.body',
       'install.captcha.title', 'install.captcha.body', 'install.safesocial.title', 'install.safesocial.body',
       'install.record.title', 'install.record.body_html', 'install.cta.title', 'install.scroll_hint',
+      'install.chip.record', 'install.chip.shot', 'install.chip.dl',
       'install.mock.files', 'install.mock.offline', 'install.mock.not_robot', 'install.mock.captcha_blocked',
       'install.mock.captcha_sent', 'install.mock.captcha_waiting', 'install.mock.captcha_note',
       'install.mock.show_image', 'install.mock.safesocial_note', 'install.mock.tab', 'install.mock.screen',

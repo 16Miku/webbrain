@@ -109,6 +109,9 @@ export default {
   'install.mock.screen': 'Tela',
   'install.cta.title': 'Pronto quando você estiver.',
   'install.scroll_hint': 'Mais recursos abaixo',
+  'install.chip.record': 'Gravar a tela',
+  'install.chip.shot': 'Capturas de página inteira',
+  'install.chip.dl': 'Downloads em massa',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "Desconectado",

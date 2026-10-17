@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': 'Écran',
   'install.cta.title': 'Prêt quand vous l’êtes.',
   'install.scroll_hint': 'Plus de fonctionnalités ci-dessous',
+  'install.chip.record': 'Enregistrer l’écran',
+  'install.chip.shot': 'Captures de page entière',
+  'install.chip.dl': 'Téléchargements groupés',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} sur {total}',

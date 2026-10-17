@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': 'หน้าจอ',
   'install.cta.title': 'พร้อมเมื่อคุณพร้อม',
   'install.scroll_hint': 'ฟีเจอร์เพิ่มเติมด้านล่าง',
+  'install.chip.record': 'บันทึกหน้าจอ',
+  'install.chip.shot': 'แคปหน้าเว็บทั้งหน้า',
+  'install.chip.dl': 'ดาวน์โหลดจำนวนมาก',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} จาก {total}',

@@ -165,6 +165,9 @@ export default {
   'install.mock.screen': 'Skrin',
   'install.cta.title': 'Sedia apabila anda sedia.',
   'install.scroll_hint': 'Lebih banyak ciri di bawah',
+  'install.chip.record': 'Rakam skrin',
+  'install.chip.shot': 'Tangkapan skrin halaman penuh',
+  'install.chip.dl': 'Muat turun pukal',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} daripada {total}',
