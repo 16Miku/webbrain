@@ -21,7 +21,7 @@ import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
 import { validateToolArguments } from './tool-arguments.js';
-import { BATCH_INTERMEDIATE_RESULT_CHARS, BATCH_TRAILING_OBSERVATION_TOOLS, expandBrowserBatchCalls, foldBrowserBatchMessages, digestBrowserBatch, browserBatchResultStatus } from './browser-batch.js';
+import { BATCH_INTERMEDIATE_RESULT_CHARS, BATCH_TRAILING_OBSERVATION_TOOLS, expandBrowserBatchCalls, foldBrowserBatchMessages, digestBrowserBatch, browserBatchResultStatus, textWriteRefuted } from './browser-batch.js';
 import { calculateExpression, calculationResultInText } from './calculator.js';
 import { isLiteralCalculationTask, literalCalculationSummaryFormatMatches } from './page-feedback-policy.js';
 import { chatRecoveryDisplayText, terminalRecoveryFinalText } from './chat-recovery-text.js';
@@ -12678,10 +12678,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // A text write that went out but could not be read back exactly is an
   // advisory result (success + unverifiedWrite + a note), not a reason to
   // replan the rest of the batch. Failures, refusals and unknown outcomes
-  // still interrupt; so does every unverified result under Strict checks.
+  // still interrupt; so does a write an exact reader read back as a
+  // different value, since the rest of the batch would build on a value
+  // WebBrain knows is wrong, and every unverified result under Strict checks.
   _advisoryTextWriteContinuesBatch(toolName, toolResult) {
     return ['set_field', 'type_ax', 'type_text'].includes(toolName)
       && toolResult?.success === true && toolResult.unverifiedWrite === true && !toolResult.error
+      && !textWriteRefuted(toolResult)
       && this._guardAdvises('browser-batch-fresh-turn-interrupt', { decided: true });
   }
 

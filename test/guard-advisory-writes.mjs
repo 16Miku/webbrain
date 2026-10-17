@@ -332,6 +332,34 @@ for (const { build, Agent, batch } of builds) {
     assert.equal(strictStatus.reason, 'action_unverified');
   });
 
+  test(`${build}: a write an exact reader reads back as a different value stops the rest of the batch`, async () => {
+    // A semantic (exact) reader read another value: WebBrain knows the field
+    // is wrong, so a batched submit must not run on it. The write itself is
+    // still an advised success that locks nothing.
+    const agent = setup(Agent, { write: () => renderedMismatch({
+      unverified: { reason: 'readback_mismatch', reader: 'semantic' }, readbackExact: true }) });
+    const refuted = await agent.executeTool(tabId, 'set_field', args);
+    assert.equal(refuted.success, true);
+    assert.equal(refuted.unverifiedWrite, true);
+    assert.equal(refuted.verified, false);
+    assert.equal(refuted.readbackExact, true);
+    assert.match(advisoryOf(refuted, 'text-write-readback-unverified')?.note || '', /reads back a different value/);
+    assert.equal(agent._uncertainTextMutations.has(tabId), false, 'no text-write debt');
+    const batchContext = { navigationChanged: false, sameNext: true, remainingObservations: false,
+      hadMutation: true, hasRemaining: true, submit: false };
+    assert.equal(agent._browserActionFreshTurnReason('full', 'set_field', refuted, batchContext), 'action_unverified');
+    assert.equal(batch.textWriteRefuted(refuted), true);
+    const status = batch.browserBatchResultStatus({ role: 'tool', content: JSON.stringify(refuted) });
+    assert.equal(status.failed, true, 'the next batched action must not run on a refuted value');
+    assert.equal(status.reason, 'action_unverified');
+    // Rendered-layout and unreadable readbacks only leave the write unconfirmed.
+    for (const uncertain of [{ ...refuted, readbackExact: false }, { ...refuted, readbackExact: undefined, verified: undefined }]) {
+      assert.equal(batch.textWriteRefuted(uncertain), false);
+      assert.equal(agent._browserActionFreshTurnReason('full', 'set_field', uncertain, batchContext), '');
+      assert.equal(batch.browserBatchResultStatus({ role: 'tool', content: JSON.stringify(uncertain) }).failed, false);
+    }
+  });
+
   test(`${build}: content readback reports which reader produced the value`, async () => {
     const h = contentHarness(build);
     // A generic block editor reads back through innerText, the browser's

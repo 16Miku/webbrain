@@ -38,7 +38,10 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
     the model's outcome.
   - A write that went out but could not be read back exactly (GitHub's
     CodeMirror editor is the usual case) is an unverified success: it locks
-    nothing, arms no text-write debt and is not a loop failure.
+    nothing, arms no text-write debt and is not a loop failure. A write that
+    an exact reader reads back as a different value is reported the same
+    way, but it ends a batch: the next action is planned once the model has
+    seen it.
   - A quality guard whose `onCannotDecide` is `ask` asks the user when it
     cannot verify a consequential step, such as a commit or a post. Where
     that guard has no card, it refuses.
