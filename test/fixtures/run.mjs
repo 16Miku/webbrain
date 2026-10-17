@@ -363,7 +363,7 @@ async function collectSmd(page, mode = 'auto') {
   }, mode);
 }
 
-async function setupSelectionShortcut(page, sourcePath, { enabled = true, requiresManualOpen = false, locale = 'en', promiseDetect = false, holdLocalization = false } = {}) {
+async function setupSelectionShortcut(page, sourcePath, { enabled = true, requiresManualOpen = false, locale = 'en', promiseDetect = false, holdLocalization = false, failLocalization = false } = {}) {
   await page.setViewportSize({ width: 360, height: 280 });
   await page.setContent(`<!doctype html>
     <style>body{margin:0;font:18px/1.5 sans-serif} #copy{position:absolute;right:2px;bottom:2px;width:210px}</style>
@@ -390,6 +390,7 @@ async function setupSelectionShortcut(page, sourcePath, { enabled = true, requir
           if (message.type === 'WB_SELECTION_SHORTCUT_LOCALIZATION') {
             window.__selectionLocalizationRequests += 1;
             if (window.__selectionLocalizationGate) await window.__selectionLocalizationGate;
+            if (${failLocalization ? 'true' : 'false'}) throw new Error('The language bundle is unavailable.');
             const locale = String(message.locale || 'en').toLowerCase().split('-')[0];
             return { ok: true, ...(window.__selectionLocalizations[locale] || window.__selectionLocalizations.en) };
           }
@@ -2165,6 +2166,23 @@ for (const [label, sourcePath, manualOpen] of [
     }
     if ((await page.evaluate(() => window.__selectionInlineMessages.length)) !== 0) {
       throw new Error('no model call should be made when source and target are the same language');
+    }
+    await page.evaluate(() => window.__webbrainSelectionShortcut.chooseTarget('es'));
+    state = await waitForCardStatus(page, 'ready');
+    const messages = await page.evaluate(() => window.__selectionInlineMessages);
+    if (messages.length !== 1 || messages[0].language !== 'es') {
+      throw new Error(`choosing a target should start the translation: ${JSON.stringify(messages)}`);
+    }
+  });
+
+  test(`${label}: Translate still offers a target list when the language bundle cannot be loaded`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, failLocalization: true });
+    await page.evaluate(() => { window.__selectionDetectedLanguage = 'en'; });
+    await openInlineCard(page, 'translate');
+    let state = await waitForCardStatus(page, 'idle');
+    const options = await page.evaluate(() => window.__webbrainSelectionShortcut.getState().cardTargetOptions);
+    if (state.cardTargetLabel !== 'Translate to' || !(options > 20)) {
+      throw new Error(`the English fallback card should still list target languages: ${JSON.stringify({ state, options })}`);
     }
     await page.evaluate(() => window.__webbrainSelectionShortcut.chooseTarget('es'));
     state = await waitForCardStatus(page, 'ready');

@@ -543,7 +543,8 @@ its token budget, since they have no finish reason); the card also claims its re
 before it waits for the language bundle, so a double click starts only one call, and **More…** takes a newer id on the same wait, so an action clicked just before it never reaches the model. Selections
 over 4,000 characters skip the card and use the side-panel flow. The card draws the answer as DOM
 nodes (paragraphs, lists, bold, italic and code), never as HTML, and takes the source
-language from the browser's own detector, with no network call. A follow-up typed in a card
+language from the browser's own detector, with no network call. If the language bundle cannot be
+loaded, the card runs on its built-in English text and still lists the translation targets. A follow-up typed in a card
 continues in the side panel as a custom question. In Chrome the background opens the panel
 only when none is showing in that window: re-running `sidePanel.setOptions()` + `open()` on an
 open panel closes it, so each panel reports its visibility over a long-lived port

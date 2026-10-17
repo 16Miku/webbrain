@@ -201,7 +201,14 @@
   }
 
   function applyLocalization() {
-    if (!localization || !shadow) return;
+    if (!shadow) return;
+    if (!localization) {
+      // The language bundle did not load. The card still runs on the built-in English
+      // text, and its target list has to exist too: Translate asks for a target when the
+      // text is already in the interface language.
+      populateTargetLanguages();
+      return;
+    }
     const strings = localization.strings;
     host.lang = localization.locale;
     host.dir = localization.dir;
@@ -1300,6 +1307,7 @@
       cardStatus: cardState?.status || '',
       cardText: cardState?.text || '',
       cardError: cardState?.error || '',
+      cardTargetOptions: cardParts ? cardParts.target.options.length : 0,
       cardSide,
       cardRect: card && !card.hidden ? card.getBoundingClientRect().toJSON() : null,
       cardSourceLabel: cardParts && !cardParts.lang.hidden ? cardParts.source.textContent : '',
