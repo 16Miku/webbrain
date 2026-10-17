@@ -1402,3 +1402,8 @@ test('round-31: history navigation keeps the breadcrumb in step; breadcrumb clic
   assert.match(read('components/Elements/MainModal/components/ModalTopBar.jsx'), /onSubSectionChange\(null, currentSectionName\)/);
   assert.match(read('utils/settings/import.js'), /quicklinks: \(e\) => isObject\(e\)/);
 });
+
+test('round-32: closing or normally opening the settings modal drops stale deep-link data', () => {
+  const src = readFileSync(nt('features/misc/modals/Modals.jsx'), 'utf8');
+  assert.match(src, /setMainModal\(action\);[^}]*setDeepLinkData\(null\);/);
+});

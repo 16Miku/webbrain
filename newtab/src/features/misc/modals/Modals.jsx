@@ -33,6 +33,8 @@ const Modals = () => {
 
   const toggleMainModal = (action) => {
     setMainModal(action);
+    // A route the modal was first opened with must not come back the next time it opens.
+    setDeepLinkData(null);
     if (action !== false) {
       updateHash('#settings');
     }
