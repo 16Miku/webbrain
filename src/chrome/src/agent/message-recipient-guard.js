@@ -81,6 +81,22 @@ export function normalizeRecipientIdentity(value) {
   }
 }
 
+// Free text (a user's task or answer) normalized the same way as identities,
+// so an identity can be found inside it with indexOf.
+export function normalizeRecipientAnswer(value) {
+  const text = String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/[\u200b-\u200d\ufeff]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  try {
+    return text.normalize('NFKC').toLocaleLowerCase();
+  } catch {
+    return text.toLowerCase();
+  }
+}
+
 export function recipientMatchesObservedIdentity(recipient, observedIdentity) {
   const expected = normalizeRecipientIdentity(recipient);
   const observed = normalizeRecipientIdentity(observedIdentity);

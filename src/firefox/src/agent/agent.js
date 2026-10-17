@@ -71,7 +71,7 @@ import {
   shouldInvalidateFormInventoryAfterAction,
   workflowRequiredRowsAreProcessed,
 } from './adapter-workflow-evidence.js';
-import { messageTargetMatchesObservedIdentities, messageRecipientUploadSourceKey, normalizeMessageTarget, normalizeRecipientIdentity } from './message-recipient-guard.js';
+import { messageTargetMatchesObservedIdentities, messageRecipientUploadSourceKey, normalizeMessageTarget, normalizeRecipientAnswer, normalizeRecipientIdentity } from './message-recipient-guard.js';
 import { advanceChatSession, chatRunEndedNotice, createOwnedNativeChatReadRepair, createChatSession, decideChatSend, markChatSendPending, normalizeChatSession, normalizeChatSnapshot, normalizeNativeOpaqueBaseline, serializeChatSession } from './chat-workflow.js';
 import {
   fetchUrl,

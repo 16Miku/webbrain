@@ -15,13 +15,16 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: generated assets survive the actual background broadcast and bounded replay`, async () => {
     const source = await readFile(`src/${build}/src/background.js`, 'utf8');
     const start = source.indexOf('function sendAgentUpdate(');
-    const sendSource = source.slice(start, source.indexOf('\nfunction ', start + 1));
+    // End at the function's own closing brace; top-level declarations may follow it.
+    const sendSource = source.slice(start, source.indexOf('\n}\n', start) + 2);
     const runJournal = new journal.RunUiJournal();
     runJournal.begin(11, 'media-run');
     const delivered = [];
     const api = { runtime: { sendMessage: async message => { delivered.push(message); } } };
-    const send = new Function('recordRunUiEvent', 'agent', 'chrome', 'browser', `return (${sendSource});`)(
+    const send = new Function('recordRunUiEvent', 'agent', 'chrome', 'browser', 'notifyPlanReview',
+      'clearPlanReviewAttention', 'planReviewAttentionByTab', `return (${sendSource});`)(
       (...args) => runJournal.record(...args), { currentRunId: new Map() }, api, api,
+      () => {}, () => {}, new Map(),
     );
     const results = [
       { success: true, provider: 'fal', model: 'fal-ai/flux/schnell', url: 'https://cdn.example/image.png' },

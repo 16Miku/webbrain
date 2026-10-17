@@ -34,12 +34,18 @@ function recordedResults(agent, tabId, run) {
       if (!result || typeof result !== 'object' || Array.isArray(result)) return { tool };
       const entry = { tool };
       for (const key of ['success', 'dispatched', 'noDispatch', 'denied', 'cancelled', 'outcomeUnknown',
-        'verified', 'remoteStateVerified', 'stable']) if (typeof result[key] === 'boolean') entry[key] = result[key];
+        'verified', 'remoteStateVerified', 'stable', 'deletionDeclined', 'submitConfirmationRequired',
+        'permissionRequired']) if (typeof result[key] === 'boolean') entry[key] = result[key];
       for (const key of ['error', 'attachmentState', 'previousUrl', 'currentUrl']) {
         if (typeof result[key] === 'string') entry[key] = text(result[key]);
       }
       return entry;
     }).filter(Boolean);
+}
+
+function userDeclined(entry) {
+  return entry.deletionDeclined === true
+    || (entry.denied === true && (entry.submitConfirmationRequired === true || entry.permissionRequired === true));
 }
 
 export async function incompleteCompletionBlock(agent, tabId, { outcome, summary, pageState, pageUrl = '', terminalOnly = false }) {
@@ -69,6 +75,11 @@ export async function incompleteCompletionBlock(agent, tabId, { outcome, summary
     let parentIdentity = identity;
     try { const composed = JSON.parse(identity); if (Array.isArray(composed)) parentIdentity = composed[0]; } catch {}
     if (pageState.documentIdentity && pageState.documentIdentity !== parentIdentity) return changed();
+    const results = recordedResults(agent, tabId, run);
+    // The user's own refusal on a WebBrain card (a deletion, a submit or a
+    // permission) is the reason this run is incomplete. Reporting that is the
+    // honest end; recovery must not push the model to try again.
+    if (results.some(userDeclined)) return null;
     const request = agent._progressTaskAnchorText(tabId) || agent._latestTaskText(tabId) || '';
     const reading = await agent._semanticDecision(tabId, 'incomplete_task', { request, page: {
       candidate_summary_not_proof: text(summary),
@@ -82,7 +93,7 @@ export async function incompleteCompletionBlock(agent, tabId, { outcome, summary
         label: text(control?.label), disabled: control?.disabled === true,
         busy: control?.busy === true, progress: text(control?.progress),
       })),
-      recorded_current_results: recordedResults(agent, tabId, run),
+      recorded_current_results: results,
       recorded_task_progress: { successfulTools: Number(guard.successfulTaskToolCalls || 0),
         consequentialTools: Number(guard.successfulConsequentialToolCalls || 0),
         verifiedSubmission: guard.verifiedSubmissionEvidence === true },

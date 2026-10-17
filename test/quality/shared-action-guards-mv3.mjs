@@ -320,6 +320,13 @@ const server = http.createServer(async (request, response) => {
       // reports the outcome.
       current.summaryReadings = (current.summaryReadings || 0) + 1;
       completion = { role: 'assistant', content: JSON.stringify({ choice: 'result', evidence: '' }) };
+    } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")
+        && /^- "continue_now":/m.test(system)) {
+      // A partial or failed end is checked once for a remaining step. Its
+      // request is the app-assembled task anchor, not the latest correction;
+      // these cases end on a guard's refusal, so nothing should resume.
+      current.incompleteReadings = (current.incompleteReadings || 0) + 1;
+      completion = { role: 'assistant', content: JSON.stringify({ choice: 'stop_required', evidence: '' }) };
     } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
       // The model's reading of the latest request, in any language: whether it
       // asks to delete this exact item, or the earlier post first.
