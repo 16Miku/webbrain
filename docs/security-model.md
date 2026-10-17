@@ -229,6 +229,31 @@ The primary threat: a malicious page crafts content that, when read by the agent
 
 ---
 
+## Unanswered Questions
+
+When the agent asks a `clarify` question and nobody answers before the clarify
+timeout (Settings → General, default 60 s), the setting **When a question times
+out** decides the answer:
+
+- **Finish the task** (default) keeps the run moving. The option the model named
+  as `finish_option` applies as the user's answer; without one, the model
+  continues with the choice that best completes the task and reports it in its
+  summary. Runs no longer stall because the user stepped away.
+- **Play it safe** selects `options[0]` as a safe default. It authorizes nothing
+  consequential unless the model marked that option `safe_first`; otherwise
+  consequential actions and a success completion stay blocked until the user
+  answers directly.
+
+A question whose answer would approve a deletion, a payment, credentials, the
+recipient of a message, or a publication the user did not ask for (the model
+sets `consequence`, or uses a recipient `purpose`) always times out to its safe
+first option, whatever the setting. A timed-out answer is never recorded as the
+user's own words in the task authority or the publication contract.
+WebBrain's own confirmation cards (site permissions, form submits, recipients,
+deletions) are separate prompts: they never time out.
+
+The logic lives in `src/*/src/agent/clarify-timeout.js`.
+
 ## `/allow-api` Flag
 
 Set per-conversation via the `/allow-api` slash command in the side panel, or

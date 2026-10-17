@@ -577,7 +577,7 @@ function normalizeClarifyTimeoutSec(value) {
 }
 
 async function loadClarifyTimeout() {
-  const stored = await chrome.storage.local.get(['clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2']);
+  const stored = await chrome.storage.local.get(['clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'clarifyTimeoutPolicy']);
   // One-shot: old 0 meant Off; new 0 means Instant and Off is >1200.
   if (!stored.clarifyTimeoutSemanticsV2) {
     const updates = { clarifyTimeoutSemanticsV2: true };
@@ -590,6 +590,7 @@ async function loadClarifyTimeout() {
   agent.clarifyTimeoutSec = normalizeClarifyTimeoutSec(
     stored.clarifyTimeoutSec != null ? stored.clarifyTimeoutSec : 60,
   );
+  agent.clarifyTimeoutPolicy = stored.clarifyTimeoutPolicy === 'safe' ? 'safe' : 'finish';
 }
 loadClarifyTimeout();
 
@@ -1286,6 +1287,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
   if (changes.clarifyTimeoutSec) {
     agent.clarifyTimeoutSec = normalizeClarifyTimeoutSec(changes.clarifyTimeoutSec.newValue);
+  }
+  if (changes.clarifyTimeoutPolicy) {
+    agent.clarifyTimeoutPolicy = changes.clarifyTimeoutPolicy.newValue === 'safe' ? 'safe' : 'finish';
   }
   if (changes.autoScreenshot) {
     agent.autoScreenshot = changes.autoScreenshot.newValue;

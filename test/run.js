@@ -50192,6 +50192,8 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const agent = new AgentClass({});
     const tabId = AgentClass === AgentCh ? 4801 : 4802;
     agent.clarifyTimeoutSec = 1205;
+    // The safe timeout setting: a timed-out answer is not authorization.
+    agent.clarifyTimeoutPolicy = 'safe';
 
     const waitedTimeout = await agent.executeTool(
       tabId,
@@ -50373,6 +50375,8 @@ test('waited clarify timeout guard is persisted before clarify returns', async (
     const agent = new AgentClass({});
     const tabId = 4803 + index;
     agent.clarifyTimeoutSec = 1205;
+    // The safe timeout setting: a timed-out answer is not authorization.
+    agent.clarifyTimeoutPolicy = 'safe';
     agent.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
     agent.conversationIds.set(tabId, `conv_${tabId}`);
 
