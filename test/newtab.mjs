@@ -643,6 +643,52 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(input.value, 'task A');
   });
 
+  test(`${browser}: a task waiting behind a long send stays out of the composer and is delivered when the send settles`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'A', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_900 } };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    let finishA;
+    const gateA = new Promise((r) => { finishA = r; });
+    let calls = 0;
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn) => { queueMicrotask(fn); return 0; }; // run the 150 ms polls at once
+    try {
+      const handoff = createNewtabHandoff({
+        storage: {
+          get: async (k) => (k in store ? { [k]: store[k] } : {}),
+          remove: async (k) => { delete store[k]; },
+          set: async (o) => Object.assign(store, o),
+        },
+        getCurrentTabId: () => 3,
+        getIsProcessing: () => false,
+        getIsBlocked: () => false,
+        getIsDocumentVisible: () => true,
+        doc: { addEventListener() {} },
+        setMode() {},
+        getInputEl: () => input,
+        autoResizeInput() {},
+        sendMessage: async () => {
+          calls += 1;
+          if (calls === 1) { await gateA; input.value = ''; return true; } // A: slow preflight, then sent
+          input.value = ''; return true;
+        },
+        now: () => 100_000,
+      });
+      await handoff.start(); // A is claimed and its send starts (composer holds A)
+      store[key3] = { id: 'B', tabId: 3, text: 'task B', mode: 'ask', createdAt: 99_950 };
+      await handoff.consume(); // B is waiting behind A
+      for (let i = 0; i < 400; i++) await Promise.resolve(); // polling budget runs out
+      assert.equal(input.value, 'task A', 'B was not merged into the composer beside the running send');
+      assert.equal(store[key3].id, 'B', 'B is still waiting in storage');
+      finishA();
+      for (let i = 0; i < 20; i++) await new Promise((r) => realSetTimeout(r, 0));
+      assert.equal(key3 in store, false, 'B was delivered once A settled');
+      assert.equal(calls, 2);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+  });
+
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
   const KEY = newtabHandoffKey(3);
 
@@ -1768,7 +1814,7 @@ test('round-51: handoff records are cleared at browser start, never swept from a
   for (const [file, api] of [['src/chrome/src/background.js', 'chrome'], ['src/firefox/src/background.js', 'browser']]) {
     const src = readFileSync(path.join(root, file), 'utf8');
     assert.doesNotMatch(src, /sweepStaleNewtabHandoffs/, file);
-    assert.match(src, /onStartup\?\.addListener\?\.\(async \(\) => \{\s*try \{[\s\S]*startsWith\('wbNewtabHandoff:'\)/, file);
+    assert.match(src, /onStartup\?\.addListener\?\.\(async \(\) => \{\s*try \{[\s\S]*startedAt - 10_000[\s\S]*startsWith\('wbNewtabHandoff:'\)/, file);
     assert.match(src, /wbNewtabHandoff:retry:\$\{closedTabId\}/, file);
   }
 });

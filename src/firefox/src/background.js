@@ -1401,8 +1401,17 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 // ignored by their age, and closing a tab removes its records.
 browser.runtime.onStartup?.addListener?.(async () => {
   try {
+    // Only records written before this moment: a task submitted since the browser started is
+    // never a candidate (the one case left, a stale key rewritten between the read and the
+    // removal below, needs a submission in that few-millisecond gap).
+    const startedAt = Date.now();
     const all = await browser.storage.local.get(null);
-    const keys = Object.keys(all).filter((key) => key.startsWith('wbNewtabHandoff:'));
+    const olderThanStart = (record) => Number(record?.createdAt) < startedAt - 10_000;
+    const keys = Object.keys(all).filter((key) => {
+      if (!key.startsWith('wbNewtabHandoff:')) return false;
+      const entries = Array.isArray(all[key]) ? all[key] : [all[key]];
+      return entries.every(olderThanStart);
+    });
     if (keys.length) await browser.storage.local.remove(keys);
   } catch {
     // best effort

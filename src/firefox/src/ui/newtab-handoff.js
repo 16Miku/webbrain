@@ -102,8 +102,14 @@ export function createNewtabHandoff({
     if (retryTimer) return;
     retryTimer = setTimeout(() => {
       retryTimer = null;
-      // A send that never commits must not hold later hand-offs back forever.
-      if (++retries > NEWTAB_HANDOFF_SEND_HOLD_MAX_RETRIES && pendingSend) pendingSend.settled = true;
+      // Stop polling after the budget instead of forcing the send aside: a send that is still
+      // running owns the composer, and putting the next task in beside it would be sent along
+      // with it or duplicated when it settles. The waiting task stays in storage and is picked
+      // up when that send settles (below) or when the panel is next triggered.
+      if (++retries > NEWTAB_HANDOFF_SEND_HOLD_MAX_RETRIES) {
+        retries = 0;
+        return;
+      }
       consume();
     }, NEWTAB_HANDOFF_SEND_RETRY_MS);
   }
@@ -232,6 +238,9 @@ export function createNewtabHandoff({
           .then((result) => result !== false, () => false)
           .then((sent) => {
             send.settled = true;
+            // A task that arrived while this send held the composer is waiting; look for it once
+            // the recovery below (which runs synchronously) is done.
+            queueMicrotask(() => { consume(); });
             // Declined or failed: the new tab already showed success and cleared its
             // box, so make sure the text is still sitting in the composer.
             if (sent) return;
