@@ -265,13 +265,13 @@ Results on the held-out test, RTX 5090, through the extension:
 
 | | d1 FP32, main | d1 FP16, new runtime | Bonsai 2B readout, no training | Bonsai 2B + probe |
 |---|---:|---:|---:|---:|
-| Categorical | 92/126 | 92/126 | 74/126 | {probe_cat} |
-| Completion found | 22/24 | 22/24 | 24/24 | {probe_tp} |
-| False completions | 1/48 | 1/48 | 30/48 | {probe_fp} |
-| Unknown recognized | 23/24 | 23/24 | 0/24 | {probe_unk} |
-| Other choice / yes-no | 10/36, 13/18 | 10/36, 13/18 | 18/36, 14/18 | {probe_aux} |
-| Score MAE | 0.574 | 0.573 | 0.459 | {probe_mae} |
-| Latency p50 / p95 (s per request) | 0.83 / 0.97 | 0.75 / 0.88 | 1.65 / 2.16 | {probe_lat} |
+| Categorical | 92/126 | 92/126 | 74/126 | 110/126 |
+| Completion found | 22/24 | 22/24 | 24/24 | 21/24 |
+| False completions | 1/48 | 1/48 | 30/48 | 4/48 |
+| Unknown recognized | 23/24 | 23/24 | 0/24 | 20/24 |
+| Other choice / yes-no | 10/36, 13/18 | 10/36, 13/18 | 18/36, 14/18 | 29/36, 16/18 |
+| Score MAE | 0.574 | 0.573 | 0.459 | 0.724 |
+| Latency p50 / p95 (s per request) | 0.83 / 0.97 | 0.75 / 0.88 | 1.65 / 2.16 | 2.25 / 2.81 |
 | 16 questions on 1k / 2k / 4k / 8k-token states | ok / fail / fail / fail | all ok | not run | not run |
 
 - At WebBrain's 0.9 completion threshold d1 is still the better completion
@@ -281,8 +281,14 @@ Results on the held-out test, RTX 5090, through the extension:
 - All of these are synthetic, AI-labelled screens from one generator; the
   probe and d1 were trained on the same train split. Neither result
   establishes real-site quality.
-- Bonsai's cost is the prefill (about 1.1 s for a screenshot of about 1,000
-  tokens) plus about 0.15 s per option.
+- Bonsai's cost is the prefill (median 1.2 s; about 1.3 s for an
+  1,100-token state with one screenshot) plus about 0.15 s per option.
+- The 2B repository's decoder graph with `decision_hidden` is published
+  (Hugging Face commit `b9895bc`, `decision-validation.json`). On the CPU its
+  logits and caches are bit-identical to the previous graph
+  (`scripts/models/bonsai/check_decision_hidden.py`). Installs that cached
+  the previous graph keep it until the model is downloaded again in Settings;
+  until then the provider reports that it needs the updated decoder.
 
 ## Updating a published graph
 

@@ -19,6 +19,8 @@
 // --prompt NAME     Bonsai decision mode: probe (default, what Settings uses),
 //                   readout, strict or verify
 // --decoder-graph F install a replacement decoder graph in the cache first
+// --refresh         download a cached model again first, the Settings path
+//                   that replaces a stale decoder graph by hash
 // --return-hidden   with --prompt verify, record each option's hidden state
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -145,6 +147,18 @@ try {
         if (Date.now() - started > 60 * 60_000) throw new Error('Download did not finish within an hour');
       }
     }
+    if (status?.ready && args.includes('--refresh')) {
+      const started = Date.now();
+      const refreshed = await message('start_webgpu_download', { model: bonsaiModel });
+      if (!refreshed || refreshed.error || refreshed.success === false) throw new Error(`Refresh failed: ${refreshed?.error}`);
+      do {
+        await sleep(2000);
+        status = await message('get_webgpu_download_status', { model: bonsaiModel });
+        if (status?.error) throw new Error(`Refresh failed: ${status.error}`);
+        if (Date.now() - started > 10 * 60_000) throw new Error('Refresh did not finish within ten minutes');
+      } while (!status?.ready || status?.status === 'downloading');
+      result.refreshSeconds = (Date.now() - started) / 1000;
+    }
     const graphFile = option('--decoder-graph', '');
     if (graphFile) {
       // Replace the cached decoder graph (same external weights) before the
@@ -157,6 +171,13 @@ try {
       }, { url: `https://huggingface.co/${bonsaiModel}/resolve/main/onnx/decoder_model_merged_q2f16.onnx`, data });
       result.decoderGraph = graphFile;
     }
+    result.cachedDecoderGraphSha256 = await harness.evaluate(async url => {
+      const cached = await (await caches.open('transformers-cache')).match(url);
+      if (!cached) return null;
+      const digest = await crypto.subtle.digest('SHA-256', await cached.arrayBuffer());
+      return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    }, `https://huggingface.co/${bonsaiModel}/resolve/main/onnx/decoder_model_merged_q2f16.onnx`);
+    console.log('cached decoder graph', result.cachedDecoderGraphSha256);
     const temperature = Number(option('--temperature', 1));
     const promptVariant = option('--prompt', 'probe');
     const returnHidden = args.includes('--return-hidden');

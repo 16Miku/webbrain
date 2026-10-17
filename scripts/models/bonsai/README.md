@@ -202,5 +202,8 @@ the external weight file are unchanged). `train_decision_probe.py` trains the
 `scripts/check-webgpu-decisions.mjs --prompt verify --return-hidden
 --decoder-graph <graph>` on d1's balanced-V3 train, validation and test splits.
 The selected weights live in `src/chrome/src/offscreen/bonsai-decision-probe.js`.
+`check_decision_hidden.py <dir> --old <previous graph> --new <graph>` checks on
+onnxruntime's CPU provider that logits and caches stay bit-identical (the
+external `.onnx_data` must sit next to both graphs).
 A re-exported decoder or a retrained probe must be evaluated again through the
 extension before its pin or weights change.
