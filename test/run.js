@@ -50346,7 +50346,23 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     );
     assert.equal(emptyOptionsTimeout.authorized, false, `${AgentClass.name}: safe_first without options was accepted`);
 
+    // Instant (source=auto) answers by the same timeout policy as a waited
+    // timeout. Under the safe setting, an option that was not marked
+    // safe_first is not authorization, and an armed guard stays armed.
     agent.clarifyTimeoutSec = 0;
+    const instantSafe = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Which record?', options: ['First', 'Second'] },
+      () => { },
+    );
+    assert.equal(instantSafe.source, 'auto', `${AgentClass.name}: Instant did not use source=auto`);
+    assert.equal(instantSafe.authorized, false, `${AgentClass.name}: Instant under the safe setting authorized a non-safe_first option`);
+    assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: Instant under the safe setting cleared the timeout guard`);
+
+    // Under the default setting (finish), Instant keeps the task moving.
+    await agent._recordClarificationAuthorization(tabId, 'user');
+    agent.clarifyTimeoutPolicy = 'finish';
     const instant = await agent.executeTool(
       tabId,
       'clarify',
@@ -50356,6 +50372,18 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(instant.source, 'auto', `${AgentClass.name}: Instant did not use source=auto`);
     assert.equal(instant.authorized, true, `${AgentClass.name}: configured Instant mode was not authorized`);
     assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: Instant unexpectedly armed the timeout guard`);
+
+    // A question about a hard-list consequence is never answered by Instant.
+    const instantDeletion = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Delete the records?', options: ['Keep them', 'Delete them'], consequence: 'deletion' },
+      () => { },
+    );
+    assert.equal(instantDeletion.source, 'auto', `${AgentClass.name}: Instant consequence question did not use source=auto`);
+    assert.equal(instantDeletion.authorized, false, `${AgentClass.name}: Instant authorized a deletion question`);
+    assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: Instant deletion question left no guard armed`);
+    agent.clarifyTimeoutPolicy = 'safe';
 
     const unscopedTabId = tabId + 100;
     await agent._recordClarificationAuthorization(unscopedTabId, 'timeout');

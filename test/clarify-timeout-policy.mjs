@@ -180,6 +180,44 @@ for (const { build, Agent, policy, Capability } of builds) {
     assert.equal(instantResult.answer, 'Second', 'Instant picks the finishing answer too');
   });
 
+  test(`${build}: Instant answers by the same policy, so it never approves a consequential or safe-setting question`, async () => {
+    const hard = new Agent({});
+    hard.clarifyTimeoutSec = 0;
+    const hardResult = await hard.executeTool(9150, 'clarify', {
+      question: 'Delete the 40 archived emails?', options: ['Keep them', 'Delete them'],
+      finish_option: 'Delete them', consequence: 'deletion',
+    }, () => {});
+    assert.equal(hardResult.source, 'auto');
+    assert.equal(hardResult.answer, 'Keep them', 'Instant picks the safe answer for a consequence question');
+    assert.equal(hardResult.authorized, false, 'Instant must not approve a consequence question');
+    assert.match(hardResult.note, /NOT a real user confirmation/);
+    assert.ok(hard._clarificationAuthorizationBlock(9150, 'click_ax', {}, [Capability.CLICK]), 'consequential actions stay blocked');
+
+    const safe = new Agent({});
+    safe.clarifyTimeoutSec = 0;
+    safe.clarifyTimeoutPolicy = 'safe';
+    const safeResult = await safe.executeTool(9151, 'clarify', {
+      question: 'Commit the post?', options: ['Leave it uncommitted', 'Commit it'], finish_option: 'Commit it',
+    }, () => {});
+    assert.equal(safeResult.answer, 'Leave it uncommitted');
+    assert.equal(safeResult.authorized, false, 'Instant on the safe setting does not authorize');
+
+    const finish = new Agent({});
+    finish.clarifyTimeoutSec = 0;
+    const finishResult = await finish.executeTool(9152, 'clarify', {
+      question: 'Which list?', options: ['First', 'Second'],
+    }, () => {});
+    assert.equal(finishResult.authorized, true, 'Instant on the finish setting continues');
+    assert.match(finishResult.note, /Instant \(source=auto\)/);
+  });
+
+  test(`${build}: a reconnecting panel gets the decided timeout answer`, async () => {
+    const source = await read(`src/${build}/src/agent/agent.js`);
+    const capture = source.slice(source.indexOf('  _capturePendingClarificationForUi('), source.indexOf('  _capturePendingClarificationForUi(') + 1600);
+    assert.match(capture, /'timeoutAnswer', 'timeoutPolicy', 'timeoutContinues'/,
+      'the public pending-clarification record keeps the decided answer');
+  });
+
   test(`${build}: settings, background, export and the side panel carry the setting`, async () => {
     const settingsHtml = await read(`src/${build}/src/ui/settings.html`);
     const settings = await read(`src/${build}/src/ui/settings.js`);

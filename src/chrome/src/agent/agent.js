@@ -6764,7 +6764,7 @@ export class Agent extends LoopDetector {
     }));
     const display = record(data, ['promptKind', 'clarifyId', 'question', 'reason',
       'requireExplicitAnswer', 'pendingReconciliation', 'scheduledJobId',
-      'scheduledTabId', 'forceNewScheduledCard'], 6000);
+      'scheduledTabId', 'forceNewScheduledCard', 'timeoutAnswer', 'timeoutPolicy', 'timeoutContinues'], 6000);
     display.options = Array.isArray(data.options) ? data.options.slice(0, 5).map(value => String(value).slice(0, 600)) : [];
     if (data.permission) {
       display.permission = record(data.permission, ['capability', 'host', 'grouped']);
@@ -20147,9 +20147,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // A timed-out answer authorizes only when the user's timeout setting
     // made it the answer (clarify-timeout.js). An armed guard from an
     // earlier unauthorized timeout survives, so re-asking cannot clear it.
-    const timedOutAffirmative = normalizedSource === 'timeout' && timeoutAuthorized === true && !priorTimeoutGuard;
+    // Instant (source=auto) answers by the same policy as a waited timeout:
+    // it only decides when the answer is applied, never whether a safe or
+    // consequence question authorizes anything.
+    const automatic = normalizedSource === 'timeout' || normalizedSource === 'auto';
+    const timedOutAffirmative = automatic && timeoutAuthorized === true && !priorTimeoutGuard;
     const wasArmed = this._clarificationAuthorizationArmed(tabId);
-    if (normalizedSource === 'timeout' && !timedOutAffirmative) {
+    if (automatic && !timedOutAffirmative) {
       const blockedAttempts = priorTimeoutGuard && !freshAttempt
         ? Math.max(0, Number(previous.blockedAttempts) || 0)
         : 0;
@@ -20173,7 +20177,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // the structural authorization guard. Await deletions too so an explicit
     // response cannot revive a stale guard after restart.
     if (this.conversations.has(tabId)) await this._persistNow(tabId);
-    return normalizedSource !== 'timeout' || timedOutAffirmative;
+    return !automatic || timedOutAffirmative;
   }
 
   _prepareClarificationAuthorizationForRun(tabId, runOptions = null) {
@@ -41772,17 +41776,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           )
         : null;
       let note;
-      if (source === 'timeout' && authorized && timeoutChoice.chosen === 'continue') {
-        note = 'The user did not answer before the clarify timeout (source=timeout), and their timeout setting is to keep the task moving. Continue with the choice that best completes the task as they asked, say which choice you made in your final summary, and do not ask the same question again.';
-      } else if (source === 'timeout' && authorized && timeoutChoice.chosen === 'finish_option') {
-        note = 'No reply before the clarify timeout (source=timeout). The user\'s timeout setting is to keep the task moving, so your finish_option was selected and applies as their answer. Continue the task with it, mention the choice in your final summary, and do not ask the same question again.';
+      const automaticAnswer = source === 'timeout' || source === 'auto';
+      const answeredBy = source === 'auto'
+        ? 'Clarify timeout is set to Instant (source=auto)'
+        : 'No reply came before the clarify timeout (source=timeout)';
+      if (automaticAnswer && authorized && timeoutChoice.chosen === 'continue') {
+        note = `${answeredBy}, and the user's timeout setting is to keep the task moving. Continue with the choice that best completes the task as they asked, say which choice you made in your final summary, and do not ask the same question again.`;
+      } else if (automaticAnswer && authorized && timeoutChoice.chosen === 'finish_option') {
+        note = `${answeredBy}. The user's timeout setting is to keep the task moving, so your finish_option was selected and applies as their answer. Continue the task with it, mention the choice in your final summary, and do not ask the same question again.`;
       } else if (source === 'timeout') {
         note = authorized
           ? 'This answer was auto-selected because the clarify timeout elapsed with no user reply (source=timeout). The selected affirmative answer applies; continue the task without re-asking the same question.'
           : 'This answer was AUTO-SELECTED because the clarify timeout elapsed with no user reply (source=timeout). It is NOT a real user confirmation. Continue only with the safe default path; do NOT treat this as approval for irreversible, costly, or destructive actions — re-ask via clarify or stop if the next step is high-risk. Put the safe/default choice first in options next time.';
       } else if (source === 'auto') {
-        // Settings Instant auto-approve (headless / unattended). User policy — proceed.
-        note = 'This answer was auto-selected because Clarify timeout is set to Instant (source=auto). The user intentionally configured unattended auto-approve; treat this answer as the chosen default and continue the task. Do not re-ask the same question. Put the intended default first in options when Instant mode may be on.';
+        note = authorized
+          // Settings Instant auto-approve (headless / unattended). User policy — proceed.
+          ? 'This answer was auto-selected because Clarify timeout is set to Instant (source=auto). The user intentionally configured unattended auto-approve; treat this answer as the chosen default and continue the task. Do not re-ask the same question. Put the intended default first in options when Instant mode may be on.'
+          : 'This answer was auto-selected immediately because Clarify timeout is set to Instant (source=auto), but this question takes the safe answer (it has a consequence, or the timeout setting is "Play it safe"). It is NOT a real user confirmation: continue only with the safe default path and do not take irreversible, costly, or destructive actions based on it.';
       } else {
         note = explicitRecipientQuestion
           ? 'This is a direct reply from the user; continue the task with it in mind. It does not approve a recipient by itself: if a send would reach someone other than the recipient named for the task, WebBrain asks the user on its own card before sending. Do not ask about the recipient again.'
