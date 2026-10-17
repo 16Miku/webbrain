@@ -538,7 +538,7 @@ that is closed, retried or retargeted sends `WB_SELECTION_SHORTCUT_INLINE_CANCEL
 background aborts the paid request it no longer needs (a page that unloads mid-answer sends the
 same cancel from `pagehide`, since it can no longer close the card itself; for the in-browser WebGPU models the
 provider also sends `webgpu-chat-cancel`, and the offscreen worker interrupts the running
-generation or drops a queued one, and the offscreen host remembers a cancel that arrives while the request is still being routed to a worker, so the generation never starts; those workers report `outputTruncated` when an answer used
+generation or drops a queued one, and the offscreen host remembers a cancel that arrives while the request is still being routed to a worker, so the generation never starts, and the Bonsai 2 Vision worker re-checks for a cancel before each prefill slice so a long prompt stops at the next slice boundary; those workers report `outputTruncated` when an answer used
 its token budget, since they have no finish reason); the card also claims its request id
 before it waits for the language bundle, so a double click starts only one call, and **More…** takes a newer id on the same wait, so an action clicked just before it never reaches the model. Selections
 over 4,000 characters skip the card and use the side-panel flow. The card draws the answer as DOM

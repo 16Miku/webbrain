@@ -53897,6 +53897,69 @@ test('a response-only reply cut off as a Responses error keeps its text and says
   }
 });
 
+test('an OpenAI Responses call that ends at the output limit is still metered', async () => {
+  for (const [label, AgentClass, Provider] of [['chrome', AgentCh, OpenAIProviderCh], ['firefox', AgentFx, OpenAIProviderFx]]) {
+    const responses = new Provider({
+      category: 'cloud', providerName: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.6-terra',
+    });
+    const incomplete = (usage, text = 'Half of it') => ({
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      ...(usage ? { usage } : {}),
+      output: [{ type: 'message', content: [{ type: 'output_text', text }] }],
+    });
+    const thrown = (data) => {
+      try { responses._parseResponsesData(data); } catch (error) { return error; }
+      return null;
+    };
+    const error = thrown(incomplete({ input_tokens: 120, output_tokens: 800, total_tokens: 920 }));
+    assert.equal(error?.billedUsage?.prompt_tokens, 120, `${label}: the error keeps what the call was billed for`);
+    assert.equal(error?.billedUsage?.completion_tokens, 800);
+    assert.equal('billedUsage' in thrown(incomplete(null)), false, `${label}: a response with no usage has nothing to meter`);
+
+    const setup = (data) => {
+      const recorded = [];
+      const provider = {
+        supportsTools: false, supportsVision: false, promptTier: 'full', contextWindow: 128000,
+        model: 'test-model', name: 'test-provider',
+        chat: async () => responses._parseResponsesData(data),
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async (_provider, usage) => { recorded.push(usage); return null; };
+      return { agent, provider, recorded };
+    };
+    const messages = [{ role: 'system', content: 'rules' }, { role: 'user', content: 'Translate it.' }];
+
+    // The wrapper every caller goes through meters the call before the error moves on.
+    let { agent, provider, recorded } = setup(incomplete({ input_tokens: 120, output_tokens: 800, total_tokens: 920 }));
+    await assert.rejects(agent._chatWithCostAllowance(provider, messages, {}, agent._newCostRunState()), /Responses incomplete/);
+    assert.equal(recorded.length, 1, `${label}: the incomplete call is counted once`);
+    assert.equal(recorded[0].completion_tokens, 800);
+
+    // So does the side-panel path that recovers the partial text.
+    ({ agent, provider, recorded } = setup(incomplete({ input_tokens: 120, output_tokens: 800, total_tokens: 920 })));
+    const text = await agent._generateContextOnlyResponse(
+      1, messages, provider, agent._newCostRunState(), null, { phase: 'response_only', step: 1 },
+    );
+    assert.match(text, /^Half of it/, `${label}: the partial text is still shown`);
+    assert.equal(recorded.length, 1, `${label}: and the recovered call is counted once`);
+
+    ({ agent, provider, recorded } = setup(incomplete(null)));
+    await assert.rejects(agent._chatWithCostAllowance(provider, messages, {}, agent._newCostRunState()), /Responses incomplete/);
+    assert.equal(recorded.length, 0, `${label}: nothing reported, nothing recorded`);
+
+    // A call that fails for another reason is not counted, and a completed one is counted once as before.
+    ({ agent, provider, recorded } = setup(null));
+    provider.chat = async () => { throw new Error('network down'); };
+    await assert.rejects(agent._chatWithCostAllowance(provider, messages, {}, agent._newCostRunState()), /network down/);
+    assert.equal(recorded.length, 0);
+    provider.chat = async () => ({ content: 'Done', toolCalls: null, usage: { prompt_tokens: 3, completion_tokens: 2 } });
+    await agent._chatWithCostAllowance(provider, messages, {}, agent._newCostRunState());
+    assert.equal(recorded.length, 1);
+  }
+});
+
 test('ordinary attachments leave selection grounding and remain usable', async () => {
   for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
     ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
@@ -69239,7 +69302,41 @@ test('Bonsai 2 Vision prefill runs long prompts in cache-carrying slices', async
       'image features are merged once over the whole prompt before slicing');
     assert.equal(calls.length, 3);
 
+    // A cancelled request stops at the next slice boundary and releases the cache built so far.
+    calls.length = 0;
+    let released = 0;
+    class TrackedCache extends DynamicCache {
+      async dispose() { released += 1; return super.dispose?.(); }
+    }
+    const trackedRuntime = { model, library: { DynamicCache: TrackedCache } };
+    const abort = () => Object.assign(new Error('The generation was cancelled.'), { name: 'AbortError' });
+    let encodes = 0;
+    const countingRuntime = {
+      model: Object.assign(Object.create(model), {
+        encode_text: async (args) => { encodes += 1; return model.encode_text(args); },
+      }),
+      library: { DynamicCache: TrackedCache },
+    };
+    await assert.rejects(
+      worker.prefillBonsai2InSlices(countingRuntime, { input_ids: ids, attention_mask: mask }, 4, () => { throw abort(); }),
+      /cancelled/,
+    );
+    assert.equal(calls.length, 0, 'a request cancelled before the prefill starts runs no slice');
+    assert.equal(encodes, 0, 'and does not even embed the prompt');
+    await assert.rejects(
+      worker.prefillBonsai2InSlices(trackedRuntime, { input_ids: ids, attention_mask: mask }, 4, () => { if (calls.length >= 1) throw abort(); }),
+      /cancelled/,
+    );
+    assert.equal(calls.length, 1, 'a request cancelled during the first slice stops before the second');
+    assert.equal(released, 1, 'the cache built so far is released');
+    assert.equal(
+      (await worker.prefillBonsai2InSlices(trackedRuntime, { input_ids: ids, attention_mask: mask }, 4, () => {})).get_seq_length(),
+      9, 'a request that is not cancelled prefills as before',
+    );
+
     const workerSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
+    assert.match(workerSource, /bonsai2PrefillSliceTokens\(payload\?\.options\?\.prefillSliceTokens\),\s*\(\) => throwIfTextCancelled\(requestKey\),\s*\);\s*\}\s*\/\/[^\n]*\n\s*throwIfTextCancelled\(requestKey\);\s*outputs = await runtime\.model\.generate/,
+      'the worker must pass its cancellation check to the prefill and re-check before generating');
     assert.match(workerSource, /past_key_values: prefilled/);
     assert.match(workerSource, /if \(prefilled\) await prefilled\.dispose\(\)/,
       'the caller-supplied cache must be released after generation');

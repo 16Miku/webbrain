@@ -373,11 +373,16 @@ function presentToPastName(name) {
  * null when the prompt fits in one slice. generate() then continues from the
  * cache: the Qwen VL input preparation computes the full rotary positions and
  * feeds only the remaining token.
+ *
+ * `checkCancelled` throws when the request was cancelled. It runs before the embedding
+ * passes and before every slice, so a card that was closed stops at the next slice
+ * boundary instead of occupying the serialized GPU worker for the whole prefill.
  */
-export async function prefillBonsai2InSlices(runtime, inputs, sliceTokens) {
+export async function prefillBonsai2InSlices(runtime, inputs, sliceTokens, checkCancelled = () => {}) {
   const { model, library } = runtime;
   const length = inputs.input_ids.dims.at(-1);
   if (!sliceTokens || length - 1 <= sliceTokens) return null;
+  checkCancelled();
   let embeds = await model.encode_text({ input_ids: inputs.input_ids });
   let attentionMask = inputs.attention_mask;
   if (inputs.pixel_values) {
@@ -401,6 +406,7 @@ export async function prefillBonsai2InSlices(runtime, inputs, sliceTokens) {
   let cache = null;
   try {
     for (let start = 0; start < length - 1; start += sliceTokens) {
+      checkCancelled();
       const end = Math.min(start + sliceTokens, length - 1);
       const outputs = await model.forward({
         inputs_embeds: embeds.slice(null, [start, end], null),
@@ -1790,8 +1796,11 @@ async function runMultimodalText(payload) {
         runtime,
         inputs,
         bonsai2PrefillSliceTokens(payload?.options?.prefillSliceTokens),
+        () => throwIfTextCancelled(requestKey),
       );
     }
+    // A cancel that landed during the last slice should not start a generation.
+    throwIfTextCancelled(requestKey);
     outputs = await runtime.model.generate({
       ...inputs,
       ...(prefilled ? { past_key_values: prefilled } : {}),

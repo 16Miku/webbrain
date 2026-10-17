@@ -8202,6 +8202,13 @@ export class Agent extends LoopDetector {
     const after = await this._recordCostUsage(provider, result?.usage, costState);
     if (after) result.costAllowanceMessage = after;
     return result;
+    } catch (error) {
+      // A call that ends in a provider error can still have been billed (OpenAI Responses
+      // stopped at max_output_tokens): count what it reports before the error moves on.
+      if (error?.billedUsage) {
+        try { await this._recordCostUsage(provider, error.billedUsage, costState); } catch { /* the original error matters more */ }
+      }
+      throw error;
     } finally {
       linked.dispose();
     }
