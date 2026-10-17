@@ -360,6 +360,46 @@ for (const browser of ['chrome', 'firefox']) {
     });
   }
 
+  test(`${browser}: a slash-command Ask keeps the composer held while its preflight runs`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'A', tabId: 3, text: '/compact question', mode: 'ask', createdAt: 99_000 } };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    let processing = false;
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => processing,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      // like sidepanel.js: a slash command empties the box, then awaits its preflight
+      sendMessage: async () => { input.value = ''; await gate; return true; },
+      now: () => 100_000,
+    });
+    await handoff.start();
+    assert.equal(input.value, '');
+    // a second task arrives while the first is still in preflight (box empty, not yet running)
+    store[key3] = { id: 'B', tabId: 3, text: 'task B', mode: 'act', createdAt: 99_500 };
+    await handoff.consume();
+    assert.equal(input.value, '', 'the second task waits instead of landing in the box');
+    assert.equal(store[key3]?.id, 'B', 'and stays in storage');
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(input.value, 'task B', 'it is applied once the first send has settled');
+    assert.equal(processing, false);
+  });
+
   test(`${browser}: a declined send never refills another tab's composer; the task goes back to its own tab`, async () => {
     const key3 = newtabHandoffKey(3);
     const store = { [key3]: { id: 'r1', tabId: 3, text: 'for tab three', mode: 'ask', createdAt: 99_000 } };
@@ -1500,7 +1540,7 @@ test('round-20: todo focus handlers, vertical colour resets, padded date reorder
   assert.doesNotMatch(todo, /onFocus=\{handleHideTodo\}/);
   const time = read('features/time/options/TimeOptions.jsx');
   assert.doesNotMatch(time, /onClick=\{\(\) => localStorage\.setItem\('(hour|minute|second)Colour'/);
-  assert.equal((time.match(/updateColour\('(hour|minute|second)Colour', \{ target: \{ value: '#ffffff' \} \}\)/g) || []).length, 3);
+  assert.equal((time.match(/updateColour\('(hour|minute|second)Colour', \{ target: \{ value: '#ffffff' \} \}\)/g) || []).length, 6);
   const date = read('features/time/Date.jsx');
   assert.doesNotMatch(date, /day = dateMonth|month = dateDay|year = dateDay/);
   assert.match(read('features/time/Clock.jsx'), /setFinalSeconds\(''\)/);
@@ -2012,4 +2052,15 @@ test('round-59: reset actions are keyboard-operable; Dropdown only writes a pair
   }
   const dd = read('components/Form/Settings/Dropdown/Dropdown.jsx');
   assert.match(dd, /props\.name2 !== undefined && props\.name2 !== null\) \{\s*localStorage\.setItem\(props\.name2, props\.value2\)/);
+});
+
+test('round-63: remaining click-only controls are keyboard-operable', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  const time = read('features/time/options/TimeOptions.jsx');
+  assert.equal((time.match(/onKeyDown=\{onActivateKey\(\(\) => updateColour\(/g) || []).length, 3);
+  assert.equal((time.match(/role="button"\s+tabIndex=\{0\}/g) || []).length >= 3, true);
+  assert.match(read('features/background/options/Colour.jsx'), /onKeyDown=\{onActivateKey\(\(\) => resetColour\(\)\)\}\s+role="button"\s+tabIndex=\{0\}/);
+  const chips = read('components/Form/Settings/ChipSelect/ChipSelect.jsx');
+  assert.match(chips, /className="chipSelect-control"[\s\S]*onKeyDown=\{onActivateKey[\s\S]*role="combobox"[\s\S]*tabIndex=\{0\}/);
+  assert.match(chips, /className=\{`chipSelect-option[\s\S]*onKeyDown=\{onActivateKey[\s\S]*role="option"[\s\S]*tabIndex=\{0\}/);
 });

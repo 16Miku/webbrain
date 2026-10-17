@@ -1,3 +1,4 @@
+import { onActivateKey } from 'utils/keyboard';
 import { useState, memo, useRef, useEffect } from 'react';
 import { MdExpandMore, MdClose } from 'react-icons/md';
 
@@ -48,7 +49,16 @@ function ChipSelect({ label, options, onChange }) {
   return (
     <div className="chipSelect" ref={containerRef}>
       {label && <label className="chipSelect-label">{label}</label>}
-      <div className="chipSelect-control" onClick={() => setIsOpen(!isOpen)}>
+      <div
+        className="chipSelect-control"
+        onClick={() => setIsOpen(!isOpen)}
+        onKeyDown={onActivateKey(() => setIsOpen(!isOpen))}
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-label={label || undefined}
+        tabIndex={0}
+      >
         <div className="chipSelect-value">
           {optionsSelected.length === 0 ? (
             <span className="chipSelect-placeholder">Select options...</span>
@@ -72,12 +82,16 @@ function ChipSelect({ label, options, onChange }) {
         <MdExpandMore className={`chipSelect-arrow ${isOpen ? 'open' : ''}`} />
       </div>
       {isOpen && (
-        <div className="chipSelect-dropdown">
+        <div className="chipSelect-dropdown" role="listbox" aria-multiselectable="true">
           {options.map((option) => (
             <div
               key={option.name}
               className={`chipSelect-option ${optionsSelected.includes(option.name) ? 'selected' : ''}`}
               onClick={() => handleToggle(option.name)}
+              onKeyDown={onActivateKey(() => handleToggle(option.name))}
+              role="option"
+              aria-selected={optionsSelected.includes(option.name)}
+              tabIndex={0}
             >
               <span className="chipSelect-option-checkbox">
                 {optionsSelected.includes(option.name) && '✓'}

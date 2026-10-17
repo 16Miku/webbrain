@@ -101,7 +101,12 @@ export function createNewtabHandoff({
 
   const sendStillHoldsComposer = () => {
     if (!pendingSend || pendingSend.settled) return false;
-    return String(getInputEl()?.value ?? '') === pendingSend.text;
+    const value = String(getInputEl()?.value ?? '');
+    if (value === pendingSend.text) return true;
+    // A slash command empties the composer before its (asynchronous) preflight finishes, so an
+    // empty box does not yet mean the send has committed. It has once the run is under way, and a
+    // send that was queued behind a run settles by itself.
+    return pendingSend.text.startsWith('/') && value === '' && (pendingSend.queued || !getIsProcessing());
   };
 
   function retrySoon() {
@@ -246,7 +251,7 @@ export function createNewtabHandoff({
         // sendMessage reads the composer synchronously when called, so starting it
         // here captures this task. It is not awaited: a send can last a whole run,
         // and that must not hold up later hand-offs or the panel's own startup.
-        const send = { text: handoff.text, settled: false };
+        const send = { text: handoff.text, settled: false, queued: Boolean(getIsProcessing()) };
         pendingSend = send;
         let sending;
         try {

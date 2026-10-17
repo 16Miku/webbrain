@@ -1,4 +1,5 @@
 import variables from 'config/variables';
+import { onActivateKey } from 'utils/keyboard';
 import { useState } from 'react';
 import ColorPicker from 'react-best-gradient-color-picker';
 import { toast } from 'react-toastify';
@@ -50,7 +51,13 @@ const ColourOptions = () => {
           height={147}
         />
         <div className="colourReset">
-          <span className="link" onClick={() => resetColour()}>
+          <span
+ className="link"
+ onClick={() => resetColour()}
+ onKeyDown={onActivateKey(() => resetColour())}
+ role="button"
+ tabIndex={0}
+ >
             <MdRefresh />
             {variables.getMessage('modals.main.settings.buttons.reset')}
           </span>

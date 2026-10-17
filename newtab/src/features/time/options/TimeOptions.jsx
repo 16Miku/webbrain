@@ -1,4 +1,5 @@
 import variables from 'config/variables';
+import { onActivateKey } from 'utils/keyboard';
 import React, { useState } from 'react';
 
 import { Header, Row, Content, Action, PreferencesWrapper } from 'components/Layout/Settings';
@@ -157,7 +158,13 @@ const TimeOptions = () => {
               {hourColour}
             </label>
           </div>
-          <span className="link" onClick={() => updateColour('hourColour', { target: { value: '#ffffff' } })}>
+          <span
+ className="link"
+ onClick={() => updateColour('hourColour', { target: { value: '#ffffff' } })}
+ onKeyDown={onActivateKey(() => updateColour('hourColour', { target: { value: '#ffffff' } }))}
+ role="button"
+ tabIndex={0}
+ >
             <MdRefresh />
             {variables.getMessage('modals.main.settings.buttons.reset')}
           </span>
@@ -182,7 +189,13 @@ const TimeOptions = () => {
               {minuteColour}
             </label>
           </div>
-          <span className="link" onClick={() => updateColour('minuteColour', { target: { value: '#ffffff' } })}>
+          <span
+ className="link"
+ onClick={() => updateColour('minuteColour', { target: { value: '#ffffff' } })}
+ onKeyDown={onActivateKey(() => updateColour('minuteColour', { target: { value: '#ffffff' } }))}
+ role="button"
+ tabIndex={0}
+ >
             <MdRefresh />
             {variables.getMessage('modals.main.settings.buttons.reset')}
           </span>
@@ -207,7 +220,13 @@ const TimeOptions = () => {
               {secondColour}
             </label>
           </div>
-          <span className="link" onClick={() => updateColour('secondColour', { target: { value: '#ffffff' } })}>
+          <span
+ className="link"
+ onClick={() => updateColour('secondColour', { target: { value: '#ffffff' } })}
+ onKeyDown={onActivateKey(() => updateColour('secondColour', { target: { value: '#ffffff' } }))}
+ role="button"
+ tabIndex={0}
+ >
             <MdRefresh />
             {variables.getMessage('modals.main.settings.buttons.reset')}
           </span>
