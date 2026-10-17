@@ -254,6 +254,10 @@ class WebGPUOffscreenProvider extends BaseLLMProvider {
   async _dispatch(message, { timeoutMs = 0, signal = null, onAbort = null } = {}) {
     if (signal?.aborted) throw responseAbortError(signal);
     await ensureOffscreen();
+    // Starting the offscreen document can take a while; an abort that landed meanwhile
+    // has no listener to fire (a listener added to an aborted signal never runs), so
+    // look again before anything is sent.
+    if (signal?.aborted) throw responseAbortError(signal);
     return await new Promise((resolve, reject) => {
       let settled = false;
       const finish = (callback, value) => {

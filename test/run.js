@@ -52059,6 +52059,55 @@ test('WebGPU provider stops waiting and cancels the worker when its caller abort
   }
 });
 
+test('WebGPU provider drops a request whose caller aborts while the offscreen document is starting', async () => {
+  const previousChrome = globalThis.chrome;
+  const sent = [];
+  let gateDocument = false;
+  let releaseDocument = null;
+  try {
+    globalThis.chrome = {
+      offscreen: {
+        hasDocument: () => {
+          if (!gateDocument) return Promise.resolve(true);
+          return new Promise(resolve => { releaseDocument = () => resolve(true); });
+        },
+      },
+      runtime: {
+        lastError: undefined,
+        sendMessage(message, callback) {
+          sent.push(message);
+          if (message.type === 'webgpu-download-status') {
+            gateDocument = true; // the next dispatch is the chat itself
+            callback?.({ ok: true, ready: true });
+          } else {
+            callback?.({ ok: true, content: 'should not be asked' });
+          }
+        },
+      },
+    };
+    const provider = new WebGPUProvider({ model: WEBGPU_MODEL_ID });
+    const controller = new AbortController();
+    const pending = provider.chat([{ role: 'user', content: 'Translate this.' }], {
+      maxTokens: 50,
+      signal: controller.signal,
+    });
+    for (let attempt = 0; attempt < 200 && !releaseDocument; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 2));
+    }
+    assert.equal(typeof releaseDocument, 'function', 'the chat should be waiting for the offscreen document');
+    controller.abort(new Error('The card was closed.'));
+    releaseDocument();
+    await assert.rejects(pending, /The card was closed\./);
+    assert.equal(sent.some(message => message.type === 'webgpu-chat'), false,
+      'a request aborted while the offscreen document starts must never be sent');
+    assert.equal(sent.some(message => message.type === 'webgpu-chat-cancel'), false,
+      'nothing was started, so there is nothing to cancel');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
 test('WebGPU host and workers carry the cancel request to the generation they stop', () => {
   const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
   const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
