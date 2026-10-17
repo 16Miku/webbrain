@@ -34,6 +34,11 @@ SOURCE_GRAPH_SHA256 = {
     "4B": "e7975db212de3464d54f086cc4652e2d56a9f16632ee428601be47e7dc33a542",
 }
 STALE_EVIDENCE = {"browser-validation.json", "offline-browser-validation.json"}
+# Native vision parity tests only the (unchanged) vision encoder; it is kept
+# only while its recorded hashes still name the bundle's encoder files.
+NATIVE_VISION_EVIDENCE = "native-vision-validation.json"
+VISION_GRAPH = "onnx/vision_encoder_fp16.onnx"
+VISION_DATA = "onnx/vision_encoder_fp16.onnx_data"
 CARD_LANGUAGE_OLD = "The ternary language graphs and Hadamard transforms come unchanged from"
 CARD_LANGUAGE_NEW = "The ternary language weights and Hadamard transforms come unchanged from"
 # Written only by this tool; marks a directory it may replace.
@@ -78,10 +83,23 @@ def replace_output(staging, output):
         shutil.rmtree(backup, ignore_errors=True)
 
 
+def native_vision_matches(source, manifest):
+    """True when the native parity report was recorded for exactly these encoder files."""
+    hashes = {entry["path"]: entry["sha256"] for entry in manifest["files"]}  # verified against the files
+    report = read_json(source / NATIVE_VISION_EVIDENCE)
+    return (report.get("passed") is True
+            and report.get("exported_graph_sha256") == hashes.get(VISION_GRAPH)
+            and report.get("exported_weights_sha256") == hashes.get(VISION_DATA))
+
+
 def build_bundle(source, output, manifest, args):
+    keep_native_vision = any(entry["path"] == NATIVE_VISION_EVIDENCE for entry in manifest["files"]) \
+        and native_vision_matches(source, manifest)
     for entry in manifest["files"]:
         path = entry["path"]
         if path == GRAPH or path in STALE_EVIDENCE:
+            continue
+        if path == NATIVE_VISION_EVIDENCE and not keep_native_vision:
             continue
         target = output / path
         target.parent.mkdir(parents=True, exist_ok=True)
