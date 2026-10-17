@@ -36,7 +36,7 @@ dialog "Add a product" [ref_166]
 **Parameters:**
 | Parameter | Default | Description |
 |---|---|---|
-| `filter` | `'all'` | `'all'` (whole rendered document scope), `'visible'` (in-viewport, visible nodes), `'interactive'` (clickable/typeable only) |
+| `filter` | `'all'` | `'all'` (whole document scope, including hidden nodes), `'visible'` (in-viewport, visible nodes), `'interactive'` (clickable/typeable only) |
 | `maxDepth` | `15` | Max tree depth to descend |
 | `maxChars` | Filter-dependent | Structured page size. Defaults to 6,000 for `all`, 3,000 for `visible`, and 3,500 for `interactive`; larger trees return continuation metadata. See [adaptive read windows](#adaptive-read-windows). |
 | `ref_id` | — | Anchor at a specific element's subtree instead of `document.body` |
@@ -48,6 +48,10 @@ role "accessible name" [ref_id] href="..." type="..." placeholder="..." value=".
 ```
 
 Indentation is 1 space per tree-depth level (skipped generic containers don't bump depth).
+
+`filter: 'all'` retains hidden nodes and marks them `hidden=true`, including
+inactive status and error messages. Their presence alone does not establish a
+current upload or failure; inspect visible status and the staged asset rows.
 
 ### `__wb_ax_lookup(ref_id)`
 

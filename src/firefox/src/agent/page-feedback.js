@@ -229,7 +229,20 @@ export function pageFeedbackPendingResult() {
 }
 
 // The answer of a call whose target the observed certificate cannot bind.
-function actionBindingUnavailableResult(run) {
+function actionBindingUnavailableResult(run, name) {
+  if (name === 'upload_file') {
+    const reason = run.actionBindingUnavailableReason;
+    const explanation = reason === 'target_ambiguous'
+      ? 'The selector matches more than one element, so the intended file input cannot be bound.'
+      : reason === 'target_unresolved'
+        ? 'The requested file input could not be resolved on the current page.'
+        : 'The requested file input was not covered by the observed action context.';
+    return { success: false, skipped: true, dispatched: false, noDispatch: true, retryable: false,
+      errorCode: 'action_binding_unavailable',
+      ...(['target_ambiguous', 'target_unresolved', 'target_uncovered'].includes(reason) ? { bindingFailure: reason } : {}),
+      recoveryRequired: 'get_interactive_elements',
+      error: explanation + ' Nothing was attached. Call get_interactive_elements again, identify the intended file-input record by its upload widget context, and copy its exact selector into a new upload_file call with the same attachmentId, downloadId, or filePath. Do not guess a selector or click the upload control.' };
+  }
   return { success: false, skipped: true, dispatched: false, noDispatch: true, retryable: false,
     errorCode: 'action_binding_unavailable',
     ...(run.actionBindingUnavailableReason === 'target_ambiguous' ? { bindingFailure: 'target_ambiguous',
@@ -1354,6 +1367,11 @@ export const pageFeedbackMethods = {
         run.actionCaptureTarget = safeAction(name, args);
         run.actionBindingUnavailable = `${name}:${JSON.stringify(args)}`;
         run.actionBindingUnavailableReason = response.reason;
+        // The monitor may reject ambiguity before the upload resolver runs.
+        // Preserve that resolver's required inventory step on this path too.
+        if (name === 'upload_file' && response.reason === 'target_ambiguous') {
+          this._uploadSelectorRecoveryRequired?.set(tabId, 0);
+        }
       }
       if (owned && response.uncertified === true) {
         // The original node is unchanged, but its action context was never
@@ -1377,7 +1395,7 @@ export const pageFeedbackMethods = {
     if (!run || typeof args?.selector !== 'string' || !args.selector.trim() || !this.constructor.STATE_CHANGE_TOOLS?.has(name)
         || pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage).kind !== 'bound_target') return null;
     if (await this._validatePageFeedbackAction(tabId, name, args, run.modelState, null, { answerOnly: true }) !== false) return null;
-    return run.actionBindingUnavailable === `${name}:${JSON.stringify(args)}` ? actionBindingUnavailableResult(run) : null;
+    return run.actionBindingUnavailable === `${name}:${JSON.stringify(args)}` ? actionBindingUnavailableResult(run, name) : null;
   },
 
   _pageFeedbackBlocksCall(tabId, name, args = {}) {
@@ -1760,7 +1778,7 @@ export function installPageFeedback(Agent) {
     if (modelBound) {
       const validated = await this._validatePageFeedbackAction(tabId, name, args, modelState, batchId);
       if (validated === false) return run.actionBindingUnavailable === `${name}:${JSON.stringify(args)}`
-        ? actionBindingUnavailableResult(run)
+        ? actionBindingUnavailableResult(run, name)
         : run.actionContextUnverified === true
           ? { ...pageFeedbackPendingResult(), actionContextUnverified: true, errorCode: 'action_context_unverified',
             error: 'The requested control had no verified original action context. No action was dispatched; inspect the fresh bounded target observation before choosing another action.' }
