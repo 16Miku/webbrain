@@ -1401,7 +1401,12 @@ async function sweepStaleNewtabHandoffs() {
     // Past the longest age the panel still accepts (150 s), so nothing claimable is removed.
     const cutoff = Date.now() - 180_000;
     const stale = Object.keys(all).filter(
-      (key) => key.startsWith('wbNewtabHandoff:') && !(Number(all[key]?.createdAt) > cutoff),
+      (key) => {
+        if (!key.startsWith('wbNewtabHandoff:')) return false;
+        // The panel's retry slot holds a list; it is stale once none of its tasks is still claimable.
+        const entries = Array.isArray(all[key]) ? all[key] : [all[key]];
+        return !entries.some((entry) => Number(entry?.createdAt) > cutoff);
+      },
     );
     if (stale.length) await browser.storage.local.remove(stale);
   } catch {

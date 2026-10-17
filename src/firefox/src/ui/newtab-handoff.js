@@ -213,7 +213,7 @@ export function createNewtabHandoff({
               const current = String(input.value || '').trim();
               if (!current) {
                 fill();
-              } else if (!current.includes(handoff.text)) {
+              } else if (current !== handoff.text && !current.endsWith(`\n\n${handoff.text}`)) {
                 // The user typed something else while the send was pending: keep their draft and
                 // put the task below it (the record is gone, so this is the only copy left).
                 input.value = `${current}\n\n${handoff.text}`;

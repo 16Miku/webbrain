@@ -522,6 +522,36 @@ for (const browser of ['chrome', 'firefox']) {
     assert.deepEqual(store[retry3].map((r) => r.id), ['A-retry', 'B-retry'], 'both tasks are kept');
   });
 
+  test(`${browser}: a short task is not mistaken for a longer replacement draft that merely contains it`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'A', tabId: 3, text: 'yes', mode: 'ask', createdAt: 99_000 } };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => { input.value = 'yesterday'; await gate; return false; },
+      now: () => 100_000,
+    });
+    await handoff.start();
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(input.value, 'yesterday\n\nyes');
+  });
+
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
   const KEY = newtabHandoffKey(3);
 
@@ -1631,4 +1661,12 @@ test('round-42: background cards and todo checkboxes work from the keyboard; nes
 test('round-43: todo delete icon is a keyboard control', () => {
   const todo = readFileSync(nt('features/navbar/components/Todo.jsx'), 'utf8');
   assert.match(todo, /<MdDelete\s+role="button"\s+tabIndex=\{0\}/);
+});
+
+test('round-46: the stale-record sweep understands the retry queue', () => {
+  for (const [file, api] of [['src/chrome/src/background.js', 'chrome'], ['src/firefox/src/background.js', 'browser']]) {
+    const src = readFileSync(path.join(root, file), 'utf8');
+    assert.match(src, /Array\.isArray\(all\[key\]\) \? all\[key\] : \[all\[key\]\]/, file);
+    assert.match(src, /entries\.some\(\(entry\) => Number\(entry\?\.createdAt\) > cutoff\)/, file);
+  }
 });
