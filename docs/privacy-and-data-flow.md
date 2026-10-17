@@ -442,8 +442,10 @@ saved metadata and must ask the user again for any still-needed value.
 ### New Tab Page
 
 The new tab page (`docs/newtab.md`) makes no network requests of its own: backgrounds
-are bundled, there are no fonts, favicons, weather, quotes or analytics requests, and
-no error reporting. Its settings, quick links and uploaded backgrounds stay in the
+are bundled, there are no fonts, favicons, link-title lookups, weather, quotes or
+analytics requests, and no error reporting. The one exception is something you choose:
+if you set a background image by URL, the page loads that image from the address you
+gave. Its settings, quick links and uploaded backgrounds stay in the
 browser under a separate `wbnt:` prefix. Text typed into its box is held briefly in
 extension storage to hand it to the side panel and removed once claimed (or after
 30 seconds). **Search** mode uses the browser's own default search engine, so a

@@ -19,7 +19,9 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
 1. In the submit handler (no `await` before it, to keep the user gesture) the page
    writes `{id, tabId, text, mode, createdAt}` to extension storage key
    `wbNewtabHandoff` and opens the panel for that tab (Chrome
-   `sidePanel.setOptions` + `open({tabId})`; Firefox `sidebarAction.open()`).
+   `sidePanel.setOptions` + `open({tabId})`; Firefox `sidebarAction.open()`). If the
+   panel fails to open the page removes its own record again, so a failed submit can
+   never be picked up and sent later when the panel is opened by hand.
 2. It then sends `WB_NEWTAB_PANEL_OPENED`. `background.js` accepts it only from the
    extension's own `newtab/index.html` tab, and on Chrome adds the tab to the
    WebBrain group/`panelTabs` as the install page does.

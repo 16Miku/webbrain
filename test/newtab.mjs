@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -10,6 +10,7 @@ const load = (file) => import(pathToFileURL(file).href);
 
 const { createNamespacedStorage, NAMESPACE_PREFIX } = await load(nt('lib/storage-namespace.js'));
 const { buildHandoff, toNavigableUrl, submitTask, HANDOFF_KEY } = await load(nt('features/agent/handoff.js'));
+const { getTitleFromUrl } = await load(nt('utils/links/getTitleFromUrl.js'));
 
 function memoryStorage(seed = {}) {
   const map = new Map(Object.entries(seed));
@@ -75,6 +76,72 @@ test('submitTask stores the task, opens the panel from the same tick, then annou
   await p;
   assert.deepEqual(calls.at(-1)[1], { type: 'WB_NEWTAB_PANEL_OPENED', tabId: 42 });
   await assert.rejects(() => submitTask({ text: 'x', mode: 'ask' }, api, null));
+});
+
+function failingApi({ open, withSidePanel = true } = {}) {
+  const store = new Map();
+  const api = {
+    storage: {
+      local: {
+        set: async (v) => { for (const [k, val] of Object.entries(v)) store.set(k, val); },
+        get: async (k) => (store.has(k) ? { [k]: store.get(k) } : {}),
+        remove: async (k) => { store.delete(k); },
+      },
+    },
+    runtime: { sendMessage: async () => {} },
+    _store: store,
+  };
+  if (withSidePanel) api.sidePanel = { setOptions: async () => {}, open };
+  return api;
+}
+
+test('a failed panel open removes the stored task so it cannot be sent later', async () => {
+  const rejected = failingApi({ open: () => Promise.reject(new Error('no gesture')) });
+  await assert.rejects(() => submitTask({ text: 'secret plan', mode: 'ask' }, rejected, { id: 1 }), /no gesture/);
+  assert.equal(rejected._store.has(HANDOFF_KEY), false);
+
+  const threw = failingApi({ open: () => { throw new Error('sync failure'); } });
+  await assert.rejects(() => submitTask({ text: 'x', mode: 'ask' }, threw, { id: 1 }), /sync failure/);
+  assert.equal(threw._store.has(HANDOFF_KEY), false);
+});
+
+test('an unavailable side panel API never stores the task', async () => {
+  const api = failingApi({ withSidePanel: false });
+  await assert.rejects(() => submitTask({ text: 'x', mode: 'ask' }, api, { id: 1 }));
+  assert.equal(api._store.has(HANDOFF_KEY), false);
+});
+
+test('cleanup never removes a newer task written by another submit', async () => {
+  const api = failingApi({
+    open: async () => {
+      api._store.set(HANDOFF_KEY, { id: 'newer', tabId: 1, text: 'later', mode: 'ask', createdAt: Date.now() });
+      throw new Error('late failure');
+    },
+  });
+  await assert.rejects(() => submitTask({ text: 'first', mode: 'ask' }, api, { id: 1 }));
+  assert.equal(api._store.get(HANDOFF_KEY)?.id, 'newer');
+});
+
+test('link titles are derived locally and never fetched', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => { throw new Error('network call'); };
+  try {
+    assert.equal(await getTitleFromUrl('https://www.example.com/a/b?q=1'), 'example.com');
+    assert.equal(await getTitleFromUrl('docs.example.org/path'), 'docs.example.org');
+    assert.equal(await getTitleFromUrl('not a url at all'), 'not a url at all');
+    assert.equal(await getTitleFromUrl(''), '');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('the only remaining fetch in the new tab source loads the chosen background image', () => {
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]);
+  const hits = walk(nt()).filter((f) => /\.(jsx?|mjs)$/.test(f))
+    .filter((f) => /\bfetch\(|XMLHttpRequest|sendBeacon|new WebSocket/.test(readFileSync(f, 'utf8')))
+    .map((f) => path.relative(nt(), f).split(path.sep).join('/'));
+  assert.deepEqual(hits, ['features/background/api/blobUrl.js']);
 });
 
 for (const browser of ['chrome', 'firefox']) {

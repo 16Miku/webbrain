@@ -50,25 +50,50 @@ export function buildHandoff({ text, mode, tabId, now = Date.now() }) {
  */
 export function submitTask({ text, mode }, api = extApi(), tab = currentTab) {
   if (!api || tab?.id == null) return Promise.reject(new Error('Extension API unavailable'));
+  const firefox = hasFirefoxSidebar();
+  if (!firefox && !api.sidePanel?.open) return Promise.reject(new Error('Side panel API unavailable'));
+
   const handoff = buildHandoff({ text, mode, tabId: tab.id });
-  const stored = api.storage.local.set({ [HANDOFF_KEY]: handoff });
+  const stored = Promise.resolve(api.storage.local.set({ [HANDOFF_KEY]: handoff }));
 
   let opened;
-  if (hasFirefoxSidebar()) {
-    opened = api.sidebarAction.open();
-  } else if (api.sidePanel?.open) {
-    Promise.resolve(
-      api.sidePanel.setOptions({ tabId: tab.id, path: 'src/ui/sidepanel.html', enabled: true }),
-    ).catch(() => {});
-    opened = api.sidePanel.open({ tabId: tab.id });
-  } else {
-    return Promise.reject(new Error('Side panel API unavailable'));
+  try {
+    if (firefox) {
+      opened = api.sidebarAction.open();
+    } else {
+      Promise.resolve(
+        api.sidePanel.setOptions({ tabId: tab.id, path: 'src/ui/sidepanel.html', enabled: true }),
+      ).catch(() => {});
+      opened = api.sidePanel.open({ tabId: tab.id });
+    }
+  } catch (error) {
+    opened = Promise.reject(error);
   }
 
-  return Promise.all([stored, opened]).then(() => {
-    Promise.resolve(api.runtime.sendMessage({ type: 'WB_NEWTAB_PANEL_OPENED', tabId: tab.id })).catch(() => {});
-    return true;
-  });
+  return Promise.all([stored, opened]).then(
+    () => {
+      Promise.resolve(api.runtime.sendMessage({ type: 'WB_NEWTAB_PANEL_OPENED', tabId: tab.id })).catch(() => {});
+      return true;
+    },
+    async (error) => {
+      // The panel did not open, so the user is told it failed. Take the task back
+      // out of storage, otherwise opening the panel by hand within the next 30 s
+      // would pick it up and send it as if the submit had worked.
+      await stored.catch(() => {});
+      await discardHandoff(api, handoff.id);
+      throw error;
+    },
+  );
+}
+
+/** Removes the stored hand-off, but only if it is still the one we wrote. */
+export async function discardHandoff(api, id) {
+  try {
+    const current = (await api.storage.local.get(HANDOFF_KEY))?.[HANDOFF_KEY];
+    if (!current || current.id === id) await api.storage.local.remove(HANDOFF_KEY);
+  } catch {
+    // best effort: the panel also drops anything older than 30 s
+  }
 }
 
 export function canSearch(api = extApi()) {
