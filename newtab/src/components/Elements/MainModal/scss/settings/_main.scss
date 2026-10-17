@@ -1,0 +1,311 @@
+@use 'scss/variables' as *;
+@use 'modules/material-ui' as *;
+@use 'modules/tabs/about' as *;
+@use 'modules/tabs/changelog' as *;
+@use 'modules/tabs/order' as *;
+@use 'modules/tabs/stats' as *;
+
+input {
+  /* colour picker */
+  &[type='color'] {
+    border-radius: 100%;
+    height: 30px;
+    width: 30px;
+    border: none;
+    outline: none;
+    appearance: none;
+    vertical-align: middle;
+    background: none;
+
+    @include themed {
+      border: t($modal-sidebarActive) 1px solid;
+    }
+
+    &::-webkit-color-swatch-wrapper {
+      padding: 0;
+    }
+
+    &::-webkit-color-swatch {
+      border: none;
+      border-radius: 100%;
+    }
+  }
+
+  /* firefox fixes for colour picker (using "," didn't work) */
+  &[type='color']::-moz-color-swatch {
+    border-radius: 100%;
+    height: 30px;
+    width: 30px;
+    border: none;
+    outline: none;
+    appearance: none;
+    vertical-align: middle;
+    background: none;
+
+    &::-moz-color-swatch {
+      border: none;
+      border-radius: 100%;
+    }
+  }
+
+  /* date picker */
+  &[type='date'] {
+    width: 260px;
+    flex-flow: column;
+
+    @include themed {
+      background: t($modal-sidebar);
+      border: 1px solid t($modal-sidebarActive);
+      color: t($color);
+    }
+
+    padding: 15px 20px;
+    border-radius: 4px;
+    display: flex !important;
+    cursor: pointer;
+
+    &::-webkit-calendar-picker-indicator {
+      cursor: pointer;
+    }
+  }
+}
+
+/* dark theme date picker fix */
+.dark {
+  ::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+  }
+}
+
+h4 {
+  cursor: pointer;
+}
+
+.photosEmpty {
+  height: 400px;
+  display: grid;
+  place-items: center;
+
+  button {
+    padding: 0 20px;
+  }
+}
+
+.imagesTopBar {
+  position: sticky;
+  top: -20px;
+  z-index: 90;
+  padding: 25px 0 15px 0;
+  display: flex;
+  flex-flow: row;
+  justify-content: space-between;
+  align-items: center;
+
+  @include themed {
+    background: t($modal-background);
+  }
+
+  .imagesTopBarTitle {
+    display: flex;
+    flex-flow: row;
+    align-items: center;
+    gap: 20px;
+
+    svg {
+      font-size: 30px;
+
+      @include themed {
+        color: t($subColor);
+      }
+    }
+
+    div {
+      display: flex;
+      flex-flow: column;
+    }
+  }
+
+  .topbarbuttons {
+    display: flex;
+    flex-flow: row;
+    gap: 15px;
+    align-items: center;
+  }
+
+  button:not(.MuiButtonBase-root) {
+    padding: 0 20px;
+  }
+}
+
+.imagesControlBar {
+  position: sticky;
+  top: 68px;
+  z-index: 89;
+  padding: 12px 0;
+  margin-bottom: 15px;
+  display: flex;
+  flex-flow: row;
+  justify-content: space-between;
+  align-items: center;
+
+  @include themed {
+    background: t($modal-background);
+    border-bottom: 1px solid t($modal-sidebarActive);
+  }
+
+  .controlBarLeft {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+
+    @include themed {
+      color: t($subColor);
+    }
+
+    .image-count {
+      font-weight: 500;
+      display: flex;
+
+      @include themed {
+        color: t($color);
+      }
+
+      .storage-info {
+        font-weight: 400;
+
+        @include themed {
+          color: t($subColor);
+        }
+
+        .request-storage-link {
+          background: none;
+          border: none;
+          padding: 0;
+          margin-left: 5px;
+          cursor: pointer;
+          text-decoration: underline;
+          font-size: 13px;
+          transition: opacity 0.2s;
+
+          @include themed {
+            color: #ff5c25;
+          }
+
+          &:hover {
+            opacity: 0.8;
+          }
+        }
+      }
+    }
+
+    .selection-separator {
+      opacity: 0.5;
+    }
+
+    .selected-count {
+      font-weight: 500;
+    }
+
+    .delete-link {
+      background: none;
+      border: none;
+      padding: 0;
+      margin-left: 5px;
+      cursor: pointer;
+      text-decoration: underline;
+      font-size: 14px;
+      transition: opacity 0.2s;
+
+      @include themed {
+        color: rgb(255 71 87);
+      }
+
+      &:hover {
+        opacity: 0.8;
+      }
+    }
+
+    .select-all-link {
+      background: none;
+      border: none;
+      padding: 0;
+      margin-left: 5px;
+      cursor: pointer;
+      text-decoration: underline;
+      font-size: 14px;
+      transition: opacity 0.2s;
+
+      @include themed {
+        color: t($subColor);
+      }
+
+      &:hover {
+        opacity: 0.8;
+
+        @include themed {
+          color: t($color);
+        }
+      }
+    }
+  }
+
+  .controlBarRight {
+    display: flex;
+    align-items: center;
+  }
+}
+
+.customcss textarea {
+  font-family:
+    Consolas, 'Andale Mono WT', 'Andale Mono', 'Lucida Console', 'Lucida Sans Typewriter',
+    'DejaVu Sans Mono', 'Bitstream Vera Sans Mono', 'Liberation Mono', 'Nimbus Mono L', Monaco,
+    'Courier New', Courier, monospace !important;
+}
+
+.preferences {
+  transition: 0.4s ease-in-out;
+}
+
+.preferencesInactive {
+  opacity: 0.5;
+  pointer-events: none;
+  transition: 0.4s ease-in-out;
+}
+
+// Warning banner (used in Search settings and potentially others)
+.itemWarning {
+  padding: 10px 20px;
+  display: flex;
+  flex-flow: row;
+  gap: 15px;
+  align-items: center;
+
+  .text {
+    display: flex;
+    flex-flow: column;
+
+    .header {
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+  }
+
+  svg {
+    @include themed {
+      background-image: t($slightGradient);
+      box-shadow: t($boxShadow);
+    }
+
+    padding: 7px;
+    border-radius: 100%;
+    font-size: 24px;
+    min-width: 24px;
+  }
+
+  @include themed {
+    background: t($modal-sidebar);
+    border-radius: t($borderRadius);
+    box-shadow: 0 0 0 1px t($modal-sidebarActive);
+  }
+}

@@ -1,0 +1,441 @@
+// this file is too long
+@use 'modules/lightbox' as *;
+@use 'scss/variables' as *;
+
+.items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 280px));
+  grid-gap: 1.5rem;
+  margin-top: 15px;
+  margin-bottom: 30px;
+
+  .item {
+    position: relative;
+    border-radius: 12px;
+    width: auto;
+    cursor: pointer;
+    transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-flow: column;
+    align-items: flex-start;
+    gap: 15px;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    padding: 1.5rem;
+    will-change: transform;
+    transform: translate3d(0, 0, 0); // Force GPU acceleration
+
+    @include themed {
+      background-color: t($modal-secondaryColour);
+      box-shadow: 0 0 0 1px t($modal-sidebarActive);
+
+      &:hover {
+        transform: translate3d(0, -5px, 0);
+      }
+    }
+
+    .tags {
+      margin-top: 7px;
+    }
+
+    .item-icon {
+      object-fit: cover !important;
+      height: 60px !important;
+      width: 60px !important;
+      border-radius: 12px;
+      transition: 0.5s;
+
+      &.item-icon-text {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: 1px;
+
+        @include themed {
+          background-color: t($modal-sidebarActive);
+          color: t($color);
+        }
+      }
+    }
+
+    .card-details {
+      z-index: 1;
+      display: flex;
+      flex-flow: column;
+      align-items: flex-start;
+
+      .card-title {
+        font-size: 18px;
+      }
+
+      .card-subtitle {
+        font-size: 14px;
+
+        @include themed {
+          color: t($subColor);
+        }
+      }
+
+      .card-chips {
+        margin-top: 20px;
+        display: flex;
+        flex-flow: row;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .card-type,
+      .card-collection {
+        font-size: 12px;
+        font-weight: bolder;
+
+        @include themed {
+          color: t($subColor);
+        }
+
+        border-radius: 150px;
+        padding: 2px 15px;
+        background-color: rgb(255 255 255 / 10%);
+        border: 1px solid rgb(209 213 219 / 30%);
+      }
+
+      .card-collection {
+        @include themed {
+          background-color: rgb(255 255 255 / 15%);
+          border: 1px solid rgb(209 213 219 / 40%);
+        }
+      }
+    }
+
+    .item-uninstall-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: none;
+      background-color: rgba(0, 0, 0, 0.5);
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+
+      svg {
+        color: white;
+        font-size: 18px;
+      }
+
+      &:hover {
+        background-color: rgba(220, 50, 50, 0.9);
+      }
+    }
+
+    .item-installed-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+      z-index: 2;
+      pointer-events: none;
+      will-change: transform;
+
+      svg {
+        color: white;
+        font-size: 20px;
+      }
+    }
+
+    .item-sideload-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background-color: rgba(100, 100, 100, 0.9);
+      cursor: help;
+
+      svg {
+        color: white;
+        font-size: 16px;
+      }
+    }
+
+    &:hover .item-installed-badge {
+      transform: scale(1.05);
+    }
+
+    &.item-sideloaded {
+      cursor: default;
+
+      &:hover {
+        transform: none;
+      }
+    }
+  }
+}
+
+.itemPage {
+  display: flex;
+  flex-flow: row;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 30px;
+  flex-wrap: wrap;
+
+  .itemContent {
+    display: flex;
+    flex-flow: column;
+    gap: 25px;
+    flex: 1;
+
+    img {
+      width: 100%;
+      height: auto;
+      border-radius: 12px;
+    }
+
+    table {
+      table-layout: fixed;
+      width: 100%;
+      word-wrap: break-word !important;
+      font-size: 16px;
+      border-collapse: collapse;
+    }
+
+    .itemTop {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background-color: rgba(100, 100, 100, 0.9);
+      cursor: help;
+
+      svg {
+        color: white;
+        font-size: 16px;
+      }
+    }
+
+    &:hover .item-installed-badge {
+      transform: scale(1.05);
+    }
+
+    &.item-sideloaded {
+      cursor: default;
+
+      &:hover {
+        transform: none;
+      }
+    }
+  }
+}
+
+.emptyItems {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.emptyMessage {
+  display: grid;
+  place-items: center;
+  grid-gap: 5px;
+  padding: 50px;
+
+  .title,
+  svg {
+    margin: 10px;
+  }
+
+  svg {
+    font-size: 70px;
+  }
+
+  @include themed {
+    .sideloadIcon {
+      font-size: 50px;
+      color: t($subColor);
+    }
+  }
+
+  button {
+    display: flex;
+    flex-flow: row;
+  }
+}
+
+.emptyNewMessage {
+  display: flex;
+  gap: 20px;
+  flex-flow: column;
+  text-align: center;
+  align-items: center;
+  -webkit-user-select: none;
+  user-select: none;
+
+  img {
+    width: 200px;
+    height: auto;
+  }
+
+  svg {
+    font-size: 70px;
+
+    /* background: -webkit-linear-gradient(90deg,rgba(255,92,39,.7) 37%,rgba(255,70,110,.67) 60%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent; */
+  }
+
+  button {
+    svg {
+      font-size: 1rem;
+    }
+  }
+
+  .buttonsRow {
+    display: flex;
+    flex-flow: row;
+    gap: 30px;
+    align-items: center;
+  }
+}
+
+p.author {
+  margin-top: -5px;
+}
+
+#item > img,
+.updateImage,
+.updateChangelog > p > img {
+  border-radius: 12px;
+  height: 200px;
+  width: auto;
+  cursor: pointer;
+}
+
+
+.filter {
+  display: flex;
+  flex-flow: row;
+  gap: 15px;
+  justify-content: space-between;
+  align-items: center;
+
+  .MuiFormControl-root {
+    margin-bottom: 10px;
+  }
+
+  .buttonSection {
+    display: flex;
+    flex-flow: row;
+    gap: 20px;
+  }
+
+  .tags {
+    max-width: 50%;
+  }
+}
+
+.createYourOwn {
+  display: flex;
+  flex-flow: column;
+  gap: 20px;
+  align-items: center;
+  margin-top: 30px;
+
+  svg {
+    font-size: 30px;
+  }
+}
+
+.topAddons {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 15px;
+
+  .tooltip {
+    margin-right: 25px;
+  }
+
+  .mainTitle {
+    margin-bottom: 0 !important;
+  }
+}
+
+.filter-options-container {
+  display: flex;
+  flex-flow: row;
+  gap: 20px;
+  margin: 20px 0;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.filter-chips {
+  display: flex;
+  flex-flow: row;
+  gap: 12px;
+  align-items: center;
+
+  .filter-chip {
+    all: unset;
+    padding: 8px 20px;
+    border-radius: 24px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    -webkit-user-select: none;
+    user-select: none;
+
+    @include themed {
+      background-color: t($modal-sidebarActive);
+      color: t($color);
+    }
+
+    &:hover {
+      @include themed {
+        background-color: rgba(255, 255, 255, 0.15);
+      }
+    }
+
+    &.active {
+      @include themed {
+        background-color: #fff;
+        color: #000;
+      }
+
+      &:hover {
+        @include themed {
+          background-color: #f0f0f0;
+        }
+      }
+    }
+
+    &:focus-visible {
+      outline: 2px solid rgba(255, 255, 255, 0.5);
+      outline-offset: 2px;
+    }
+  }
+}
