@@ -1195,6 +1195,11 @@
   window.addEventListener('keypress', containSurfaceKeyboardEvent, true);
   window.addEventListener('keyup', containSurfaceKeyboardEvent, true);
   window.addEventListener('blur', () => surfacePressedKeys.clear());
+  // A reload, navigation or closed tab ends this page without closing the card, so the
+  // model call it is waiting on would run to its timeout for an answer nobody can see.
+  window.addEventListener('pagehide', () => {
+    if (cardJobId) dismissSurface();
+  });
 
   api.runtime.onMessage.addListener((message) => {
     if (message?.type === 'WB_HIDE_FOR_TOOL_USE') {

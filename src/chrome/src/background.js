@@ -1669,15 +1669,17 @@ function notifySidePanelOfContextMenuPrompt(payload) {
   pendingContextMenuNotifications.set(tabId, timerId);
 }
 
-function openSidePanelForContextMenu(tab) {
+function openSidePanelForContextMenu(tab, { open = true } = {}) {
   if (!tab?.id) return;
   panelTabs.add(tab.id);
   savePanelTabs();
   // A panel that is already showing in this window needs nothing here: callers hand it
   // the prompt by message. Running setOptions + open again on an open panel makes
   // Chrome tear it down, which is how a follow-up used to close the sidebar. This check
-  // must stay synchronous: open() loses the user's gesture across an await.
-  if (!sidePanelPresence.isVisibleInWindow(tab.windowId)) {
+  // must stay synchronous: open() loses the user's gesture across an await. A caller
+  // that has just opened the panel itself passes open: false, since a panel that is
+  // still starting up has not reported in yet and would be opened a second time.
+  if (open && !sidePanelPresence.isVisibleInWindow(tab.windowId)) {
     chrome.sidePanel.setOptions({
       tabId: tab.id,
       path: 'src/ui/sidepanel.html',
@@ -1825,7 +1827,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // Selection-shortcut clicks originate in a content script. Keep this listener
 // synchronous until sidePanel.open() so Chrome preserves the originating user
 // gesture; prompt recovery storage can finish afterward.
-function queueSelectionShortcutPrompt(msg, tab, sendResponse) {
+function queueSelectionShortcutPrompt(msg, tab, sendResponse, { panelOpened = false } = {}) {
   const selectionAction = normalizeSelectionAction(msg.action);
   const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
   const sourceGrounding = includePageContext
@@ -1868,7 +1870,7 @@ function queueSelectionShortcutPrompt(msg, tab, sendResponse) {
     createdAt: Date.now(),
   };
 
-  openSidePanelForContextMenu(tab);
+  openSidePanelForContextMenu(tab, { open: !panelOpened });
   (async () => {
     try {
       await contextMenuStorage.save(tab.id, payload);
@@ -1914,7 +1916,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     openSidePanelForContextMenu(windowId === undefined ? { id: tabId } : { id: tabId, windowId });
   } catch {}
   chrome.tabs.get(tabId)
-    .then(tab => queueSelectionShortcutPrompt(msg, tab, sendResponse))
+    .then(tab => queueSelectionShortcutPrompt(msg, tab, sendResponse, { panelOpened: true }))
     .catch(error => sendResponse({
       ok: false,
       queued: false,

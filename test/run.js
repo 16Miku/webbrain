@@ -52720,7 +52720,7 @@ test('side panel presence: the background learns which windows show a panel, and
 
 test('background does not re-open a side panel that is already showing, and still opens one that is not', () => {
   const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
-  const start = background.indexOf('function openSidePanelForContextMenu(tab) {');
+  const start = background.indexOf('function openSidePanelForContextMenu(tab, { open = true } = {}) {');
   const end = background.indexOf('\nasync function handleContextMenuAsk', start);
   assert.ok(start > 0 && end > start, 'openSidePanelForContextMenu should be found');
   const source = background.slice(start, end);
@@ -52755,6 +52755,25 @@ test('background does not re-open a side panel that is already showing, and stil
   assert.deepEqual(run(4, { id: 12 }),
     ['save', ['setOptions', 12], ['open', 12], 'group'],
     'a tab with no window id keeps opening');
+  const runWithoutOpening = (visibleWindowId, tab) => {
+    const calls = [];
+    const context = vm.createContext({
+      panelTabs: new Set(),
+      savePanelTabs: () => calls.push('save'),
+      ensureWebBrainGroup: () => { calls.push('group'); return Promise.resolve(); },
+      sidePanelPresence: { isVisibleInWindow: windowId => windowId === visibleWindowId },
+      chrome: {
+        sidePanel: {
+          setOptions: options => calls.push(['setOptions', options.tabId]),
+          open: options => calls.push(['open', options.tabId]),
+        },
+      },
+    });
+    vm.runInContext(`${source}\nopenSidePanelForContextMenu(tab, { open: false });`, Object.assign(context, { tab }));
+    return calls;
+  };
+  assert.deepEqual(runWithoutOpening(9, { id: 11, windowId: 4 }), ['save', 'group'],
+    'a caller that has just opened the panel itself does not open it a second time, even before the panel has reported in');
 
   assert.match(background, /chrome\.runtime\.onConnect\.addListener\(\(port\) => \{ sidePanelPresence\.attach\(port\); \}\);/,
     'the presence port must be accepted at the top level of the worker');
@@ -52763,15 +52782,16 @@ test('background does not re-open a side panel that is already showing, and stil
     'the side panel must tell the background when it is on screen');
 });
 
-test('a PDF viewer selection leaves a side panel that is already showing in its window alone', () => {
+test('a PDF viewer selection leaves a side panel that is already showing in its window alone', async () => {
   const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
-  const helperStart = background.indexOf('function openSidePanelForContextMenu(tab) {');
+  const helperStart = background.indexOf('function openSidePanelForContextMenu(tab, { open = true } = {}) {');
   const helperEnd = background.indexOf('\nasync function handleContextMenuAsk', helperStart);
   const listenerStart = background.indexOf("chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {\n  if (msg?.type !== 'WB_PDF_SELECTION_SHORTCUT_SUBMIT') return;");
   const listenerEnd = background.indexOf('\n// (See the panel visibility comment above', listenerStart);
   assert.ok(helperStart > 0 && helperEnd > helperStart && listenerStart > 0 && listenerEnd > listenerStart,
     'the helper and the PDF listener should be found');
 
+  const queued = [];
   const run = ({ visibleWindowId, message, sender }) => {
     const calls = [];
     let listener = null;
@@ -52780,14 +52800,14 @@ test('a PDF viewer selection leaves a side panel that is already showing in its 
       savePanelTabs: () => {},
       ensureWebBrainGroup: () => Promise.resolve(),
       isPdfHandlerSender: () => true,
-      queueSelectionShortcutPrompt: () => {},
+      queueSelectionShortcutPrompt: (msg, tab, sendResponse, options) => queued.push({ tab, options }),
       sidePanelPresence: { isVisibleInWindow: windowId => windowId === visibleWindowId },
       chrome: {
         sidePanel: {
           setOptions: options => calls.push(['setOptions', options.tabId]),
           open: options => calls.push(['open', options.tabId]),
         },
-        tabs: { get: () => new Promise(() => {}) },
+        tabs: { get: async id => ({ id, windowId: 4 }) },
         runtime: { onMessage: { addListener: callback => { listener = callback; } } },
       },
     });
@@ -52815,9 +52835,19 @@ test('a PDF viewer selection leaves a side panel that is already showing in its 
   assert.deepEqual(run({ visibleWindowId: 4, message: { windowId: '4' }, sender: {} }), opened,
     'a window id that is not a number is ignored');
 
-  const viewer = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/pdf-handler.js'), 'utf8');
-  assert.match(viewer, /windowId = \(await api\.windows\?\.getCurrent\?\.\(\)\)\?\.id \?\? null;[\s\S]*?submitFields: \{[\s\S]*?\.\.\.\(Number\.isInteger\(windowId\) \? \{ windowId \} : \{\}\),/,
-    'the PDF viewer must report the window it is in');
+  // The live tab is verified after the panel was opened here; the queueing step must not open it again.
+  await new Promise(resolve => setTimeout(resolve, 0));
+  queued.length = 0;
+  run({ visibleWindowId: 9, message: { windowId: 4 }, sender: {} });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  {
+    assert.equal(queued.length, 1, 'the verified tab is queued');
+    assert.equal(JSON.stringify(queued[0].options), '{"panelOpened":true}', 'and told the panel was already opened');
+    assert.equal(queued[0].tab.id, 7);
+    const viewer = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/pdf-handler.js'), 'utf8');
+    assert.match(viewer, /windowId = \(await api\.windows\?\.getCurrent\?\.\(\)\)\?\.id \?\? null;[\s\S]*?submitFields: \{[\s\S]*?\.\.\.\(Number\.isInteger\(windowId\) \? \{ windowId \} : \{\}\),/,
+      'the PDF viewer must report the window it is in');
+  }
 });
 
 test('WebGPU provider drops a request whose caller aborts while the offscreen document is starting', async () => {
@@ -54522,7 +54552,7 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
   const chromeEnd = chromeBg.indexOf('// (See the panel visibility comment', chromeStart);
   const chromePromptStart = chromeBg.indexOf('function queueSelectionShortcutPrompt(');
   const chromeHandler = chromeBg.slice(chromePromptStart, chromeEnd);
-  const chromeOpen = chromeHandler.indexOf('openSidePanelForContextMenu(tab);');
+  const chromeOpen = chromeHandler.indexOf('openSidePanelForContextMenu(tab, { open: !panelOpened });');
   const chromeSave = chromeHandler.indexOf('await contextMenuStorage.save(tab.id, payload);');
   assert.notEqual(chromeStart, -1, 'chrome: selection shortcut listener missing');
   assert.notEqual(chromePromptStart, -1, 'chrome: shared selection prompt handler missing');

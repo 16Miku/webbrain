@@ -2405,6 +2405,29 @@ for (const [label, sourcePath, manualOpen] of [
     await page.waitForTimeout(60);
     const cancels = await page.evaluate(() => window.__selectionCancelMessages.length);
     if (cancels !== 3) throw new Error(`closing a finished card should not send a cancel: ${cancels}`);
+
+    // A page that unloads mid-flight (reload, navigation, closed tab) never closes its card,
+    // so the unload itself has to cancel the call. An idle page has nothing to cancel.
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = () => new Promise(() => {});
+    });
+    const before = await page.evaluate(() => window.__selectionInlineMessages.length);
+    await openInlineCard(page, 'explain');
+    await page.waitForFunction((count) => window.__selectionInlineMessages.length === count + 1, before);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
+    await page.waitForFunction(() => window.__selectionCancelMessages.length === 4);
+    const unloaded = await page.evaluate(() => ({
+      cancelled: window.__selectionCancelMessages.at(-1).jobId,
+      running: window.__selectionInlineMessages.at(-1).jobId,
+      visible: window.__webbrainSelectionShortcut.getState().cardVisible,
+    }));
+    if (unloaded.cancelled !== unloaded.running || unloaded.visible) {
+      throw new Error(`unloading should cancel the running call and hide the card: ${JSON.stringify(unloaded)}`);
+    }
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+    await page.waitForTimeout(60);
+    const afterIdle = await page.evaluate(() => window.__selectionCancelMessages.length);
+    if (afterIdle !== 4) throw new Error(`unloading a page with no call in flight should not send a cancel: ${afterIdle}`);
   });
 
   test(`${label}: a cut-off card answer says so and continues in the side panel`, async (page) => {

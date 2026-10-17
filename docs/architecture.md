@@ -535,7 +535,8 @@ reports `outputTruncated`, or OpenAI Responses raises the limit as an error carr
 `partialContent`, whose text is then shown), so a long remainder never passes as complete
 and can be continued by asking. Each call carries a job id, and a card
 that is closed, retried or retargeted sends `WB_SELECTION_SHORTCUT_INLINE_CANCEL` so the
-background aborts the paid request it no longer needs (for the in-browser WebGPU models the
+background aborts the paid request it no longer needs (a page that unloads mid-answer sends the
+same cancel from `pagehide`, since it can no longer close the card itself; for the in-browser WebGPU models the
 provider also sends `webgpu-chat-cancel`, and the offscreen worker interrupts the running
 generation or drops a queued one, and the offscreen host remembers a cancel that arrives while the request is still being routed to a worker, so the generation never starts; those workers report `outputTruncated` when an answer used
 its token budget, since they have no finish reason); the card also claims its request id
@@ -552,7 +553,9 @@ was dropped by a background restart reconnects at once (only a port that is refu
 away backs off), so the restarted worker is not left unaware of a panel that is still showing.
 A selection made in the bundled PDF viewer, whose message carries only a tab id, brings the
 window too (Chrome's `sender.tab` for that tab, else the window the viewer reported from
-`windows.getCurrent()`), so the same check applies there. The card's
+`windows.getCurrent()`), so the same check applies there; that path opens the panel once in the
+click and queues the verified prompt with `panelOpened`, because a panel that is still starting
+up has not reported in yet and a second `open()` would close it. The card's
 answer travels inside the selection's untrusted boundary, labelled as an earlier answer that
 may contain mistakes and
 capped at 6,000 characters, so model output derived from page text never becomes trusted
