@@ -2095,6 +2095,13 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // the legacy URL list is rendered entry by entry, so every entry has to be a usable address
     assert.equal(await mod.importSettings(JSON.stringify({ customBackground: JSON.stringify([{}]) })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ customBackground: JSON.stringify(['']) })), false);
+
+    // an empty first-run sentinel would make App.jsx reload forever
+    store.setItem('theme', 'dark');
+    assert.equal(await mod.importSettings(JSON.stringify({ firstRun: '', theme: 'light' })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ firstRun: null })), false);
+    assert.equal(store.getItem('theme'), 'dark');
+    assert.equal(await mod.importSettings(JSON.stringify({ firstRun: 'true' })), true);
     assert.equal(await mod.importSettings(JSON.stringify({ customBackground: JSON.stringify(['https://x.test/a.jpg']) })), true);
     store.setItem('theme', 'light');
 

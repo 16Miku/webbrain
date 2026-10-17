@@ -137,6 +137,11 @@ export function validateSettings(content) {
   for (const [key, value] of Object.entries(content)) {
     if (value !== null && typeof value === 'object') return `${key} is not a plain value`;
   }
+  // `firstRun` is the "profile is initialised" sentinel: App.jsx reloads while it is empty, and the
+  // import restores whatever it holds after writing the defaults, so an empty one would loop forever.
+  if ('firstRun' in content && (content.firstRun === null || String(content.firstRun) === '')) {
+    return 'firstRun is empty';
+  }
   for (const [key, isValidEntry] of Object.entries(JSON_ARRAY_ENTRIES)) {
     if (!(key in content)) continue;
     // A profile that never had a legacy gallery stores "" here (the shipped default); the loader
