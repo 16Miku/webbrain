@@ -420,9 +420,10 @@ export function buildFollowUpSelectionText(selectionText, priorAction, priorAnsw
   // A window that cannot take even the selection and the question keeps the whole answer and is
   // refused, with a reason, when it runs.
   const room = priorAnswerRoom(contextWindow, buildSelectionPrompt(head, 'custom', question, language, SELECTION_CONTEXT_SOURCE_GROUNDING));
-  if (room > INLINE_FOLLOW_UP_OMITTED_TOKENS) {
-    const start = sliceWithinTokens(answer, room - INLINE_FOLLOW_UP_OMITTED_TOKENS, false);
-    if (start.length < answer.length) answer = `${start}${INLINE_FOLLOW_UP_OMITTED_NOTE}`;
+  if (room > 0) {
+    const markerTokens = room > INLINE_FOLLOW_UP_OMITTED_TOKENS ? INLINE_FOLLOW_UP_OMITTED_TOKENS : 0;
+    const start = sliceWithinTokens(answer, room - markerTokens, false);
+    if (start.length < answer.length) answer = `${start}${markerTokens ? INLINE_FOLLOW_UP_OMITTED_NOTE : ''}`;
   }
   return `${head}${answer}`;
 }
@@ -502,7 +503,7 @@ export function buildContinuationSelectionPrompt(selectionText, action, partialA
   if (room !== null && room >= 0) {
     // A zero room comes from the conservative reply reserve. Keep the last
     // token so the side panel can still resume a selection that itself fits.
-    const tail = sliceWithinTokens(body, Math.max(room, 1), true);
+    const tail = sliceWithinTokens(body, Math.max(room, 4), true);
     if (tail.length < body.length) {
       body = tail;
       trimmed = true;

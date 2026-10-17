@@ -1560,7 +1560,10 @@ async function answerInlineSelection(msg) {
       agent._newCostRunState(),
     );
     const { text, cut } = capInlineAnswer(String(result?.content || '').trim());
-    if (!text) return { ok: false, error: 'The model returned an empty answer.' };
+    if (!text) {
+      const notice = inlineCostNotice(result);
+      return { ok: false, error: 'The model returned an empty answer.', ...(notice ? { notice } : {}) };
+    }
     // The call that reaches the cost allowance still returns its answer; the card is told
     // so it can say the next one will not run.
     const notice = inlineCostNotice(result);

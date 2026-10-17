@@ -2565,6 +2565,23 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
+  test(`${label}: an empty card response preserves its cost allowance notice`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    const notice = 'Cloud cost allowance reached: total cloud/router usage is $5.00 against the $5.00 limit.';
+    await page.evaluate((text) => {
+      window.__selectionInlineHandler = async () => ({
+        ok: false,
+        notice: text,
+        error: 'The model returned an empty answer.',
+      });
+    }, notice);
+    await openInlineCard(page, 'proofread');
+    const state = await waitForCardStatus(page, 'error');
+    if (state.cardNotice !== notice || state.cardTruncated || !state.cardError) {
+      throw new Error(`an empty response should show its allowance notice: ${JSON.stringify(state)}`);
+    }
+  });
+
   test(`${label}: an answer beyond the card limit is cut, flagged and carried whole to the side panel`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     await page.evaluate(() => {

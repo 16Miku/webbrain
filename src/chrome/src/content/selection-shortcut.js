@@ -931,8 +931,8 @@
     parts.text.hidden = status !== 'ready';
     parts.error.hidden = status !== 'error' || cutOffOnly;
     parts.cut.hidden = !((status === 'ready' || cutOffOnly) && cardState.truncated);
-    parts.notice.hidden = !((status === 'ready' || cutOffOnly) && cardState.notice);
-    parts.notice.textContent = status === 'ready' || cutOffOnly ? cardState.notice : '';
+    parts.notice.hidden = !(status !== 'loading' && cardState.notice);
+    parts.notice.textContent = status !== 'loading' ? cardState.notice : '';
     if (status === 'ready') renderAnswer(parts.text, cardState.text, kind !== 'translate');
     if (status === 'error') {
       parts.errorText.textContent = str('inlineFailed');
