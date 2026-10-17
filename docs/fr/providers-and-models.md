@@ -125,6 +125,13 @@ fonctionne sans qu’Apocalypse soit activé. Le fournisseur est texte seul, ave
 une fenêtre de contexte de 32k par défaut ; sur les GPU limités, réduisez-la
 dans Settings → Providers si nécessaire. Firefox n’expose pas cette carte.
 
+Les modèles dans le navigateur répondent seulement aux questions. Dans le
+panneau latéral, chaque tour Ask fait un seul appel sans outils : WebBrain lit
+d’abord la page actuelle, la sélection, un onglet PDF et toute page liée dans
+la question, puis envoie ce texte avec un prompt court (tiny Ask, voir
+`docs/webgpu-models.md`). Les modes Act et Dev sont refusés pour ce
+fournisseur ; choisissez-en un autre pour les actions dans le navigateur.
+
 Neuf fournisseurs à terminaison locale sont activés par défaut. Les moteurs de
 modèles n'exigent pas de clé sauf si le serveur utilise l'authentification ; la
 carte proxy générique exige une clé client :

@@ -32,9 +32,12 @@ stacked up:
 4. **One giant prefill pass.** Even with a fixed graph, a ~9k-token prompt in a
    single decoder pass keeps a GPU that is shared with the display (Apple
    silicon, a display-attached card) busy for seconds, and the desktop stutters.
-5. **Large prompts.** Ask mode sends the full Ask system prompt (~3k tokens)
-   plus 17 tool schemas (~6k tokens) to in-browser models on every call,
-   because the compact tier currently only changes Act mode.
+5. **Large prompts.** Ask mode sent the full Ask system prompt (~3.4k tokens)
+   plus 17 tool schemas (~5.7k tokens) to in-browser models on every call,
+   because the compact tier only changes Act mode. The 2B model then often
+   called a tool with invalid arguments, which cost another full call: "hello"
+   took four calls and 108 s on the display GPU. Tiny Ask (below) replaces
+   this path.
 
 Two process gaps let this ship. The production harness
 (`scripts/check-bonsai-webgpu.mjs`) only uses prompts of a few dozen tokens,
@@ -109,13 +112,21 @@ Do all of these on the exact files you will publish.
 
    In a decoder-only benchmark, 4B prefilled 8,192 tokens in 16 s. The
    original Scan graph took 128 s for 1,024 tokens.
-4. **Production harness.** Run `scripts/check-bonsai-webgpu.mjs` online and
+4. **Ask eval.** Run `scripts/check-webgpu-ask.mjs` through the real extension
+   before and after any change to the in-browser prompt, page context or
+   runtime. It covers greeting, summary, a fact at the end of a long page,
+   prices, a follow-up, arithmetic, a selection, Turkish, a prompt injection,
+   an Act request, a linked URL and a browser page. Use a fresh `--profile`
+   for each build: a reused profile keeps running the service worker of the
+   build it first loaded, so it can silently test old code. The report lists
+   the prompt variant that answered each task (`tiny_ask` or `ask`).
+5. **Production harness.** Run `scripts/check-bonsai-webgpu.mjs` online and
    `--offline` (with `--vision --image-history` for vision models) and record
    the evidence with `scripts/models/bonsai/record_browser_validation.py`.
-5. **Memory.** Budget weights, plus KV and recurrent cache for the browser
+6. **Memory.** Budget weights, plus KV and recurrent cache for the browser
    context, plus transient prefill buffers. Keep every single tensor under
    2 GB, the per-buffer limit on many adapters.
-6. **Rollout.** Browsers keep files cached by URL. If a published file
+7. **Rollout.** Browsers keep files cached by URL. If a published file
    changes in place, existing installs never see it unless the worker
    refreshes it explicitly (see "Updating a published graph").
 
@@ -147,6 +158,32 @@ Use the tools in `scripts/models/bonsai/`:
 
 ## Runtime behaviour to keep
 
+- **Tiny Ask** (`src/chrome/src/agent/tiny-ask.js`). A side-panel Ask turn
+  whose provider is the in-browser model makes one tool-free call.
+  - WebBrain reads the current page before the call: `read_page` windows up to
+    60k characters, the selection, PDF text through the `read_pdf` redirect,
+    and a page the user linked in the question (`fetch_url`). It sends a
+    ~280-token system prompt with that text in untrusted-content wrappers.
+    The page's URL and title are page-controlled, so they go inside the
+    page's wrapper too, not in a trusted line.
+  - A long page keeps its opening plus the chunks that share content words
+    with the question, in ~9k characters (~2.5k tokens). The first call stays
+    near 4k tokens, against ~10k before.
+  - Page text is ephemeral: durable history keeps only the question, and each
+    turn reads the page again. Offline Wikipedia and Emergency Box references
+    are added only when there is no page text.
+  - It reuses the standalone WebGPU run machinery but not its prompt or
+    history: the standalone window still has no page access, and the two
+    profiles' history segments never cross (`webbrainStandaloneChat` and
+    `webbrainTinyAsk` markers).
+  - Act and Dev are refused for in-browser models, in the agent before
+    enrichment and in the side-panel mode toggle.
+  - Selection shortcuts keep their own source-bound path. After a background
+    restart a tiny Ask candidate hydrates the tab before it is decided, so a
+    restored selected-text scope is never bypassed by a full page read.
+  - Do not add tools or instructions back to this profile without
+    re-running `scripts/check-webgpu-ask.mjs`. Every token is prefilled again
+    on every call, and a 2B model picks tools unreliably.
 - **Sliced prefill.** For the Bonsai 2 Vision presets the worker prefills
   long prompts in 512-token slices that carry the recurrent, conv and KV
   cache, then lets `generate()` continue from that cache.
@@ -200,5 +237,5 @@ change in place, as the Bonsai 2 Vision decoders did:
 - The Bonsai 2 2B **text** preset still points at
   `danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU`, which fails the audit. Publish
   a rewritten text repository or point the preset at a passing graph.
-- Ask mode should use a compact prompt and a smaller tool set for in-browser
-  models.
+- Selection shortcuts (context-menu "explain", "summarize" and similar) on
+  in-browser models still use the full Ask system prompt, without tools.

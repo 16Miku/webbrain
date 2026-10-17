@@ -947,6 +947,7 @@ export default {
   "sp.mode.dev.title": "Gamitin ang mga tool para sa source, style, at pag-debug ng page",
   "sp.mode.dev.confirm": "Ang Dev mode ay nagdaragdag ng mga tool para sa page source, style inspection, DOM/frame inspection, at pag-debug sa ibabaw ng Aksyon mode.\n\nGamitin ito para sa HTML/CSS, pag-edit ng page, at pag-troubleshoot. Naka-block ito para sa mga Compact-tier provider.\n\nMagpatuloy?",
   "sp.mode.dev.compact_blocked": "Naka-block ang Dev mode para sa mga Compact-tier provider. Kasalukuyang Compact ang {provider}; lumipat sa Mid/Full-tier provider o baguhin ang prompt tier nito.",
+  "sp.mode.webgpu.ask_only": "Sumasagot lang sa mga tanong sa Ask mode ang mga in-browser na WebGPU model. Para magamit ang Act o Dev mode, pumili ng ibang provider sa menu ng provider.",
   "sp.input.dev_placeholder": "Sabihin kung ano ang iinspeksyunin o ie-edit sa page na ito...",
   "sp.slash.remember": "Tandaan ang kagustuhan ng user",
   "sp.slash.show_memory": "Ipakita ang naka-save na memory ng user",

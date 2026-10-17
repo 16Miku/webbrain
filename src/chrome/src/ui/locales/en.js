@@ -175,6 +175,7 @@ export default {
   'sp.mode.dev.title': 'Use source, style, and page-debugging tools',
   'sp.mode.dev.confirm': 'Dev mode adds page source, style inspection, DOM/frame inspection, and debugging tools on top of Act mode.\n\nUse it for HTML/CSS/page-editing and troubleshooting work. It is blocked for Compact-tier providers.\n\nContinue?',
   'sp.mode.dev.compact_blocked': 'Dev mode is blocked for Compact-tier providers. {provider} is currently Compact; switch to a Mid/Full-tier provider or change its prompt tier.',
+  'sp.mode.webgpu.ask_only': 'In-browser WebGPU models answer questions in Ask mode only. To use Act or Dev mode, choose another provider in the provider menu.',
 
   'sp.input.ask_placeholder': 'Ask anything about this page...',
   'sp.input.placeholder_tip.help': 'Use /help to learn more about slash commands',

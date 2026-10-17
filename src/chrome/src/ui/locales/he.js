@@ -185,6 +185,7 @@ export default {
   "sp.mode.dev.title": "השתמש בכלי מקור, סגנון וניפוי שגיאות בדף",
   "sp.mode.dev.confirm": "מצב Dev מוסיף למצב פעולה כלים להצגת מקור הדף, לבדיקת סגנונות, לבדיקת DOM ומסגרות ולניפוי שגיאות.\n\nהשתמש בו לעבודה עם HTML/CSS, לעריכת דפים ולפתרון תקלות. הוא אינו זמין לספקים ברמת Compact.\n\nלהמשיך?",
   "sp.mode.dev.compact_blocked": "מצב Dev אינו זמין לספקים ברמת Compact. ‏{provider} מוגדר כרגע כ-Compact; עבור לספק ברמת Mid/Full או שנה את רמת ההנחיה שלו.",
+  "sp.mode.webgpu.ask_only": "מודלי WebGPU בתוך הדפדפן עונים על שאלות במצב Ask בלבד. כדי להשתמש במצב Act או Dev, בחר ספק אחר בתפריט הספקים.",
   "sp.input.ask_placeholder": "שאל כל דבר על הדף הזה...",
   "sp.input.placeholder_tip.help": "השתמש ב-/help למידע נוסף על פקודות לוכסן",
   "sp.input.placeholder_tip.record": "אמור \"הקלט את הדף הזה\" כדי לשמור את הפעילות בכרטיסייה או בחלון",

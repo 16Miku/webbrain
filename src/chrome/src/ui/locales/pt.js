@@ -174,6 +174,7 @@ export default {
   'sp.mode.dev.title': "Use ferramentas de origem, estilo e depuração de página",
   'sp.mode.dev.confirm': "O modo Dev adiciona fonte de página, inspeção de estilo, inspeção de DOM/frame e ferramentas de depuração no modo Act.\n\nUse-o para trabalhos de HTML/CSS/edição de páginas e solução de problemas. Está bloqueado para provedores de nível compacto.\n\nContinuar?",
   'sp.mode.dev.compact_blocked': "O modo Dev está bloqueado para provedores de nível compacto. {provider} atualmente é compacto; mude para um provedor de nível intermediário/completo ou altere seu nível de prompt.",
+  'sp.mode.webgpu.ask_only': 'Os modelos WebGPU no navegador só respondem a perguntas no modo Ask. Para usar o modo Act ou Dev, escolha outro provedor no menu de provedores.',
 
   'sp.input.ask_placeholder': "Pergunte qualquer coisa sobre esta página...",
   'sp.input.placeholder_tip.help': "Use /help para aprender mais sobre comandos de barra",
