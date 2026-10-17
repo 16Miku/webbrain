@@ -21,6 +21,7 @@ import argparse
 import json
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 
 from build_vision import digest, link_or_copy, read_json, seal_manifest, write_json
@@ -56,11 +57,25 @@ def make_staging(output):
 
 
 def replace_output(staging, output):
-    """Swap the sealed staging bundle into place; only a previous derived bundle is removed."""
+    """Swap the sealed staging bundle into place; only a previous derived bundle is removed.
+
+    The previous bundle is renamed aside first and deleted only after the new
+    one is in place, so a locked file (for example a browser still serving the
+    old bundle) cannot leave a half-deleted --output.
+    """
+    backup = None
     if output.exists():
         check_output(staging, output)
-        shutil.rmtree(output)
-    staging.rename(output)
+        backup = output.with_name(f".{output.name}.{uuid.uuid4().hex}.old")
+        output.rename(backup)
+    try:
+        staging.rename(output)
+    except BaseException:
+        if backup is not None:
+            backup.rename(output)
+        raise
+    if backup is not None:
+        shutil.rmtree(backup, ignore_errors=True)
 
 
 def build_bundle(source, output, manifest, args):
@@ -94,7 +109,7 @@ def build_bundle(source, output, manifest, args):
         scratch.rename(output / GRAPH)
 
     evidence = [read_json(path) for path in args.evidence]
-    card_section = model_card_section(evidence, report["output_sha256"])  # rejects failed evidence
+    card_section = model_card_section(evidence, report["output_sha256"], report["chunk_tokens"])  # rejects failed evidence
     write_json(output / DERIVED_MARKER, {
         "rewrite": report,
         "external_data_unchanged": "onnx/decoder_model_merged_q2f16.onnx_data",

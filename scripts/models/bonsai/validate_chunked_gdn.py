@@ -79,6 +79,8 @@ def compare(a: dict, b: dict) -> dict:
     lb = b["logits"][:, -1].astype(np.float32)
     worst_state = 0.0
     worst_name = ""
+    worst_fro = 0.0
+    worst_fro_name = ""
     for k in a:
         if k == "logits":
             continue
@@ -88,6 +90,10 @@ def compare(a: dict, b: dict) -> dict:
         err = float(np.abs(x - y).max()) / scale
         if err > worst_state:
             worst_state, worst_name = err, k
+        # Whole-tensor error: robust to a single FP16 rounding flip on an outlier.
+        fro = float(np.linalg.norm(x - y)) / max(float(np.linalg.norm(x)), 1e-6)
+        if fro > worst_fro:
+            worst_fro, worst_fro_name = fro, k
     pa = np.exp(la - la.max()); pa /= pa.sum()
     pb = np.exp(lb - lb.max()); pb /= pb.sum()
     return {
@@ -101,6 +107,8 @@ def compare(a: dict, b: dict) -> dict:
         "kl_original_to_rewritten": float((pa * (np.log(pa + 1e-30) - np.log(pb + 1e-30))).sum()),
         "worst_cache_rel_err": worst_state,
         "worst_cache_name": worst_name,
+        "worst_cache_rel_fro": worst_fro,
+        "worst_cache_rel_fro_name": worst_fro_name,
         "finite": bool(all(np.isfinite(v.astype(np.float32)).all() for v in b.values())),
     }
 

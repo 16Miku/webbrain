@@ -50,7 +50,7 @@ kernel, so prompts were processed one token at a time through a CPU loop with
 a GPU round trip per token and layer (0.13 s per prompt token for 2B and 0.19 s
 for 4B on an RTX 5090; a faster GPU barely helps).
 This graph replaces each `Scan` with the chunked gated delta rule
-(128-token chunks; stable recursive block inversion inside a chunk; a parallel
+({chunk}-token chunks; stable recursive block inversion inside a chunk; a parallel
 prefix scan across chunks), built only from ops the WebGPU EP implements, and
 returns logits for the last position only. Weights, quantization and the
 external data file are byte-identical to the previous revision; decode
@@ -63,6 +63,11 @@ MAX_RELATIVE_LOGIT_DIFF = 5e-3
 MAX_ABSOLUTE_LOGIT_DIFF = 0.05
 MAX_KL = 1e-3
 MAX_WEBGPU_KL = 1e-2
+# Cache outputs (recurrent/conv states, KV) carry FP16 rounding through the
+# stack: observed whole-tensor error stays below 1% and the worst single
+# element below 3% of the tensor maximum. A corrupted cache is O(1).
+MAX_CACHE_REL_FRO = 2e-2
+MAX_CACHE_REL_MAX = 1e-1
 
 
 def _require(condition, message):
@@ -88,6 +93,12 @@ def verify_prefill_evidence(reports, graph_sha256):
                      "CPU report must cover a chunk boundary and a multi-chunk prompt")
             for row in rows + [continuation]:
                 _require(row.get("top1_equal") is True, f"top-1 differs ({row})")
+                _require(row.get("finite") is True, f"non-finite outputs ({row})")
+                _require("worst_cache_rel_fro" in row and "worst_cache_rel_err" in row,
+                         "CPU report must record cache-output errors (rerun validate_chunked_gdn.py)")
+                _require(float(row["worst_cache_rel_fro"]) <= MAX_CACHE_REL_FRO
+                         and float(row["worst_cache_rel_err"]) <= MAX_CACHE_REL_MAX,
+                         f"cache outputs diverge ({row})")
                 # Without a recorded scale, allow a few FP16 ulps at typical |logit| of 16-32.
                 tolerance = (MAX_RELATIVE_LOGIT_DIFF * max(float(row["last_logits_scale"]), 1.0)
                              if row.get("last_logits_scale") else MAX_ABSOLUTE_LOGIT_DIFF)
@@ -97,8 +108,7 @@ def verify_prefill_evidence(reports, graph_sha256):
             for row in rows:
                 _require(row.get("decode_step_top1_equal") is True, f"decode step differs ({row})")
         elif kind == WEBGPU_EVIDENCE_KIND:
-            if "rewritten_graph_sha256" in report:
-                _require(report["rewritten_graph_sha256"] == graph_sha256, "WebGPU report is for a different graph")
+            _require(report.get("rewritten_graph_sha256") == graph_sha256, "WebGPU report is for a different graph")
             rewritten = [row for row in report.get("prefill") or [] if row.get("variant") == "rewritten"]
             original = [row for row in report.get("prefill") or [] if row.get("variant") == "original"]
             comparisons = list(report.get("webgpu_logit_comparison") or [])
@@ -112,9 +122,9 @@ def verify_prefill_evidence(reports, graph_sha256):
     return verified
 
 
-def model_card_section(reports, graph_sha256):
+def model_card_section(reports, graph_sha256, chunk_tokens=128):
     verified = verify_prefill_evidence(reports, graph_sha256)
-    text = MODEL_CARD_INTRO + "\n"
+    text = MODEL_CARD_INTRO.format(chunk=chunk_tokens) + "\n"
     if CPU_EVIDENCE_KIND in verified:
         text += ("`chunked-prefill-validation.json` records CPU comparisons with the original\n"
                  "graph on real text (prefill lengths across chunk boundaries and a cached\n"

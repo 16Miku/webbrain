@@ -339,7 +339,7 @@ optional check. {ocr_limit}
 Apache 2.0; see LICENSE and NOTICE.txt. Original context capacity is 262,144 tokens;
 WebBrain applies a smaller browser context budget. Model weights and processor
 files are downloaded once; inference runs locally.
-""" + model_card_section([], language_graph["output_sha256"]), encoding="utf-8")
+""" + model_card_section([], language_graph["output_sha256"], language_graph["chunk_tokens"]), encoding="utf-8")
     total = seal_manifest(output)
     print(json.dumps({"output": str(output.resolve()), "vision_tensors": len(records),
                       "total_bytes": total, "vision_inference": validation}), flush=True)
