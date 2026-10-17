@@ -116,9 +116,10 @@ Do all of these on the exact files you will publish.
    before and after any change to the in-browser prompt, page context or
    runtime. It covers greeting, summary, a fact at the end of a long page,
    prices, a follow-up, arithmetic, a selection, Turkish, a prompt injection,
-   an Act request, a linked URL and a browser page. To compare two builds,
-   load both from the same `--extension` directory so they share the model
-   cache.
+   an Act request, a linked URL and a browser page. Use a fresh `--profile`
+   for each build: a reused profile keeps running the service worker of the
+   build it first loaded, so it can silently test old code. The report lists
+   the prompt variant that answered each task (`tiny_ask` or `ask`).
 5. **Production harness.** Run `scripts/check-bonsai-webgpu.mjs` online and
    `--offline` (with `--vision --image-history` for vision models) and record
    the evidence with `scripts/models/bonsai/record_browser_validation.py`.
