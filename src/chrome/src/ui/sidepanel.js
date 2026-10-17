@@ -5032,8 +5032,9 @@ async function init() {
   // is reported as soon as the window is known, ahead of the awaits below, so an action
   // that arrives while the panel is still starting up does not open it a second time.
   const presenceReportedEarly = !isBtwWindow && initialWindowId != null;
+  let presenceReporter = null;
   if (presenceReportedEarly) {
-    reportSidePanelPresence({ runtime: chrome.runtime, doc: document, windowId: initialWindowId });
+    presenceReporter = reportSidePanelPresence({ runtime: chrome.runtime, doc: document, windowId: initialWindowId });
   }
   const [tab] = await chrome.tabs.query(initialWindowId != null
     ? { active: true, windowId: initialWindowId }
@@ -5069,11 +5070,13 @@ async function init() {
     getCurrentTabId: () => currentTabId,
     getRenderedTabId: () => renderedTabId,
     switchToTab,
+    // The browser may carry this panel to another window; the background must follow.
+    onWindowChanged: (windowId) => presenceReporter?.setWindowId(windowId),
   });
 
   // The window could not be read up front; fall back to the active tab's.
   if (!isBtwWindow && !presenceReportedEarly) {
-    reportSidePanelPresence({ runtime: chrome.runtime, doc: document, windowId: tab?.windowId ?? null });
+    presenceReporter = reportSidePanelPresence({ runtime: chrome.runtime, doc: document, windowId: tab?.windowId ?? null });
   }
 
   if (windowScope) {

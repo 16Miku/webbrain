@@ -48753,11 +48753,13 @@ test('sidepanel follows its live window when the represented tab is detached', a
         },
       },
     };
+    const windowChanges = [];
     const scope = createSidePanelWindowScope({
       browserApi,
       initialWindowId: 10,
       getCurrentTabId: () => currentTabId,
       getRenderedTabId: () => renderedTabId,
+      onWindowChanged: windowId => windowChanges.push(windowId),
       settleWindowTransfer: () => new Promise(resolve => {
         releaseWindowTransfer = resolve;
       }),
@@ -48781,6 +48783,7 @@ test('sidepanel follows its live window when the represented tab is detached', a
     await attaching;
     assert.deepEqual(switches, [101], `${label}: attach should resync to the active tab in the panel's new window`);
     switches.length = 0;
+    assert.deepEqual(windowChanges, [20], `${label}: the move to another window should be announced once`);
 
     activeTabs.set(10, { id: 103, windowId: 10 });
     await scope.handleActivated({ tabId: 103, windowId: 10 });
@@ -48790,6 +48793,43 @@ test('sidepanel follows its live window when the represented tab is detached', a
     await scope.handleActivated({ tabId: 201, windowId: 20 });
     assert.deepEqual(switches, [201], `${label}: activity in the panel's live window should still switch tab-scoped chat`);
     assert.equal(queries.every(query => query.currentWindow == null && query.windowId != null), true, `${label}: active-tab queries must use an explicit live window ID`);
+    assert.deepEqual(windowChanges, [20], `${label}: lookups that find the panel where it already was announce nothing`);
+
+    // A move the browser reverses (the panel stayed where it was) is not a change.
+    let stayedWindowId = 30;
+    const stayedChanges = [];
+    const stayed = createSidePanelWindowScope({
+      browserApi: {
+        windows: { getCurrent: async () => ({ id: stayedWindowId }) },
+        tabs: { query: async () => [{ id: 301, windowId: stayedWindowId }] },
+      },
+      initialWindowId: 30,
+      getCurrentTabId: () => 301,
+      getRenderedTabId: () => 301,
+      onWindowChanged: windowId => stayedChanges.push(windowId),
+      settleWindowTransfer: async () => {},
+      switchToTab: async () => {},
+    });
+    stayed.handleDetached(301, { oldWindowId: 30 });
+    await stayed.handleAttached(301, { newWindowId: 31 });
+    assert.deepEqual(stayedChanges, [], `${label}: a panel the browser kept in its window is not reported as moved`);
+    stayedWindowId = 31;
+    await stayed.syncActiveTab();
+    assert.deepEqual(stayedChanges, [31], `${label}: a later lookup that finds it elsewhere announces the move`);
+
+    // A listener that throws must not break tab sync.
+    const noisy = createSidePanelWindowScope({
+      browserApi: {
+        windows: { getCurrent: async () => ({ id: 41 }) },
+        tabs: { query: async () => [{ id: 401, windowId: 41 }] },
+      },
+      initialWindowId: 40,
+      getCurrentTabId: () => 400,
+      getRenderedTabId: () => 400,
+      onWindowChanged: () => { throw new Error('listener failed'); },
+      switchToTab: async () => {},
+    });
+    assert.equal((await noisy.syncActiveTab())?.id, 401, `${label}: a failing window listener must not stop the tab sync`);
   }
 });
 
@@ -52775,7 +52815,51 @@ test('side panel presence: the background learns which windows show a panel, and
   // Without a window it reports nothing, which keeps the old always-open behaviour.
   const anonymous = reportSidePanelPresence({ runtime, doc, windowId: null });
   assert.equal(connections.length, 5);
+
+  // ...until the window is learned, when it connects and says where it stands.
+  posted.length = 0;
+  anonymous.setWindowId(4);
+  assert.equal(connections.length, 6, 'learning the window opens the port');
+  assert.deepEqual(posted, [{ visible: true, windowId: 4 }]);
   anonymous.stop();
+
+  // A browser can carry the panel document to another window: the background must be
+  // told, or it keeps the old window occupied and the new one empty.
+  posted.length = 0;
+  const mover = reportSidePanelPresence({
+    runtime,
+    doc,
+    windowId: 5,
+    schedule: (callback, delay) => timers.push({ callback, delay }),
+    now: () => clock,
+  });
+  const moverConnections = connections.length;
+  assert.deepEqual(posted, [{ visible: true, windowId: 5 }]);
+  mover.setWindowId(9);
+  assert.deepEqual(posted.at(-1), { visible: true, windowId: 9 }, 'a move to another window is reported on the open port');
+  assert.equal(connections.length, moverConnections, 'a move does not need a new port');
+  posted.length = 0;
+  mover.setWindowId(9);
+  mover.setWindowId(null);
+  mover.setWindowId('11');
+  mover.setWindowId(undefined);
+  assert.deepEqual(posted, [], 'a repeated or unusable window id says nothing');
+  doc.visibilityState = 'hidden';
+  doc.listeners.forEach(callback => callback());
+  assert.deepEqual(posted.at(-1), { visible: false, windowId: 9 }, 'later reports keep naming the new window');
+  doc.visibilityState = 'visible';
+
+  // A move while the port is down is picked up by the reconnect that is already coming.
+  clock += 60_000;
+  connections.at(-1).drop();
+  mover.setWindowId(12);
+  assert.equal(connections.length, moverConnections, 'a pending reconnect is not raced by a second port');
+  timers.splice(0).forEach(timer => timer.callback());
+  assert.equal(connections.length, moverConnections + 1);
+  assert.deepEqual(posted.at(-1), { visible: true, windowId: 12 }, 'the reconnect names the window the panel moved to');
+  mover.stop();
+  mover.setWindowId(13);
+  assert.equal(connections.length, moverConnections + 1, 'a stopped reporter ignores a move');
 });
 
 test('background does not re-open a side panel that is already showing, and still opens one that is not', () => {
@@ -52838,10 +52922,12 @@ test('background does not re-open a side panel that is already showing, and stil
   assert.match(background, /chrome\.runtime\.onConnect\.addListener\(\(port\) => \{ sidePanelPresence\.attach\(port\); \}\);/,
     'the presence port must be accepted at the top level of the worker');
   const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
-  assert.match(panel, /const initialWindowId = initialWindow\?\.id \?\? null;[\s\S]*?const presenceReportedEarly = !isBtwWindow && initialWindowId != null;\s*if \(presenceReportedEarly\) \{\s*reportSidePanelPresence\(\{ runtime: chrome\.runtime, doc: document, windowId: initialWindowId \}\);\s*\}\s*const \[tab\] = await chrome\.tabs\.query/,
+  assert.match(panel, /const initialWindowId = initialWindow\?\.id \?\? null;[\s\S]*?const presenceReportedEarly = !isBtwWindow && initialWindowId != null;\s*let presenceReporter = null;\s*if \(presenceReportedEarly\) \{\s*presenceReporter = reportSidePanelPresence\(\{ runtime: chrome\.runtime, doc: document, windowId: initialWindowId \}\);\s*\}\s*const \[tab\] = await chrome\.tabs\.query/,
     'the side panel must tell the background it is on screen as soon as its window is known, before its other awaits');
-  assert.match(panel, /if \(!isBtwWindow && !presenceReportedEarly\) \{\s*reportSidePanelPresence\(\{ runtime: chrome\.runtime, doc: document, windowId: tab\?\.windowId \?\? null \}\);/,
+  assert.match(panel, /if \(!isBtwWindow && !presenceReportedEarly\) \{\s*presenceReporter = reportSidePanelPresence\(\{ runtime: chrome\.runtime, doc: document, windowId: tab\?\.windowId \?\? null \}\);/,
     'and still report when the window could only be learned from the active tab');
+  assert.match(panel, /createSidePanelWindowScope\(\{[^}]*?onWindowChanged: \(windowId\) => presenceReporter\?\.setWindowId\(windowId\),/,
+    'a panel the browser moves to another window must tell the background, or the old window stays occupied and the new one looks empty');
 });
 
 test('a PDF viewer selection leaves a side panel that is already showing in its window alone', async () => {

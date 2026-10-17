@@ -55,8 +55,12 @@ export function createSidePanelPresence(api) {
 }
 
 /**
- * Side panel side: keeps a port open and reports whether this page is visible.
- * The port is reopened when the background worker restarts, which drops it.
+ * Side panel side: keeps a port open and reports whether this page is visible, and in
+ * which window. The port is reopened when the background worker restarts, which drops
+ * it. A browser can keep this document alive while its tab is dragged to another
+ * window, so the caller says so through `setWindowId()` and the next report names the
+ * window the panel is really in; a panel whose window was unknown at start connects
+ * once it learns it.
  */
 export function reportSidePanelPresence({
   runtime,
@@ -65,19 +69,22 @@ export function reportSidePanelPresence({
   schedule = (callback, delay) => setTimeout(callback, delay),
   now = () => Date.now(),
 }) {
-  if (!Number.isInteger(windowId)) return { stop() {} };
+  let currentWindowId = Number.isInteger(windowId) ? windowId : null;
   let port = null;
   let stopped = false;
+  let reconnectPending = false;
   let quickCloses = 0;
 
   const report = () => {
+    if (currentWindowId == null) return;
     try {
-      port?.postMessage({ visible: doc.visibilityState === 'visible', windowId });
+      port?.postMessage({ visible: doc.visibilityState === 'visible', windowId: currentWindowId });
     } catch { /* the port closed under us; its disconnect handler reconnects */ }
   };
 
   const connect = () => {
-    if (stopped) return;
+    reconnectPending = false;
+    if (stopped || currentWindowId == null) return;
     let next;
     try {
       next = runtime.connect({ name: SIDEPANEL_PRESENCE_PORT });
@@ -97,6 +104,7 @@ export function reportSidePanelPresence({
       const delay = quickCloses === 0
         ? 0
         : Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** (quickCloses - 1));
+      reconnectPending = true;
       schedule(connect, delay);
     });
     report();
@@ -105,6 +113,12 @@ export function reportSidePanelPresence({
   doc.addEventListener('visibilitychange', report);
   connect();
   return {
+    setWindowId(nextWindowId) {
+      if (stopped || !Number.isInteger(nextWindowId) || nextWindowId === currentWindowId) return;
+      currentWindowId = nextWindowId;
+      if (port) report();
+      else if (!reconnectPending) connect();
+    },
     stop() {
       stopped = true;
       doc.removeEventListener('visibilitychange', report);

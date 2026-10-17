@@ -559,6 +559,9 @@ was dropped by a background restart reconnects at once (only a port that is refu
 away backs off), so the restarted worker is not left unaware of a panel that is still showing.
 A new panel reports as soon as it knows its window, ahead of its other start-up awaits, so an
 action arriving while it is still opening does not open it a second time.
+A panel the browser carries to another window (the tab dragged out) keeps its document; the window scope
+notices on its next live `windows.getCurrent()` lookup and the reporter (`setWindowId()`) names the new
+window, so the background does not treat the old window as occupied and the new one as empty.
 A selection made in the bundled PDF viewer, whose message carries only a tab id, brings the
 window too (Chrome's `sender.tab` for that tab, else the window the viewer reported from
 `windows.getCurrent()`), so the same check applies there; that path opens the panel once in the
