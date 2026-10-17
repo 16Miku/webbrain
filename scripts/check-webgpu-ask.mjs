@@ -14,9 +14,9 @@
 // --extension DIR    unpacked extension to load (default src/chrome). The
 //                    extension ID, and so the model cache, follows the path:
 //                    reuse one directory and profile to compare two builds.
-//                    Chrome keeps the registered service worker while the
-//                    manifest version is unchanged, so give the second build a
-//                    different version (for example append ".1").
+//                    Chrome keeps running a cached service worker for an
+//                    unchanged extension, so the script reloads the extension
+//                    once at start to pick up the files on disk.
 // --model ID         WebGPU preset (default Bonsai 2 2B Vision)
 // --download         download the model if it is not cached yet
 // --tasks a,b        run only these tasks
@@ -112,7 +112,14 @@ try {
   });
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 30000 });
   const id = new URL(worker.url()).host;
-  const harness = await context.newPage();
+  let harness = await context.newPage();
+  await harness.goto(`chrome-extension://${id}/src/ui/settings.html`);
+  // A persistent profile can keep serving the previous build's service
+  // worker; chrome.runtime.reload() makes Chrome read the files again.
+  const reloaded = context.waitForEvent('serviceworker', { timeout: 30000 });
+  await harness.evaluate(() => chrome.runtime.reload()).catch(() => {});
+  await reloaded;
+  harness = await context.newPage();
   await harness.goto(`chrome-extension://${id}/src/ui/settings.html`);
   const message = (action, data = {}) => harness.evaluate(({ action, data }) => chrome.runtime.sendMessage({ target: 'background', action, ...data }), { action, data });
   await harness.evaluate(() => chrome.storage.local.set({
