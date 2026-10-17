@@ -44,7 +44,7 @@
     "dev": "vite",
     "build": "node scripts/build.mjs",
     "lint": "eslint \"./src/**/*.{js,jsx}\"",
-    "test": "node --test test/"
+    "test": "node --test --test-timeout=60000 ../test/newtab.mjs"
   },
   "author": "WebBrain contributors; derived from Mue by The Mue Authors (see LICENSE.mue-bsd-3-clause)"
 }
