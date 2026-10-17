@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 
 from build_vision import digest, link_or_copy, read_json, seal_manifest, write_json
-from chunk_gdn_prefill import MODEL_CARD_SECTION as CARD_SECTION, rewrite_file
+from chunk_gdn_prefill import model_card_section, rewrite_file
 
 GRAPH = "onnx/decoder_model_merged_q2f16.onnx"
 # Upstream danyalmalik language graphs this rewrite was validated against.
@@ -93,10 +93,12 @@ def build_bundle(source, output, manifest, args):
     else:
         scratch.rename(output / GRAPH)
 
+    evidence = [read_json(path) for path in args.evidence]
+    card_section = model_card_section(evidence, report["output_sha256"])  # rejects failed evidence
     write_json(output / DERIVED_MARKER, {
         "rewrite": report,
         "external_data_unchanged": "onnx/decoder_model_merged_q2f16.onnx_data",
-        "evidence": [read_json(path) for path in args.evidence],
+        "evidence": evidence,
     })
     validation = read_json(output / "export-validation.json")
     validation["language_graph"] = {
@@ -110,7 +112,7 @@ def build_bundle(source, output, manifest, args):
     card = (output / "README.md").read_text(encoding="utf-8")
     card = card.replace(CARD_LANGUAGE_OLD, CARD_LANGUAGE_NEW)
     head, sep, tail = card.partition("\n## Hardware validation")
-    card = head.rstrip() + "\n" + CARD_SECTION
+    card = head.rstrip() + "\n" + card_section
     if sep:
         # Keep OCR limitation notes; hardware evidence is re-recorded for this graph.
         ocr = tail.partition("\n### Observed OCR limitation")

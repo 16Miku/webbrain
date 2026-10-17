@@ -21,9 +21,13 @@ import json
 import time
 from pathlib import Path
 
+import hashlib
+
 import numpy as np
 import onnxruntime as ort
 from tokenizers import Tokenizer
+
+from chunk_gdn_prefill import CPU_EVIDENCE_KIND
 
 TEXT = (
     "The nested set model is a technique for representing nested set collections in relational databases. "
@@ -107,7 +111,8 @@ def main():
     p.add_argument("--rewritten", type=Path, required=True)
     p.add_argument("--embed", type=Path, required=True)
     p.add_argument("--tokenizer", type=Path, required=True)
-    p.add_argument("--lengths", default="2,63,64,65,200,700")
+    # Cover one token, both sides of the 128-token chunk boundary and a multi-chunk prompt.
+    p.add_argument("--lengths", default="2,127,128,129,700")
     p.add_argument("--output", type=Path)
     args = p.parse_args()
 
@@ -118,7 +123,17 @@ def main():
     all_embeds = embed.run(None, {emb_in: np.array([ids], np.int64)})[0]
     orig = session(args.original)
     new = session(args.rewritten)
-    report = {"tokens_available": len(ids), "fresh_prefill": [], "continuation": None}
+    sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()  # noqa: E731
+    report = {
+        "kind": CPU_EVIDENCE_KIND,
+        "onnxruntime": f"{ort.__version__} (CPUExecutionProvider)",
+        "original_graph_sha256": sha(args.original),
+        "rewritten_graph_sha256": sha(args.rewritten),
+        "input": "Real English text embedded with the bundle's embed_tokens graph; zero initial cache unless noted.",
+        "tokens_available": len(ids),
+        "fresh_prefill": [],
+        "continuation_from_cache": None,
+    }
 
     for S in [int(x) for x in args.lengths.split(",")]:
         e = all_embeds[:, :S]
@@ -145,7 +160,7 @@ def main():
     a, _ = run(orig, tail, cache, 150)
     b, _ = run(new, tail, cache, 150)
     r = compare(a, b)
-    report["continuation"] = {"cached_tokens": 150, "new_tokens": 300, **r}
+    report["continuation_from_cache"] = {"cached_tokens": 150, "new_tokens": 300, **r}
     print(json.dumps({"continuation": {k: r[k] for k in ("last_logits_max_abs_diff", "top1_equal", "kl_original_to_rewritten", "worst_cache_rel_err")}}))
     if args.output:
         args.output.write_text(json.dumps(report, indent=2))

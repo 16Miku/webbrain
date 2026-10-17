@@ -38,8 +38,10 @@ from onnx import TensorProto, helper, numpy_helper
 
 INT64_MAX = 9223372036854775807
 
-# Model-card paragraph shared by build_vision.py and make_chunked_bundle.py.
-MODEL_CARD_SECTION = """
+# Model-card text shared by build_vision.py and make_chunked_bundle.py. The
+# validation claims are rendered only from verified evidence (see
+# model_card_section) so an unvalidated build cannot publish them.
+MODEL_CARD_INTRO = """
 ## Parallel prefill
 
 The upstream language graph computes every GatedDeltaNet prefill with an ONNX
@@ -53,14 +55,83 @@ prefix scan across chunks), built only from ops the WebGPU EP implements, and
 returns logits for the last position only. Weights, quantization and the
 external data file are byte-identical to the previous revision; decode
 (one token at a time) uses the unchanged recurrent path.
-
-`chunked-prefill-validation.json` records the rewrite, CPU comparisons with the
-original graph on real text (logit differences at fp16 rounding level,
-identical top-1 tokens, prefill lengths across chunk boundaries and a cached
-continuation) and WebGPU prefill timings against the original graph.
-Reproduce with `scripts/models/bonsai/chunk_gdn_prefill.py` in the WebBrain
-repository.
 """
+CPU_EVIDENCE_KIND = "cpu-onnxruntime-comparison"
+WEBGPU_EVIDENCE_KIND = "webgpu-prefill-benchmark"
+# Last-position logits may differ by FP16 rounding only.
+MAX_RELATIVE_LOGIT_DIFF = 5e-3
+MAX_ABSOLUTE_LOGIT_DIFF = 0.05
+MAX_KL = 1e-3
+MAX_WEBGPU_KL = 1e-2
+
+
+def _require(condition, message):
+    if not condition:
+        raise ValueError(f"Prefill evidence rejected: {message}")
+
+
+def verify_prefill_evidence(reports, graph_sha256):
+    """Check attached reports and return the verified ones by kind.
+
+    Raises on an unknown report kind or any failed comparison, so a bundle can
+    never be sealed with evidence that contradicts its model card.
+    """
+    verified = {}
+    for report in reports:
+        kind = report.get("kind")
+        if kind == CPU_EVIDENCE_KIND:
+            _require(report.get("rewritten_graph_sha256") == graph_sha256, "CPU report is for a different graph")
+            rows = list(report.get("fresh_prefill") or [])
+            continuation = report.get("continuation_from_cache")
+            _require(rows and continuation, "CPU report needs fresh prefills and a cached continuation")
+            _require(any(row["tokens"] % 128 == 0 for row in rows) and any(row["tokens"] > 128 for row in rows),
+                     "CPU report must cover a chunk boundary and a multi-chunk prompt")
+            for row in rows + [continuation]:
+                _require(row.get("top1_equal") is True, f"top-1 differs ({row})")
+                # Without a recorded scale, allow a few FP16 ulps at typical |logit| of 16-32.
+                tolerance = (MAX_RELATIVE_LOGIT_DIFF * max(float(row["last_logits_scale"]), 1.0)
+                             if row.get("last_logits_scale") else MAX_ABSOLUTE_LOGIT_DIFF)
+                _require(float(row["last_logits_max_abs_diff"]) <= tolerance,
+                         f"logit difference above FP16 tolerance ({row})")
+                _require(float(row["kl_original_to_rewritten"]) <= MAX_KL, f"KL too large ({row})")
+            for row in rows:
+                _require(row.get("decode_step_top1_equal") is True, f"decode step differs ({row})")
+        elif kind == WEBGPU_EVIDENCE_KIND:
+            if "rewritten_graph_sha256" in report:
+                _require(report["rewritten_graph_sha256"] == graph_sha256, "WebGPU report is for a different graph")
+            rewritten = [row for row in report.get("prefill") or [] if row.get("variant") == "rewritten"]
+            original = [row for row in report.get("prefill") or [] if row.get("variant") == "original"]
+            comparisons = list(report.get("webgpu_logit_comparison") or [])
+            _require(rewritten and original and comparisons, "WebGPU report needs both timings and a logit comparison")
+            for row in comparisons:
+                _require(row.get("argmax_equal") is True and float(row["kl"]) <= MAX_WEBGPU_KL,
+                         f"WebGPU logits differ ({row})")
+        else:
+            raise ValueError(f"Prefill evidence rejected: unknown report kind {kind!r}")
+        verified[kind] = report
+    return verified
+
+
+def model_card_section(reports, graph_sha256):
+    verified = verify_prefill_evidence(reports, graph_sha256)
+    text = MODEL_CARD_INTRO + "\n"
+    if CPU_EVIDENCE_KIND in verified:
+        text += ("`chunked-prefill-validation.json` records CPU comparisons with the original\n"
+                 "graph on real text (prefill lengths across chunk boundaries and a cached\n"
+                 "continuation): identical top-1 tokens, including the following decode step, and\n"
+                 "logit differences at FP16 rounding level.")
+        if WEBGPU_EVIDENCE_KIND in verified:
+            text += " It also records WebGPU prefill timings against\nthe original graph."
+        text += "\n"
+    elif WEBGPU_EVIDENCE_KIND in verified:
+        text += ("`chunked-prefill-validation.json` records WebGPU prefill timings and logit\n"
+                 "comparisons against the original graph; CPU parity evidence is pending.\n")
+    else:
+        text += ("Parity and timing evidence for this build is pending:\n"
+                 "`chunked-prefill-validation.json` records the rewrite only. Attach\n"
+                 "`validate_chunked_gdn.py` and WebGPU timing reports before publishing.\n")
+    return text + ("Reproduce with `scripts/models/bonsai/chunk_gdn_prefill.py` in the WebBrain\n"
+                   "repository.\n")
 
 
 class Builder:

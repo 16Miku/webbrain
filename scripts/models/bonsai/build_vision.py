@@ -19,7 +19,7 @@ import onnx
 import onnxruntime as ort
 from huggingface_hub import snapshot_download
 
-from chunk_gdn_prefill import MODEL_CARD_SECTION, rewrite_file
+from chunk_gdn_prefill import model_card_section, rewrite_file
 from onnx import numpy_helper
 from safetensors import safe_open
 
@@ -339,7 +339,7 @@ optional check. {ocr_limit}
 Apache 2.0; see LICENSE and NOTICE.txt. Original context capacity is 262,144 tokens;
 WebBrain applies a smaller browser context budget. Model weights and processor
 files are downloaded once; inference runs locally.
-""" + MODEL_CARD_SECTION, encoding="utf-8")
+""" + model_card_section([], language_graph["output_sha256"]), encoding="utf-8")
     total = seal_manifest(output)
     print(json.dumps({"output": str(output.resolve()), "vision_tensors": len(records),
                       "total_bytes": total, "vision_inference": validation}), flush=True)

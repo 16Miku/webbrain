@@ -71,9 +71,13 @@ already sealed one without rebuilding the vision tower:
 
 `validate_chunked_gdn.py` compares the two graphs on CPU with real text:
 prefills across chunk boundaries, a cached continuation, last-position logits,
-every cache output and the following decode step. Browser evidence recorded
-against the previous graph is not carried over; rerun the WebGPU checks below
-on the new bundle. The worker replaces a stale cached graph for the two
+every cache output and the following decode step; its `--output` report is the
+CPU evidence for `make_chunked_bundle.py --evidence`. Attached reports are
+checked against the bundle's graph hash and FP16 tolerances, and the model card
+states parity or timing results only for reports that pass; otherwise it says
+the evidence is pending, and a failing report stops the build. Browser evidence
+recorded against the previous graph is not carried over; rerun the WebGPU
+checks below on the new bundle. The worker replaces a stale cached graph for the two
 webbrain-one Vision repositories by SHA-256, so existing installs only
 download the new 3 MB graph file.
 
