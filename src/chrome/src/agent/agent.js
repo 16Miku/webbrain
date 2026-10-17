@@ -16738,7 +16738,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             && ['partial', 'failed'].includes(toolResult.outcome)) {
           toolResult.runEnded = true;
           toolResult.autoResumeScheduled = false;
-          if (!fnArgs.data_ref) {
+          // Only an exact table actually delivered as its JSON keeps the
+          // notice out of the payload; a reference that delivered nothing
+          // (_resolveExactTableDone) gets it like any other answer.
+          if (!this._isExactTablePayload(tabId, fnArgs, toolResult.summary)) {
             const notice = chatRunEndedNotice(this.responseLanguagePolicies.get(tabId)?.framing_locale || runOptions?.locale);
             toolResult.summary = (toolResult.summary || partialAssistantText || '') + '\n\n' + notice;
           }

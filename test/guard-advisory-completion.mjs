@@ -785,6 +785,57 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: a chat run's undelivered exact table ends with the run-ended notice; a delivered one stays its JSON`, async () => {
+    const { chatRunEndedNotice, createChatSession } = await import(`../src/${build}/src/agent/chat-workflow.js`);
+    const askSchemas = new Map(getToolsForMode('ask', { tier: 'full' }).map(tool => [tool.function.name, tool.function.parameters]));
+    const doneResultOf = updates => updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
+    // The reference expired: no table is delivered, so the partial chat run
+    // gets its notice like any other answer.
+    {
+      const h = batchAgent(Agent, { mode: 'ask', realDone: true, schemas: askSchemas });
+      h.agent.chatSessions.set(h.tab, createChatSession({ threadKey: 'dom:telegram:k:123456:0' }));
+      h.agent.readCompletenessStates.set(h.tab, { runToken: 'owned-run', tablePageObserved: true });
+      const done = ['done', { summary: 'Full inventory.', data_ref: 'table_expired' }];
+      assert.equal((await h.batch([done])).action, 'continue');
+      const updates = [];
+      assert.equal((await h.batch([done], updates)).action, 'return');
+      const doneResult = doneResultOf(updates);
+      assert.equal(doneResult?.outcome, 'partial');
+      assert.equal(doneResult?.runEnded, true);
+      assert.ok(String(doneResult?.summary).includes(chatRunEndedNotice()), `${build}: the run-ended notice is missing`);
+    }
+    // A delivered table in a chat run that ends partial for another reason
+    // (unread pages of a whole read) stays the exact JSON, without the notice.
+    {
+      const h = batchAgent(Agent, { mode: 'ask', realDone: true, schemas: askSchemas, task: 'Summarize this whole conversation.' });
+      h.agent.chatSessions.set(h.tab, createChatSession({ threadKey: 'dom:telegram:k:123456:0' }));
+      h.agent._currentUrl = async () => 'https://outlook.live.com/mail/0/inbox/id/AQMkADAwATM0MDAAMS1i';
+      await h.agent._beginReadCompleteness(h.tab, 'Summarize this whole conversation.', {});
+      h.agent._armReadCompletenessFromPlan(h.tab, { request_kind: 'execute', read_scope: 'complete_thread' });
+      h.agent._recordReadCompleteness(h.tab, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
+        pageContent: 'main\n listitem "First message"', page: 1, totalChars: 9000, hasMore: true, truncated: false, nextPage: 2 });
+      const state = h.agent.readCompletenessStates.get(h.tab);
+      const owner = { runToken: state.runToken, current: () => true };
+      const table = { rowCount: 1, rows: [{ id: 'A' }] };
+      const record = { dataRef: 'table_owned', runToken: state.runToken, owner, args: { columns: ['id'] }, summary: JSON.stringify(table) };
+      state.exactTableExports = new Map([['table_owned', record]]);
+      h.agent._exactTableOwner = () => owner;
+      const realExecute = h.agent.executeTool.bind(h.agent);
+      h.agent.executeTool = async (tab, name, args, ...rest) => (name === 'extract_data'
+        ? { success: true, verifiedExactTable: true } : realExecute(tab, name, args, ...rest));
+      const done = ['done', { summary: 'Full inventory.', data_ref: 'table_owned' }];
+      assert.equal((await h.batch([done])).action, 'continue', `${build}: the coverage note comes first`);
+      const updates = [];
+      const accepted = await h.batch([done], updates);
+      assert.equal(accepted.action, 'return');
+      const doneResult = doneResultOf(updates);
+      assert.equal(doneResult?.outcome, 'partial', `${build}: the unread pages downgrade the answer`);
+      assert.equal(doneResult?.runEnded, true);
+      assert.deepEqual(JSON.parse(accepted.value), table, `${build}: the delivered table stays its exact JSON`);
+      assert.ok(!String(doneResult?.summary).includes(chatRunEndedNotice()), `${build}: the notice went into the table JSON`);
+    }
+  });
+
   test(`${build}: an unverifiable table snapshot is delivered over advice, but not under Strict secret mode`, async () => {
     for (const strictSecretMode of [false, true]) {
       const h = batchAgent(Agent, { mode: 'ask' });
