@@ -104,17 +104,17 @@ const Notes = ({ notesRef, floatRef, position, xPosition, yPosition }) => {
             </div>
             <div className="notes-buttons">
               <Tooltip title={t('widgets.navbar.todo.pin')}>
-                <button onClick={handlePin}>
+                <button onClick={handlePin} aria-label={t('widgets.navbar.todo.pin')}>
                   <MdPushPin />
                 </button>
               </Tooltip>
               <Tooltip title={t('widgets.quote.copy')}>
-                <button onClick={handleCopy} disabled={notes === ''}>
+                <button onClick={handleCopy} disabled={notes === ''} aria-label={t('widgets.quote.copy')}>
                   <MdContentCopy />
                 </button>
               </Tooltip>
               <Tooltip title={t('widgets.background.download')}>
-                <button onClick={handleDownload} disabled={notes === ''}>
+                <button onClick={handleDownload} disabled={notes === ''} aria-label={t('widgets.background.download')}>
                   <MdDownload />
                 </button>
               </Tooltip>

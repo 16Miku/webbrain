@@ -729,6 +729,9 @@ const CustomSettings = memo(() => {
                     >
                       <button
                         className="delete-button"
+                        aria-label={variables.getMessage(
+                          'modals.main.settings.sections.background.source.remove',
+                        )}
                         onClick={(e) => {
                           // The card selects itself on click; deleting must not select
                           // whatever slides into this index afterwards.
@@ -833,7 +836,11 @@ const CustomSettings = memo(() => {
             <span className="title">
               {variables.getMessage('modals.main.settings.sections.background.source.storage_info')}
             </span>
-            <button className="closeModal" onClick={() => setStorageQuotaModal(false)}>
+            <button
+              className="closeModal"
+              onClick={() => setStorageQuotaModal(false)}
+              aria-label={variables.getMessage('modals.welcome.buttons.close')}
+            >
               <MdCancel />
             </button>
           </div>

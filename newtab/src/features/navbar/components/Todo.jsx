@@ -185,12 +185,12 @@ function Todo({ todoRef, floatRef, position, xPosition, yPosition }) {
             </div>
             <div className="notes-buttons">
               <Tooltip title={t('widgets.navbar.todo.pin')}>
-                <button onClick={handlePin}>
+                <button onClick={handlePin} aria-label={t('widgets.navbar.todo.pin')}>
                   <MdPushPin />
                 </button>
               </Tooltip>
               <Tooltip title={t('widgets.navbar.todo.add')}>
-                <button onClick={() => updateTodo('add')}>
+                <button onClick={() => updateTodo('add')} aria-label={t('widgets.navbar.todo.add')}>
                   <MdPlaylistAdd />
                 </button>
               </Tooltip>

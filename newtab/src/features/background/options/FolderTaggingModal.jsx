@@ -16,7 +16,11 @@ const FolderTaggingModal = ({ files, onConfirm, onCancel }) => {
         <span className="title">
           {variables.getMessage('modals.main.settings.sections.background.source.tag_images')}
         </span>
-        <button className="closeModal" onClick={onCancel}>
+        <button
+          className="closeModal"
+          onClick={onCancel}
+          aria-label={variables.getMessage('modals.welcome.buttons.close')}
+        >
           <MdClose />
         </button>
       </div>

@@ -2415,3 +2415,32 @@ test('round-69: the documented hold budget matches the constants', async () => {
   assert.equal((every * max) / 1000, 15);
   assert.match(readFileSync(path.join(root, 'docs/newtab.md'), 'utf8'), /retried every 150 ms, for up to about 15 s/);
 });
+
+test('round-73: icon-only buttons have an accessible name', () => {
+  const unnamed = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.jsx')) {
+        const src = readFileSync(full, 'utf8');
+        for (const m of src.matchAll(/<button\b/g)) {
+          let i = m.index + m[0].length;
+          let depth = 0;
+          for (; i < src.length; i++) {
+            const c = src[i];
+            if (c === '{') depth++;
+            else if (c === '}') depth--;
+            else if (c === '>' && depth === 0 && src[i - 1] !== '=') break;
+          }
+          const tag = src.slice(m.index, i + 1);
+          const end = src.indexOf('</button>', i);
+          const body = src.slice(i + 1, end).replace(/<Md\w+\s*\/>/g, '').trim();
+          if (!body && !/aria-label=/.test(tag)) unnamed.push(`${path.relative(nt(), full)}:${src.slice(0, m.index).split('\n').length}`);
+        }
+      }
+    }
+  };
+  walk(nt());
+  assert.deepEqual(unnamed, [], 'icon-only <button>s need an aria-label');
+});

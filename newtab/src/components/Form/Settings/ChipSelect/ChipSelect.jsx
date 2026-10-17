@@ -70,6 +70,7 @@ function ChipSelect({ label, options, onChange }) {
                   <button
                     type="button"
                     className="chipSelect-chip-remove"
+                    aria-label={`Remove ${value}`}
                     onClick={(e) => handleRemoveChip(e, value)}
                   >
                     <MdClose />
