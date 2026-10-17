@@ -48,6 +48,40 @@ and returns embeddings in the original residual basis. The restored vision
 embeddings therefore need no extra Hadamard rotation. The decoder already accepts
 Qwen's three-axis position IDs and hybrid attention caches.
 
+## Parallel prefill graph
+
+The danyalmalik language graphs compute GatedDeltaNet prefill with an ONNX
+`Scan` over tokens. The WebGPU execution provider has no `Scan` kernel, so ONNX
+Runtime runs it as a CPU loop with a GPU round trip per token per layer: about
+0.13 s per prompt token for 2B and 0.19 s for 4B on an RTX 5090; a faster GPU
+barely helps.
+`chunk_gdn_prefill.py` replaces each `Scan` with the chunked gated delta rule
+(128-token chunks, stable recursive block inversion inside a chunk, and a
+parallel prefix scan across chunks, skipped by `If` when unneeded) and makes
+the decoder return logits for the last position only. It uses only ops the
+WebGPU EP implements. Weights and the `.onnx_data` file are unchanged, and
+decode keeps the original single-token recurrent branch.
+
+`build_vision.py` applies the rewrite. To derive a rewritten bundle from an
+already sealed one without rebuilding the vision tower:
+
+```powershell
+.build/bonsai/venv/Scripts/python.exe scripts/models/bonsai/make_chunked_bundle.py --source .build/bonsai/exports/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision --output .build/bonsai/exports-chunked/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision --evidence .build/bonsai/chunked-cpu-2B.json --evidence .build/bonsai/chunked-webgpu-2B.json
+```
+
+`validate_chunked_gdn.py` compares the two graphs on CPU with real text:
+prefills across chunk boundaries, a cached continuation, last-position logits,
+every cache output and the following decode step; its `--output` report is the
+CPU evidence for `make_chunked_bundle.py --evidence`. Attached reports are
+checked against the bundle's graph hash and FP16 tolerances, and the model card
+states parity or timing results only for reports that pass; otherwise it says
+the evidence is pending, and a failing report stops the build. Browser evidence
+recorded against the previous graph is not carried over; rerun the WebGPU
+checks below on the new bundle. For the two webbrain-one Vision repositories
+the worker compares the cached graph with a pinned SHA-256. Inference stays
+cache-only and keeps using a stale graph; an explicit download of the model
+replaces just the 3 MB graph file and keeps the cached weights.
+
 ## Runtime contract
 
 Load `AutoProcessor` and `AutoModelForImageTextToText` with:

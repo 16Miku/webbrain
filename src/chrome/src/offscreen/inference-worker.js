@@ -48,6 +48,22 @@ const WEBGPU_BONSAI2_MODEL_IDS = new Set([
   ...WEBGPU_BONSAI2_VISION_MODEL_IDS,
   'Mike0021/Ternary-Bonsai-2-4B-text-ONNX',
 ]);
+// Parallel-prefill decoder graphs (chunked GatedDeltaNet; see
+// scripts/models/bonsai/chunk_gdn_prefill.py). Earlier revisions prefilled with
+// an ONNX Scan that WebGPU runs one token at a time on the CPU. Installs that
+// cached that graph keep it under the same URL, so replace just this small file;
+// the unchanged weight files stay cached.
+const BONSAI2_DECODER_GRAPH_FILE = 'onnx/decoder_model_merged_q2f16.onnx';
+const BONSAI2_DECODER_GRAPH_SHA256 = new Map([
+  ['webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision', '2768d880f4fdab46a984d697b901db6e8ac54dc9b896524cb8cb769bbb339df0'],
+  ['webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision', '52424fbb7094ed0a1036d8795e78c3da349fce1838ee6bd077523929b0bb7bb2'],
+]);
+// A refresh must never stall model loading on a flaky network; one attempt per
+// worker lifetime, after which the working cached graph is used.
+const BONSAI2_DECODER_GRAPH_REFRESH_TIMEOUT_MS = 15_000;
+const checkedBonsai2DecoderGraphs = new Set();
+// Cache-only loads remember a stale graph so inference does not re-hash it.
+const staleBonsai2DecoderGraphs = new Set();
 // The Qwen3.5 generation_config sidecar omitted by Danyal's split exports.
 // Per-request decoding still controls do_sample and the output token budget.
 const BONSAI2_GENERATION_CONFIG = {
@@ -205,6 +221,74 @@ async function cacheBonsai2CompatibilityMetadata(modelId) {
   for (const file of ['tokenizer_config.json', 'generation_config.json']) {
     const url = `https://huggingface.co/${modelId}/resolve/main/${file}`;
     if (!await cache.match(url)) await cache.put(url, packagedMetadataResponse(bonsai2CompatibilityMetadata(url)));
+  }
+}
+
+async function sha256Hex(buffer) {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Make a cached Bonsai 2 Vision decoder graph the parallel-prefill revision.
+ * Inference loads are cache-only, so they only detect a stale graph
+ * ('stale'); the replacement is fetched solely from explicit download flows
+ * (`allowNetwork`). Offline or unexpected responses keep the cached graph,
+ * which still produces the same answers, only with slower prefill.
+ */
+export async function refreshBonsai2DecoderGraph(modelId, {
+  allowNetwork = false,
+  expected = BONSAI2_DECODER_GRAPH_SHA256.get(modelId),
+  timeoutMs = BONSAI2_DECODER_GRAPH_REFRESH_TIMEOUT_MS,
+} = {}) {
+  if (!expected || checkedBonsai2DecoderGraphs.has(modelId)) return 'skipped';
+  if (!allowNetwork && staleBonsai2DecoderGraphs.has(modelId)) return 'stale';
+  if (typeof caches === 'undefined' || !globalThis.crypto?.subtle) return 'unavailable';
+  const url = `https://huggingface.co/${modelId}/resolve/main/${BONSAI2_DECODER_GRAPH_FILE}`;
+  let cache;
+  try {
+    cache = await caches.open(TRANSFORMERS_CACHE_NAME);
+    const cached = await cache.match(url);
+    if (!cached) {
+      // Not downloaded yet: the regular download fetches the current graph.
+      checkedBonsai2DecoderGraphs.add(modelId);
+      return 'not-cached';
+    }
+    if (await sha256Hex(await cached.arrayBuffer()) === expected) {
+      checkedBonsai2DecoderGraphs.add(modelId);
+      return 'current';
+    }
+  } catch {
+    return 'unavailable';
+  }
+  // Cache-only loads (inference) never download; an explicit download replaces it.
+  if (!allowNetwork) {
+    staleBonsai2DecoderGraphs.add(modelId);
+    console.info(`[webgpu] ${modelId}: the cached decoder graph predates parallel prefill; download the model again to update it.`);
+    return 'stale';
+  }
+  const fetcher = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : nativeFetch;
+  if (!fetcher) return 'unavailable';
+  // Known offline (Apocalypse Mode): load the cached graph now and retry on a
+  // later load instead of waiting for the network deadline.
+  if (globalThis.navigator?.onLine === false) return 'unavailable';
+  checkedBonsai2DecoderGraphs.add(modelId);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetcher(url, { cache: 'no-store', signal: controller.signal });
+    if (!response?.ok) return 'unavailable';
+    const bytes = await response.arrayBuffer();
+    if (await sha256Hex(bytes) !== expected) return 'unexpected';
+    await cache.put(url, new Response(bytes, {
+      headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.byteLength) },
+    }));
+    staleBonsai2DecoderGraphs.delete(modelId);
+    return 'updated';
+  } catch {
+    return 'unavailable';
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -696,6 +780,13 @@ async function getVisionRuntime(modelId, dtype, device, {
   // A device loss flagged between turns leaves both resident sessions poisoned;
   // dispose them before the cached gate so we never hand out a dead session.
   await disposeWebgpuRuntimesIfDirty();
+  // Before any resident-session shortcut: download flows replace a stale
+  // decoder graph (and drop the session built from it); cache-only loads
+  // only notice it.
+  if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
+    const graph = await refreshBonsai2DecoderGraph(modelId, { allowNetwork: !localFilesOnly });
+    if (graph === 'updated' && visionRuntimeKey.startsWith(`vision|${modelId}|`)) await disposeVisionRuntime();
+  }
   if (visionRuntime && visionRuntimeKey === key) {
     visionRuntimeOwner = owner;
     return visionRuntime;
@@ -1049,6 +1140,14 @@ async function downloadTextModel(payload, { onStarted } = {}) {
   }
   await clearLegacyLfm25VlWrongPrecisionCache(modelId, dtype);
   if (await isTextModelReady(modelId, dtype)) {
+    // An explicit download of a cached model is the update path for its graph.
+    // Model operations are serialized, so no load can race this replacement.
+    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)
+        && await refreshBonsai2DecoderGraph(modelId, { allowNetwork: true }) === 'updated'
+        && visionRuntimeKey.startsWith(`vision|${modelId}|`)) {
+      // The resident session was built from the replaced graph.
+      await disposeVisionRuntime();
+    }
     if (payload?.requireTools === true) {
       const runtime = await getDownloadedTextRuntime(modelId, dtype, device, { localFilesOnly: true });
       assertToolCapableTextRuntime(runtime, modelId);
