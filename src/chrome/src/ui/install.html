@@ -6,6 +6,7 @@
   <title data-i18n="install.page_title">WebBrain installed</title>
   <script src="theme-bootstrap.js"></script>
   <link rel="stylesheet" href="install.css">
+  <link rel="stylesheet" href="install-scenes.css">
 </head>
 <body>
   <main class="install-page">
@@ -42,7 +43,6 @@
           <button id="feature-tab-ask" class="feature-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="feature-panel-ask" data-feature="ask" data-i18n="sp.mode.ask">Ask</button>
           <button id="feature-tab-act" class="feature-tab" type="button" role="tab" aria-selected="false" aria-controls="feature-panel-act" tabindex="-1" data-feature="act" data-i18n="sp.mode.act">Act</button>
           <button id="feature-tab-model" class="feature-tab" type="button" role="tab" aria-selected="false" aria-controls="feature-panel-model" tabindex="-1" data-feature="model" data-i18n="st.provider.field.model">Model</button>
-          <button id="feature-tab-apocalypse" class="feature-tab" type="button" role="tab" aria-selected="false" aria-controls="feature-panel-apocalypse" tabindex="-1" data-feature="apocalypse" data-i18n="ap.title">Apocalypse Mode</button>
         </div>
 
         <div class="feature-panels">
@@ -66,16 +66,255 @@
               <p data-i18n="install.showcase.model.body">Local, cloud, or your own keys — switch anytime.</p>
             </figcaption>
           </figure>
-          <figure id="feature-panel-apocalypse" class="feature-panel" role="tabpanel" aria-labelledby="feature-tab-apocalypse" aria-describedby="feature-caption-apocalypse" data-feature-panel="apocalypse" hidden>
-            <img src="install-assets/08-apocalypse-mode.png" alt="" aria-hidden="true">
-            <figcaption id="feature-caption-apocalypse" class="feature-copy">
-              <p class="feature-copy-eyebrow" data-i18n="ap.title">Apocalypse Mode</p>
-              <h2 data-i18n="ap.subtitle">WebBrain, ready when the internet isn’t.</h2>
-              <p data-i18n="install.showcase.apocalypse.body">Offline knowledge, under your control. Download the essentials while you still can.</p>
-            </figcaption>
-          </figure>
         </div>
       </aside>
+    </section>
+
+    <section class="more" aria-labelledby="more-title">
+      <div class="more-head" data-reveal>
+        <p class="eyebrow" data-i18n="install.more.eyebrow">Also built in</p>
+        <h2 id="more-title" class="more-title" data-i18n="install.more.title">Plenty more under the hood.</h2>
+        <p class="more-body" data-i18n="install.more.body">All of it ships with WebBrain. Optional extras stay off until you set them up.</p>
+      </div>
+
+      <div class="bento">
+        <!-- Apocalypse Mode -->
+        <article class="fcard fcard--apocalypse" data-reveal>
+          <div class="scene scene--ap" aria-hidden="true">
+            <div class="mock ap-card">
+              <div class="ap-head">
+                <span class="mock-label">WB // OFFLINE KIT</span>
+                <span class="chip chip--ready"><i></i><span data-i18n="install.ready">Ready</span></span>
+              </div>
+              <ul class="ap-list">
+                <li>
+                  <i class="ap-tile">T</i>
+                  <span class="ap-name" data-i18n="ap.models.text.title">Text Model</span>
+                  <span class="ap-prog"><i></i></span>
+                  <span class="chip chip--amber" data-i18n="st.providers.filter.local">Local</span>
+                </li>
+                <li>
+                  <i class="ap-tile">V</i>
+                  <span class="ap-name" data-i18n="ap.models.vision.title">Vision Model</span>
+                  <span class="ap-prog"><i></i></span>
+                  <span class="chip chip--amber" data-i18n="st.providers.filter.local">Local</span>
+                </li>
+                <li>
+                  <i class="ap-tile">W</i>
+                  <span class="ap-name" data-i18n="ap.models.wikipedia.active_title">Wikipedia</span>
+                  <span class="ap-prog"><i></i></span>
+                  <span class="chip chip--green" data-i18n="install.mock.offline">Offline</span>
+                </li>
+                <li>
+                  <i class="ap-tile">+</i>
+                  <span class="ap-name" data-i18n="ap.emergency.title">Emergency Box</span>
+                  <span class="ap-prog"><i></i></span>
+                  <span class="chip chip--green" data-i18n="install.mock.offline">Offline</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <div class="fcard-copy">
+            <p class="fcard-kicker">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="11" fill="currentColor"/>
+                <g fill="#15130e">
+                  <path id="nuke-blade" d="M10.5 9.402 7.5 4.206A9 9 0 0 1 16.5 4.206L13.5 9.402A3 3 0 0 0 10.5 9.402Z"/>
+                  <use href="#nuke-blade" transform="rotate(120 12 12)"/>
+                  <use href="#nuke-blade" transform="rotate(240 12 12)"/>
+                  <circle cx="12" cy="12" r="1.7"/>
+                </g>
+              </svg>
+              <span data-i18n="ap.title">Apocalypse Mode</span>
+            </p>
+            <h3 data-i18n="ap.subtitle">WebBrain, ready when the internet isn’t.</h3>
+            <p data-i18n="install.showcase.apocalypse.body">Offline knowledge, under your control. Download the essentials while you still can.</p>
+          </div>
+        </article>
+
+        <!-- Full-page screenshots -->
+        <article class="fcard fcard--shot" data-reveal>
+          <div class="scene scene--shot" aria-hidden="true">
+            <div class="mock shot-card">
+              <span class="mock-label" data-i18n="sp.screenshot.full_page_alt">Full-page screenshot</span>
+              <div class="shot-page">
+                <div class="shot-scroll">
+                  <i class="blk blk--title"></i>
+                  <i class="blk blk--violet"></i>
+                  <i class="blk blk--plain"></i>
+                  <i class="blk blk--rose"></i>
+                  <i class="blk blk--plain"></i>
+                  <i class="blk blk--mint"></i>
+                  <i class="blk blk--plain"></i>
+                  <i class="blk blk--sky"></i>
+                </div>
+                <svg class="shot-frame" viewBox="0 0 100 100" preserveAspectRatio="none"><rect x="0.5" y="0.5" width="99" height="99"/></svg>
+                <i class="shot-scan"></i>
+                <i class="shot-flash"></i>
+                <span class="shot-done">
+                  <svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+                </span>
+              </div>
+              <div class="composer">
+                <span class="typed"><span class="typed-text typed-text--shot">/screenshot --full-page</span></span>
+                <span class="send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></span>
+              </div>
+            </div>
+          </div>
+          <div class="fcard-copy">
+            <h3 data-i18n="install.shot.title">Capture the full page.</h3>
+            <p data-i18n-html="install.shot.body_html">Just type <code>/screenshot --full-page</code>.</p>
+          </div>
+        </article>
+
+        <!-- Bulk file downloads -->
+        <article class="fcard fcard--dl" data-reveal>
+          <div class="scene scene--dl" aria-hidden="true">
+            <div class="mock dl-card">
+              <span class="mock-label" data-i18n="install.mock.files">4 files · one task</span>
+              <ul class="dl-list">
+                <li>
+                  <span class="dl-meta"><b>video.mp4</b><small>X</small></span>
+                  <i class="fmt fmt--mp4">MP4</i>
+                  <span class="dl-check"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                  <i class="dl-bar"></i>
+                </li>
+                <li>
+                  <span class="dl-meta"><b>clip.mp4</b><small>YouTube</small></span>
+                  <i class="fmt fmt--yt">MP4</i>
+                  <span class="dl-check"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                  <i class="dl-bar"></i>
+                </li>
+                <li>
+                  <span class="dl-meta"><b>photo.jpg</b><small>Instagram</small></span>
+                  <i class="fmt fmt--jpg">JPG</i>
+                  <span class="dl-check"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                  <i class="dl-bar"></i>
+                </li>
+                <li>
+                  <span class="dl-meta"><b>report.pdf</b><small>example.com</small></span>
+                  <i class="fmt fmt--pdf">PDF</i>
+                  <span class="dl-check"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                  <i class="dl-bar"></i>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <div class="fcard-copy">
+            <h3 data-i18n="install.dl.title">Download them all.</h3>
+            <p data-i18n="install.dl.body">Videos and photos from X, YouTube, Instagram, and more.</p>
+          </div>
+        </article>
+
+        <!-- Video recording -->
+        <article class="fcard fcard--record" data-reveal>
+          <div class="scene scene--record" aria-hidden="true">
+            <div class="mock rec-card">
+              <div class="rec-top">
+                <span class="mock-label" data-i18n="sp.record.banner_label">Recording</span>
+                <span class="rec-pill"><i class="rec-dot"></i>REC · <b data-rec-timer>12:34</b></span>
+              </div>
+              <div class="rec-grid">
+                <span class="rec-tile rec-tile--a"><i class="rec-av">AL</i></span>
+                <span class="rec-tile rec-tile--b"><i class="rec-av">JM</i></span>
+                <span class="rec-tile rec-tile--c"><i class="rec-av">SK</i></span>
+                <span class="rec-tile rec-tile--d">
+                  <i class="rec-av"><svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="4"/><path d="M4.5 20c.8-4 3.8-6 7.5-6s6.7 2 7.5 6Z"/></svg></i>
+                </span>
+              </div>
+              <div class="rec-bar">
+                <i class="rec-play"></i>
+                <span class="rec-track"><i></i></span>
+              </div>
+              <div class="composer">
+                <span class="typed"><span class="typed-text typed-text--record">/record</span></span>
+                <span class="send"><svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></svg></span>
+              </div>
+              <div class="rec-cmds">
+                <span><b data-i18n="install.mock.tab">Tab</b> /record</span>
+                <span><b data-i18n="install.mock.screen">Screen</b> /record --full-screen</span>
+              </div>
+            </div>
+          </div>
+          <div class="fcard-copy">
+            <h3 data-i18n="install.record.title">Keep the whole call.</h3>
+            <p data-i18n-html="install.record.body_html">Record Zoom calls, demos, and more. Just type <code>/record</code>.</p>
+          </div>
+        </article>
+
+        <!-- CAPTCHA assistance -->
+        <article class="fcard fcard--captcha" data-reveal>
+          <div class="scene scene--captcha" aria-hidden="true">
+            <div class="mock cap-card">
+              <span class="mock-label" data-i18n="st.tab.captcha">CAPTCHA</span>
+              <div class="cap-widget">
+                <span class="cap-box"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                <span class="cap-text" data-i18n="install.mock.not_robot">I’m not a robot</span>
+              </div>
+              <ul class="cap-steps">
+                <li class="cap-s1">
+                  <span class="cap-dot cap-dot--ok"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                  <span data-i18n="install.mock.captcha_blocked">Page blocked by a challenge</span>
+                </li>
+                <li class="cap-s2">
+                  <span class="cap-dot cap-dot--ok"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                  <span data-i18n="install.mock.captcha_sent">Sent to your solving service</span>
+                </li>
+                <li class="cap-s3">
+                  <span class="cap-dot cap-dot--wait"><i></i></span>
+                  <span class="cap-dot cap-dot--ok cap-dot--final"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                  <span data-i18n="install.mock.captcha_waiting">Waiting for the solution…</span>
+                </li>
+              </ul>
+              <p class="mock-note" data-i18n="install.mock.captcha_note">Optional setup. Separate service account required; charges may apply.</p>
+            </div>
+          </div>
+          <div class="fcard-copy">
+            <h3 data-i18n="install.captcha.title">Don’t stall on a CAPTCHA.</h3>
+            <p data-i18n="install.captcha.body">Connect a supported solving service.</p>
+          </div>
+        </article>
+
+        <!-- SafeSocial -->
+        <article class="fcard fcard--safesocial" data-reveal>
+          <div class="scene scene--safe" aria-hidden="true">
+            <div class="mock safe-card">
+              <span class="mock-label">SafeSocial</span>
+              <div class="safe-frame">
+                <div class="safe-nav"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                <div class="safe-photo">
+                  <i class="safe-sun"></i>
+                  <i class="safe-hill safe-hill--far"></i>
+                  <i class="safe-hill safe-hill--near"></i>
+                </div>
+                <span class="safe-show" data-i18n="install.mock.show_image">Show image</span>
+                <i class="safe-cursor"></i>
+              </div>
+              <p class="mock-note" data-i18n="install.mock.safesocial_note">Optional · runs on your device · off by default</p>
+            </div>
+          </div>
+          <div class="fcard-copy">
+            <h3 data-i18n="install.safesocial.title">Give your mind a break from the feed.</h3>
+            <p data-i18n="install.safesocial.body">A calmer Instagram, filtered on device.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="install-cta" aria-labelledby="cta-title" data-reveal>
+      <div class="install-cta-copy">
+        <h2 id="cta-title" data-i18n="install.cta.title">Ready when you are.</h2>
+        <p data-i18n="install.open_panel.body">Open WebBrain next to this page to finish setup.</p>
+      </div>
+      <div class="install-cta-action">
+        <button class="open-panel-button" type="button" data-open-panel-mirror disabled>
+          <span data-i18n="install.open_panel">Open Side Panel</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 12h13M13 6l6 6-6 6"/>
+          </svg>
+        </button>
+        <p class="open-panel-status" data-open-panel-status-mirror aria-live="polite"></p>
+      </div>
     </section>
   </main>
 

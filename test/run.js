@@ -44110,7 +44110,7 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     assert.doesNotMatch(html, /toolbar-rehearsal|extension-menu|pin-target|class="next-step"/, `${label}: install guide must not present fake browser controls or a second pinning lesson`);
     assert.match(html, /class="feature-tabs"[^>]*role="tablist"/, `${label}: install guide should expose the showcase as an accessible tab list`);
     assert.doesNotMatch(html, /feature-caption-\w+"[^>]*class="visually-hidden"/, `${label}: showcase explanations should be visible to sighted users`);
-    for (const feature of ['ask', 'act', 'model', 'apocalypse']) {
+    for (const feature of ['ask', 'act', 'model']) {
       assert.match(html, new RegExp(`data-feature="${feature}"`), `${label}: ${feature} feature tab missing`);
       assert.match(html, new RegExp(`data-feature-panel="${feature}"`), `${label}: ${feature} feature panel missing`);
       assert.match(html, new RegExp(`id="feature-caption-${feature}" class="feature-copy"`), `${label}: ${feature} showcase copy should overlay the artwork as localizable HTML`);
@@ -44119,11 +44119,84 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     assert.match(html, /data-i18n="install\.showcase\.act\.title"/, `${label}: Act showcase headline should be localizable`);
     assert.match(html, /data-i18n="install\.showcase\.model\.title"/, `${label}: Model showcase headline should be localizable`);
     assert.match(html, /data-i18n="ap\.subtitle"/, `${label}: Apocalypse showcase headline should reuse the existing localized subtitle`);
+
+    // "Also built in": six animated feature cards under the hero showcase.
+    const sceneCss = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/install-scenes.css'), 'utf8');
+    const motionJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/install-motion.js'), 'utf8');
+    const featureCards = ['apocalypse', 'shot', 'dl', 'record', 'captcha', 'safesocial'];
+    assert.match(html, /<link rel="stylesheet" href="install-scenes\.css">/, `${label}: install page should load its feature-scene styles`);
+    assert.equal((html.match(/<article class="fcard fcard--\w+" data-reveal>/g) || []).length, featureCards.length, `${label}: install page should advertise every extra feature once`);
+    for (const card of featureCards) {
+      assert.match(html, new RegExp(`<article class="fcard fcard--${card}" data-reveal>`), `${label}: ${card} feature card missing`);
+      assert.match(sceneCss, new RegExp(`\\.fcard--${card} \\{ --fc: #[0-9a-f]{6}; \\}`), `${label}: ${card} card should carry its own accent colour`);
+    }
+    assert.equal((html.match(/class="scene scene--\w+" aria-hidden="true"/g) || []).length, featureCards.length, `${label}: decorative feature mock-ups should be hidden from assistive tech`);
+    assert.doesNotMatch(sceneCss, /\.fcard \{[^}]*--fc:/, `${label}: the shared .fcard rule must not override the per-card accent colours`);
+    assert.match(sceneCss, /@media \(prefers-reduced-motion: reduce\)/, `${label}: feature scenes should respect reduced motion`);
+    assert.match(sceneCss, /\.js-motion \[data-reveal\]/, `${label}: content should only be hidden for reveal once the motion script is running`);
+    assert.match(html, /\/screenshot --full-page|data-i18n-html="install\.shot\.body_html"/, `${label}: the screenshot card should show its command`);
+    assert.match(html, /<button class="open-panel-button" type="button" data-open-panel-mirror disabled>/, `${label}: closing call-to-action should start disabled like the primary one`);
+    assert.equal((html.match(/id="open-panel-button"/g) || []).length, 1, `${label}: only one primary panel-open button should exist`);
+    assert.match(installJs, /mirror\.addEventListener\('click', \(\) => openButton\.click\(\)\)/, `${label}: closing call-to-action should forward to the primary open action`);
+    assert.doesNotMatch(motionJs, /\b(?:fetch|XMLHttpRequest|chrome\.|browser\.)/, `${label}: install motion helpers should stay purely presentational`);
+    const installEnglish = (await import(pathToFileURL(path.join(ROOT, prefix, 'src/ui/locales/en.js')).href)).default;
+    for (const key of new Set([...html.matchAll(/data-i18n(?:-html)?="(install\.[\w.]+)"/g)].map((match) => match[1]))) {
+      assert.ok(installEnglish[key], `${label}: install.html references a missing English string: ${key}`);
+    }
+    for (const file of ['install.css', 'install-scenes.css', 'install-motion.js', 'install.js']) {
+      assert.equal(
+        fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui', file), 'utf8'),
+        fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui', file), 'utf8'),
+        `${file}: Chrome and Firefox install pages should share one implementation`,
+      );
+    }
+
+    const motion = await import(pathToFileURL(path.join(ROOT, prefix, 'src/ui/install-motion.js')).href);
+    assert.equal(motion.formatClock(12 * 60 + 34), '12:34', `${label}: the mock recording clock should format minutes and seconds`);
+    assert.equal(motion.formatClock(-3), '00:00', `${label}: the mock recording clock should never go negative`);
+    const autoplayListeners = new Map();
+    const autoplayClasses = new Set();
+    const autoplayShowcase = {
+      style: { setProperty() {} },
+      classList: {
+        add: (...names) => names.forEach((name) => autoplayClasses.add(name)),
+        remove: (...names) => names.forEach((name) => autoplayClasses.delete(name)),
+      },
+      addEventListener(type, fn) { autoplayListeners.set(type, fn); },
+      removeEventListener(type) { autoplayListeners.delete(type); },
+    };
+    let autoplaySelected = 0;
+    const autoplayTabs = ['ask', 'act', 'model'].map((feature, index) => ({
+      dataset: { feature },
+      getAttribute: (name) => (name === 'aria-selected' ? String(autoplaySelected === index) : null),
+      addEventListener(type, fn) { this[`on_${type}`] = fn; },
+    }));
+    const autoplayPicks = [];
+    const autoplayDocument = { querySelector: () => autoplayShowcase, querySelectorAll: () => autoplayTabs };
+    motion.initializeShowcaseAutoplay({
+      documentLike: autoplayDocument,
+      windowLike: { matchMedia: () => ({ matches: false }) },
+      select: (feature) => { autoplayPicks.push(feature); autoplaySelected = autoplayTabs.findIndex((tab) => tab.dataset.feature === feature); },
+    });
+    assert.ok(autoplayClasses.has('is-autoplaying'), `${label}: hero tabs should rotate on their own`);
+    autoplayListeners.get('animationend')({ animationName: 'some-other-animation' });
+    assert.deepEqual(autoplayPicks, [], `${label}: only the tab progress animation should advance the rotation`);
+    for (let step = 0; step < 3; step += 1) autoplayListeners.get('animationend')({ animationName: 'tab-progress' });
+    assert.deepEqual(autoplayPicks, ['act', 'model', 'ask'], `${label}: rotation should visit each tab in order and wrap`);
+    autoplayTabs[1].on_click();
+    assert.equal(autoplayClasses.has('is-autoplaying'), false, `${label}: choosing a tab should end the rotation`);
+    assert.equal(autoplayListeners.has('animationend'), false, `${label}: a stopped rotation should release its listeners`);
+    const reducedClasses = new Set();
+    motion.initializeShowcaseAutoplay({
+      documentLike: { querySelector: () => ({ ...autoplayShowcase, classList: { add: (...names) => names.forEach((name) => reducedClasses.add(name)), remove() {} } }), querySelectorAll: () => autoplayTabs },
+      windowLike: { matchMedia: () => ({ matches: true }) },
+      select() {},
+    });
+    assert.equal(reducedClasses.size, 0, `${label}: reduced-motion visitors should not get auto-rotating tabs`);
     for (const asset of [
       '02-tell-the-browser.png',
       '03-ask-any-page.png',
       '04-any-llm.png',
-      '08-apocalypse-mode.png',
       'fonts/bricolage-grotesque-var.woff2',
       'fonts/instrument-sans-var.woff2',
       'fonts/geist-mono-var.woff2',
@@ -44203,13 +44276,13 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     assert.equal(installModule.getBrowserGuide('vivaldi').failureKey, 'install.open_failed_chromium', `${label}: Chromium browsers should receive shortcut and Extensions-menu recovery`);
 
     const classSet = new Set();
-    const featureTabs = ['ask', 'act', 'model', 'apocalypse'].map((feature) => ({
+    const featureTabs = ['ask', 'act', 'model'].map((feature) => ({
       dataset: { feature },
       classList: { toggle(name, on) { if (on) classSet.add(`${feature}:${name}`); else classSet.delete(`${feature}:${name}`); } },
       setAttribute(name, value) { this[name] = value; },
       tabIndex: feature === 'ask' ? 0 : -1,
     }));
-    const featurePanels = ['ask', 'act', 'model', 'apocalypse'].map((feature) => ({
+    const featurePanels = ['ask', 'act', 'model'].map((feature) => ({
       dataset: { featurePanel: feature },
       hidden: feature !== 'ask',
     }));
@@ -44218,11 +44291,12 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
         return selector === '[data-feature]' ? featureTabs : featurePanels;
       },
     };
-    assert.equal(installModule.selectInstallFeature('apocalypse', { documentLike: showcaseDocument }), true, `${label}: Apocalypse Mode should be selectable`);
-    assert.equal(featureTabs[3]['aria-selected'], 'true', `${label}: selected feature tab should expose its state`);
+    assert.equal(installModule.selectInstallFeature('model', { documentLike: showcaseDocument }), true, `${label}: the Model feature should be selectable`);
+    assert.equal(featureTabs[2]['aria-selected'], 'true', `${label}: selected feature tab should expose its state`);
     assert.equal(featureTabs[0].tabIndex, -1, `${label}: roving tab stop should leave the old feature`);
-    assert.equal(featurePanels[3].hidden, false, `${label}: selected Apocalypse Mode artwork should become visible`);
+    assert.equal(featurePanels[2].hidden, false, `${label}: selected Model artwork should become visible`);
     assert.equal(featurePanels[0].hidden, true, `${label}: previous feature artwork should be hidden`);
+    assert.equal(installModule.selectInstallFeature('apocalypse', { documentLike: showcaseDocument }), false, `${label}: Apocalypse Mode now lives in the feature cards, not the hero tabs`);
 
     const calls = [];
     const messages = [];
@@ -44279,14 +44353,13 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
   }
 
   const explainerRenderer = fs.readFileSync(path.join(ROOT, 'assets/webstore-explainer-2026/render.mjs'), 'utf8');
-  assert.match(explainerRenderer, /actScene\(true\), askScene\(true\), modelsScene\(true\), apocalypseScene\(\{ onboarding: true \}\)/, 'install showcase should render dedicated copy-free artwork');
+  assert.match(explainerRenderer, /actScene\(true\), askScene\(true\), modelsScene\(true\),\s*\];/, 'install showcase should render dedicated copy-free artwork');
   assert.match(explainerRenderer, /scene\.onboarding[\s\S]*?'install-assets'/, 'copy-free artwork should be written only to extension install assets');
   assert.match(explainerRenderer, /candidate\.onboarding \? `onboarding\/\$\{candidate\.file\}` : candidate\.file/, 'onboarding-only renders should be independently selectable without replacing Web Store screenshots');
   for (const asset of [
     '02-tell-the-browser.png',
     '03-ask-any-page.png',
     '04-any-llm.png',
-    '08-apocalypse-mode.png',
   ]) {
     const storeArtwork = fs.readFileSync(path.join(ROOT, 'assets/webstore-explainer-2026', asset));
     const chromeArtwork = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/install-assets', asset));
@@ -44349,9 +44422,22 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     const chromeLocale = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales', filename)).href)).default;
     const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales', filename)).href)).default;
     const installKeys = Object.keys(chromeLocale).filter((key) => key.startsWith('install.'));
-    assert.equal(installKeys.length, 35, `${filename}: install guide should translate every user-facing string`);
+    assert.equal(installKeys.length, 60, `${filename}: install guide should translate every user-facing string`);
     assert.ok(chromeLocale['install.showcase.ask.title'], `${filename}: Ask showcase headline should be translated`);
     assert.ok(chromeLocale['install.showcase.apocalypse.body'], `${filename}: Apocalypse showcase body should be translated`);
+    for (const key of [
+      'install.more.eyebrow', 'install.more.title', 'install.more.body',
+      'install.shot.title', 'install.shot.body_html', 'install.dl.title', 'install.dl.body',
+      'install.captcha.title', 'install.captcha.body', 'install.safesocial.title', 'install.safesocial.body',
+      'install.record.title', 'install.record.body_html', 'install.cta.title',
+      'install.mock.files', 'install.mock.offline', 'install.mock.not_robot', 'install.mock.captcha_blocked',
+      'install.mock.captcha_sent', 'install.mock.captcha_waiting', 'install.mock.captcha_note',
+      'install.mock.show_image', 'install.mock.safesocial_note', 'install.mock.tab', 'install.mock.screen',
+    ]) {
+      assert.ok(chromeLocale[key], `${filename}: ${key} should be translated`);
+    }
+    assert.ok(chromeLocale['install.shot.body_html'].includes('<code>/screenshot --full-page</code>'), `${filename}: the screenshot command must survive translation verbatim`);
+    assert.ok(chromeLocale['install.record.body_html'].includes('<code>/record</code>'), `${filename}: the record command must survive translation verbatim`);
     assert.ok(chromeLocale['install.pin.confirm'], `${filename}: pin coachmark should translate its confirmation action`);
     assert.ok(chromeLocale['install.pin.skip'], `${filename}: pin coachmark should translate its skip action`);
     assert.ok(chromeLocale['install.open_failed_chromium'], `${filename}: Chromium recovery guidance should be translated`);
