@@ -1063,7 +1063,8 @@ test('round-19: import applies by reloading; multiline messages split on real ne
 test('round-20: todo focus handlers, vertical colour resets, padded date reordering, seconds clearing', () => {
   const read = (f) => readFileSync(nt(f), 'utf8');
   const todo = read('features/navbar/components/Todo.jsx');
-  assert.match(todo, /onFocus=\{handleShowTodo\}\s*onBlur=\{handleHideTodo\}/);
+  assert.match(todo, /onFocus=\{handleShowTodo\}/);
+  assert.doesNotMatch(todo, /onFocus=\{handleHideTodo\}/);
   const time = read('features/time/options/TimeOptions.jsx');
   assert.doesNotMatch(time, /onClick=\{\(\) => localStorage\.setItem\('(hour|minute|second)Colour'/);
   assert.equal((time.match(/updateColour\('(hour|minute|second)Colour', \{ target: \{ value: '#ffffff' \} \}\)/g) || []).length, 3);
@@ -1074,7 +1075,7 @@ test('round-20: todo focus handlers, vertical colour resets, padded date reorder
 
 test('round-21: Apps popup closes on blur; Maximise restores the page when it unmounts', () => {
   const read = (f) => readFileSync(nt(f), 'utf8');
-  assert.match(read('features/navbar/components/Apps.jsx'), /onFocus=\{handleShowApps\}\s*onBlur=\{handleHideApps\}/);
+  assert.match(read('features/navbar/components/Apps.jsx'), /onFocus=\{handleShowApps\}/);
   const max = read('features/navbar/components/Maximise.jsx');
   assert.match(max, /useEffect\(\s*\(\) => \(\) => \{\s*if \(!hiddenRef\.current\) return;/);
   assert.match(max, /hiddenRef\.current = true/);
@@ -1092,4 +1093,22 @@ test('round-22: switch is an accessible control; report link uses ?title=; uploa
   const custom = read('features/background/options/Custom.jsx');
   assert.doesNotMatch(custom, /localStorage\.setItem\('customBackground', JSON/);
   assert.equal((custom.match(/syncBackgroundCount\(backgrounds\)/g) || []).length, 3);
+});
+
+test('round-23: popups keep focus inside; reminder mounts via event; backups carry uploaded backgrounds', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  for (const f of ['Notes', 'Todo', 'Apps']) {
+    const src = read(`features/navbar/components/${f}.jsx`);
+    assert.match(src, /event\.currentTarget\.contains\(event\.relatedTarget\)/, f);
+    assert.doesNotMatch(src, /<button[\s\S]{0,200}onBlur=/, `${f}: trigger no longer hides on its own blur`);
+  }
+  assert.match(read('utils/reminder.js'), /EventBus\.emit\('reminder'\)/);
+  assert.match(read('components/Elements/MainModal/backend/Tabs.jsx'), /EventBus\.on\('reminder', handleReminder\)[\s\S]*EventBus\.off\('reminder', handleReminder\)/);
+  const exp = read('utils/settings/export.js');
+  assert.match(exp, /BACKGROUNDS_BACKUP_KEY = 'wbBackgroundsBackup'/);
+  assert.match(exp, /getAllBackgroundsWithMetadata\(\)/);
+  const imp = read('utils/settings/import.js');
+  assert.match(imp, /export async function importSettings/);
+  assert.match(imp, /\[BACKGROUNDS_BACKUP_KEY\]: backgrounds/);
+  assert.match(imp, /await clearAllBackgrounds\(\)[\s\S]*await addBackground\(record\)/);
 });

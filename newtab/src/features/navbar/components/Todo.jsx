@@ -149,12 +149,19 @@ function Todo({ todoRef, floatRef, position, xPosition, yPosition }) {
   };
 
   return (
-    <div className="notes" onMouseLeave={handleHideTodo} onFocus={handleShowTodo}>
+    <div
+      className="notes"
+      onMouseLeave={handleHideTodo}
+      onFocus={handleShowTodo}
+      onBlur={(event) => {
+        // Tab from the button into the popup moves focus inside the container: keep it open.
+        if (!event.currentTarget.contains(event.relatedTarget)) handleHideTodo();
+      }}
+    >
       <button
         className="navbarButton"
         onMouseEnter={handleShowTodo}
         onFocus={handleShowTodo}
-        onBlur={handleHideTodo}
         ref={todoRef}
         style={{ fontSize: zoomFontSize }}
       >

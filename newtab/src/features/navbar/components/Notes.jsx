@@ -68,12 +68,19 @@ const Notes = ({ notesRef, floatRef, position, xPosition, yPosition }) => {
   };
 
   return (
-    <div className="notes" onMouseLeave={handleHideNotes} onFocus={handleShowNotes}>
+    <div
+      className="notes"
+      onMouseLeave={handleHideNotes}
+      onFocus={handleShowNotes}
+      onBlur={(event) => {
+        // Tab from the button into the popup moves focus inside the container: keep it open.
+        if (!event.currentTarget.contains(event.relatedTarget)) handleHideNotes();
+      }}
+    >
       <button
         className="navbarButton"
         onMouseEnter={handleShowNotes}
         onFocus={handleShowNotes}
-        onBlur={handleHideNotes}
         ref={notesRef}
         style={{ fontSize: zoomFontSize }}
         aria-label={t('widgets.navbar.notes.title')}

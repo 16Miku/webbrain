@@ -55,12 +55,19 @@ const Apps = ({ appsRef, floatRef, position, xPosition, yPosition }) => {
   const appsInfo = apps;
 
   return (
-    <div className="notes" onMouseLeave={handleHideApps} onFocus={handleShowApps}>
+    <div
+      className="notes"
+      onMouseLeave={handleHideApps}
+      onFocus={handleShowApps}
+      onBlur={(event) => {
+        // Tab from the button into the popup moves focus inside the container: keep it open.
+        if (!event.currentTarget.contains(event.relatedTarget)) handleHideApps();
+      }}
+    >
       <button
         className="navbarButton"
         onMouseEnter={handleShowApps}
         onFocus={handleShowApps}
-        onBlur={handleHideApps}
         ref={appsRef}
         style={{ fontSize: zoomFontSize }}
       >

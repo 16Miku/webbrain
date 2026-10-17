@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useT } from 'contexts/TranslationContext';
 import variables from 'config/variables';
+import EventBus from 'utils/eventbus';
 import Tab from './Tab';
 import ReminderInfo from '../components/ReminderInfo';
 import ErrorBoundary from '../../../../features/misc/modals/ErrorBoundary';
@@ -108,6 +109,13 @@ const Tabs = ({
       }
     }
   }, [resetToFirst]);
+
+  // showReloadReminder() asks for the notice through this event.
+  useEffect(() => {
+    const handleReminder = () => setShowReminder(true);
+    EventBus.on('reminder', handleReminder);
+    return () => EventBus.off('reminder', handleReminder);
+  }, []);
 
   const handleHideReminder = () => {
     localStorage.setItem('showReminder', 'false');
