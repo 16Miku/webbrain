@@ -1,6 +1,7 @@
 // Settings → General → "When a question times out": 'finish' (default) keeps
 // an unattended run moving, 'safe' takes the safe first option. Questions
-// about the short list of consequential actions always take the safe answer.
+// about the short list of consequential actions always take the safe answer,
+// and so does a question the model did not classify as consequence 'none'.
 import assert from 'node:assert/strict';
 import test, { after, before } from 'node:test';
 import fs from 'node:fs/promises';
@@ -56,6 +57,40 @@ for (const { build, Agent, policy, Capability } of builds) {
     assert.equal(clarifyTimeoutChoice({ policy: 'safe', options, safeFirst: true }).authorized, true);
   });
 
+  test(`${build}: only a question classified 'none' may finish on its own; anything else fails closed`, () => {
+    const { normalizeClarifyConsequence, clarifyQuestionIsHard, CLARIFY_NO_CONSEQUENCE } = policy;
+    assert.equal(CLARIFY_NO_CONSEQUENCE, 'none');
+    assert.equal(normalizeClarifyConsequence('none'), 'none');
+    assert.equal(normalizeClarifyConsequence('deletion'), 'deletion');
+    for (const value of [undefined, null, '', 'maybe', 'NONE', 0]) assert.equal(normalizeClarifyConsequence(value), null);
+    assert.equal(clarifyQuestionIsHard('none'), false);
+    for (const value of [null, 'deletion', 'money', 'credentials', 'recipient', 'publication']) {
+      assert.equal(clarifyQuestionIsHard(value), true, String(value));
+    }
+  });
+
+  test(`${build}: an unclassified question times out to the safe answer even on the finish setting`, async () => {
+    for (const [index, consequence] of [undefined, 'maybe'].entries()) {
+      const agent = new Agent({});
+      agent.clarifyTimeoutSec = 30;
+      const tab = 9160 + index;
+      const args = { question: 'Delete the 40 archived emails?', options: ['Keep them', 'Delete them'], finish_option: 'Delete them',
+        ...(consequence === undefined ? {} : { consequence }) };
+      const { result, prompt } = await askAndTimeOut(agent, tab, args, { answer: 'Delete them' });
+      assert.equal(prompt.timeoutPolicy, 'safe', `${consequence}: the card announces the safe answer`);
+      assert.equal(result.answer, 'Keep them');
+      assert.equal(result.authorized, false, `${consequence}: an unclassified question was approved by a timeout`);
+      assert.ok(agent._clarificationAuthorizationBlock(tab, 'click_ax', {}, [Capability.CLICK]), 'consequential actions stay blocked');
+    }
+    const instant = new Agent({});
+    instant.clarifyTimeoutSec = 0;
+    const instantResult = await instant.executeTool(9162, 'clarify', {
+      question: 'Delete the 40 archived emails?', options: ['Keep them', 'Delete them'], finish_option: 'Delete them',
+    }, () => {});
+    assert.equal(instantResult.answer, 'Keep them');
+    assert.equal(instantResult.authorized, false, 'Instant must not approve an unclassified question');
+  });
+
   test(`${build}: by default a timed-out question applies finish_option and the run continues`, async () => {
     const agent = new Agent({});
     assert.equal(agent.clarifyTimeoutPolicy, 'finish', 'finishing the task is the default');
@@ -65,6 +100,7 @@ for (const { build, Agent, policy, Capability } of builds) {
       question: 'The editor could not be verified exactly. Commit the post as it appears?',
       options: ['Leave it uncommitted', 'Commit it'],
       finish_option: 'Commit it',
+      consequence: 'none',
     });
     assert.equal(prompt.timeoutAnswer, 'Commit it', 'the card counts down to the finishing answer');
     assert.equal(prompt.timeoutPolicy, 'finish');
@@ -85,6 +121,7 @@ for (const { build, Agent, policy, Capability } of builds) {
     const { result, prompt } = await askAndTimeOut(agent, tab, {
       question: 'Which of the two API keys did you mean?',
       options: ['The WordPress application password', 'The plugin key'],
+      consequence: 'none',
     });
     assert.equal(prompt.timeoutContinues, true, 'the card says the run continues on its own');
     assert.equal(result.answer, policy.CLARIFY_CONTINUE_ANSWER);
@@ -121,7 +158,7 @@ for (const { build, Agent, policy, Capability } of builds) {
     agent.clarifyTimeoutSec = 30;
     const tab = 9120;
     const unsafe = await askAndTimeOut(agent, tab, {
-      question: 'Commit the post?', options: ['Leave it uncommitted', 'Commit it'], finish_option: 'Commit it',
+      question: 'Commit the post?', options: ['Leave it uncommitted', 'Commit it'], finish_option: 'Commit it', consequence: 'none',
     });
     assert.equal(unsafe.prompt.timeoutPolicy, 'safe');
     assert.equal(unsafe.result.answer, 'Leave it uncommitted');
@@ -132,7 +169,7 @@ for (const { build, Agent, policy, Capability } of builds) {
     other.clarifyTimeoutPolicy = 'safe';
     other.clarifyTimeoutSec = 30;
     const safeFirst = await askAndTimeOut(other, 9121, {
-      question: 'Continue browsing?', options: ['Continue browsing', 'Stop'], safe_first: true,
+      question: 'Continue browsing?', options: ['Continue browsing', 'Stop'], safe_first: true, consequence: 'none',
     });
     assert.equal(safeFirst.result.authorized, true, 'safe_first still applies on the safe setting');
   });
@@ -145,7 +182,7 @@ for (const { build, Agent, policy, Capability } of builds) {
       question: 'Delete the old drafts?', options: ['Keep them', 'Delete them'], consequence: 'deletion',
     });
     const reasked = await askAndTimeOut(agent, tab, {
-      question: 'Should I go ahead?', options: ['Wait', 'Go ahead'], finish_option: 'Go ahead',
+      question: 'Should I go ahead?', options: ['Wait', 'Go ahead'], finish_option: 'Go ahead', consequence: 'none',
     });
     assert.equal(reasked.result.authorized, false, 're-asking without the consequence did not approve it');
     assert.ok(agent._clarificationAuthorizationBlock(tab, 'click_ax', {}, [Capability.CLICK]));
@@ -163,7 +200,7 @@ for (const { build, Agent, policy, Capability } of builds) {
     const tab = 9140;
     const updates = [];
     const result = await agent.executeTool(tab, 'clarify', {
-      question: 'Which list should I use?', options: ['The first list', 'The second list'],
+      question: 'Which list should I use?', options: ['The first list', 'The second list'], consequence: 'none',
     }, (type, data) => updates.push({ type, data }));
     const auto = updates.find(update => update.type === 'clarify_auto')?.data;
     assert.equal(auto?.continues, true, 'the panel learns the run continued on its own');
@@ -174,7 +211,7 @@ for (const { build, Agent, policy, Capability } of builds) {
     const instant = new Agent({});
     instant.clarifyTimeoutSec = 0;
     const instantResult = await instant.executeTool(9141, 'clarify', {
-      question: 'Which list?', options: ['First', 'Second'], finish_option: 'Second',
+      question: 'Which list?', options: ['First', 'Second'], finish_option: 'Second', consequence: 'none',
     }, () => {});
     assert.equal(instantResult.source, 'auto');
     assert.equal(instantResult.answer, 'Second', 'Instant picks the finishing answer too');
@@ -197,7 +234,7 @@ for (const { build, Agent, policy, Capability } of builds) {
     safe.clarifyTimeoutSec = 0;
     safe.clarifyTimeoutPolicy = 'safe';
     const safeResult = await safe.executeTool(9151, 'clarify', {
-      question: 'Commit the post?', options: ['Leave it uncommitted', 'Commit it'], finish_option: 'Commit it',
+      question: 'Commit the post?', options: ['Leave it uncommitted', 'Commit it'], finish_option: 'Commit it', consequence: 'none',
     }, () => {});
     assert.equal(safeResult.answer, 'Leave it uncommitted');
     assert.equal(safeResult.authorized, false, 'Instant on the safe setting does not authorize');
@@ -205,7 +242,7 @@ for (const { build, Agent, policy, Capability } of builds) {
     const finish = new Agent({});
     finish.clarifyTimeoutSec = 0;
     const finishResult = await finish.executeTool(9152, 'clarify', {
-      question: 'Which list?', options: ['First', 'Second'],
+      question: 'Which list?', options: ['First', 'Second'], consequence: 'none',
     }, () => {});
     assert.equal(finishResult.authorized, true, 'Instant on the finish setting continues');
     assert.match(finishResult.note, /Instant \(source=auto\)/);
@@ -243,7 +280,9 @@ for (const { build, Agent, policy, Capability } of builds) {
     assert.match(panel, /sp\.clarify\.continued/);
     assert.match(scheduler, /pending\.timeoutAnswer = obj\.timeoutAnswer\.slice\(0, 200\)/);
     assert.match(tools, /finish_option: \{/);
-    assert.match(tools, /enum: \['deletion', 'money', 'credentials', 'recipient', 'publication'\]/);
+    assert.match(tools, /enum: \['none', 'deletion', 'money', 'credentials', 'recipient', 'publication'\]/);
+    assert.match(tools, /Classify every question\. "none" when answering approves nothing below/);
+    assert.match(tools, /set consequence on every question/i);
   });
 }
 

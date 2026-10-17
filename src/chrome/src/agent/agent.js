@@ -163,7 +163,7 @@ import { generateImage, readMediaConfig } from './generative-media.js';
 import { GENERATIVE_MEDIA_SETUP_NOTE, isImageGenConfigured, mediaPermissionUrl, validateMediaConfig } from './media-config.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, repairClarifyText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
-import { clarifyTimedAnswer, clarifyTimeoutChoice, normalizeClarifyConsequence, normalizeClarifyTimeoutPolicy } from './clarify-timeout.js';
+import { clarifyQuestionIsHard, clarifyTimedAnswer, clarifyTimeoutChoice, normalizeClarifyConsequence, normalizeClarifyTimeoutPolicy } from './clarify-timeout.js';
 import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
 import { stepLimitUserMessage, terminalGuardUserMessage } from './terminal-messages.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
@@ -41617,13 +41617,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const explicitRecipientQuestion = purpose === 'message_recipient' || purpose === 'recipient_change';
       // What a timeout answers is fixed when the question is asked. A
       // question about deleting data, money, credentials, the recipient
-      // or an unrequested publication always takes the safe default.
+      // or an unrequested publication always takes the safe default, and so
+      // does one the model did not classify as consequence 'none'.
       const timeoutChoice = clarifyTimeoutChoice({
         policy: this.clarifyTimeoutPolicy,
         options,
         safeFirst,
         finishOption,
-        hardQuestion: !!consequence || explicitRecipientQuestion,
+        hardQuestion: clarifyQuestionIsHard(consequence) || explicitRecipientQuestion,
       });
       const technicalRecipientReasons = new Set(['recipient_identity_unavailable', 'message_body_unverified',
         'message_body_baseline_unavailable', 'recipient_dispatch_binding_unavailable']);
@@ -41792,7 +41793,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         note = authorized
           // Settings Instant auto-approve (headless / unattended). User policy — proceed.
           ? 'This answer was auto-selected because Clarify timeout is set to Instant (source=auto). The user intentionally configured unattended auto-approve; treat this answer as the chosen default and continue the task. Do not re-ask the same question. Put the intended default first in options when Instant mode may be on.'
-          : 'This answer was auto-selected immediately because Clarify timeout is set to Instant (source=auto), but this question takes the safe answer (it has a consequence, or the timeout setting is "Play it safe"). It is NOT a real user confirmation: continue only with the safe default path and do not take irreversible, costly, or destructive actions based on it.';
+          : 'This answer was auto-selected immediately because Clarify timeout is set to Instant (source=auto), but this question takes the safe answer (its consequence is not "none", or the timeout setting is "Play it safe"). It is NOT a real user confirmation: continue only with the safe default path and do not take irreversible, costly, or destructive actions based on it.';
       } else {
         note = explicitRecipientQuestion
           ? 'This is a direct reply from the user; continue the task with it in mind. It does not approve a recipient by itself: if a send would reach someone other than the recipient named for the task, WebBrain asks the user on its own card before sending. Do not ask about the recipient again.'

@@ -11,7 +11,9 @@
 // A question whose answer would authorize one of the short list of
 // consequential actions (deleting data, spending money, credentials, who
 // receives a message, publishing something the user did not ask for) always
-// uses 'safe', whatever the setting, so walking away never approves one.
+// uses 'safe', whatever the setting, so walking away never approves one. The
+// model classifies every question with `consequence`; only 'none' lets a
+// timeout finish the task, so a question it did not classify fails closed.
 // WebBrain's own confirmation cards (permissions, form submits, recipients,
 // deletions) are separate prompts and never time out.
 //
@@ -20,6 +22,8 @@
 export const CLARIFY_TIMEOUT_POLICIES = Object.freeze(['finish', 'safe']);
 export const DEFAULT_CLARIFY_TIMEOUT_POLICY = 'finish';
 export const CLARIFY_CONSEQUENCES = Object.freeze(['deletion', 'money', 'credentials', 'recipient', 'publication']);
+// The model's statement that answering approves nothing on that list.
+export const CLARIFY_NO_CONSEQUENCE = 'none';
 
 export const CLARIFY_TIMEOUT_ANSWER = '(no response — timed out)';
 export const CLARIFY_INSTANT_NO_OPTIONS_ANSWER = '(no options — auto-selected)';
@@ -29,8 +33,19 @@ export function normalizeClarifyTimeoutPolicy(value) {
   return value === 'safe' ? 'safe' : DEFAULT_CLARIFY_TIMEOUT_POLICY;
 }
 
+/** 'none', one of CLARIFY_CONSEQUENCES, or null when the question was not classified. */
 export function normalizeClarifyConsequence(value) {
+  if (value === CLARIFY_NO_CONSEQUENCE) return CLARIFY_NO_CONSEQUENCE;
   return CLARIFY_CONSEQUENCES.includes(value) ? value : null;
+}
+
+/**
+ * Whether a timeout answers this question with the safe option whatever the
+ * setting. Only a question classified 'none' may finish the task on its own;
+ * a missing or unknown classification counts as consequential.
+ */
+export function clarifyQuestionIsHard(consequence) {
+  return consequence !== CLARIFY_NO_CONSEQUENCE;
 }
 
 /**

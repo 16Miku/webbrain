@@ -50360,13 +50360,14 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(instantSafe.authorized, false, `${AgentClass.name}: Instant under the safe setting authorized a non-safe_first option`);
     assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: Instant under the safe setting cleared the timeout guard`);
 
-    // Under the default setting (finish), Instant keeps the task moving.
+    // Under the default setting (finish), Instant keeps the task moving for
+    // a question the model classified as consequence 'none'.
     await agent._recordClarificationAuthorization(tabId, 'user');
     agent.clarifyTimeoutPolicy = 'finish';
     const instant = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Which record?', options: ['First', 'Second'] },
+      { question: 'Which record?', options: ['First', 'Second'], consequence: 'none' },
       () => { },
     );
     assert.equal(instant.source, 'auto', `${AgentClass.name}: Instant did not use source=auto`);
