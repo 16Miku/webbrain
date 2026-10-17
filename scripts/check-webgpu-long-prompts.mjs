@@ -4,9 +4,15 @@
 // (a CPU-fallback recurrence or full-sequence logits only show up with
 // thousands of prompt tokens). This runs real text of several lengths (and,
 // with --vision, a long prompt that includes an image) through
-// src/chrome/src/offscreen/inference-worker.js, reports wall time per prompt
-// and seconds per 1k prompt tokens, and checks that greedy answers are the same
-// for every requested prefill slice size. See docs/webgpu-models.md.
+// src/chrome/src/offscreen/inference-worker.js and reports wall time per
+// prompt and seconds per 1k prompt tokens. It fails when a text prompt of at
+// least 4k tokens is slower than --max-seconds-per-1k (default 10; a CPU
+// fallback costs 100 or more), or when the answer with a sliced prefill differs
+// from the first --slices value within its first --min-common-words words
+// (default 8). A broken cache handoff loses the prompt and diverges at once,
+// while FP16 rounding differences between slice sizes can change a near-tied
+// token later in a long greedy answer; the common prefix is reported either
+// way. Slicing applies to the Bonsai 2 Vision path. See docs/webgpu-models.md.
 //
 //   node scripts/check-webgpu-long-prompts.mjs --model webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision \
 //     --vision --profile .build/bonsai/chunked-2b-profile --offline --lengths 1000,4000,8000 --slices 0,512
@@ -34,6 +40,8 @@ const dtype = option('--dtype', null)
 const lengths = option('--lengths', '1000,4000,8000').split(',').map(Number);
 const slices = option('--slices', '0,512').split(',').map(Number);
 const maxTokens = Number(option('--max-tokens', 48));
+const maxSecondsPer1k = Number(option('--max-seconds-per-1k', 10));
+const minCommonWords = Number(option('--min-common-words', 8));
 const profile = path.resolve(option('--profile', '.build/webgpu-long-prompts/profile'));
 const output = path.resolve(option('--output', '.build/webgpu-long-prompts/result.json'));
 const localRepos = {};
@@ -88,7 +96,17 @@ const context = await chromium.launchPersistentContext(profile, {
   args: ['--enable-unsafe-webgpu', '--force-high-performance-gpu',
     ...(option('--adapter-luid', '') ? [`--use-adapter-luid=${option('--adapter-luid')}`] : [])],
 });
-const result = { model, vision, dtype, startedAt: new Date().toISOString(), runs: [], mismatches: [] };
+const words = text => String(text || '').trim().split(/\s+/).filter(Boolean);
+const commonPrefixWords = (a, b) => {
+  const left = words(a), right = words(b);
+  let count = 0;
+  while (count < left.length && count < right.length && left[count] === right[count]) count++;
+  return count;
+};
+const result = {
+  model, vision, dtype, maxSecondsPer1k, minCommonWords, startedAt: new Date().toISOString(),
+  runs: [], divergences: [], failures: [],
+};
 try {
   const page = await context.newPage();
   page.on('console', message => { if (message.type() === 'error') console.log(`[browser:error] ${message.text().slice(0, 300)}`); });
@@ -153,18 +171,27 @@ try {
       result.runs.push(run);
       answers.set(slice, reply.content);
       console.log(JSON.stringify(run).slice(0, 300));
+      if (prompt.name.startsWith('text-') && prompt.tokens >= 4000 && run.secondsPer1kPromptTokens > maxSecondsPer1k) {
+        result.failures.push({ prompt: prompt.name, slice, check: 'prefill-speed', secondsPer1kPromptTokens: run.secondsPer1kPromptTokens });
+      }
     }
     const reference = answers.get(slices[0]);
     for (const [slice, content] of answers) {
-      if (content !== reference) result.mismatches.push({ prompt: prompt.name, slice, reference: slices[0] });
+      if (content === reference) continue;
+      const common = commonPrefixWords(reference, content);
+      const divergence = { prompt: prompt.name, slice, reference: slices[0], commonPrefixWords: common, referenceWords: words(reference).length };
+      result.divergences.push(divergence);
+      if (common < Math.min(minCommonWords, words(reference).length)) result.failures.push({ ...divergence, check: 'early-divergence' });
     }
   }
-  result.passed = result.mismatches.length === 0;
+  result.passed = result.failures.length === 0;
 } finally {
   result.finishedAt = new Date().toISOString();
   await fs.writeFile(output, JSON.stringify(result, null, 2));
   await context.close();
   server.close();
 }
+for (const divergence of result.divergences) console.log(`divergence: ${JSON.stringify(divergence)}`);
+for (const failure of result.failures || []) console.log(`failure: ${JSON.stringify(failure)}`);
 console.log(`${result.passed ? 'PASSED' : 'FAILED'}: ${output}`);
 if (!result.passed) process.exitCode = 1;
