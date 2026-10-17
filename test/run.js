@@ -50211,7 +50211,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const guardedSafeFirst = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue browsing?', options: ['Continue browsing', 'Stop'], safe_first: true },
+      { question: 'Continue browsing?', options: ['Continue browsing', 'Stop'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Continue browsing', 'timeout');
       },
@@ -50234,7 +50234,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const blankOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', options: [' '], safe_first: true },
+      { question: 'Continue?', options: [' '], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '', 'timeout');
       },
@@ -50246,7 +50246,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const invisibleOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', options: ['\u200B'], safe_first: true },
+      { question: 'Continue?', options: ['\u200B'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '\u200B', 'timeout');
       },
@@ -50257,7 +50257,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const brailleBlankOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', options: ['\u2800'], safe_first: true },
+      { question: 'Continue?', options: ['\u2800'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '\u2800', 'timeout');
       },
@@ -50269,7 +50269,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
       const fillerTimeout = await agent.executeTool(
         tabId,
         'clarify',
-        { question: 'Continue?', options: [filler], safe_first: true },
+        { question: 'Continue?', options: [filler], safe_first: true, consequence: 'none' },
         (type, data) => {
           if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, filler, 'timeout');
         },
@@ -50282,7 +50282,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const emojiOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', options: ['👩‍💻 Continue', 'Stop'], safe_first: true },
+      { question: 'Continue?', options: ['👩‍💻 Continue', 'Stop'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '👩‍💻 Continue', 'timeout');
       },
@@ -50293,7 +50293,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const promotedOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Delete everything?', options: [' ', 'Yes, delete them'], safe_first: true },
+      { question: 'Delete everything?', options: [' ', 'Yes, delete them'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
       },
@@ -50304,7 +50304,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const truncatedInvisibleOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Delete everything?', options: [`${'\u200B'.repeat(200)}Yes`, 'Yes, delete them'], safe_first: true },
+      { question: 'Delete everything?', options: [`${'\u200B'.repeat(200)}Yes`, 'Yes, delete them'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
       },
@@ -50315,7 +50315,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const affirmativeTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', options: ['Yes', 'No'], safe_first: true },
+      { question: 'Continue?', options: ['Yes', 'No'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes', 'timeout');
       },
@@ -50324,6 +50324,24 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(affirmativeTimeout.authorized, true, `${AgentClass.name}: timed-out safe_first Yes was not accepted`);
     assert.equal(affirmativeTimeout.requiresExplicitConfirmation, false, `${AgentClass.name}: timed-out safe_first Yes still required confirmation`);
     assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: timed-out safe_first Yes left a timeout guard armed`);
+
+    // safe_first is the model's hint: it never lets a consequential or
+    // unclassified question approve itself on a timeout.
+    for (const consequence of ['deletion', undefined]) {
+      await agent._recordClarificationAuthorization(tabId, 'user');
+      const hardSafeFirst = await agent.executeTool(
+        tabId,
+        'clarify',
+        { question: 'Delete everything?', options: ['Yes, delete them', 'No, keep them'], safe_first: true,
+          ...(consequence ? { consequence } : {}) },
+        (type, data) => {
+          if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
+        },
+      );
+      assert.equal(hardSafeFirst.authorized, false, `${AgentClass.name}: safe_first authorized a ${consequence || 'unclassified'} question`);
+      assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: ${consequence || 'unclassified'} safe_first timeout left no guard`);
+    }
+    await agent._recordClarificationAuthorization(tabId, 'user');
 
     const unsafeTimeout = await agent.executeTool(
       tabId,
@@ -50339,7 +50357,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const emptyOptionsTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', safe_first: true },
+      { question: 'Continue?', safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '(no response - timed out)', 'timeout');
       },
