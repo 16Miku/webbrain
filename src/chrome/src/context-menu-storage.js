@@ -359,7 +359,11 @@ const INLINE_FOLLOW_UP_LABELS = Object.freeze({
   explain: 'explanation',
   proofread: 'proofreading result',
 });
-export const INLINE_FOLLOW_UP_ANSWER_MAX_CHARS = 6000;
+// The most a card answer can hold: 8,000 output tokens at four characters each. Both a
+// follow-up and a continuation carry the whole answer up to this, because the side panel
+// shows it to the user and a question may refer to any part of it.
+const INLINE_CARD_ANSWER_MAX_CHARS = 32000;
+export const INLINE_FOLLOW_UP_ANSWER_MAX_CHARS = INLINE_CARD_ANSWER_MAX_CHARS;
 
 // A follow-up typed in a card continues in the side panel. The card's earlier
 // answer is model output derived from untrusted page text, so it travels inside
@@ -367,8 +371,12 @@ export const INLINE_FOLLOW_UP_ANSWER_MAX_CHARS = 6000;
 export function buildFollowUpSelectionText(selectionText, priorAction, priorAnswer) {
   const selection = String(selectionText || '');
   const label = INLINE_FOLLOW_UP_LABELS[String(priorAction || '').trim()];
-  const answer = String(priorAnswer || '').trim().slice(0, INLINE_FOLLOW_UP_ANSWER_MAX_CHARS);
-  if (!label || !answer) return selection;
+  const full = String(priorAnswer || '').trim();
+  if (!label || !full) return selection;
+  // A longer answer than a card can produce is shortened, and says so.
+  const answer = full.length > INLINE_FOLLOW_UP_ANSWER_MAX_CHARS
+    ? `${full.slice(0, INLINE_FOLLOW_UP_ANSWER_MAX_CHARS)}\n[The answer continues beyond this point.]`
+    : full;
   return `${selection}\n\n[Earlier ${label} of the text above, shown to the user in WebBrain's page card. It may contain mistakes.]\n${answer}`;
 }
 
@@ -378,7 +386,7 @@ export function buildFollowUpSelectionText(selectionText, priorAction, priorAnsw
 // text, so it travels inside the selection's untrusted block. The side panel shows that
 // block to the user, so the whole unfinished text is kept (the cap is the most a card
 // can produce, 8,000 tokens at four characters each) and only a longer one loses its start.
-export const INLINE_CONTINUE_PARTIAL_MAX_CHARS = 32000;
+export const INLINE_CONTINUE_PARTIAL_MAX_CHARS = INLINE_CARD_ANSWER_MAX_CHARS;
 const INLINE_CONTINUE_NOTE = ' An earlier attempt at this stopped partway; the text it produced is included after the selection. Continue it from exactly where it stops and give only the missing remainder, without repeating anything already written.';
 
 export function buildContinuationSelectionPrompt(selectionText, action, partialAnswer, language = '') {

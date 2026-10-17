@@ -566,7 +566,7 @@ click and queues the verified prompt with `panelOpened`, because a panel that is
 up has not reported in yet and a second `open()` would close it. The card's
 answer travels inside the selection's untrusted boundary, labelled as an earlier answer that
 may contain mistakes and
-capped at 6,000 characters, so model output derived from page text never becomes trusted
+capped at 32,000 characters (the most a card can produce; a longer one is shortened and says so), so model output derived from page text never becomes trusted
 instruction. The selection and the answer go to the configured provider like any other
 model call.
 

@@ -699,6 +699,7 @@ const {
   buildContinuationSelectionPrompt: buildContinuationSelectionPromptCh,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS: INLINE_CONTINUE_PARTIAL_MAX_CHARS_CH,
   buildFollowUpSelectionText: buildFollowUpSelectionTextCh,
+  INLINE_FOLLOW_UP_ANSWER_MAX_CHARS: INLINE_FOLLOW_UP_ANSWER_MAX_CHARS_CH,
   buildInlineSelectionMessages: buildInlineSelectionMessagesCh,
   SELECTION_CONTEXT_SOURCE_GROUNDING: SELECTION_CONTEXT_SOURCE_GROUNDING_CH,
   SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_CH,
@@ -723,6 +724,7 @@ const {
   buildContinuationSelectionPrompt: buildContinuationSelectionPromptFx,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS: INLINE_CONTINUE_PARTIAL_MAX_CHARS_FX,
   buildFollowUpSelectionText: buildFollowUpSelectionTextFx,
+  INLINE_FOLLOW_UP_ANSWER_MAX_CHARS: INLINE_FOLLOW_UP_ANSWER_MAX_CHARS_FX,
   buildInlineSelectionMessages: buildInlineSelectionMessagesFx,
   SELECTION_CONTEXT_SOURCE_GROUNDING: SELECTION_CONTEXT_SOURCE_GROUNDING_FX,
   SELECTION_ONLY_SOURCE_GROUNDING: SELECTION_ONLY_SOURCE_GROUNDING_FX,
@@ -52237,7 +52239,14 @@ test('inline card prompts keep the selection and any earlier answer inside the u
     assert.equal(follow.startsWith('selected words\n\n[Earlier explanation of the text above'), true, `${label}: the earlier answer follows the selection`);
     assert.equal(buildFollowUp('sel', 'explain', ''), 'sel', `${label}: no answer means the selection is unchanged`);
     assert.equal(buildFollowUp('sel', 'summarize', 'answer'), 'sel', `${label}: only card actions can supply an earlier answer`);
-    assert.equal(buildFollowUp('sel', 'translate', 'x'.repeat(20000)).length < 'sel'.length + 6300, true, `${label}: the earlier answer is bounded`);
+    // The whole card answer reaches the side panel, up to the most a card can produce.
+    const wholeAnswer = `FIRST-${'y'.repeat(11_000)}-LAST`;
+    assert.equal(buildFollowUp('sel', 'translate', wholeAnswer).endsWith(`\n${wholeAnswer}`), true, `${label}: a long card answer is carried in full, end included`);
+    assert.equal(label === 'chrome' ? INLINE_FOLLOW_UP_ANSWER_MAX_CHARS_CH : INLINE_FOLLOW_UP_ANSWER_MAX_CHARS_FX, 32000, `${label}: the follow-up cap is the largest card answer`);
+    const oversized = buildFollowUp('sel', 'translate', 'x'.repeat(40000));
+    assert.equal(oversized.length < 'sel'.length + 32300 + 120, true, `${label}: an answer beyond that is bounded`);
+    assert.match(oversized, /\[The answer continues beyond this point\.\]$/, `${label}: and says it was shortened`);
+    assert.doesNotMatch(buildFollowUp('sel', 'translate', 'x'.repeat(32000)), /continues beyond/, `${label}: an answer at the cap is not marked`);
     const prompt = buildSelectionPrompt(follow, 'custom', 'Why?', '', grounding);
     const answerAt = prompt.indexOf('do evil');
     assert.equal(answerAt > prompt.indexOf('<untrusted_page_content id="'), true, `${label}: the earlier answer must sit inside the untrusted block`);
