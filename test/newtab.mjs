@@ -1271,7 +1271,9 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     ]) {
       assert.equal(await mod.importSettings(JSON.stringify(bad)), false, JSON.stringify(bad));
     }
-    assert.equal(globalThis.__toasts.length, 13);
+    assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[null]' })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"x"}]' })), false);
+    assert.equal(globalThis.__toasts.length, 15);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({
@@ -1389,4 +1391,14 @@ test('round-30: leaving the settings route with Back closes the modal', () => {
   const src = readFileSync(nt('components/Elements/MainModal/Main.jsx'), 'utf8');
   assert.match(src, /else if \(!window\.location\.hash\) \{[^}]*modalClose\?\.\(\);/);
   assert.match(src, /\[modalClose\]\);/);
+});
+
+test('round-31: history navigation keeps the breadcrumb in step; breadcrumb click updates the route', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  assert.match(read('components/Elements/MainModal/backend/Tabs.jsx'), /onSectionChange\?\.\(label, section\.name, \{ fromHistory: true \}\)/);
+  const main = read('components/Elements/MainModal/Main.jsx');
+  assert.match(main, /\{ fromHistory = false \} = \{\}/);
+  assert.match(main, /if \(fromHistory\) return;/);
+  assert.match(read('components/Elements/MainModal/components/ModalTopBar.jsx'), /onSubSectionChange\(null, currentSectionName\)/);
+  assert.match(read('utils/settings/import.js'), /quicklinks: \(e\) => isObject\(e\)/);
 });

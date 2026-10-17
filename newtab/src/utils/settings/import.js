@@ -87,6 +87,7 @@ const JSON_ARRAY_ENTRIES = {
   applinks: (e) => isObject(e) && isString(e.name) && isString(e.url),
   backgroundExclude: isString,
   customEvents: (e) => isObject(e) && isString(e.name) && Number.isFinite(e.month) && Number.isFinite(e.date),
+  quicklinks: (e) => isObject(e) && isString(e.name) && isString(e.url),
   messages: isString,
   order: isString,
   todo: (e) => isObject(e) && isString(e.value),

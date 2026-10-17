@@ -52,7 +52,7 @@ function ModalTopBar({
       // Show: Tab > Section or Tab > Section > Sub-Section
       breadcrumbPath.push({
         label: currentSection,
-        onClick: currentSubSection ? () => onSubSectionChange(null) : null, // Clickable if sub-section is active
+        onClick: currentSubSection ? () => onSubSectionChange(null, currentSectionName) : null, // Clickable if sub-section is active
       });
 
       // Add sub-section if present

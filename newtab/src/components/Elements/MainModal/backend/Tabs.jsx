@@ -91,6 +91,8 @@ const Tabs = ({
         if (contentRef.current) {
           contentRef.current.scrollTop = 0;
         }
+        // Keep the breadcrumb in step; the route is already right, so don't rewrite it.
+        onSectionChange?.(label, section.name, { fromHistory: true });
       }
     }
   }, [navigationTrigger, sections, t]);

@@ -59,9 +59,11 @@ function MainModal({ modalClose, deepLinkData }) {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [modalClose]);
 
-  const handleSectionChange = (section, sectionName) => {
+  const handleSectionChange = (section, sectionName, { fromHistory = false } = {}) => {
     setCurrentSection(section);
     setCurrentSectionName(sectionName);
+    // Back / Forward already moved the route (and set the sub-section from it).
+    if (fromHistory) return;
     // Clear sub-section when changing sections
     setCurrentSubSection(null);
     if (sectionName) {
