@@ -306,6 +306,9 @@ const QuickLinksOptions = () => {
           setShowAddModal(false);
           setUrlError('');
           setIconError('');
+          // Escape / overlay click must not leave edit mode on for the next Add Link.
+          setEdit(false);
+          setEditData('');
         }}
         isOpen={showAddModal}
         className="Modal resetmodal mainModal"

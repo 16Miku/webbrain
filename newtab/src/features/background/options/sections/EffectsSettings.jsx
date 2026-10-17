@@ -23,7 +23,7 @@ const EffectsSettings = ({ backgroundFilter, onFilterChange }) => {
           display="%"
           marks={values.background}
           category="backgroundeffect"
-          element="#backgroundImage"
+          element="#backgroundImage, #backgroundVideo"
         />
         <Slider
           title={variables.getMessage(
@@ -36,7 +36,7 @@ const EffectsSettings = ({ backgroundFilter, onFilterChange }) => {
           display="%"
           marks={values.background}
           category="backgroundeffect"
-          element="#backgroundImage"
+          element="#backgroundImage, #backgroundVideo"
         />
         <Dropdown
           label={variables.getMessage(
@@ -45,7 +45,7 @@ const EffectsSettings = ({ backgroundFilter, onFilterChange }) => {
           name="backgroundFilter"
           onChange={onFilterChange}
           category="backgroundeffect"
-          element="#backgroundImage"
+          element="#backgroundImage, #backgroundVideo"
           items={backgroundImageEffects}
         />
         {backgroundFilter !== 'none' && (
@@ -60,7 +60,7 @@ const EffectsSettings = ({ backgroundFilter, onFilterChange }) => {
             display="%"
             marks={values.background}
             category="backgroundeffect"
-            element="#backgroundImage"
+            element="#backgroundImage, #backgroundVideo"
           />
         )}
       </Action>

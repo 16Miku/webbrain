@@ -1002,3 +1002,16 @@ test('the new tab only publishes its tab after pending-record adoption finished'
   const fn = src.slice(src.indexOf('export async function primeCurrentTab'), src.indexOf('export function buildHandoff'));
   assert.ok(fn.indexOf('await adoptPendingHandoff') < fn.indexOf('currentTab = tab'));
 });
+
+test('round-17: maximise and effect controls handle video backgrounds; dismissing the modal leaves edit mode', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  const max = read('features/navbar/components/Maximise.jsx');
+  assert.match(max, /getElementById\('backgroundVideo'\)/);
+  assert.match(max, /if \(!video && !element\) return;/);
+  assert.match(max, /if \(widgets\) widgets\.style\.display = 'none'/);
+  const fx = read('features/background/options/sections/EffectsSettings.jsx');
+  assert.equal((fx.match(/element="#backgroundImage, #backgroundVideo"/g) || []).length, 4);
+  assert.doesNotMatch(fx, /element="#backgroundImage"/);
+  const ql = read('features/quicklinks/options/QuickLinksOptions.jsx');
+  assert.match(ql, /onRequestClose=\{\(\) => \{[^}]*setEdit\(false\);\s*setEditData\(''\);/);
+});

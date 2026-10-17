@@ -21,7 +21,10 @@ const Maximise = memo(({ fontSize }) => {
       return;
     }
 
+    // A custom video background has no #backgroundImage; it takes the same filter on the <video>.
+    const video = document.getElementById('backgroundVideo');
     const element = document.getElementById('backgroundImage');
+    if (!video && !element) return;
 
     let backgroundFilter;
     if (filter === true) {
@@ -31,15 +34,22 @@ const Maximise = memo(({ fontSize }) => {
       }
     }
 
+    const filterValue = `blur(${blur}px) brightness(${brightness}%) ${
+      backgroundFilter
+        ? backgroundFilter + '(' + localStorage.getItem('backgroundFilterAmount') + '%)'
+        : ''
+    }`;
+
+    if (video) {
+      video.style.webkitFilter = filterValue;
+      return;
+    }
+
     element.setAttribute(
       'style',
       `background-image: url(${element.style.backgroundImage
         .replace('url("', '')
-        .replace('")', '')}); -webkit-filter: blur(${blur}px) brightness(${brightness}%) ${
-        backgroundFilter
-          ? backgroundFilter + '(' + localStorage.getItem('backgroundFilterAmount') + '%)'
-          : ''
-      };`,
+        .replace('")', '')}); -webkit-filter: ${filterValue};`,
     );
   }, []);
 
@@ -48,12 +58,12 @@ const Maximise = memo(({ fontSize }) => {
     const widgets = document.getElementById('widgets');
 
     if (!hidden) {
-      widgets.style.display = 'none';
+      if (widgets) widgets.style.display = 'none';
       setHidden(true);
       setAttribute(0, 100);
       variables.stats.postEvent('feature', 'Background maximise');
     } else {
-      widgets.style.display = 'flex';
+      if (widgets) widgets.style.display = 'flex';
       setHidden(false);
       setAttribute(localStorage.getItem('blur'), localStorage.getItem('brightness'), true);
       variables.stats.postEvent('feature', 'Background unmaximise');
