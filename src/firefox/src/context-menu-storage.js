@@ -280,14 +280,33 @@ export const INLINE_ANSWER_MAX_TOKENS = 8000;
 const INLINE_FALLBACK_OUTPUT_CEILING = 4096;
 // Room kept for the prompt in a small context window: backends that enforce
 // input + max_tokens <= window reject a request whose output budget ignores it. The
-// prompt is counted at half a token per character, which holds for CJK and Indic
-// text and over-counts Latin text, so a tight window is more likely to cut an answer
-// off (the card then offers the side panel) than to refuse it. Chat-template tokens
-// are covered by the reserve, and the answer keeps a floor so it is never starved.
-const INLINE_PROMPT_TOKENS_PER_CHAR = 0.5;
+// provider's tokenizer is not available here, so the prompt is estimated per
+// character on the high side: Latin-range text at half a token, everything else
+// (CJK, Indic, Arabic, Cyrillic, emoji) at two, which covers the worst tokenizers.
+// Over-counting only makes a tight window end in a flagged cut-off or a hand-off to
+// the side panel instead of a refused request. Chat-template tokens are covered by
+// the reserve.
+const INLINE_LATIN_TOKENS_PER_CHAR = 0.5;
+const INLINE_OTHER_TOKENS_PER_CHAR = 2;
+const INLINE_LATIN_RANGE_END = 0x250;
 const INLINE_PROMPT_TOKEN_RESERVE = 128;
 const INLINE_MIN_ANSWER_TOKENS = 256;
 
+function estimateInlinePromptTokens(messages) {
+  let tokens = INLINE_PROMPT_TOKEN_RESERVE;
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (typeof message?.content !== 'string') continue;
+    for (const char of message.content) {
+      tokens += char.codePointAt(0) < INLINE_LATIN_RANGE_END
+        ? INLINE_LATIN_TOKENS_PER_CHAR
+        : INLINE_OTHER_TOKENS_PER_CHAR;
+    }
+  }
+  return Math.ceil(tokens);
+}
+
+// 0 means the prompt alone leaves the answer less than its floor in the provider's
+// context window, so the card should hand the selection to the side panel.
 export function inlineSelectionMaxTokens(selectionText, action, providerCeiling, { contextWindow, messages } = {}) {
   const chars = String(selectionText || '').trim().length;
   const wanted = String(action || '').trim() === 'explain'
@@ -297,10 +316,9 @@ export function inlineSelectionMaxTokens(selectionText, action, providerCeiling,
   const budget = Math.min(wanted, limit > 0 ? limit : INLINE_FALLBACK_OUTPUT_CEILING);
   const window = Math.floor(Number(contextWindow));
   if (!(window > 0)) return budget;
-  const promptChars = (Array.isArray(messages) ? messages : [])
-    .reduce((total, message) => total + (typeof message?.content === 'string' ? message.content.length : 0), 0);
-  const promptTokens = Math.ceil(promptChars * INLINE_PROMPT_TOKENS_PER_CHAR) + INLINE_PROMPT_TOKEN_RESERVE;
-  return Math.min(budget, Math.max(INLINE_MIN_ANSWER_TOKENS, window - promptTokens));
+  const room = window - estimateInlinePromptTokens(messages);
+  if (room < Math.min(INLINE_MIN_ANSWER_TOKENS, budget)) return 0;
+  return Math.min(budget, room);
 }
 
 // Whether the model stopped because it ran out of output budget. Providers report
@@ -357,9 +375,10 @@ export function buildFollowUpSelectionText(selectionText, priorAction, priorAnsw
 // A card answer that hit the output limit is finished in the side panel by
 // resuming it, not by running the whole action again: a second full run meets the
 // same limit. The unfinished text is model output derived from untrusted page
-// text, so it travels inside the selection's untrusted block, and only its end is
-// kept because that is where the answer has to pick up.
-export const INLINE_CONTINUE_PARTIAL_MAX_CHARS = 6000;
+// text, so it travels inside the selection's untrusted block. The side panel shows that
+// block to the user, so the whole unfinished text is kept (the cap is the most a card
+// can produce, 8,000 tokens at four characters each) and only a longer one loses its start.
+export const INLINE_CONTINUE_PARTIAL_MAX_CHARS = 32000;
 const INLINE_CONTINUE_NOTE = ' An earlier attempt at this stopped partway; the text it produced is included after the selection. Continue it from exactly where it stops and give only the missing remainder, without repeating anything already written.';
 
 export function buildContinuationSelectionPrompt(selectionText, action, partialAnswer, language = '') {

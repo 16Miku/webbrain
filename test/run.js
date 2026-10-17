@@ -52151,6 +52151,13 @@ test('a cut-off card answer is resumed in the side panel, not run again', () => 
     assert.match(block, /Fuchs springt über \[markup stripped\] den faulen/, `${label}: a forged closing tag in the unfinished text is neutralised`);
     assert.equal((block.match(/<\/untrusted_page_content>/g) || []).length, 1, `${label}: the boundary closes exactly once`);
 
+    // The side panel shows this block, so a partial answer is kept whole up to the most a card can produce.
+    assert.equal(maxChars, 32000, `${label}: the cap is the largest card answer (8,000 tokens at four characters)`);
+    const wholePartial = `FIRST-${'y'.repeat(11_000)}-LAST`;
+    const wholePrompt = buildContinuation('Some text.', 'translate', wholePartial, 'de');
+    assert.ok(wholePrompt.includes(wholePartial), `${label}: an unfinished answer well past the old 6,000-character cap is kept in full`);
+    assert.doesNotMatch(wholePrompt, /…/, `${label}: nothing was trimmed, so no ellipsis`);
+
     // An answer longer than the budget keeps its end, which is where it has to pick up.
     const long = `START-${'x'.repeat(maxChars + 500)}-END`;
     const longPrompt = buildContinuation('Some text.', 'proofread', long, 'en');
@@ -52181,7 +52188,7 @@ test('a cut-off card answer is resumed in the side panel, not run again', () => 
     ['firefox', 'src/firefox/src/background.js'],
   ]) {
     const background = fs.readFileSync(path.join(ROOT, bgPath), 'utf8');
-    assert.match(background, /const resumesCutOffAnswer = selectionAction !== 'custom'\s*&& typeof msg\.continueFrom === 'string' && msg\.continueFrom\.trim\(\) !== '';\s*const text = resumesCutOffAnswer\s*\? buildContinuationSelectionPrompt\(msg\.selectionText, selectionAction, msg\.continueFrom\.slice\(-20000\), msg\.language\)/,
+    assert.match(background, /const resumesCutOffAnswer = selectionAction !== 'custom'\s*&& typeof msg\.continueFrom === 'string' && msg\.continueFrom\.trim\(\) !== '';\s*const text = resumesCutOffAnswer\s*\? buildContinuationSelectionPrompt\(msg\.selectionText, selectionAction, msg\.continueFrom\.slice\(-INLINE_CONTINUE_PARTIAL_MAX_CHARS\), msg\.language\)/,
       `${prefix}: the background resumes a cut-off answer for the card actions and bounds what it accepts`);
     const content = fs.readFileSync(path.join(ROOT, `src/${prefix}/src/content/selection-shortcut.js`), 'utf8');
     assert.match(content, /\.\.\.\(action !== 'custom' && extra\.continueFrom \? \{ continueFrom: extra\.continueFrom \} : \{\}\)/,
@@ -52276,6 +52283,7 @@ test('inline card answers are one tool-less, bounded model call behind validated
     assert.match(body, /if \(!messages\) return \{ ok: false/, `${prefix}: invalid requests are refused before any model call`);
     assert.match(body, /agent\._chatWithCostAllowance\(\s*provider,\s*messages,\s*\{ maxTokens, temperature: 0, signal: controller\.signal \},\s*agent\._newCostRunState\(\),/, `${prefix}: the call is bounded, abortable and goes through the cost allowance`);
     assert.match(body, /const maxTokens = inlineSelectionMaxTokens\(msg\.selectionText, msg\.action, provider\?\.maxOutputTokens, \{\s*contextWindow: provider\?\.contextWindow,\s*messages,\s*\}\);/, `${prefix}: the budget is sized to the selection, the provider's ceiling and the room its context window leaves after the prompt`);
+    assert.match(body, /if \(maxTokens === 0\) \{\s*return \{ ok: false, truncated: true, error: [^}]*context window[^}]*\};\s*\}\s*const result = await agent\._chatWithCostAllowance/, `${prefix}: a prompt that fills the context window is handed to the side panel without a model call`);
     assert.match(body, /inlineAnswerWasCut\(result, maxTokens\) \? \{ ok: true, text, truncated: true \}/, `${prefix}: a capped answer is flagged instead of passing as complete`);
     assert.match(body, /catch \(error\) \{\s*if \(inlineErrorWasCut\(error\)\) \{[\s\S]*?\{ ok: true, text: partial, truncated: true \}[\s\S]*?\{ ok: false, truncated: true, error:/, `${prefix}: a provider that reports the output limit as an error still ends in the cut-off state`);
 
@@ -52316,10 +52324,32 @@ test('inline card token budget follows the selection and never exceeds the provi
       `${label}: a large window changes nothing`);
     assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 16_384, messages: prompt(3500) }), 6000,
       `${label}: an ordinary local window changes nothing for a card-sized selection`);
-    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 2048, messages: prompt(3500) }), 256,
-      `${label}: the answer keeps a floor when the prompt alone nearly fills the window`);
+    // Prompt estimate: 128 reserved + half a token per Latin character; two per other character.
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 2048, messages: prompt(2500) }), 2048 - 128 - 1500,
+      `${label}: the answer gets what is left once the prompt is counted`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 2048, messages: prompt(3500) }), 0,
+      `${label}: a prompt that leaves less than the answer floor is handed to the side panel`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 1900, messages: prompt(2500) }), 272,
+      `${label}: an answer at or above the floor is still attempted`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 1800, messages: prompt(2500) }), 0,
+      `${label}: just under the floor is handed off`);
     assert.equal(budget('short', 'translate', 100, { contextWindow: 2048, messages: prompt(10) }), 100,
       `${label}: a ceiling lower than the floor still wins`);
+    assert.equal(budget('short', 'translate', 100, { contextWindow: 2048, messages: prompt(3500) }), 0,
+      `${label}: but not when the prompt itself cannot fit`);
+
+    // CJK text costs about a token per character or more, not half of one.
+    const cjk = (chars) => [{ role: 'system', content: 'x'.repeat(500) }, { role: 'user', content: '漢'.repeat(chars) }];
+    assert.equal(budget('漢'.repeat(4000), 'translate', 16_000, { contextWindow: 4096, messages: cjk(4000) }), 0,
+      `${label}: a 4,000-character CJK selection does not fit a 4k window and is handed off`);
+    assert.equal(budget('漢'.repeat(1000), 'translate', 16_000, { contextWindow: 4096, messages: cjk(1000) }), 4096 - 128 - 250 - 2000,
+      `${label}: a shorter one gets the window minus a two-token-per-character prompt`);
+    assert.equal(budget('漢'.repeat(4000), 'translate', 16_000, { contextWindow: 131_072, messages: cjk(4000) }), 8000,
+      `${label}: a large window still allows the full answer`);
+    assert.equal(budget('Привет'.repeat(300), 'translate', 16_000, { contextWindow: 4096, messages: [{ role: 'user', content: 'Привет'.repeat(300) }] }), 4096 - 128 - 3600,
+      `${label}: Cyrillic is counted as non-Latin text too`);
+    assert.equal(budget('😀'.repeat(10), 'translate', 16_000, { contextWindow: 500, messages: [{ role: 'user', content: '😀'.repeat(10) }] }), 500 - 128 - 20,
+      `${label}: an astral character counts once, not as two UTF-16 units`);
     assert.equal(budget(longText, 'translate', 16_000, { contextWindow: undefined, messages: prompt(3500) }), 6000,
       `${label}: an unknown window is not guessed at`);
     assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 0 }), 6000, `${label}: a zero window is ignored`);
@@ -52799,8 +52829,10 @@ test('background does not re-open a side panel that is already showing, and stil
   assert.match(background, /chrome\.runtime\.onConnect\.addListener\(\(port\) => \{ sidePanelPresence\.attach\(port\); \}\);/,
     'the presence port must be accepted at the top level of the worker');
   const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
-  assert.match(panel, /if \(!isBtwWindow\) \{\s*reportSidePanelPresence\(\{[\s\S]*?runtime: chrome\.runtime,[\s\S]*?windowId: initialWindowId \?\? tab\?\.windowId \?\? null,/,
-    'the side panel must tell the background when it is on screen');
+  assert.match(panel, /const initialWindowId = initialWindow\?\.id \?\? null;[\s\S]*?const presenceReportedEarly = !isBtwWindow && initialWindowId != null;\s*if \(presenceReportedEarly\) \{\s*reportSidePanelPresence\(\{ runtime: chrome\.runtime, doc: document, windowId: initialWindowId \}\);\s*\}\s*const \[tab\] = await chrome\.tabs\.query/,
+    'the side panel must tell the background it is on screen as soon as its window is known, before its other awaits');
+  assert.match(panel, /if \(!isBtwWindow && !presenceReportedEarly\) \{\s*reportSidePanelPresence\(\{ runtime: chrome\.runtime, doc: document, windowId: tab\?\.windowId \?\? null \}\);/,
+    'and still report when the window could only be learned from the active tab');
 });
 
 test('a PDF viewer selection leaves a side panel that is already showing in its window alone', async () => {

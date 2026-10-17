@@ -521,16 +521,19 @@ behind a short fixed system message, then makes a single tool-less model call th
 cost allowance (90 s timeout) and returns the text. The output budget is sized to the
 selection (at least 2,000 tokens; Translate and Proofread grow to about two tokens per
 character, up to 8,000) and never exceeds the provider's own output ceiling or the room its
-context window leaves after the prompt (counted at half a token per character, with a floor of
-256 tokens), so a small local window is not sent a request it would reject. If the reply
+context window leaves after the prompt (estimated on the high side, since the provider's tokenizer
+is not available: half a token per Latin-range character, two per other character such as CJK,
+plus a reserve), so a small local window is not sent a request it would reject. When the prompt
+leaves less than 256 tokens for the answer, the background makes no call and answers with the
+cut-off shape, so the card hands the selection to the side panel. If the reply
 still stopped at the cap (finish reason, Anthropic `stop_reason` or Responses
 `incomplete_details`, or token usage at the budget when no reason is reported; OpenAI
 Responses reports the limit as an error, which the background treats the same way and
 answers with whatever text the provider returned) the response
 is flagged `truncated`, and the card says so and offers **Continue in side panel** instead
 of passing a cut-off translation off as complete. Continue sends the unfinished text as
-`continueFrom`; the background wraps it inside the selection's untrusted block (keeping its
-end) with a trusted request to resume from where it stops, because running the action again
+`continueFrom`; the background wraps it inside the selection's untrusted block (whole, up to the
+most a card can produce, because the side panel shows that block to the user) with a trusted request to resume from where it stops, because running the action again
 would meet the same output limit. A side-panel reply that is cut off again says so (the
 response-only path appends a notice when the provider reports a length finish, WebGPU
 reports `outputTruncated`, or OpenAI Responses raises the limit as an error carrying
@@ -554,6 +557,8 @@ open panel closes it, so each panel reports its visibility over a long-lived por
 gesture can lapse, then hands an already-open panel the prompt by message. A panel whose port
 was dropped by a background restart reconnects at once (only a port that is refused straight
 away backs off), so the restarted worker is not left unaware of a panel that is still showing.
+A new panel reports as soon as it knows its window, ahead of its other start-up awaits, so an
+action arriving while it is still opening does not open it a second time.
 A selection made in the bundled PDF viewer, whose message carries only a tab id, brings the
 window too (Chrome's `sender.tab` for that tab, else the window the viewer reported from
 `windows.getCurrent()`), so the same check applies there; that path opens the panel once in the

@@ -67,6 +67,7 @@ import {
   SELECTION_TRANSLATION_LANGUAGES,
   buildContextMenuPrompt,
   buildContinuationSelectionPrompt,
+  INLINE_CONTINUE_PARTIAL_MAX_CHARS,
   buildFollowUpSelectionText,
   buildFullContextSelectionPrompt,
   buildInlineSelectionMessages,
@@ -1540,6 +1541,11 @@ async function answerInlineSelection(msg) {
       contextWindow: provider?.contextWindow,
       messages,
     });
+    // The prompt alone fills the model's context window: no call could answer, so the
+    // card offers the side panel, which manages its own context, instead.
+    if (maxTokens === 0) {
+      return { ok: false, truncated: true, error: 'This selection is too long for the model\'s context window.' };
+    }
     const result = await agent._chatWithCostAllowance(
       provider,
       messages,
@@ -1599,7 +1605,7 @@ function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
   const resumesCutOffAnswer = selectionAction !== 'custom'
     && typeof msg.continueFrom === 'string' && msg.continueFrom.trim() !== '';
   const text = resumesCutOffAnswer
-    ? buildContinuationSelectionPrompt(msg.selectionText, selectionAction, msg.continueFrom.slice(-20000), msg.language)
+    ? buildContinuationSelectionPrompt(msg.selectionText, selectionAction, msg.continueFrom.slice(-INLINE_CONTINUE_PARTIAL_MAX_CHARS), msg.language)
     : includePageContext
     ? buildFullContextSelectionPrompt(selectionText, msg.question)
     : buildSelectionPrompt(

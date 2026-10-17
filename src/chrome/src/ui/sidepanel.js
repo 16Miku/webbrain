@@ -5028,6 +5028,13 @@ function clearScratchpad(tabId = currentTabId) {
 async function init() {
   const initialWindow = await chrome.windows.getCurrent().catch(() => null);
   const initialWindowId = initialWindow?.id ?? null;
+  // Lets the background reuse this panel instead of re-opening it (which closes it). It
+  // is reported as soon as the window is known, ahead of the awaits below, so an action
+  // that arrives while the panel is still starting up does not open it a second time.
+  const presenceReportedEarly = !isBtwWindow && initialWindowId != null;
+  if (presenceReportedEarly) {
+    reportSidePanelPresence({ runtime: chrome.runtime, doc: document, windowId: initialWindowId });
+  }
   const [tab] = await chrome.tabs.query(initialWindowId != null
     ? { active: true, windowId: initialWindowId }
     : { active: true, currentWindow: true });
@@ -5064,13 +5071,9 @@ async function init() {
     switchToTab,
   });
 
-  // Lets the background reuse this panel instead of re-opening it (which closes it).
-  if (!isBtwWindow) {
-    reportSidePanelPresence({
-      runtime: chrome.runtime,
-      doc: document,
-      windowId: initialWindowId ?? tab?.windowId ?? null,
-    });
+  // The window could not be read up front; fall back to the active tab's.
+  if (!isBtwWindow && !presenceReportedEarly) {
+    reportSidePanelPresence({ runtime: chrome.runtime, doc: document, windowId: tab?.windowId ?? null });
   }
 
   if (windowScope) {
