@@ -48,6 +48,44 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       assert.equal(await page.locator('#live').textContent(), '');
     } finally { await browser.close(); }
   });
+  test(`${build}: the steering notice sits inside the composer on its gutters`, async () => {
+    const browser = await engine.launch({ headless: true });
+    try {
+      const page = await browser.newPage({ viewport: { width: 360, height: 640 } });
+      const html = read(build, 'src/ui/sidepanel.html');
+      const source = read(build, 'src/ui/sidepanel.js');
+      const start = html.indexOf('<div id="agent-activity"');
+      const end = html.indexOf('<button id="selection-ask-action"', start);
+      assert.ok(start >= 0 && end > start);
+      await page.setContent(`<style>${read(build, 'styles/sidepanel.css')}</style><div id="app">${html.slice(start, end)}`);
+      await page.addScriptTag({ content: `
+        var inputArea = document.getElementById('input-area');
+        var composerToastTimer = null;
+        function isSystemHtml() { return false; }
+        ${extract(source, 'showComposerToast')}
+        document.getElementById('agent-activity').classList.remove('hidden');
+        const queue = document.getElementById('queued-messages');
+        queue.classList.remove('hidden');
+        queue.innerHTML = '<div class="queued-message" role="listitem"><span class="queued-message-label">Queued</span><span class="queued-message-text">Next</span></div>';
+        showComposerToast('sp.steer.sent', { duration: 60000 });
+      ` });
+      const box = await page.evaluate(() => {
+        const rect = id => document.getElementById(id).getBoundingClientRect();
+        const toast = document.getElementById('composer-toast');
+        return {
+          parent: toast.parentElement.id, toast: toast.getBoundingClientRect(),
+          activity: rect('agent-activity'), area: rect('input-area'), queue: rect('queued-messages'), wrapper: rect('input-wrapper'),
+        };
+      });
+      assert.equal(box.parent, 'input-area', 'The notice belongs to the composer, not the strip above it');
+      assert.ok(box.toast.top >= box.area.top + 8, 'The notice keeps the composer padding below the activity bar');
+      assert.equal(box.toast.left, box.wrapper.left, 'The notice shares the composer gutter');
+      assert.equal(box.toast.right, box.wrapper.right, 'The notice shares the composer gutter');
+      assert.equal(box.queue.top - box.toast.bottom, 8, 'The notice keeps the queued-row gap');
+    } finally {
+      await browser.close();
+    }
+  });
   test(`${build}: native composer honors delivery settings, explicitly steers, and preserves drafts across races`, async () => {
     const browser = await engine.launch({ headless: true });
     try {
