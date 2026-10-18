@@ -8745,7 +8745,10 @@ function showComposerToast(message, { duration = 2600, effect = '' } = {}) {
     toast.className = 'composer-toast';
     toast.setAttribute('role', 'status');
     toast.setAttribute('aria-live', 'polite');
-    inputArea?.parentNode?.insertBefore(toast, inputArea);
+    // Inside the composer, not between it and the activity bar above: there it
+    // touched that bar and floated over a strip of panel background, cut off
+    // from the composer by the input area's top border.
+    inputArea?.prepend(toast);
   }
   if (isSystemHtml(message)) toast.innerHTML = message.__systemHtml;
   else toast.textContent = message;
