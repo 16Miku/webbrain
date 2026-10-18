@@ -12054,10 +12054,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // The visible page for a tiny Ask turn, only when the in-browser model reads
-  // images itself. Never a separate describing model: tiny Ask stays on the
-  // user's device. Same capture as the agent's automatic screenshots
-  // (redaction, size budget, per-turn screenshot limit).
+  // images itself and Strict Secret Mode is off. Never a separate describing
+  // model: tiny Ask stays on the user's device. Same capture as the agent's
+  // automatic screenshots (redaction, size budget, per-turn screenshot limit).
   async _tinyAskScreenshot(tabId, onUpdate = null) {
+    // Redaction covers form fields, not text drawn in images or canvases.
+    if (this.strictSecretMode) return null;
     let provider = null;
     let route = null;
     try {

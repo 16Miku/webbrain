@@ -175,11 +175,16 @@ Use the tools in `scripts/models/bonsai/`:
   - When the model reads images (Ternary Bonsai 2 2B Vision), a visual
     question also gets a screenshot of the visible page. Visual means an
     image, photo, chart, colour, logo, "can you see" and similar, in English
-    and Turkish (`tinyAskWantsScreenshot`). A page with almost no text gets
-    one as well, with a note to answer from the image.
+    and Turkish (`tinyAskWantsScreenshot`). A question about a page with
+    almost no text ("what is on this page?") gets one as well, with a note to
+    answer from the image. A general question asked there ("who was Ada
+    Lovelace?") does not, and keeps its offline references.
     - The capture is the same as automatic screenshots: redaction, size
       budget and the per-turn limit. It is ephemeral like page text, and it
       never goes to a separate vision model.
+    - Redaction covers form fields, not text drawn in images, so the prompt's
+      no-secrets rule names screenshots too, and Strict Secret Mode takes no
+      tiny Ask screenshot.
     - Text questions stay text-only. On the RTX 5090 a screenshot adds about
       0.5–1 s; `scripts/check-webgpu-ask.mjs` has three image tasks (15/15
       with the price task checking that no screenshot is taken).
