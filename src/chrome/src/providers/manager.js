@@ -2025,8 +2025,21 @@ export class ProviderManager {
       ...updates,
       configured: !WEBBRAIN_CLOUD_PROVIDER_IDS.has(id) && (markConfigured || current.configured === true),
     };
+    if (Object.hasOwn(updates, 'manualContextWindow')) {
+      if (updates.manualContextWindow === true) {
+        merged.manualContextWindow = true;
+      } else {
+        delete merged.manualContextWindow;
+      }
+    } else if (Object.hasOwn(updates, 'contextWindow')) {
+      const updateKeys = Object.keys(updates);
+      const isTargetedContextUpdate = updateKeys.length === 1 && updateKeys[0] === 'contextWindow';
+      const isContextChanged = Number(updates.contextWindow) !== Number(current.contextWindow);
+      if (isTargetedContextUpdate || isContextChanged || current.manualContextWindow === true) {
+        merged.manualContextWindow = true;
+      }
+    }
     if (Object.hasOwn(updates, 'contextWindow')) {
-      merged.manualContextWindow = true;
       if (!Number.isFinite(Number(current.contextWindow))
         || Number(updates.contextWindow) !== Number(current.contextWindow)
         || Number(updates.contextWindow) !== Number(current.autoContextWindow)) {

@@ -73035,6 +73035,43 @@ test('Local OpenAI-compatible Proxy context window: model card, live props, mode
         assert.equal(config().contextWindow, 65536);
       }
 
+      // 5d. An untouched 64k default saved before detection (e.g. from Settings serialization)
+      // is not marked manual and can be enlarged by detection.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: '', contextWindow: 65536,
+        });
+        await mgr.updateProvider('local_openai_proxy', {
+          baseUrl: 'http://127.0.0.1:8317/v1',
+          model: 'claude-sonnet-4-5',
+          contextWindow: 65536,
+          manualContextWindow: false,
+        });
+        assert.equal(config().contextWindow, 65536);
+        assert.equal(config().manualContextWindow, undefined, `${label}: untouched 64k has no manualContextWindow`);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.contextWindow, 128000, `${label}: untouched 64k is enlarged to 128k by name inference`);
+        assert.equal(config().contextWindow, 128000);
+      }
+
+      // 5e. An untargeted multi-field save that includes unchanged 64k without manualContextWindow
+      // does not turn untouched default into manual override.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: '', contextWindow: 65536,
+        });
+        await mgr.updateProvider('local_openai_proxy', {
+          baseUrl: 'http://127.0.0.1:8317/v1',
+          model: 'claude-sonnet-4-5',
+          contextWindow: 65536,
+        });
+        assert.equal(config().contextWindow, 65536);
+        assert.equal(config().manualContextWindow, undefined, `${label}: unchanged 64k in full save is not manual`);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.contextWindow, 128000, `${label}: unchanged 64k can be enlarged`);
+        assert.equal(config().contextWindow, 128000);
+      }
+
       // 6. A manual override is never enlarged by a name or the fallback...
       {
         const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {

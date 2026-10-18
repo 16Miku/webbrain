@@ -3302,10 +3302,11 @@ function renderProviders() {
         const minAttr = field.min != null ? ` min="${escapeHtml(field.min)}"` : '';
         const stepAttr = field.step != null ? ` step="${escapeHtml(field.step)}"` : '';
         const value = config[field.key] ?? '';
+        const manualAttr = (field.key === 'contextWindow' && config.manualContextWindow === true) ? ' data-manually-edited="true"' : '';
         fieldHTML += `
           <div class="field">
             <label>${escapeHtml(label)}${apiKeyLink}</label>
-            <input type="${field.type}" data-provider="${id}" data-key="${field.key}" data-type="${field.type}" ${listAttr}${minAttr}${stepAttr}
+            <input type="${field.type}" data-provider="${id}" data-key="${field.key}" data-type="${field.type}" ${listAttr}${minAttr}${stepAttr}${manualAttr}
                    value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}">
             ${datalistHTML}
             ${loadBtnHTML}
@@ -3421,7 +3422,12 @@ function renderProviders() {
   });
   document.querySelectorAll('input[data-provider], select[data-provider], textarea[data-provider]').forEach(input => {
     const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
-    input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
+    input.addEventListener(eventName, () => {
+      markProviderDirty(input.dataset.provider);
+      if (input.dataset.key === 'contextWindow') {
+        input.dataset.manuallyEdited = 'true';
+      }
+    });
   });
   document.querySelectorAll('input[data-key="shareQueriesForResearch"]').forEach(input => {
     input.addEventListener('click', confirmResearchSharing);
@@ -3717,9 +3723,15 @@ function applyProviderBaseUrl(id, baseUrl) {
 function applyProviderContextWindow(id, contextWindow) {
   const n = Number(contextWindow);
   if (!Number.isFinite(n) || n <= 0) return;
-  if (providersData[id]) providersData[id].contextWindow = n;
+  if (providersData[id]) {
+    providersData[id].contextWindow = n;
+    providersData[id].manualContextWindow = false;
+  }
   const input = document.querySelector(`input[data-provider="${id}"][data-key="contextWindow"]`);
-  if (input && input.value !== String(n)) input.value = String(n);
+  if (input) {
+    if (input.value !== String(n)) input.value = String(n);
+    input.dataset.manuallyEdited = 'false';
+  }
 }
 
 async function detectProviderContextWindowForModel(id, model) {
@@ -3846,6 +3858,9 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
         ? parseProviderExtraBodyJson(input.value)
         : providerInputValue(input);
       setProviderConfigValue(config, input.dataset.key, value);
+      if (input.dataset.key === 'contextWindow') {
+        config.manualContextWindow = input.dataset.manuallyEdited === 'true';
+      }
     });
     if (typeof config.label === 'string') config.label = config.label.trim();
     apiKeyWarning = providerApiKeyWarning(id, config);
@@ -3952,6 +3967,9 @@ function syncInputsIntoProvidersData() {
       return;
     }
     setProviderConfigValue(providersData[id], key, providerInputValue(input));
+    if (key === 'contextWindow') {
+      providersData[id].manualContextWindow = input.dataset.manuallyEdited === 'true';
+    }
   });
 }
 
