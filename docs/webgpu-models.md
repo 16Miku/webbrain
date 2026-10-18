@@ -172,31 +172,40 @@ Use the tools in `scripts/models/bonsai/`:
   - Page text is ephemeral: durable history keeps only the question, and each
     turn reads the page again. Offline Wikipedia and Emergency Box references
     are added only when there is no page text.
-  - When the model reads images (Ternary Bonsai 2 2B Vision), a visual
-    question about the page also gets a screenshot of the visible page
-    (`tinyAskWantsScreenshot`). It needs both: the question points at the page
-    (this, here, the page, "the photo", "that Buy button", "can you see",
-    Turkish bu/burada/sayfa or a word for a thing on it), and asks something
-    visual (appearance, colours, images, charts). Examples: "is the Buy
-    button red?", "what does the chart show?", "fotoğraftaki kupa ne renk?".
-    - A question about a page with almost no text ("what is on this page?")
-      gets one as well, with a note to answer from the image.
-    - General questions take none, even on an image page: "what does
-      melanoma look like?", "explain what melanoma looks like", "who was Ada
-      Lovelace?". A screenshot alone never suppresses offline references.
-    - A turn with an attached image or a linked page takes one only when the
-      question names the page outright ("compare the attached image with the
-      logo on this page"). Otherwise that source is the subject, and the
-      current tab would be the wrong one.
+  - When the model reads images (Ternary Bonsai 2 2B Vision), a question
+    can also get a screenshot of the visible page. The model decides, so it
+    works in any language and there are no word lists (`tinyAskScreenshotGate`).
+    - Before the answer, one Yes/No readout on the same model returns a logit
+      margin and the decoder's last-position state. It costs about 0.22 s on
+      the RTX 5090 and generates no text.
+    - A small probe scores them (`tiny-ask-gate-probe.js`, 2,050 weights,
+      `scripts/models/bonsai/train_gate_probe.py`). The training data comes
+      from templates in 11 languages (`gate_dataset.py`).
+    - The readout sees only the user's message and facts WebBrain knows: how
+      much page text there is, an attached image, a linked page. It never
+      sees page content, so a page cannot steer it.
+    - Hand-written test, 72 questions: 64/72 correct and 1/38 false "yes".
+      The 28 questions in 7 languages absent from training scored 23/28.
+      The untrained readout scored 38/72.
+    - Misses lean towards no screenshot, which is the old behaviour; most are
+      colour-of-a-button questions in unseen languages. A wrong "yes" only
+      costs a screenshot, about 0.5 s.
+    - A page with almost no text gets a note to answer from the image. A
+      screenshot alone never suppresses offline references. With an attached
+      image both images can be sent, when the readout says the page is needed
+      too.
+    - If the readout fails, or the model cannot run it (only Bonsai 2 2B
+      Vision can), the turn stays text-only.
     - The capture is the same as automatic screenshots: redaction, size
       budget and the per-turn limit. It is ephemeral like page text, and it
       never goes to a separate vision model.
     - Redaction covers form fields, not text drawn in images, so the prompt's
       no-secrets rule names screenshots too, and Strict Secret Mode takes no
       tiny Ask screenshot.
-    - Text questions stay text-only. On the RTX 5090 a screenshot adds about
-      0.5–1 s; `scripts/check-webgpu-ask.mjs` has three image tasks (15/15
-      with the price task checking that no screenshot is taken).
+    - On the RTX 5090 a screenshot adds about 0.5–1 s. `scripts/check-webgpu-ask.mjs`
+      has image tasks in English, Turkish, German and Spanish, and text tasks
+      that must take no screenshot (18/18). `scripts/check-tiny-ask-screenshot-gate.mjs`
+      measures the readout alone.
   - It reuses the standalone WebGPU run machinery but not its prompt or
     history: the standalone window still has no page access, and the two
     profiles' history segments never cross (`webbrainStandaloneChat` and
