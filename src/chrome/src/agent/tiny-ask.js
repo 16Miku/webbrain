@@ -91,6 +91,10 @@ const PAGE_REFERENCE = new RegExp([
   '(?<!\\p{L})(?:resim|resm|görsel|görüntü|foto|grafi|grafiğ|şema|diyagram|harita|logo|ikon|simge|çizim|video|buton|düğme|başlık)\\p{L}*',
   '(?<!\\p{L})ne (?:yazıyor|gösteriyor)(?!\\p{L})',
 ].join('|'), 'iu');
+// The page named outright ("this page", "on screen", "sayfada"). With an
+// attached image or a linked page in the turn, "this image" means that
+// source, so only this explicit form still points at the current page.
+const EXPLICIT_PAGE_REFERENCE = /(?<!\p{L})(?:(?:the|this|current|open) (?:page|site|website|tab|screen)|on (?:the )?screen)(?!\p{L})|(?<!\p{L})(?:sayfa|sekme|ekran)\p{L}*/iu;
 // A bare request with nothing else to act on ("Summarize", "Describe it",
 // "Özetle", "Bunu açıkla") can only mean the current page.
 const BARE_PAGE_REQUEST = /^\s*(?:please\s+)?(?:summari[sz]e|describe|explain|tl;?dr)(?:\s+(?:it|(?:the|this) page))?(?:\s+please)?\s*[.?!]*\s*$|^\s*(?:bunu\s+|bu sayfayı\s+)?(?:özetle|açıkla|anlat)\p{L}*\s*[.?!]*\s*$/iu;
@@ -107,12 +111,16 @@ export function tinyAskScreenshotNote(page = null) {
     ? TINY_ASK_TEXTLESS_SCREENSHOT_NOTE : TINY_ASK_SCREENSHOT_NOTE;
 }
 
-// Whether a tiny Ask turn should also show the model the visible page. Never
-// with an attached image or a linked page, which is then what the question is
-// about: a screenshot of the current tab would be the wrong source.
+// Whether a tiny Ask turn should also show the model the visible page. With
+// an attached image or a linked page, that source is the subject unless the
+// question names the current page outright ("compare the attached image with
+// the logo on this page"); otherwise a current-tab screenshot would be the
+// wrong source.
 export function tinyAskWantsScreenshot({ question = '', page = null, imageAttachment = false, linkedPage = false } = {}) {
-  if (imageAttachment || linkedPage) return false;
   const text = String(question || '');
+  if (imageAttachment || linkedPage) {
+    return EXPLICIT_PAGE_REFERENCE.test(text) && VISUAL_QUESTION.test(text);
+  }
   if (!PAGE_REFERENCE.test(text) && !BARE_PAGE_REQUEST.test(text)) return false;
   if (VISUAL_QUESTION.test(text)) return true;
   // A page that was read but has almost no text: the answer is likely only

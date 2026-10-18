@@ -41625,6 +41625,15 @@ test('tiny Ask shows a vision-capable in-browser model the visible page for visu
     'an attached image is the subject, not the page');
   assert.equal(tinyAskWantsScreenshot({ question: 'What color is the logo at https://example.com?', page, linkedPage: true }), false,
     'a linked page is the subject, not the current tab');
+  for (const [question, options] of [
+    ['Compare the attached image with the logo on this page.', { imageAttachment: true }],
+    ['Bu resim sayfadaki logoya benziyor mu?', { imageAttachment: true }],
+    ['Is the logo at https://example.com the same colour as the one on this page?', { linkedPage: true }],
+  ]) {
+    assert.equal(tinyAskWantsScreenshot({ question, page, ...options }), true, `a mixed-source question names the page: ${question}`);
+  }
+  assert.equal(tinyAskWantsScreenshot({ question: 'Describe this image', page, imageAttachment: true }), false,
+    'with an attachment, "this image" is the attachment');
   const textless = { kind: 'page', text: '  ' };
   for (const question of ['Summarize', 'What is on this page?', 'Describe it', 'Bu sayfada ne var?', 'Burada ne yazıyor?', 'Özetle', 'Bunu açıkla']) {
     assert.equal(tinyAskWantsScreenshot({ question, page: textless }), true, `a page question on a textless page: ${question}`);
@@ -41720,6 +41729,10 @@ test('tiny Ask shows a vision-capable in-browser model the visible page for visu
     assert.equal(captures.length, 0, 'an attached image is not joined by a page screenshot');
     const images = requests[0].at(-1).content.filter(block => block.type === 'image_url');
     assert.deepEqual(images.map(block => block.image_url.url), ['data:image/png;base64,Y2F0'], 'only the attached image reaches the model');
+    await run('Compare the attached image with the logo on this page.', [{ kind: 'image', name: 'logo.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,bG9nbw==' }]);
+    assert.equal(captures.length, 1, 'a question that names the page as well takes a page screenshot');
+    assert.deepEqual(requests[1].at(-1).content.filter(block => block.type === 'image_url').map(block => block.image_url.url),
+      ['data:image/jpeg;base64,c2NyZWVu', 'data:image/png;base64,bG9nbw=='], 'both the page screenshot and the attachment reach the model');
   }
   {
     const { requests, captures, run } = setup();
