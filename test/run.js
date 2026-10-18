@@ -43936,10 +43936,10 @@ test('sidepanel keeps display tools and conversation actions in the header and t
 
     const tools = header.match(/<div class="header-tools">[\s\S]*?\n      <\/div>\n/)?.[0] || '';
     const conversation = header.slice(header.indexOf('class="conversation-action-group header-conversation"'));
-    for (const id of ['btn-expand', 'btn-ui-scale', 'btn-settings']) {
+    for (const id of ['btn-expand', 'btn-ui-scale', 'btn-permission-gate', 'btn-settings']) {
       assert.match(tools, new RegExp(`id="${id}"`), `${label}: ${id} should stay with the header display tools`);
     }
-    assert.match(tools, /id="language-picker"[\s\S]*?id="btn-ui-scale"[\s\S]*?id="btn-settings"[\s\S]*?id="btn-expand"/, `${label}: the display tools should run the display preferences, then Settings, then pop-out`);
+    assert.match(tools, /id="language-picker"[\s\S]*?id="btn-ui-scale"[\s\S]*?id="btn-permission-gate"[\s\S]*?id="btn-settings"[\s\S]*?id="btn-expand"/, `${label}: the display tools should run the display preferences, the permission switch, then Settings, then pop-out`);
     assert.ok(header.indexOf('class="header-tools"') < header.indexOf('header-conversation'), `${label}: the display tools should lead the header and the conversation actions close it`);
     assert.match(conversation, /id="btn-history"[\s\S]*?id="history-popover"[\s\S]*?id="btn-clear"/, `${label}: History and New chat should close the header, with the creation action at its edge`);
     assert.doesNotMatch(header, /id="provider-picker"|id="mode-toggle"/, `${label}: the model picker and the modes should leave the header`);
@@ -47702,6 +47702,52 @@ test('sidepanel UI scale exposes mirrored levels, layout, and focused shortcuts'
       settings: { uiScale: 133 },
     }));
     assert.equal(imported.settings.uiScale, 100, `${label}: invalid imported scales should fall back safely`);
+  }
+});
+
+test('sidepanel header permission switch drives the Settings gate in both builds', async () => {
+  const keys = ['sp.permissions.button', 'sp.permissions.button_off', 'sp.permissions.gate_desc', 'sp.permissions.gate_off', 'sp.permissions.manage', 'sp.permissions.enabled'];
+  const sources = {};
+  for (const [label, prefix, api] of [['chrome', 'src/chrome', 'chrome'], ['firefox', 'src/firefox', 'browser']]) {
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const trigger = html.match(/<button[^>]*id="btn-permission-gate"[\s\S]*?<\/button>/)?.[0] || '';
+    assert.match(trigger, /aria-haspopup="true"[^>]*aria-expanded="false"[^>]*aria-controls="permission-gate-popover"[^>]*data-i18n-title="sp\.permissions\.button"[^>]*data-i18n-aria-label="sp\.permissions\.button"/, `${label}: the trigger should be a labelled menu button like the scale control`);
+    assert.match(trigger, /data-icon="triangle-alert"[\s\S]*?stroke-width="2"[\s\S]*?stroke-linecap="round"[\s\S]*?stroke-linejoin="round"/, `${label}: the trigger should use the native Lucide-style warning icon`);
+    assert.doesNotMatch(trigger, /⚠/, `${label}: the trigger should not use an emoji glyph as an icon`);
+    assert.match(html, /id="permission-gate-popover"[^>]*class="permission-gate-popover hidden"[\s\S]*?data-i18n="st\.perms\.gate\.label"[\s\S]*?data-i18n="sp\.permissions\.gate_desc"[\s\S]*?id="toggle-permission-gate-header"[^>]*role="switch"[\s\S]*?id="permission-gate-off-note"[^>]*data-i18n="sp\.permissions\.gate_off"[\s\S]*?id="btn-permission-gate-settings"/, `${label}: the popover should hold the Settings switch label, its explanation, the off note and the site list link`);
+
+    const start = panel.indexOf("const permissionGateMenu = document.getElementById('permission-gate-menu');");
+    const end = panel.indexOf('\nrenderPermissionGateControl();\n', start);
+    assert.ok(start > panel.indexOf("const PERMISSION_GATE_KEY = 'askBeforeConsequentialActions';"), `${label}: the switch should follow the one gate key`);
+    assert.ok(end > start, `${label}: the switch block should render once on load`);
+    const block = panel.slice(start, end);
+    assert.match(block, new RegExp(`${api}\\.storage\\.local\\.set\\(\\{ \\[PERMISSION_GATE_KEY\\]: askBefore \\}\\)`), `${label}: the switch should write the same storage key as Settings`);
+    assert.match(block, /else addPersistentSlashMessage\(systemHtml\(t\('sp\.permissions\.disabled_html'\)\)\)/, `${label}: turning prompts off should post the command's persistent notice`);
+    assert.doesNotMatch(block, /resolvePendingPermissionPrompt/, `${label}: the header switch must never approve a pending permission card`);
+    assert.match(block, /permissionGateWriteQueue = write\.catch\(\(\) => renderPermissionGateControl\(\)\)/, `${label}: a failed write should restore the stored state`);
+    assert.match(block, /settings\.html#permissions/, `${label}: the popover should open Settings at the site permission list`);
+    assert.match(panel, /if \(changes\[PERMISSION_GATE_KEY\]\) \{[\s\S]*?renderPermissionGateControl\(\);/, `${label}: changes made in Settings or by the command should update the switch`);
+    assert.match(panel, /storage\.local\.get\(\[PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY\]\)\.then\([\s\S]*?renderPermissionGateControl\(\);/, `${label}: the stored gate should hydrate the switch`);
+    assert.match(panel, /if \(closeUiScalePopover\(\)\) \{[\s\S]*?\}\n\s*if \(closePermissionGatePopover\(\)\) \{[\s\S]*?permissionGateBtn\?\.focus\(\);\s*return;/, `${label}: Escape should close the switch instead of aborting the active run`);
+    assert.match(css, /#header \.header-tools #btn-permission-gate\.is-gate-off \{\s*color: var\(--warning\);/, `${label}: prompts off should keep the trigger in the warning color`);
+    assert.match(css, /#header #permission-gate-popover \.permission-gate-settings \{/, `${label}: the link should outrank the generic header icon button rule`);
+    assert.match(css, /\.permission-gate-popover \{[\s\S]*?position: absolute;[\s\S]*?inset-inline-start: 0;[\s\S]*?width: min\(272px, calc\(100vw \/ var\(--ui-scale-zoom, 1\) - 28px\)\);/, `${label}: the popover should open inward and fit a narrow or zoomed panel`);
+    assert.ok(
+      css.indexOf('@media (max-width: 380px)') > css.lastIndexOf('#header #permission-gate-popover'),
+      `${label}: the narrow-panel header overrides must still follow the header rules`,
+    );
+
+    const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
+    for (const file of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
+      const dict = (await import(pathToFileURL(path.join(localeDir, file)).href)).default;
+      for (const key of keys) {
+        assert.ok(typeof dict[key] === 'string' && dict[key].trim(), `${label}/${file}: ${key} should be translated`);
+        sources[`${file}:${key}`] ??= dict[key];
+        assert.equal(dict[key], sources[`${file}:${key}`], `${file}: ${key} should match across builds`);
+      }
+    }
   }
 });
 

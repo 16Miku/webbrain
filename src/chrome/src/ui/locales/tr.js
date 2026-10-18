@@ -353,6 +353,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 Bu konuşma için <strong>API mutasyonları etkin</strong>. Aracı artık bir adım için API\'nin arayüzden daha güvenilir olduğuna karar verirse fetch_url ve execute_js üzerinden POST/PUT/PATCH/DELETE kullanabilir. Varsayılan yine arayüz öncelikli kalır. Bu bayrak konuşmayı sıfırladığında temizlenir.',
   'sp.permissions.disabled_html': '⚠️ <strong>İzin istemleri KAPALI.</strong> WebBrain, sormadan tıklayacak, yazacak, gezinecek, JavaScript çalıştıracak, dosya yükleyecek, indirecek, kayıt yapacak ve gelecek işleri zamanlayacaktır. Bunu Ayarlar → İzinler → Önemli işlemlerden önce sor ayarlarından yeniden etkinleştirin.',
+  'sp.permissions.button': 'İzin istemleri: açık',
+  'sp.permissions.button_off': 'İzin istemleri: kapalı',
+  'sp.permissions.gate_desc': 'WebBrain bir sitede ilk kez tıklarken, yazarken, indirirken veya kod çalıştırırken izin ister.',
+  'sp.permissions.gate_off': 'Kapalı: WebBrain her sitede sormadan işlem yapar.',
+  'sp.permissions.manage': 'Site izinlerini yönet',
+  'sp.permissions.enabled': 'İzin istemleri yeniden açık.',
 
   'tool.read_page': 'Sayfa okunuyor',
   'tool.gmail_count_results': 'Gmail sonuçları sayılıyor',

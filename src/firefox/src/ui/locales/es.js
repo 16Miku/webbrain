@@ -312,6 +312,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>Mutaciones de API habilitadas</strong> en esta conversación. El agente ahora puede usar POST/PUT/PATCH/DELETE mediante fetch_url y execute_js cuando considere que la API es más fiable que la interfaz para un paso. La interfaz sigue siendo la opción por defecto. Este indicador se desactiva al reiniciar la conversación.',
   'sp.permissions.disabled_html': '⚠️ <strong>Las solicitudes de permiso están DESACTIVADAS.</strong> WebBrain hará clic, escribirá, navegará, ejecutará JavaScript, subirá, descargará, grabará y programará trabajos futuros sin preguntar primero. Reactiva esto desde Ajustes → Permisos → Preguntar antes de acciones consecuentes.',
+  'sp.permissions.button': 'Solicitudes de permiso: activadas',
+  'sp.permissions.button_off': 'Solicitudes de permiso: desactivadas',
+  'sp.permissions.gate_desc': 'WebBrain pregunta la primera vez que hace clic, escribe, descarga o ejecuta código en un sitio.',
+  'sp.permissions.gate_off': 'Desactivado: WebBrain actúa en cualquier sitio sin preguntar.',
+  'sp.permissions.manage': 'Gestionar permisos de sitios',
+  'sp.permissions.enabled': 'Las solicitudes de permiso vuelven a estar activadas.',
 
   'tool.read_page': 'Leyendo página',
   'tool.gmail_count_results': 'Contando resultados de Gmail',

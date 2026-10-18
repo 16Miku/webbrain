@@ -312,6 +312,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 この会話で <strong>API による変更が有効</strong> になりました。エージェントは UI より API のほうが確実だと判断したとき、fetch_url と execute_js で POST/PUT/PATCH/DELETE を使えるようになります。UI 優先という基本方針は変わりません。このフラグは会話をリセットするとクリアされます。',
   'sp.permissions.disabled_html': '⚠️ <strong>権限の確認がオフです。</strong> WebBrain は確認なしにクリック、入力、移動、JavaScript の実行、アップロード、ダウンロード、録画、将来の作業のスケジュールを行います。設定 → 権限 → 重要な操作の前に確認する から再有効にしてください。',
+  'sp.permissions.button': '権限の確認: オン',
+  'sp.permissions.button_off': '権限の確認: オフ',
+  'sp.permissions.gate_desc': 'サイトで初めてクリック、入力、ダウンロード、コードの実行を行う前に WebBrain が確認します。',
+  'sp.permissions.gate_off': 'オフ: WebBrain はどのサイトでも確認せずに操作します。',
+  'sp.permissions.manage': 'サイトの権限を管理',
+  'sp.permissions.enabled': '権限の確認をオンに戻しました。',
 
   'tool.read_page': 'ページを読み取り中',
   'tool.gmail_count_results': 'Gmail の結果を数えています',

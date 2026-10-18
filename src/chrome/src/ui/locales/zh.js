@@ -312,6 +312,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 本次会话已<strong>启用 API 变更</strong>。当代理判断 API 比界面更可靠时，可以通过 fetch_url 和 execute_js 使用 POST/PUT/PATCH/DELETE。默认仍优先使用界面。重置会话后此标志会清除。',
   'sp.permissions.disabled_html': '⚠️ <strong>权限提示已关闭。</strong>WebBrain 将在不事先询问的情况下点击、输入、导航、运行 JavaScript、上传、下载、录制和安排后续任务。请在设置 → 权限 → 执行重要操作前询问中重新启用。',
+  'sp.permissions.button': '权限提示：开启',
+  'sp.permissions.button_off': '权限提示：关闭',
+  'sp.permissions.gate_desc': 'WebBrain 首次在某个网站上点击、输入、下载或运行代码前会先询问。',
+  'sp.permissions.gate_off': '已关闭：WebBrain 会在所有网站上直接操作，不再询问。',
+  'sp.permissions.manage': '管理网站权限',
+  'sp.permissions.enabled': '权限提示已重新开启。',
 
   'tool.read_page': '正在阅读页面',
   'tool.gmail_count_results': '正在统计 Gmail 结果',

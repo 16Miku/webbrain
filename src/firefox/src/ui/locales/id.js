@@ -312,6 +312,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>Perubahan melalui API diaktifkan</strong> untuk percakapan ini. Agen kini dapat menggunakan POST/PUT/PATCH/DELETE melalui fetch_url dan execute_js bila menilai API lebih andal daripada UI untuk suatu langkah. UI tetap menjadi pilihan utama secara bawaan. Flag ini akan terhapus saat Anda mereset percakapan.',
   'sp.permissions.disabled_html': '⚠️ <strong>Pertanyaan izin dimatikan.</strong> WebBrain akan mengeklik, mengetik, menavigasi, menjalankan JavaScript, mengunggah, mengunduh, merekam, dan menjadwalkan pekerjaan mendatang tanpa bertanya terlebih dahulu. Aktifkan kembali dari Pengaturan → Izin → Tanya sebelum tindakan penting.',
+  'sp.permissions.button': 'Permintaan izin: aktif',
+  'sp.permissions.button_off': 'Permintaan izin: nonaktif',
+  'sp.permissions.gate_desc': 'WebBrain bertanya saat pertama kali mengklik, mengetik, mengunduh, atau menjalankan kode di sebuah situs.',
+  'sp.permissions.gate_off': 'Nonaktif: WebBrain bertindak di setiap situs tanpa bertanya.',
+  'sp.permissions.manage': 'Kelola izin situs',
+  'sp.permissions.enabled': 'Permintaan izin aktif kembali.',
 
   'tool.read_page': 'Membaca halaman',
   'tool.gmail_count_results': 'Menghitung hasil Gmail',

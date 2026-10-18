@@ -176,6 +176,27 @@
             <button type="button" class="ui-scale-reset" data-ui-scale-action="reset" data-i18n="sp.ui_scale.reset"></button>
           </div>
         </div>
+        <div id="permission-gate-menu" class="permission-gate-menu">
+          <button type="button" id="btn-permission-gate" aria-haspopup="true" aria-expanded="false" aria-controls="permission-gate-popover" data-i18n-title="sp.permissions.button" data-i18n-aria-label="sp.permissions.button">
+            <svg data-icon="triangle-alert" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>
+              <path d="M12 9v4"/>
+              <path d="M12 17h.01"/>
+            </svg>
+          </button>
+          <div id="permission-gate-popover" class="permission-gate-popover hidden" role="group" aria-labelledby="permission-gate-label">
+            <label class="permission-gate-row" for="toggle-permission-gate-header">
+              <span class="permission-gate-copy">
+                <span id="permission-gate-label" class="permission-gate-title" data-i18n="st.perms.gate.label">Ask before consequential actions</span>
+                <span id="permission-gate-desc" class="permission-gate-desc" data-i18n="sp.permissions.gate_desc">WebBrain asks the first time it clicks, types, downloads or runs code on a site.</span>
+              </span>
+              <input type="checkbox" id="toggle-permission-gate-header" class="permission-gate-input" role="switch" aria-describedby="permission-gate-desc permission-gate-off-note" checked>
+              <span class="permission-gate-switch" aria-hidden="true"></span>
+            </label>
+            <p id="permission-gate-off-note" class="permission-gate-off-note hidden" data-i18n="sp.permissions.gate_off">Off: WebBrain acts on every site without asking.</p>
+            <button type="button" id="btn-permission-gate-settings" class="permission-gate-settings" data-i18n="sp.permissions.manage">Manage site permissions</button>
+          </div>
+        </div>
         <button id="btn-settings" data-i18n-title="sp.btn.settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>

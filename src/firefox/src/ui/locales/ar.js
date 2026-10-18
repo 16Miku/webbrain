@@ -312,6 +312,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>تفعيل تعديلات واجهة API</strong> لهذه المحادثة. يمكن للوكيل الآن استخدام POST/PUT/PATCH/DELETE عبر fetch_url و execute_js عندما يرى أن API أكثر موثوقية من الواجهة. يظل التفاعل عبر الواجهة هو الافتراضي. تُمسح هذه العلامة عند تصفير المحادثة.',
   'sp.permissions.disabled_html': '⚠️ <strong>مطالبات الأذونات مُعطّلة.</strong> سيُنقر WebBrain ويكتب ويتنقّل ويُشغّل JavaScript ويرفع ويُنزّل ويُسجّل ويجدول أعمالًا مستقبلية دون أن يسأل أولًا. أعد تفعيل هذا من الإعدادات ← الأذونات ← السؤال قبل الإجراءات المهمة.',
+  'sp.permissions.button': 'مطالبات الأذونات: مُفعّلة',
+  'sp.permissions.button_off': 'مطالبات الأذونات: مُعطّلة',
+  'sp.permissions.gate_desc': 'يسأل WebBrain في أول مرة ينقر فيها أو يكتب أو ينزّل ملفات أو يشغّل تعليمات برمجية على موقع.',
+  'sp.permissions.gate_off': 'مُعطّل: يتصرف WebBrain على كل المواقع دون أن يسأل.',
+  'sp.permissions.manage': 'إدارة أذونات المواقع',
+  'sp.permissions.enabled': 'تم تفعيل مطالبات الأذونات مجددًا.',
 
   'tool.read_page': 'قراءة الصفحة',
   'tool.gmail_count_results': 'عدّ نتائج Gmail',
