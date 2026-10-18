@@ -17,8 +17,9 @@
  *   - Microsoft Edge: `chrome-search://local-ntp/local-ntp.html`; Edge does not serve
  *     `chrome://new-tab-page/` (reported in the Chromium Extensions group, not checked here).
  *   - Firefox: there is no way. `tabs.update` rejects `about:home` and `about:newtab`
- *     ("Illegal URL") and script navigation to them is denied (checked on Firefox 141), so the
- *     Firefox manifest does not declare the override at all and this page is never its new tab.
+ *     ("Illegal URL") and script navigation to them is denied (checked on Firefox 141), so
+ *     the page cannot be opted out of from inside the extension and is always shown there;
+ *     Firefox users change it in Firefox's own settings (the side panel has no switch for it).
  */
 export const NEWTAB_ENABLED_KEY = 'newTabEnabled';
 export const CHROME_DEFAULT_NEWTAB = 'chrome://new-tab-page/';

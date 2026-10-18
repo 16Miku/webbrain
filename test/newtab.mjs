@@ -1480,16 +1480,9 @@ for (const browser of ['chrome', 'firefox']) {
 
   test(`${browser}: manifest and background are wired`, () => {
     const manifest = JSON.parse(readFileSync(path.join(root, 'src', browser, 'manifest.json'), 'utf8'));
-    if (browser === 'chrome') {
-      assert.equal(manifest.chrome_url_overrides?.newtab, 'newtab/index.html');
-      assert.ok(manifest.permissions.includes('search'));
-      assert.ok(existsSync(path.join(root, 'src', browser, 'newtab/index.html')), 'run npm run build:newtab');
-    } else {
-      // Firefox cannot hand a tab to its own new tab page, so an opt-in page cannot exist there.
-      assert.equal(manifest.chrome_url_overrides, undefined);
-      assert.ok(!manifest.permissions.includes('search'));
-      assert.equal(existsSync(path.join(root, 'src', browser, 'newtab')), false);
-    }
+    assert.equal(manifest.chrome_url_overrides?.newtab, 'newtab/index.html');
+    assert.ok(manifest.permissions.includes('search'));
+    assert.ok(existsSync(path.join(root, 'src', browser, 'newtab/index.html')), 'run npm run build:newtab');
     const bg = readFileSync(path.join(root, 'src', browser, 'src/background.js'), 'utf8');
     assert.match(bg, /WB_NEWTAB_PANEL_OPENED/);
     // Unclaimed records are cleaned up without waiting for another submission.
@@ -1515,10 +1508,12 @@ test('both extensions ship an identical handoff module', () => {
   assert.equal(a, b);
 });
 
-test('built new tab calls no external host and has no inline script', () => {
-  const html = readFileSync(path.join(root, 'src/chrome/newtab/index.html'), 'utf8');
-  assert.doesNotMatch(html, /https?:\/\//);
-  assert.doesNotMatch(html, /<script(?![^>]*src=)[^>]*>[^<]/, 'no inline script (MV3 CSP)');
+test('built new tab is identical in both extensions and calls no external host', () => {
+  const dirs = ['chrome', 'firefox'].map((b) => path.join(root, 'src', b, 'newtab'));
+  const html = dirs.map((d) => readFileSync(path.join(d, 'index.html'), 'utf8'));
+  assert.equal(html[0], html[1]);
+  assert.doesNotMatch(html[0], /https?:\/\//);
+  assert.doesNotMatch(html[0], /<script(?![^>]*src=)[^>]*>[^<]/, 'no inline script (MV3 CSP)');
 });
 
 test('every WebBrain locale has every new tab string', async (t) => {
@@ -2805,7 +2800,7 @@ test('opt-in: the new tab hands the tab to the browser unless newTabEnabled is t
   assert.match(readFileSync(nt('boot.jsx'), 'utf8'), /^\/\/[^\n]*\n\/\/[^\n]*\nimport 'lib\/storage-namespace';/);
 });
 
-test('opt-in: onboarding offers the new tab (ticked by default) and Settings can change it; Firefox has no new tab', async () => {
+test('opt-in: onboarding offers the new tab (ticked by default) and Settings can change it; Firefox has no switch', async () => {
   const expected = 'en zh ar bn nl tl fr de he hi id ja ko ms fa pl pt ru es th tr uk vi'.split(' ');
   const ui = (browser, f) => readFileSync(path.join(root, 'src', browser, 'src/ui', f), 'utf8');
   const browser = 'chrome';
@@ -2830,7 +2825,8 @@ test('opt-in: onboarding offers the new tab (ticked by default) and Settings can
     assert.ok(String(dict['st.display.newtab.label'] || '').trim(), `${code} label`);
     assert.ok(String(dict['st.display.newtab.desc'] || '').trim(), `${code} desc`);
   }
-  // Firefox cannot hand a tab to its own new tab page, so it has no new tab and no switch for one
+  // Firefox cannot hand a tab to its own new tab page, so it has no in-extension switch (the new
+  // tab stays on; users change it in Firefox's own settings)
   for (const f of ['sidepanel.html', 'sidepanel.js', 'settings.html', 'settings.js']) {
     assert.doesNotMatch(ui('firefox', f), /newTabEnabled|newtab-checkbox|toggle-newtab/, `firefox ${f}`);
   }

@@ -1,10 +1,10 @@
 # New tab page
 
-WebBrain can show a Mue-derived new tab page with a single WebBrain box, **in the Chrome
-(and Chromium) extension only**. It is opt-in: the last step of onboarding has a "Use WebBrain
+WebBrain can show a Mue-derived new tab page with a single WebBrain box. On Chrome and
+Chromium it is opt-in (Firefox: see below): the last step of onboarding has a "Use WebBrain
 as my new tab page" checkbox, ticked by default, next to "Help Improve WebBrain", and
 Settings → General has the same switch (`newTabEnabled` in extension storage). Source:
-`newtab/`. Built output: `src/chrome/newtab/` (committed). Build with `npm run build:newtab`.
+`newtab/`. Built output: `src/{chrome,firefox}/newtab/` (committed). Build with `npm run build:newtab`.
 
 ## Opt-in
 
@@ -31,15 +31,14 @@ on → the WebBrain page). **Not checked:** Edge's `chrome-search://local-ntp/..
 from a report in the Chromium Extensions group) and other Chromium browsers (Brave, Opera,
 Vivaldi may show a different default page).
 
-### Firefox has no new tab page
+### Firefox: always on, changed in Firefox's settings
 
 Firefox cannot hand a tab to its own new tab page: on Firefox 141 `tabs.update` rejects both
 `about:home` and `about:newtab` ("Illegal URL"), and navigating there from the page (location,
-meta refresh, a link) is denied. A manifest override would therefore take the new tab over for
-everyone with no way to opt out, so the Firefox manifest declares no override (and no `search`
-permission), `src/firefox/newtab` does not exist, and the Firefox side panel and Settings have no
-switch for it. The side panel's handoff module is still shared byte-for-byte with Chrome; it is
-simply never triggered on Firefox.
+meta refresh, a link) is denied. So the opt-in cannot work inside the extension: on Firefox the
+gate never redirects, the new tab page is always shown, and the side panel and Settings have no
+switch for it. Firefox's own settings (Home → New windows and tabs) are where a user switches
+back to Firefox's page.
 
 ## The box
 
@@ -47,7 +46,7 @@ simply never triggered on Firefox.
 |------|--------------|
 | Ask | The text is handed to the side panel and **sent** (Ask is read-only). |
 | Act | The panel opens in Act and the text is **sent immediately**, like Ask. The box shows a warning that Act starts working right away. If **Plan before Act** is on in WebBrain, the plan is still shown for approval before anything is done. |
-| Search | A URL is opened (http/https only); anything else goes to the browser's default search engine via `chrome.search.query`. Hidden if the API is missing. |
+| Search | A URL is opened (http/https only); anything else goes to the browser's default search engine via `chrome.search.query` / `browser.search.search`. Hidden if the API is missing. |
 
 No search engine is hard-coded and nothing is sent to WebBrain's servers by the page.
 
@@ -58,7 +57,8 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
    `wbNewtabHandoff:<tabId>` (one key per tab, so different tabs cannot overwrite each
    other; within a tab the box is locked synchronously at submit and stays disabled until the
    panel has claimed the task, so a second submit cannot replace it either) and opens the panel for that tab (Chrome
-   `sidePanel.setOptions` + `open({tabId})`). If the
+   `sidePanel.setOptions` + `open({tabId})`; Firefox
+   `sidebarAction.open()`). If the
    panel fails to open, the page removes its own record again, so a failed submit can
    never be picked up and sent later when the panel is opened by hand.
 2. It then sends `WB_NEWTAB_PANEL_OPENED`. `background.js` accepts it only from the
