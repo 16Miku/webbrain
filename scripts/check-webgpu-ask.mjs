@@ -23,6 +23,8 @@
 // --tasks a,b        run only these tasks
 // --timeout-ms N     per-task deadline (default 10 minutes)
 // --decoder-graph F  install a replacement decoder graph in the cache first
+// --repeat N         run each selected task N times (answers are sampled, so
+//                    rare failures need several runs to show)
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -122,7 +124,8 @@ const tasks = [
   { name: 'image-german', page: '/image.html', text: 'Welche Farbe hat die Tasse auf dem Foto?', expect: /grün|green/i, screenshot: true },
   { name: 'image-spanish', page: '/image.html', text: '¿De qué color es la taza de la foto?', expect: /verde|green/i, screenshot: true },
   { name: 'text-german', page: '/pricing.html', text: 'Wie viel kostet der Pro-Tarif im Monat?', expect: /29/, screenshot: false },
-].filter(task => !taskFilter || taskFilter.has(task.name));
+].filter(task => !taskFilter || taskFilter.has(task.name))
+  .flatMap(task => Array.from({ length: Math.max(1, Number(option('--repeat', 1)) || 1) }, () => task));
 
 await fs.mkdir(path.dirname(output), { recursive: true });
 const result = { model, extension, startedAt: new Date().toISOString(), tasks: [] };

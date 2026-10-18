@@ -245,7 +245,9 @@ test('a cancelled decision stops in the worker before using the model', async ()
   const worker = await readFile(new URL('../src/chrome/src/offscreen/inference-worker.js', import.meta.url), 'utf8');
   const run = worker.slice(worker.indexOf('async function runMultimodalDecision'), worker.indexOf('async function runText'));
   assert.match(run, /prefixLength, stopIfCancelled\)/, 'prefill slices check for a cancel');
-  assert.equal((run.match(/stopIfCancelled\(\);\n\s*const (?:output|logits) = await bonsai2ContinuationLogits/g) || []).length, 2,
+  const continuations = (run.match(/await bonsai2ContinuationLogits/g) || []).length;
+  assert.ok(continuations >= 2);
+  assert.equal((run.match(/stopIfCancelled\(\);\n\s*const (?:output|logits) = await bonsai2ContinuationLogits/g) || []).length, continuations,
     'every continuation checks for a cancel');
 });
 
