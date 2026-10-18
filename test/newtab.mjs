@@ -2993,9 +2993,14 @@ test('bulletin: never throws, even with broken storage or no fetch', async () =>
   assert.equal(bulletin.bulletinStorage({}), null);
 });
 
-test('bulletin: the frame keeps relative links on webbrain.one and cannot run scripts', () => {
+test('bulletin: the frame keeps relative links on webbrain.one, injects a restrictive CSP, and cannot run scripts', () => {
   const framed = bulletin.bulletinDocument('<head></head><p>Hi</p>', new URL('https://webbrain.one/newtab-comm.html'));
-  assert.match(framed, /^<head><base href="https:\/\/webbrain\.one\/newtab-comm\.html" target="_blank"><meta name="referrer" content="no-referrer"><\/head>/);
+  assert.match(framed, /^<head><base href="https:\/\/webbrain\.one\/newtab-comm\.html" target="_blank"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="[^"]*"><\/head>/);
+  assert.match(framed, /default-src 'none'/);
+  assert.match(framed, /style-src 'unsafe-inline'/);
+  assert.match(framed, /img-src data:/);
+  const headless = bulletin.bulletinDocument('<p>Hi</p>', new URL('https://webbrain.one/newtab-comm.html'));
+  assert.match(headless, /^<base href="https:\/\/webbrain\.one\/newtab-comm\.html" target="_blank"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="[^"]*"><p>Hi<\/p>/);
   const view = readFileSync(nt('features/bulletin/Bulletin.jsx'), 'utf8');
   const sandbox = view.match(/sandbox="([^"]*)"/)?.[1];
   assert.equal(sandbox, 'allow-popups allow-popups-to-escape-sandbox');
@@ -3004,6 +3009,46 @@ test('bulletin: the frame keeps relative links on webbrain.one and cannot run sc
   // Under the task box, rendered whether or not the box is shown.
   const widgets = readFileSync(nt('features/misc/views/Widgets.jsx'), 'utf8');
   assert.match(widgets, /\{enabled\('taskBox'\) && <TaskBox \/>\}\s*\{\/\*[^*]*\*\/\}\s*<Bulletin \/>/);
+});
+
+test('bulletin: concurrent new tabs coordinate refreshes so only one request is sent', async () => {
+  const storage = bulletinStore();
+  let calls = 0;
+  const run = () => bulletin.loadBulletin({
+    storage,
+    location: extensionPage,
+    fetchImpl: async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 20));
+      return bulletinResponse('<p>Coordinated</p>');
+    },
+  });
+  const [tab1, tab2, tab3] = await Promise.all([run(), run(), run()]);
+  assert.equal(calls, 1, 'only one request across concurrent tabs');
+  assert.equal(tab1?.markup, '<p>Coordinated</p>');
+  assert.equal(tab2?.markup, '<p>Coordinated</p>');
+  assert.equal(tab3?.markup, '<p>Coordinated</p>');
+});
+
+test('bulletin: out-of-order completions do not overwrite a newer successful cache', async () => {
+  const storage = bulletinStore();
+  let clock = 100_000;
+  // Pre-seed storage with a fresh successful bulletin
+  storage.data[bulletin.BULLETIN_CACHE_KEY] = {
+    checkedAt: 150_000,
+    fetchedAt: 150_000,
+    url: 'https://webbrain.one/newtab-comm.html',
+    markup: '<p>Newer</p>',
+  };
+  // An older fetch started at 100_000 that resolves later
+  const res = await bulletin.loadBulletin({
+    storage,
+    location: extensionPage,
+    now: () => clock,
+    fetchImpl: async () => bulletinResponse('<p>Older</p>'),
+  });
+  assert.equal(res?.markup, '<p>Newer</p>', 'newer cache entry is preserved');
+  assert.equal(storage.data[bulletin.BULLETIN_CACHE_KEY].markup, '<p>Newer</p>');
 });
 
 test('bulletin: both built new tabs carry the same bulletin code', () => {

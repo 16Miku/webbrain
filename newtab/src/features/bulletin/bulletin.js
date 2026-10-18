@@ -18,6 +18,9 @@ export const BULLETIN_PLACEHOLDER_FILE = 'newtab-comm-placeholder.html';
 export const MAX_BULLETIN_BYTES = 128_000;
 export const BULLETIN_FETCH_TIMEOUT_MS = 5_000;
 export const BULLETIN_REFRESH_MS = 10 * 60_000;
+export const BULLETIN_LEASE_MS = 10_000;
+export const BULLETIN_LEASE_POLL_MS = 25;
+export const BULLETIN_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:;";
 // A bulletin the last successful check returned stays visible while the file cannot be
 // reached (an emergency notice matters most when the network is failing), but not forever.
 export const BULLETIN_STALE_LIMIT_MS = 24 * 60 * 60_000;
@@ -75,9 +78,10 @@ export function isPreviewUrl(url, location = globalThis.location) {
 }
 
 // <base> keeps the bulletin's relative links on webbrain.one and opens them in a new tab.
+// Restrictive CSP prevents external subresource loading or tracking by published notices.
 export function bulletinDocument(markup, url) {
   const safeBase = String(url.href).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-  const head = `<base href="${safeBase}" target="_blank"><meta name="referrer" content="no-referrer">`;
+  const head = `<base href="${safeBase}" target="_blank"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="${BULLETIN_CSP}">`;
   if (/<head(?:\s[^>]*)?>/i.test(markup)) {
     return markup.replace(/<head(?:\s[^>]*)?>/i, (match) => `${match}${head}`);
   }
@@ -144,9 +148,38 @@ export function bulletinStorage(env = globalThis) {
 const asCache = (value) => (value && typeof value === 'object'
   && Number.isFinite(value.checkedAt) && typeof value.markup === 'string' ? value : null);
 
+async function waitForLease({
+  storage,
+  timeoutMs = BULLETIN_FETCH_TIMEOUT_MS + 1_000,
+  now = () => Date.now(),
+} = {}) {
+  if (!storage || typeof storage.get !== 'function') return null;
+  const start = now();
+  const maxPolls = Math.max(1, Math.ceil(timeoutMs / BULLETIN_LEASE_POLL_MS));
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise((r) => setTimeout(r, BULLETIN_LEASE_POLL_MS));
+    let stored = {};
+    try {
+      stored = (await storage.get([BULLETIN_CACHE_KEY, BULLETIN_DISMISSED_KEY])) || {};
+    } catch {
+      return null;
+    }
+    const cache = asCache(stored[BULLETIN_CACHE_KEY]);
+    const currentAt = now();
+    const leaseActive = cache && Number.isFinite(cache.leaseUntil) && currentAt < cache.leaseUntil;
+    if (cache && !leaseActive) {
+      return { stored, cache };
+    }
+    if (currentAt - start >= timeoutMs) break;
+  }
+  return null;
+}
+
 /**
  * The bulletin to show now: { url, markup, hash } or null. Reads the cache first and asks
- * webbrain.one only when the last check is older than BULLETIN_REFRESH_MS. Never throws.
+ * webbrain.one only when the last check is older than BULLETIN_REFRESH_MS. Coordinates
+ * refreshes across new tabs using a storage lease so multiple tabs opening at once do not
+ * dogpile requests or overwrite each other out of order. Never throws.
  */
 export async function loadBulletin({
   storage = bulletinStorage(),
@@ -170,23 +203,88 @@ export async function loadBulletin({
       stored = {};
     }
     let cache = asCache(stored[BULLETIN_CACHE_KEY]);
-    const at = now();
-    if (!cache || at - cache.checkedAt >= BULLETIN_REFRESH_MS || at < cache.checkedAt) {
-      const result = await fetchBulletin(url, { fetchImpl });
-      if (result.ok) {
-        cache = { checkedAt: at, fetchedAt: at, url: result.url, markup: result.markup };
-      } else {
-        // Keep the last bulletin a while, but wait a full interval before asking again.
-        const keep = cache && Number.isFinite(cache.fetchedAt) && at - cache.fetchedAt < BULLETIN_STALE_LIMIT_MS;
-        cache = keep ? { ...cache, checkedAt: at } : { checkedAt: at, fetchedAt: 0, url: url.href, markup: '' };
+    let at = now();
+    const hasActiveLease = (c) => Boolean(
+      c && Number.isFinite(c.leaseUntil) && at < c.leaseUntil && at >= c.leaseUntil - BULLETIN_LEASE_MS
+    );
+
+    if (hasActiveLease(cache)) {
+      // Another new-tab page holds an active lease to refresh. Wait for it to complete.
+      const waited = await waitForLease({ storage, timeoutMs: BULLETIN_FETCH_TIMEOUT_MS + 1_000, now });
+      if (waited) {
+        stored = waited.stored;
+        cache = waited.cache;
       }
-      try {
-        await storage?.set({ [BULLETIN_CACHE_KEY]: cache });
-      } catch {
-        // Without a cache the next tab simply asks again.
+      at = now();
+    }
+
+    if (!cache || at - cache.checkedAt >= BULLETIN_REFRESH_MS || at < cache.checkedAt) {
+      // Need a refresh: acquire a cross-tab lease in storage to prevent dogpiling
+      const leaseHolder = `${at}_${Math.random().toString(36).slice(2, 8)}`;
+      const leaseUntil = at + BULLETIN_LEASE_MS;
+      const leasingCache = {
+        checkedAt: cache?.checkedAt ?? 0,
+        fetchedAt: cache?.fetchedAt ?? 0,
+        url: cache?.url ?? url.href,
+        markup: cache?.markup ?? '',
+        leaseUntil,
+        leaseHolder,
+      };
+
+      let wonLease = true;
+      if (storage) {
+        try {
+          await storage.set({ [BULLETIN_CACHE_KEY]: leasingCache });
+          const verified = (await storage.get([BULLETIN_CACHE_KEY])) || {};
+          const current = verified[BULLETIN_CACHE_KEY];
+          if (current?.leaseHolder && current.leaseHolder !== leaseHolder) {
+            wonLease = false;
+          }
+        } catch {
+          // Fall back to direct fetch if storage write fails
+        }
+      }
+
+      if (!wonLease) {
+        const waited = await waitForLease({ storage, timeoutMs: BULLETIN_FETCH_TIMEOUT_MS + 1_000, now });
+        if (waited) {
+          stored = waited.stored;
+          cache = waited.cache;
+        }
+      } else {
+        let result = { ok: false };
+        try {
+          result = await fetchBulletin(url, { fetchImpl });
+        } finally {
+          const finishAt = now();
+          let latestCache = null;
+          try {
+            const latestStored = (await storage?.get([BULLETIN_CACHE_KEY])) || {};
+            latestCache = asCache(latestStored[BULLETIN_CACHE_KEY]);
+          } catch {}
+
+          if (latestCache && Number.isFinite(latestCache.checkedAt) && latestCache.checkedAt > at && latestCache.leaseHolder !== leaseHolder) {
+            cache = latestCache;
+          } else if (result.ok) {
+            cache = { checkedAt: finishAt, fetchedAt: finishAt, url: result.url, markup: result.markup };
+            try {
+              await storage?.set({ [BULLETIN_CACHE_KEY]: cache });
+            } catch {}
+          } else {
+            // Keep the last bulletin a while, but wait a full interval before asking again.
+            const keep = cache && Number.isFinite(cache.fetchedAt) && finishAt - cache.fetchedAt < BULLETIN_STALE_LIMIT_MS;
+            cache = keep ? { ...cache, checkedAt: finishAt } : { checkedAt: finishAt, fetchedAt: 0, url: url.href, markup: '' };
+            delete cache.leaseUntil;
+            delete cache.leaseHolder;
+            try {
+              await storage?.set({ [BULLETIN_CACHE_KEY]: cache });
+            } catch {}
+          }
+        }
       }
     }
-    if (!cache.markup || !isRenderableMarkup(cache.markup)) return null;
+
+    if (!cache?.markup || !isRenderableMarkup(cache.markup)) return null;
     const hash = bulletinHash(cache.markup);
     if (stored[BULLETIN_DISMISSED_KEY] === hash) return null;
     let bulletinUrlValue;

@@ -4,7 +4,7 @@ import Clock from '../../time/Clock';
 import Greeting from '../../greeting/Greeting';
 import TaskBox from '../../agent/TaskBox';
 import RecentChats from '../../agent/RecentChats';
-import Bulletin from '../../bulletin/Bulletin';
+import Bulletin from '../../bulletin/Bulletin.jsx';
 import QuickLinks from '../../quicklinks/QuickLinks';
 import Date from '../../time/Date';
 import Message from '../../message/Message';
