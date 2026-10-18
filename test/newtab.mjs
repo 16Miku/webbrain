@@ -2279,8 +2279,8 @@ test('a Storage object whose methods throw falls back to in-memory storage', asy
 
 test('round-27: document language follows the WebBrain locale; effects wait while maximised; import remount wired', () => {
   const read = (f) => readFileSync(nt(f), 'utf8');
-  assert.match(read('index.jsx'), /applyDocumentLanguage\(\);/);
-  assert.doesNotMatch(read('index.jsx'), /documentElement\.lang = languagecode/);
+  assert.match(read('boot.jsx'), /applyDocumentLanguage\(\);/);
+  assert.doesNotMatch(read('boot.jsx'), /documentElement\.lang = languagecode/);
   const ctx = read('contexts/TranslationContext.jsx');
   assert.doesNotMatch(ctx, /documentElement\.lang = /);
   assert.equal((ctx.match(/applyDocumentLanguage\(\)/g) || []).length, 2);
@@ -2733,3 +2733,103 @@ test('round-85: inactive settings are inert, dialogs hide the page from assistiv
   assert.doesNotMatch(handoff, /does NOT send|user always confirms an Act run/);
   assert.match(handoff, /Ask and Act: fills the composer and sends straight away/);
 });
+
+test('opt-in: the new tab hands the tab to the browser unless newTabEnabled is true', async (t) => {
+  let esbuild;
+  try {
+    esbuild = await import(pathToFileURL(path.join(root, 'newtab/node_modules/esbuild/lib/main.js')).href);
+  } catch {
+    return t.skip('newtab dependencies are not installed');
+  }
+  const out = await esbuild.build({ entryPoints: [nt('lib/gate.js')], bundle: true, write: false, format: 'esm', platform: 'node' });
+  const gate = await import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
+  assert.equal(gate.NEWTAB_ENABLED_KEY, 'newTabEnabled');
+
+  const makeApi = ({ stored = {}, tab = { id: 7 }, failStorage = false, failUpdate = false } = {}) => {
+    const calls = [];
+    return {
+      calls,
+      storage: { local: { get: async (key) => { calls.push(['get', key]); if (failStorage) throw new Error('storage'); return stored; } } },
+      tabs: {
+        getCurrent: async () => tab,
+        update: async (id, props) => { calls.push(['update', id, props]); if (failUpdate) throw new Error('blocked'); },
+      },
+    };
+  };
+  const chromeEnv = (opts) => { const api = makeApi(opts); return { env: { chrome: { runtime: { id: 'x' }, ...api } }, calls: api.calls }; };
+
+  // never asked / declined / anything that is not exactly true: hand the tab over
+  for (const stored of [{}, { newTabEnabled: false }, { newTabEnabled: 'true' }, { newTabEnabled: 1 }, { newTabEnabled: null }]) {
+    const { env, calls } = chromeEnv({ stored });
+    assert.equal(await gate.shouldShowWebBrainNewTab(env), false, JSON.stringify(stored));
+    assert.deepEqual(calls.filter((c) => c[0] === 'update'), [['update', 7, { url: 'chrome://new-tab-page/' }]]);
+  }
+  // opted in: render, and never touch the tab
+  const on = chromeEnv({ stored: { newTabEnabled: true } });
+  assert.equal(await gate.shouldShowWebBrainNewTab(on.env), true);
+  assert.deepEqual(on.calls.filter((c) => c[0] === 'update'), []);
+  // Edge does not serve chrome://new-tab-page/, so it gets its own fallback (by brand or by UA)
+  for (const navigator of [
+    { userAgentData: { brands: [{ brand: 'Chromium' }, { brand: 'Microsoft Edge' }] }, userAgent: 'x' },
+    { userAgent: 'Mozilla/5.0 AppleWebKit/537.36 Chrome/141.0 Safari/537.36 Edg/141.0.0.0' },
+  ]) {
+    const edge = chromeEnv();
+    edge.env.navigator = navigator;
+    assert.equal(await gate.shouldShowWebBrainNewTab(edge.env), false);
+    assert.deepEqual(edge.calls.filter((c) => c[0] === 'update'), [['update', 7, { url: 'chrome-search://local-ntp/local-ntp.html' }]]);
+  }
+  const chromeUa = chromeEnv();
+  chromeUa.env.navigator = { userAgentData: { brands: [{ brand: 'Google Chrome' }] }, userAgent: 'Mozilla/5.0 Chrome/141.0 Safari/537.36' };
+  assert.equal(await gate.shouldShowWebBrainNewTab(chromeUa.env), false);
+  assert.deepEqual(chromeUa.calls.filter((c) => c[0] === 'update'), [['update', 7, { url: 'chrome://new-tab-page/' }]]);
+  // Firefox cannot load its own new tab page (about:home / about:newtab are "Illegal URL"), so
+  // there is nothing to hand over to: the page is never redirected and storage is never read
+  const ffApi = makeApi();
+  assert.equal(await gate.shouldShowWebBrainNewTab({ browser: { sidebarAction: { open() {} }, ...ffApi } }), true);
+  assert.deepEqual(ffApi.calls, []);
+  // it fails towards showing a page, never a blank tab
+  assert.equal(await gate.shouldShowWebBrainNewTab({}), true, 'no extension APIs (dev preview)');
+  assert.equal(await gate.shouldShowWebBrainNewTab(chromeEnv({ failStorage: true }).env), true, 'unreadable storage');
+  assert.equal(await gate.shouldShowWebBrainNewTab(chromeEnv({ failUpdate: true }).env), true, 'redirect refused');
+  assert.equal(await gate.shouldShowWebBrainNewTab(chromeEnv({ tab: null }).env), true, 'no current tab');
+
+  // the gate runs before the app is even loaded, and the app keeps its own first import
+  const entry = readFileSync(nt('index.jsx'), 'utf8');
+  assert.match(entry, /shouldShowWebBrainNewTab\(\)\.then\(\(show\) => \{\s*if \(show\) return import\('\.\/boot'\);/);
+  assert.doesNotMatch(entry, /from '\.\/App'/);
+  assert.match(readFileSync(nt('boot.jsx'), 'utf8'), /^\/\/[^\n]*\n\/\/[^\n]*\nimport 'lib\/storage-namespace';/);
+});
+
+test('opt-in: onboarding offers the new tab (ticked by default) and Settings can change it; Firefox has no switch', async () => {
+  const expected = 'en zh ar bn nl tl fr de he hi id ja ko ms fa pl pt ru es th tr uk vi'.split(' ');
+  const ui = (browser, f) => readFileSync(path.join(root, 'src', browser, 'src/ui', f), 'utf8');
+  const browser = 'chrome';
+  const html = ui(browser, 'sidepanel.html');
+  // on the last onboarding step (the one with Help Improve WebBrain), ticked by default
+  const lastStep = html.slice(html.indexOf('data-step="2"'));
+  assert.match(lastStep, /id="ob-newtab-checkbox"[^>]*\schecked>/);
+  assert.ok(lastStep.indexOf('ob-help-improve-checkbox') < lastStep.indexOf('ob-newtab-checkbox'), 'next to Help Improve');
+  assert.match(html, /data-i18n="st\.display\.newtab\.desc"/);
+  // written with onboardingComplete, whichever way onboarding is left
+  const js = ui(browser, 'sidepanel.js');
+  assert.match(js, /chrome\.storage\.local\.set\(\{\s*onboardingComplete: true,\s*\.\.\.\(newTabCheckbox \? \{ newTabEnabled: newTabCheckbox\.checked \} : \{\}\),\s*\}\)/);
+  assert.equal((js.match(/onboardingComplete: true/g) || []).length, 1, 'one exit path');
+  // Settings: off until chosen, saved on change
+  assert.match(ui(browser, 'settings.html'), /id="toggle-newtab"/);
+  const settings = ui(browser, 'settings.js');
+  assert.match(settings, /newTabToggle\.checked = stored\.newTabEnabled === true/);
+  assert.match(settings, /newTabToggle\?\.addEventListener\('change'[\s\S]*?chrome\.storage\.local\.set\(\{ newTabEnabled: newTabToggle\.checked \}\)/);
+  // translated everywhere
+  for (const code of expected) {
+    const dict = (await import(pathToFileURL(path.join(root, 'src', browser, 'src/ui/locales', `${code}.js`)).href)).default;
+    assert.ok(String(dict['st.display.newtab.label'] || '').trim(), `${code} label`);
+    assert.ok(String(dict['st.display.newtab.desc'] || '').trim(), `${code} desc`);
+  }
+  // Firefox cannot hand a tab to its own new tab page, so it has no in-extension switch (the new
+  // tab stays on; users change it in Firefox's own settings)
+  for (const f of ['sidepanel.html', 'sidepanel.js', 'settings.html', 'settings.js']) {
+    assert.doesNotMatch(ui('firefox', f), /newTabEnabled|newtab-checkbox|toggle-newtab/, `firefox ${f}`);
+  }
+  assert.doesNotMatch(readFileSync(path.join(root, 'src/firefox/src/ui/locales/en.js'), 'utf8'), /st\.display\.newtab/);
+});
+

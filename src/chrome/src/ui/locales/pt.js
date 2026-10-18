@@ -710,6 +710,8 @@ export default {
   ...getApocalypseModeCopy('pt'),
   ...getEmergencyBoxCopy('pt'),
   'st.display.help_improve.label': "Ajude a melhorar WebBrain",
+  'st.display.newtab.label': 'Usar o WebBrain como minha página de nova guia',
+  'st.display.newtab.desc': 'As novas guias abrem uma página do WebBrain com uma caixa para perguntar, agir ou pesquisar. Desative para manter a página de nova guia normal do seu navegador; você pode mudar isso quando quiser em Configurações → Geral.',
   'st.display.help_improve.desc_html': "Permitir que textos qualificados do WebBrain Compass e interações de ferramentas sejam retidos e usados para avaliação, melhoria, ajuste fino e treinamento. Ativado por padrão. Desativar isso permanentemente desativa a conversa atual; ativá-lo novamente se aplica à próxima nova conversa. Capturas de tela e bytes de imagem não são retidos no banco de dados de melhorias WebBrain. <u>A WebBrain só coleta solicitações de modelos locais e de suas próprias APIs dos provedores em que você ativar “Compartilhar consultas para pesquisa”.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Política de privacidade →</a>",
   'st.display.clarify_timeout.label': "Esclarecer o tempo limite",
   "st.display.clarify_timeout.desc": "Quanto tempo esperar por uma resposta a uma pergunta antes que o WebBrain a responda conforme “Quando o tempo de uma pergunta acaba”. 0 = Instantâneo (sempre responde na hora). Valores acima de 1200s aguardam indefinidamente (Desligado). Padrão 60s. Não se aplica a permissões ou confirmações de envio de formulários.",

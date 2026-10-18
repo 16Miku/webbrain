@@ -1,37 +1,8 @@
-// Must stay first: namespaces localStorage so Mue's code can't touch the
-// WebBrain keys that share this extension origin.
-import 'lib/storage-namespace';
+import { shouldShowWebBrainNewTab } from 'lib/gate';
 
-import { createRoot } from 'react-dom/client';
-
-import App from './App';
-import ErrorBoundary from './ErrorBoundary';
-import variables from './config/variables';
-
-import './scss/index.scss';
-// the toast css is based on default so we need to import it
-import 'react-toastify/dist/ReactToastify.css';
-
-import { initTranslations } from 'lib/translations';
-import { resolveMueLanguage } from 'lib/locale';
-import { applyDocumentLanguage } from 'lib/document-language';
-import { isWbKey, wbT } from 'lib/wb-strings';
-
-const languagecode = resolveMueLanguage();
-localStorage.setItem('language', languagecode);
-variables.language = initTranslations(languagecode);
-variables.languagecode = languagecode;
-applyDocumentLanguage();
-
-variables.getMessage = (text, optional) =>
-  isWbKey(text)
-    ? wbT(text)
-    : variables.language.getMessage(variables.languagecode, text, optional || {});
-
-const container = document.getElementById('root');
-const root = createRoot(container);
-root.render(
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>,
-);
+// Decide before the app (and Mue's stylesheet and data) is loaded: an opted-out tab should
+// not pay for it, and must not flash it before the browser's own page replaces it.
+shouldShowWebBrainNewTab().then((show) => {
+  if (show) return import('./boot');
+  return null;
+});

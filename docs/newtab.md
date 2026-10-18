@@ -1,8 +1,44 @@
 # New tab page
 
-WebBrain replaces the browser's new tab page with a Mue-derived page that has a
-single WebBrain box. Source: `newtab/`. Built output: `src/{chrome,firefox}/newtab/`
-(committed). Build with `npm run build:newtab`.
+WebBrain can show a Mue-derived new tab page with a single WebBrain box. On Chrome and
+Chromium it is opt-in (Firefox: see below): the last step of onboarding has a "Use WebBrain
+as my new tab page" checkbox, ticked by default, next to "Help Improve WebBrain", and
+Settings → General has the same switch (`newTabEnabled` in extension storage). Source:
+`newtab/`. Built output: `src/{chrome,firefox}/newtab/` (committed). Build with `npm run build:newtab`.
+
+## Opt-in
+
+An extension cannot switch `chrome_url_overrides.newtab` on and off while it runs: the
+manifest declares it for as long as the extension is installed. So the page is always what
+the browser opens for a new tab, and its first script (`newtab/src/lib/gate.js`) decides,
+before the app, Mue's stylesheet or any data is loaded, whether to show it:
+
+- `newTabEnabled === true`: the page loads as described below.
+- anything else (never asked, unticked, an older profile that never saw the onboarding step):
+  the tab is sent to the browser's own new tab page. `chrome://newtab` is this very override, so
+  that is `chrome://new-tab-page/` on Chrome and other Chromium browsers, and
+  `chrome-search://local-ntp/local-ntp.html` on Microsoft Edge (which does not serve the former).
+- if anything fails (no extension APIs, unreadable storage, the redirect is refused) the page
+  is shown, so the user never gets a blank tab.
+
+What this does **not** change: the manifest still declares the override, so Chrome still shows
+its "this extension changed your new tab page" notice, and the Web Store review of the
+override applies whether or not a user opted in. The address bar may not hold focus on an
+opted-out tab for the instant before the redirect lands.
+
+Checked: Chromium 141 with the real extension loaded (unset / off → `chrome://new-tab-page/`,
+on → the WebBrain page). **Not checked:** Edge's `chrome-search://local-ntp/...` target (taken
+from a report in the Chromium Extensions group) and other Chromium browsers (Brave, Opera,
+Vivaldi may show a different default page).
+
+### Firefox: always on, changed in Firefox's settings
+
+Firefox cannot hand a tab to its own new tab page: on Firefox 141 `tabs.update` rejects both
+`about:home` and `about:newtab` ("Illegal URL"), and navigating there from the page (location,
+meta refresh, a link) is denied. So the opt-in cannot work inside the extension: on Firefox the
+gate never redirects, the new tab page is always shown, and the side panel and Settings have no
+switch for it. Firefox's own settings (Home → New windows and tabs) are where a user switches
+back to Firefox's page.
 
 ## The box
 
@@ -21,7 +57,8 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
    `wbNewtabHandoff:<tabId>` (one key per tab, so different tabs cannot overwrite each
    other; within a tab the box is locked synchronously at submit and stays disabled until the
    panel has claimed the task, so a second submit cannot replace it either) and opens the panel for that tab (Chrome
-   `sidePanel.setOptions` + `open({tabId})`; Firefox `sidebarAction.open()`). If the
+   `sidePanel.setOptions` + `open({tabId})`; Firefox
+   `sidebarAction.open()`). If the
    panel fails to open, the page removes its own record again, so a failed submit can
    never be picked up and sent later when the panel is opened by hand.
 2. It then sends `WB_NEWTAB_PANEL_OPENED`. `background.js` accepts it only from the
