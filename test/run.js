@@ -41631,7 +41631,7 @@ test('tiny Ask shows a vision-capable in-browser model the visible page when its
   assert.match(TINY_ASK_TEXTLESS_SCREENSHOT_NOTE, /never repeat passwords, keys, tokens or one-time codes/);
   assert.ok(TINY_ASK_SYSTEM_PROMPT.length <= 1600);
 
-  const setup = ({ supportsVision = true, visionOverride = null, pageText = 'Blue plan: $5 per month. '.repeat(20), gate = () => 0.9, tabUrl = 'https://shop.example/plans' } = {}) => {
+  const setup = ({ supportsVision = true, visionOverride = null, pageText = 'Blue plan: $5 per month. '.repeat(20), gate = () => 0.9, tabUrl = 'https://shop.example/plans', readFails = false } = {}) => {
     const requests = [];
     const decisions = [];
     const provider = {
@@ -41662,7 +41662,7 @@ test('tiny Ask shows a vision-capable in-browser model the visible page when its
     agent._recordCostUsage = async () => null;
     agent._getTabUrlTitle = async () => ({ tabUrl, tabTitle: 'Plans' });
     agent.executeTool = async (_tabId, name) => {
-      if (name === 'read_page') return { text: pageText, hasMore: false, nextOffset: null };
+      if (name === 'read_page') return readFails ? { success: false, error: 'Cannot access contents of the page' } : { text: pageText, hasMore: false, nextOffset: null };
       if (name === 'get_selection') return { text: '' };
       if (name === 'fetch_url') return { success: true, text: 'Linked page text.', hasMore: false };
       throw new Error(`unexpected tool ${name}`);
@@ -41714,6 +41714,14 @@ test('tiny Ask shows a vision-capable in-browser model the visible page when its
     assert.equal(captures.length, 1);
     assert.ok(requests[0].at(-1).content.some(block => block.text === TINY_ASK_TEXTLESS_SCREENSHOT_NOTE),
       'a textless page tells the model to answer from the image');
+  }
+  {
+    const { requests, decisions, captures, run } = setup({ readFails: true });
+    await run('What colour is the banner?');
+    assert.equal(decisions.length, 1, 'a failed text read on a normal page still reaches the gate');
+    assert.match(decisions[0].state, /Current page text: almost none\./);
+    assert.equal(captures.length, 1);
+    assert.ok(requests[0].at(-1).content.some(block => block.text === TINY_ASK_TEXTLESS_SCREENSHOT_NOTE));
   }
   {
     const { requests, decisions, captures, run } = setup();

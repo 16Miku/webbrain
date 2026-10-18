@@ -12000,7 +12000,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const { tabUrl: url, tabTitle: title } = await this._getTabUrlTitle(tabId);
     let page = null;
     let selection = '';
-    if (tinyAskPageReadable(url) || isPdfHandlerTabUrl(url)) {
+    // A page WebBrain may read, and so capture; a failed text read below
+    // still leaves the screenshot path open.
+    const pageReadable = tinyAskPageReadable(url) || isPdfHandlerTabUrl(url);
+    if (pageReadable) {
       onUpdate?.('thinking', { step: 0, note: 'Reading the page…' });
       page = await this._readTinyAskPage(tabId);
       if (page?.kind !== 'pdf') {
@@ -12034,7 +12037,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (linked.unavailable) onUpdate?.('thinking', { step: 0, note: 'Could not read the linked page.' });
     }
     const screenshot = await this._tinyAskScreenshot(tabId, {
-      question: questionText, page, imageAttachment, linkedPage: !!linkedUrl, onUpdate,
+      question: questionText, page, pageReadable, imageAttachment, linkedPage: !!linkedUrl, onUpdate,
     });
     let modelLabel = '';
     try {
@@ -12089,9 +12092,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // tiny Ask stays on the user's device. Same capture as the agent's
   // automatic screenshots (redaction, size budget, per-turn screenshot limit).
   // Any failure leaves the turn text-only, as before.
-  async _tinyAskScreenshot(tabId, { question = '', page = null, imageAttachment = false, linkedPage = false, onUpdate = null } = {}) {
+  async _tinyAskScreenshot(tabId, { question = '', page = null, pageReadable = false, imageAttachment = false, linkedPage = false, onUpdate = null } = {}) {
     // Redaction covers form fields, not text drawn in images or canvases.
-    if (this.strictSecretMode || !page?.kind) return null;
+    // Browser-internal pages cannot be captured; a page whose text read
+    // failed still can, and is offered to the gate as having no text.
+    if (this.strictSecretMode || !pageReadable) return null;
     let provider = null;
     let route = null;
     try {
