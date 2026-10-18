@@ -136,10 +136,12 @@ test('Firefox: production BiDi typing uses exact DraftJS model text for empty ap
       assert.equal(native.commands.some(command => command.params?.actions?.[0]?.actions.some(action => action.value === '\uE007')), false, 'Literal line breaks must not send Enter.');
       assert.equal(await page.evaluate(() => qaEditor.childNodes.length), 1, 'Append stays inside the original marked document root.');
       if (scenario.name === 'append inside last leaf') {
-        const declaration = native.declarations.find(source => source.includes('const actual = readRichTextFieldValue'));
+        const declaration = native.declarations.find(source => source.includes('const settledReading = readRichTextFieldReading(el, semanticKind)'));
         const readback = expected => page.evaluate(({ declaration, expected }) => (0, eval)(`(${declaration})`)(qaEditor, expected), { declaration, expected });
-        assert.equal(await readback('First\r\n\r\nLast suffix'), true, 'CRLF normalization preserves authored document separators.');
-        assert.equal(await readback('First\n\n\nLast suffix'), false, 'Visual spacing cannot excuse an extra authored line break.');
+        assert.deepEqual(await readback('First\r\n\r\nLast suffix'), { verified: true, compared: true, reader: 'semantic' },
+          'CRLF normalization preserves authored document separators.');
+        assert.deepEqual(await readback('First\n\n\nLast suffix'), { verified: false, compared: true, reader: 'semantic' },
+          'Visual spacing cannot excuse an extra authored line break.');
       }
     });
   } finally { await browser.close(); }
@@ -321,6 +323,7 @@ test('Firefox: unsupported DraftJS preflight sends no text, and unsupported sett
       assert.equal(result.outcomeUnknown, true);
       assert.equal(result.retryable, false);
       assert.equal(result.submitted, false);
+      assert.deepEqual(result.readback, { compared: false, reason: 'readback_unavailable' }, 'An unreadable document is not a known mismatch.');
       assert.equal(await page.evaluate(() => qaModel), 'aB');
       assert.equal(native.commands.filter(command => command.method === 'input.performActions').length, 2, 'Each character is sent once; verification must not dispatch a second edit.');
     });
@@ -371,6 +374,7 @@ test('Firefox: DraftJS plain-text paste writes a complete multiline document exa
       assert.equal(result.retryable, false);
       assert.equal(result.submitted, false);
       assert.equal(await page.evaluate(() => qaModel), '');
+      assert.deepEqual(result.readback, { compared: true, reader: 'semantic' }, 'The editor model holds another document: a known mismatch.');
       const keyDowns = native.commands.filter(command => command.method === 'input.performActions')
         .flatMap(command => command.params.actions[0].actions.filter(action => action.type === 'keyDown').map(action => action.value));
       assert.equal(keyDowns.includes('\uE007'), false, 'Literal LF insertion cannot send a submit shortcut.');
@@ -444,6 +448,7 @@ test('Firefox: actual ProseMirror writes one complete plain-text edit without in
       assert.equal(result.retryable, false);
       assert.equal(result.submitted, false);
       assert.equal(await page.evaluate(() => qaModelText), 'Original');
+      assert.deepEqual(result.readback, { compared: true, reader: 'semantic' }, 'The editor model holds another document: a known mismatch.');
       assert.equal(native.commands.some(command => command.method === 'input.performActions'), false);
       assert.equal(native.declarations.filter(source => source.includes("new view.ClipboardEvent('paste'")).length, 1);
     });
@@ -512,6 +517,7 @@ test('Firefox: ProseMirror paste retains complete document and original selectio
       assert.equal(result.submitted, false);
       assert.equal(result.outcomeUnknown, true);
       assert.equal(result.retryable, false);
+      assert.deepEqual(result.readback, { compared: false, reason: 'readback_unavailable' }, 'An unreadable document is not a known mismatch.');
       assert.equal(await page.evaluate(() => qaModelText), 'First\nLast');
       assert.deepEqual(await page.evaluate(() => qaPastes), ['First\nLast']);
       assert.equal(native.commands.some(command => command.method === 'input.performActions'), false);

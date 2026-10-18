@@ -54,7 +54,11 @@ The user chooses their provider in Settings. Options include:
   LocalAI, GPT4All, and Unsloth Studio — inference requests stay on the user's
   machine when Studio is configured with its loopback URL
 - **WebGPU (In-browser), Chromium only**: the selected text model runs in an extension
-  Worker with no API key, base URL, localhost server, or model endpoint
+  Worker with no API key, base URL, localhost server, or model endpoint. In Ask,
+  a model that reads images also gets a screenshot of the visible page when its
+  own on-device readout says the question needs it (not in Strict Secret Mode);
+  it stays in the browser and is not saved with the chat (the stored question
+  only notes that one was used, so a follow-up can look again)
 - **Local OpenAI-compatible Proxy**: WebBrain connects only to the configured
   local gateway, but the gateway may forward the request context to an upstream
   account. Its configuration and privacy policy determine where data goes.
@@ -121,13 +125,18 @@ a decision model the turn starts in Ask; only when the active model asks to
 hand the turn to Act or Dev is the same page-free question sent to the active
 model to confirm it.
 
-The optional experimental **D1 FP32 WebGPU** decision provider has no inference
+The experimental **in-browser chat model** decision provider (Chrome) runs
+decisions on the already downloaded WebGPU chat model in the offscreen
+worker. Its state, questions and screenshots never leave the browser, and it
+downloads nothing beyond the chat model itself.
+
+The optional experimental **D1 WebGPU** decision provider has no inference
 endpoint or API key. Its bounded text/JSON state, questions and inline screenshots
 stay in the local decision Worker. Explicit download consent permits only pinned
-ONNX/config/tokenizer downloads (about 1.9 GB) from Hugging Face, verified against
-the packaged manifest and checksums. The roughly 3.84 GB published package also
-contains a full checkpoint for external reproducibility, but the browser never
-downloads `model.safetensors`. JS/WASM stays bundled with the extension. Cache and
+ONNX/config/tokenizer downloads (about 0.95 GB) from Hugging Face, verified against
+the packaged manifest and checksums. The full FP32 checkpoint stays in the
+separate FP32 repository for external reproducibility; the browser never
+downloads it. JS/WASM stays bundled with the extension. Cache and
 consent are local and device-bound; no download is triggered by a decision call.
 Usage traces use the existing bounded model/provider/token/cost metadata, not an
 additional copy of D1 state or pixels. Existing separately configured trace and
@@ -371,6 +380,11 @@ separate Record traces setting is off:
 counts, outcome categories, and safety-status booleans. URL, target labels,
 accessibility references, and other page content are excluded in both tiers,
 including lossless traces.
+
+`predispatch_timing` trace notes retain only bounded per-stage milliseconds of
+one tool call's pre-dispatch pipeline, the tool name and an outcome category.
+`publication_prefetch` notes retain only a status label and a duration. Page,
+draft and model content are excluded in both tiers, including lossless traces.
 
 `done_timing` trace notes retain only the milliseconds a completion check spent
 preparing its evidence, reading the page's status texts and reaching a verdict,

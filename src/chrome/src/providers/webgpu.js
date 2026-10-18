@@ -2,6 +2,7 @@
 
 import { BaseLLMProvider } from './base.js';
 import { ensureOffscreen } from '../offscreen/ensure.js';
+import { responseAbortError } from '../network/response-body.js';
 
 export const WEBGPU_VISION_MODEL_ID = 'webbrain-one/webbrain-vl-2-450M-onnx';
 export const WEBGPU_MODEL_ID = 'LiquidAI/LFM2.5-2.6B-ONNX';
@@ -202,6 +203,9 @@ export const WEBGPU_HIDDEN_MODEL_IDS = Object.freeze([
 export const WEBGPU_SELECTABLE_MODEL_PRESETS = Object.freeze(WEBGPU_PICKER_MODEL_IDS
   .filter(id => !WEBGPU_HIDDEN_MODEL_IDS.includes(id))
   .map(id => WEBGPU_MODEL_PRESETS.find(preset => preset.id === id)));
+// The preset with a trained decision probe (src/chrome/src/offscreen/bonsai-decision-probe.js).
+export const WEBGPU_DECISION_MODEL_ID = WEBGPU_BONSAI2_VL_2B_MODEL_ID;
+export const WEBGPU_DECISION_MODEL_IDS = new Set([WEBGPU_DECISION_MODEL_ID]);
 export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_COMPASS_TINY_V2_MODEL_ID} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`;
 // Chrome-only selection state. Keep this separate from the synced
 // `visionModel` endpoint so enabling the fallback never overwrites a user's
@@ -323,16 +327,35 @@ export function webgpuModelRequiresToolTemplate(modelId) {
   return !isShippedWebgpuPreset(normalized);
 }
 
+function newWebgpuRequestKey() {
+  return globalThis.crypto?.randomUUID?.()
+    || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 class WebGPUOffscreenProvider extends BaseLLMProvider {
-  async _dispatch(message, { timeoutMs = 0 } = {}) {
+  /**
+   * Send one request to the offscreen host. With a signal, an abort rejects at
+   * once (the caller stops waiting) and `onAbort` tells the host to stop the work.
+   */
+  async _dispatch(message, { timeoutMs = 0, signal = null, onAbort = null } = {}) {
+    if (signal?.aborted) throw responseAbortError(signal);
     await ensureOffscreen();
+    // Starting the offscreen document can take a while; an abort that landed meanwhile
+    // has no listener to fire (a listener added to an aborted signal never runs), so
+    // look again before anything is sent.
+    if (signal?.aborted) throw responseAbortError(signal);
     return await new Promise((resolve, reject) => {
       let settled = false;
       const finish = (callback, value) => {
         if (settled) return;
         settled = true;
         if (timeoutId) clearTimeout(timeoutId);
+        signal?.removeEventListener?.('abort', abortListener);
         callback(value);
+      };
+      const abortListener = () => {
+        try { onAbort?.(); } catch { /* the request is abandoned either way */ }
+        finish(reject, responseAbortError(signal));
       };
       const timeoutId = timeoutMs > 0
         ? setTimeout(() => {
@@ -341,6 +364,7 @@ class WebGPUOffscreenProvider extends BaseLLMProvider {
           finish(reject, error);
         }, timeoutMs)
         : null;
+      signal?.addEventListener?.('abort', abortListener, { once: true });
       try {
         chrome.runtime.sendMessage(message, (response) => {
           const lastError = chrome.runtime.lastError;
@@ -351,6 +375,15 @@ class WebGPUOffscreenProvider extends BaseLLMProvider {
         finish(reject, error);
       }
     });
+  }
+
+  // Ask the offscreen host to stop a text generation nobody is waiting for any more.
+  _cancelChat(requestKey) {
+    try {
+      chrome.runtime.sendMessage({ type: 'webgpu-chat-cancel', requestKey }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch { /* best effort: the generation then finishes on its own */ }
   }
 
   async _testWebGPU() {
@@ -428,6 +461,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
   }
 
   async chat(messages, options = {}) {
+    if (options.signal?.aborted) throw responseAbortError(options.signal);
     if (this._messagesContainImage(messages) && !this.supportsVision) {
       throw new Error('The WebGPU chat model is text-only. Configure a separate model under Settings -> Multimodal for screenshots.');
     }
@@ -435,6 +469,9 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     if (!download.ready) {
       throw new Error(`${webgpuModelDisplayName(this.model)} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
     }
+    // A caller that can abort gets a key the worker can use to interrupt this generation.
+    const signal = options.signal || null;
+    const requestKey = signal ? newWebgpuRequestKey() : '';
     const prefillSliceTokens = await this._prefillSliceTokens();
     const response = await this._dispatch({
       type: 'webgpu-chat',
@@ -443,13 +480,14 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       device: this.device,
       dtype: this.dtype,
       requireTools: this.requiresToolTemplate,
+      ...(requestKey ? { requestKey } : {}),
       messages: this._chatMessages(messages, options),
       options: {
         maxTokens: options.maxTokens,
         tools: Array.isArray(options.tools) ? options.tools : [],
         ...(prefillSliceTokens == null ? {} : { prefillSliceTokens }),
       },
-    });
+    }, { signal, onAbort: requestKey ? () => this._cancelChat(requestKey) : null });
     if (!response || response.error) {
       const error = new Error(`In-browser WebGPU: ${response?.error || 'no response from the inference worker'}`);
       // A failed OrtRun leaves the WebGPU session/device in an unknown state,
@@ -467,7 +505,58 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       toolCalls: Array.isArray(response.toolCalls) && response.toolCalls.length ? response.toolCalls : null,
       usage: null,
       raw: response.raw || null,
+      // The worker has no finish reason for these models; it reports whether the
+      // answer used up its token budget so callers can tell a cut-off from a finish.
+      ...(typeof response.outputTruncated === 'boolean' ? { outputTruncated: response.outputTruncated } : {}),
     };
+  }
+
+  /**
+   * Decision readout on the in-browser model: option probabilities from one
+   * forward pass per question, in the d1 answer shape. Bonsai 2 Vision only.
+   */
+  async decide({ state = '', images = [], questions, temperature, promptVariant, returnHidden = false, signal } = {}) {
+    if (webgpuModelRuntime(this.model) !== WEBGPU_RUNTIME_ONNX_VL || !WEBGPU_DECISION_MODEL_IDS.has(this.model)) {
+      throw new Error(`${webgpuModelDisplayName(this.model)} does not support in-browser decisions.`);
+    }
+    const stopIfAborted = () => { if (signal?.aborted) throw signal.reason ?? new DOMException('The in-browser decision was cancelled.', 'AbortError'); };
+    stopIfAborted();
+    const download = await this.downloadStatus();
+    if (!download.ready) {
+      throw new Error(`${webgpuModelDisplayName(this.model)} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it first.`);
+    }
+    const prefillSliceTokens = await this._prefillSliceTokens();
+    stopIfAborted();
+    // An abort (judge timeout, Stop) cancels the worker operation, so it does
+    // not keep the model queue busy ahead of the next request.
+    const decisionId = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const cancel = () => { this._dispatch({ type: 'webgpu-decide-cancel', decisionId }).catch(() => {}); };
+    signal?.addEventListener?.('abort', cancel, { once: true });
+    let response;
+    try {
+      response = await this._dispatch({
+        type: 'webgpu-decide',
+        decisionId,
+        model: this.model,
+        runtime: WEBGPU_RUNTIME_ONNX_VL,
+        device: this.device,
+        dtype: this.dtype,
+        state,
+        images,
+        questions,
+        ...(Number(temperature) > 0 ? { temperature: Number(temperature) } : {}),
+        ...(['readout', 'strict', 'verify', 'probe', 'gate'].includes(promptVariant) ? { promptVariant } : {}),
+        ...(returnHidden === true ? { returnHidden: true } : {}),
+        ...(prefillSliceTokens == null ? {} : { prefillSliceTokens }),
+      });
+    } finally {
+      signal?.removeEventListener?.('abort', cancel);
+    }
+    stopIfAborted();
+    if (!response || response.ok === false || response.error) {
+      throw new Error(`In-browser WebGPU: ${response?.error || 'no response from the inference worker'}`);
+    }
+    return { model: response.model, provider: 'webgpu', answers: response.answers, usage: response.usage, diagnostics: response.diagnostics };
   }
 
   async _prefillSliceTokens() {

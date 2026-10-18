@@ -64,12 +64,18 @@ for (const build of ['chrome', 'firefox']) {
       earlierResultOfThisTask: true }, 'The model is told this is the verified earlier result of this task');
   });
 
+  // Unmatched, the earlier post is never reconciled. A deletion cannot repeat
+  // it, so the one the request names is decided as any deletion is, without
+  // telling the model that this is the earlier post.
   test(`${build}: native acknowledgment, an unrelated post or a wrong body/account cannot reconcile publication`, async () => {
     for (const resources of [[], [record(savedUrl, 'Different')], [record('https://x.com/bob/status/900')]]) {
       const f = fixture(`Delete ${savedUrl}.`);
       f.detected.reconciliationResources = resources;
-      assert.equal((await f.check()).actionGuard.reason, 'prior_effect_unreconciled');
-      assert.equal(f.calls.length, 0, 'An unreconciled earlier post is never put to the model');
+      assert.equal(await f.check(), null, JSON.stringify(resources));
+      assert.notEqual(f.guard.steeringPriorSubmissionReconciliation?.verified, true, 'Nothing is reconciled');
+      const [question] = f.decisions('deletion_request');
+      assert.equal(question.page.earlierResultOfThisTask, undefined, 'The model is not told this is the earlier post');
+      assert.equal(f.audits.length, 0);
     }
   });
   test(`${build}: prior publication with media can be exactly deleted and replaced without certifying its original media`, async () => {
@@ -105,9 +111,21 @@ for (const build of ['chrome', 'firefox']) {
       if(failure==='unknown')f.guard.steeringPriorSubmission.dispatched=false;
       if(failure==='duplicate')f.detected={...f.detected,mutationKind:undefined,publicationControl:true,
         publicationSnapshot:structuredClone(f.guard.steeringPriorSubmission.publicationSnapshot)};
-      const blocked=await f.check();
-      assert.equal(blocked.noDispatch,true,failure);
+      const result=await f.check();
       assert.equal(f.audits.length,0,failure);
+      // A duplicate is never published, and another post than the one named
+      // goes to the user's card.
+      if(['duplicate','resource'].includes(failure)){assert.equal(result.noDispatch,true,failure);continue;}
+      // The post the request names may go, never as the earlier post; the
+      // replacement stays held to it.
+      assert.notEqual(f.guard.steeringPriorSubmissionReconciliation?.verificationKind,'resource_identity',`${failure}: not reconciled`);
+      assert.equal(result,null,failure);
+      assert.equal(f.decisions('deletion_request')[0].page.earlierResultOfThisTask,undefined,failure);
+      f.agent._completionSubmitStates.set(f.tab,{dispatched:true,observedAfterSubmit:true,mutationKind:'delete',
+        actionDocument:'owned-document',actionResource:record()});
+      f.detected={...f.detected,mutationKind:undefined,publicationControl:true,publicationSnapshot:snap('Corrected'),
+        reconciliationResources:[],reconciliationResourceScanComplete:true};
+      assert.equal((await f.check()).noDispatch,true,`${failure}: the replacement is held`);
     }
   });
 

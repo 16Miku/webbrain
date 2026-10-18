@@ -8,6 +8,17 @@
  */
 
 import { BONSAI2_TOKENIZER_CONFIG } from '../../vendor/bonsai2/tokenizer-config.js';
+import {
+  decisionSystemPrompt,
+  decisionAnswer,
+  decisionOptions,
+  decisionQuestionText,
+  decisionVerifyText,
+  decisionStateText,
+  normalizeDecisionRequest,
+} from './webgpu-decisions.js';
+import { BONSAI_DECISION_PROBE, bonsaiProbeScores } from './bonsai-decision-probe.js';
+import { tinyAskGateProbability } from './tiny-ask-gate-probe.js';
 
 let libraryPromise = null;
 let libraryVersion = null;
@@ -52,10 +63,12 @@ const WEBGPU_BONSAI2_MODEL_IDS = new Set([
 // scripts/models/bonsai/chunk_gdn_prefill.py). Earlier revisions prefilled with
 // an ONNX Scan that WebGPU runs one token at a time on the CPU. Installs that
 // cached that graph keep it under the same URL, so replace just this small file;
-// the unchanged weight files stay cached.
+// the unchanged weight files stay cached. The 2B graph also exposes the
+// last-position hidden state as `decision_hidden` for the decision probe
+// (scripts/models/bonsai/add_decision_hidden.py); logits and caches are as before.
 const BONSAI2_DECODER_GRAPH_FILE = 'onnx/decoder_model_merged_q2f16.onnx';
 const BONSAI2_DECODER_GRAPH_SHA256 = new Map([
-  ['webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision', '2768d880f4fdab46a984d697b901db6e8ac54dc9b896524cb8cb769bbb339df0'],
+  ['webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision', '240c07e1191911a2306faf106ee537382a1b4d5e6ecdd32b618da160db9145c1'],
   ['webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision', '52424fbb7094ed0a1036d8795e78c3da349fce1838ee6bd077523929b0bb7bb2'],
 ]);
 // A refresh must never stall model loading on a flaky network; one attempt per
@@ -145,6 +158,57 @@ let visionDownloadAbortController = null;
 const activeVisionGenerations = new Map();
 const queuedVisionGenerations = new Set();
 const cancelledVisionGenerations = new Set();
+// Text generations that carry a requestKey (the in-page answer cards do) can be
+// cancelled: one still queued never starts, and a running one is interrupted at
+// its next token instead of finishing a result nobody is waiting for.
+const queuedTextGenerations = new Set();
+const activeTextGenerations = new Map();
+const cancelledTextGenerations = new Set();
+const TEXT_REQUEST_KEY_PATTERN = /^[a-z0-9-]{8,64}$/i;
+// A re-tokenized answer that used this much of its budget is reported as cut off.
+const WEBGPU_OUTPUT_LIMIT_RATIO = 0.97;
+
+function textRequestKey(payload) {
+  const key = typeof payload?.requestKey === 'string' ? payload.requestKey : '';
+  return TEXT_REQUEST_KEY_PATTERN.test(key) ? key : '';
+}
+
+function throwIfTextCancelled(requestKey) {
+  if (!requestKey || !cancelledTextGenerations.has(requestKey)) return;
+  const error = new Error('The generation was cancelled.');
+  error.name = 'AbortError';
+  throw error;
+}
+
+function beginTextGeneration(requestKey, library) {
+  if (!requestKey || !library?.InterruptableStoppingCriteria) return null;
+  const criteria = new library.InterruptableStoppingCriteria();
+  activeTextGenerations.set(requestKey, criteria);
+  return criteria;
+}
+
+function endTextGeneration(requestKey) {
+  if (requestKey) activeTextGenerations.delete(requestKey);
+}
+
+// Tokens in a generated text, counted with the model's own tokenizer; null when it cannot.
+function countGeneratedTokens(tokenizer, text) {
+  try {
+    if (typeof tokenizer !== 'function' || !text) return null;
+    const count = Number(tokenizer(text, { add_special_tokens: false })?.input_ids?.dims?.at?.(-1));
+    return Number.isFinite(count) ? count : null;
+  } catch {
+    return null;
+  }
+}
+
+// The worker has no finish reason for these models, so a generation that used
+// (nearly) all of its token budget is reported as cut off for the caller to act on.
+function outputLimitField(generatedTokens, maxNewTokens, ratio = WEBGPU_OUTPUT_LIMIT_RATIO) {
+  return Number.isFinite(generatedTokens) && maxNewTokens > 0
+    ? { outputTruncated: generatedTokens >= Math.max(1, Math.floor(maxNewTokens * ratio)) }
+    : {};
+}
 let lastTextProgressPostAt = 0;
 let webGpuAdapterProbePromise = null;
 let webGpuAdapterSummary = '';
@@ -317,16 +381,12 @@ function presentToPastName(name) {
     .replace('present', 'past_key_values');
 }
 
-/**
- * Prefill all but the last prompt token in slices and return the cache, or
- * null when the prompt fits in one slice. generate() then continues from the
- * cache: the Qwen VL input preparation computes the full rotary positions and
- * feeds only the remaining token.
- */
-export async function prefillBonsai2InSlices(runtime, inputs, sliceTokens) {
+// Prefill the first `count` prompt tokens in slices of `sliceTokens` (one
+// pass when 0) and return the recurrent/conv/KV cache. `beforeSlice` runs
+// before each slice and may throw to stop (a cancelled decision).
+async function prefillBonsai2Cache(runtime, inputs, sliceTokens, count, beforeSlice = null) {
   const { model, library } = runtime;
-  const length = inputs.input_ids.dims.at(-1);
-  if (!sliceTokens || length - 1 <= sliceTokens) return null;
+  beforeSlice?.();
   let embeds = await model.encode_text({ input_ids: inputs.input_ids });
   let attentionMask = inputs.attention_mask;
   if (inputs.pixel_values) {
@@ -347,10 +407,12 @@ export async function prefillBonsai2InSlices(runtime, inputs, sliceTokens) {
     inputs.video_grid_thw ?? null,
     attentionMask,
   );
+  const step = sliceTokens || count;
   let cache = null;
   try {
-    for (let start = 0; start < length - 1; start += sliceTokens) {
-      const end = Math.min(start + sliceTokens, length - 1);
+    for (let start = 0; start < count; start += step) {
+      beforeSlice?.();
+      const end = Math.min(start + step, count);
       const outputs = await model.forward({
         inputs_embeds: embeds.slice(null, [start, end], null),
         attention_mask: attentionMask.slice(null, [0, end]),
@@ -369,6 +431,51 @@ export async function prefillBonsai2InSlices(runtime, inputs, sliceTokens) {
   } catch (error) {
     await cache?.dispose?.();
     throw error;
+  }
+}
+
+/**
+ * Prefill all but the last prompt token in slices and return the cache, or
+ * null when the prompt fits in one slice. generate() then continues from the
+ * cache: the Qwen VL input preparation computes the full rotary positions and
+ * feeds only the remaining token.
+ */
+export async function prefillBonsai2InSlices(runtime, inputs, sliceTokens, checkCancelled = () => {}) {
+  const length = inputs.input_ids.dims.at(-1);
+  if (!sliceTokens || length - 1 <= sliceTokens) return null;
+  return prefillBonsai2Cache(runtime, inputs, sliceTokens, length - 1, checkCancelled);
+}
+
+/**
+ * Next-token logits after appending `suffixIds` to a prefilled prompt. The
+ * prefix cache is only read: the continuation's cache outputs are released,
+ * so every question starts from the same page state.
+ */
+export async function bonsai2ContinuationLogits(runtime, prefixInputs, cache, suffixIds, { withHidden = false } = {}) {
+  const { model, library } = runtime;
+  const prefixLength = prefixInputs.input_ids.dims.at(-1), suffixLength = suffixIds.dims.at(-1);
+  const total = prefixLength + suffixLength;
+  const fullIds = library.cat([prefixInputs.input_ids, suffixIds], 1);
+  const fullMask = new library.Tensor('int64', new BigInt64Array(total).fill(1n), [1, total]);
+  const [positions] = model.get_rope_index(fullIds, prefixInputs.image_grid_thw ?? null, null, fullMask);
+  const embeds = await model.encode_text({ input_ids: suffixIds });
+  const outputs = await model.forward({
+    inputs_embeds: embeds,
+    attention_mask: fullMask,
+    position_ids: positions.slice(null, null, [prefixLength, total]),
+    past_key_values: cache,
+  });
+  try {
+    const logits = Float32Array.from(outputs.logits.slice(null, -1, null).to('float32').data);
+    if (!withHidden) return logits;
+    // Present only in a decoder graph that exposes `decision_hidden`
+    // (scripts/models/bonsai/add_decision_hidden.py).
+    const hidden = outputs.decision_hidden ? Float32Array.from(outputs.decision_hidden.to('float32').data) : null;
+    return { logits, hidden };
+  } finally {
+    for (const tensor of Object.values(outputs)) {
+      if (tensor?.location === 'gpu-buffer') tensor.dispose();
+    }
   }
 }
 
@@ -1687,6 +1794,8 @@ function addLegacyVlTools(messages, tools) {
 }
 
 async function runMultimodalText(payload) {
+  const requestKey = textRequestKey(payload);
+  throwIfTextCancelled(requestKey);
   const modelId = assertOnnxTextModel(payload?.modelId);
   if (!isMultimodalTextModel(modelId)) {
     throw new Error(`${modelId} is not a shipped WebGPU multimodal model.`);
@@ -1705,6 +1814,7 @@ async function runMultimodalText(payload) {
     owner: 'text',
     readiness: 'text',
   });
+  throwIfTextCancelled(requestKey);
   if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
   const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
   let { messages, imageUrls } = prepareMultimodalMessages(payload?.messages);
@@ -1727,6 +1837,7 @@ async function runMultimodalText(payload) {
     : 800;
   lastWebGpuDeviceError = '';
   lastWebGpuDeviceLost = '';
+  const criteria = beginTextGeneration(requestKey, runtime.library);
   let outputs;
   let prefilled = null;
   try {
@@ -1735,31 +1846,230 @@ async function runMultimodalText(payload) {
         runtime,
         inputs,
         bonsai2PrefillSliceTokens(payload?.options?.prefillSliceTokens),
+        () => throwIfTextCancelled(requestKey),
       );
     }
+    // A cancel that landed during the last slice should not start a generation.
+    throwIfTextCancelled(requestKey);
     outputs = await runtime.model.generate({
       ...inputs,
       ...(prefilled ? { past_key_values: prefilled } : {}),
       do_sample: false,
       max_new_tokens: maxNewTokens,
+      ...(criteria ? { stopping_criteria: [criteria] } : {}),
     });
   } catch (error) {
     if (isWebGpuExecutionFailure(error)) throw await handleWebGpuExecutionFailure(error);
     throw error;
   } finally {
+    endTextGeneration(requestKey);
     // generate() keeps a caller-supplied cache alive; release its GPU buffers
     // without masking a generation error.
     if (prefilled) await prefilled.dispose().catch(() => {});
   }
+  throwIfTextCancelled(requestKey);
   const inputLength = inputs.input_ids.dims.at(-1);
   const generated = outputs.slice(null, [inputLength, null]);
   const decoded = runtime.processor.batch_decode(generated, { skip_special_tokens: true });
   const result = splitThinking(String(decoded?.[0] || '').trim());
   noteWebgpuExecutionSuccess();
-  return { content: result.content, reasoningContent: result.reasoningContent };
+  // The generated tensor is exact, so reaching the budget means no end-of-text token came first.
+  return {
+    content: result.content,
+    reasoningContent: result.reasoningContent,
+    ...outputLimitField(Number(generated?.dims?.at?.(-1)), maxNewTokens, 1),
+  };
+}
+
+function encodeFloat16Base64(values) {
+  const half = new Uint16Array(values.length), view = new DataView(new ArrayBuffer(4));
+  for (let i = 0; i < values.length; i++) {
+    view.setFloat32(0, values[i]);
+    const bits = view.getUint32(0), sign = (bits >>> 16) & 0x8000, exponent = ((bits >>> 23) & 0xff) - 112, mantissa = (bits >>> 13) & 0x3ff;
+    half[i] = exponent <= 0 ? sign : exponent >= 31 ? sign | 0x7c00 : sign | (exponent << 10) | mantissa;
+  }
+  let binary = '';
+  const bytes = new Uint8Array(half.buffer);
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+// Option probabilities read from one forward pass per question (see
+// webgpu-decisions.js). Only the Bonsai 2 Vision presets are supported: they
+// use the chunked decoder whose cache the continuations share.
+const DECISION_QUESTION_MARKER = '\u2063WEBBRAIN_DECISION_QUESTION\u2063';
+
+function decisionCancelledError() {
+  const error = new Error('The in-browser decision was cancelled.');
+  error.name = 'AbortError';
+  error.code = 'webgpu_decision_cancelled';
+  return error;
+}
+
+// `isCancelled` reports a `cancel` for this request (a judge timeout or Stop).
+// It is checked before loading, between prefill slices and before every
+// continuation, so a timed-out decision frees the model queue promptly.
+async function runMultimodalDecision(payload, { isCancelled = () => false } = {}) {
+  const stopIfCancelled = () => { if (isCancelled()) throw decisionCancelledError(); };
+  stopIfCancelled();
+  const modelId = assertOnnxTextModel(payload?.modelId);
+  if (!WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
+    throw new Error(`${modelId} does not support in-browser decisions.`);
+  }
+  const request = normalizeDecisionRequest(payload);
+  const dtype = payload?.dtype || { embed_tokens: 'fp16', vision_encoder: 'fp16', decoder_model_merged: 'q2f16' };
+  if (!await isTextModelReady(modelId, dtype)) {
+    throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it first.`);
+  }
+  const runtime = await getVisionRuntime(modelId, dtype, payload?.device || 'webgpu', {
+    localFilesOnly: true,
+    owner: 'text',
+    readiness: 'text',
+  });
+  stopIfCancelled();
+  const temperature = Number(payload?.temperature) > 0 ? Number(payload.temperature) : 1;
+  const messages = [
+    { role: 'system', content: [{ type: 'text', text: decisionSystemPrompt(payload?.promptVariant) }] },
+    { role: 'user', content: [
+      ...request.images.map(() => ({ type: 'image' })),
+      { type: 'text', text: `${payload?.promptVariant === 'gate' ? String(request.state || '') : decisionStateText(request.state)}\n\n${DECISION_QUESTION_MARKER}` },
+    ] },
+  ];
+  const rendered = runtime.processor.apply_chat_template(messages, { add_generation_prompt: true, enable_thinking: false });
+  const split = rendered.indexOf(DECISION_QUESTION_MARKER);
+  if (split < 0 || rendered.indexOf(DECISION_QUESTION_MARKER, split + 1) >= 0) {
+    throw new Error('The decision prompt did not render as expected.');
+  }
+  const prefixText = rendered.slice(0, split);
+  const tailText = rendered.slice(split + DECISION_QUESTION_MARKER.length);
+  const tokenizer = runtime.processor.tokenizer;
+  const codeIds = new Map();
+  const codeId = code => {
+    if (!codeIds.has(code)) {
+      const ids = tokenizer.encode(code, { add_special_tokens: false });
+      if (ids.length !== 1) throw new Error(`Decision answer code ${code} is not a single token.`);
+      codeIds.set(code, ids[0]);
+    }
+    return codeIds.get(code);
+  };
+  let prefix;
+  if (request.images.length) {
+    const images = await Promise.all(request.images.map(url => runtime.library.load_image(url)));
+    prefix = await processMultimodalInputs(runtime, modelId, images.length === 1 ? images[0] : images, prefixText);
+  } else {
+    prefix = tokenizer(prefixText, { add_special_tokens: false });
+  }
+  lastWebGpuDeviceError = '';
+  lastWebGpuDeviceLost = '';
+  const prefixLength = prefix.input_ids.dims.at(-1);
+  const started = performance.now();
+  let cache = null;
+  const answers = {};
+  const questionMs = [];
+  let suffixTokens = 0;
+  try {
+    cache = await prefillBonsai2Cache(runtime, prefix, bonsai2PrefillSliceTokens(payload?.prefillSliceTokens), prefixLength, stopIfCancelled);
+    const prefillMs = performance.now() - started;
+    // `probe` (the default) scores each option's verify continuation with the
+    // trained probe; `verify` returns the raw Yes margins; `readout` and
+    // `strict` read the option codes in one pass. `gate` reads one Yes/No
+    // question about a user's message with its hidden state and scores it with
+    // the screenshot gate probe (tiny Ask); the others are for the diagnostic
+    // fixture path.
+    const variant = ['readout', 'default', 'strict', 'verify', 'probe', 'gate'].includes(payload?.promptVariant) ? payload.promptVariant : 'probe';
+    const verify = variant === 'verify' || variant === 'probe';
+    if (variant === 'probe' && modelId !== BONSAI_DECISION_PROBE.model) {
+      throw new Error(`No decision probe is trained for ${modelId}.`);
+    }
+    const returnHidden = payload?.returnHidden === true;
+    const yesNo = verify || variant === 'gate';
+    const yesId = yesNo ? codeId('Yes') : null, noId = yesNo ? codeId('No') : null;
+    for (const [id, question] of request.entries) {
+      const questionStarted = performance.now();
+      if (verify) {
+        // One continuation per option; the answer compares their Yes margins.
+        const margins = [], hidden = [];
+        const count = decisionOptions(question).names.length;
+        for (let index = 0; index < count; index++) {
+          const suffix = tokenizer(`${decisionVerifyText(question, index)}${tailText}`, { add_special_tokens: false });
+          suffixTokens += suffix.input_ids.dims.at(-1);
+          stopIfCancelled();
+          const output = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids, { withHidden: true });
+          margins.push(output.logits[yesId] - output.logits[noId]);
+          if (variant === 'probe' && !output.hidden) {
+            throw new Error('In-browser decisions need the updated Ternary Bonsai 2 2B Vision decoder. Download the model again in Settings > Providers > WebGPU.');
+          }
+          hidden.push(output.hidden);
+        }
+        const scores = variant === 'probe' ? bonsaiProbeScores(margins, hidden) : margins;
+        answers[id] = {
+          ...decisionAnswer(question, scores, { temperature }),
+          ...(returnHidden ? { margins, hidden: hidden.map(vector => (vector ? encodeFloat16Base64(vector) : null)) } : {}),
+        };
+        questionMs.push(Math.round(performance.now() - questionStarted));
+        continue;
+      }
+      if (variant === 'gate') {
+        if (question.type !== 'noul') throw new Error('The screenshot gate takes Yes/No questions only.');
+        const suffix = tokenizer(`${decisionQuestionText(question)}${tailText}`, { add_special_tokens: false });
+        suffixTokens += suffix.input_ids.dims.at(-1);
+        stopIfCancelled();
+        const output = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids, { withHidden: true });
+        const margin = output.logits[yesId] - output.logits[noId];
+        const probability = tinyAskGateProbability(modelId, margin, output.hidden);
+        // Collecting training data needs only the margin and hidden state.
+        if (probability === null && !(returnHidden && output.hidden)) {
+          throw new Error('The screenshot gate needs the updated Ternary Bonsai 2 2B Vision decoder. Download the model again in Settings > Providers > WebGPU.');
+        }
+        answers[id] = {
+          type: 'noul',
+          noul: probability,
+          ...(returnHidden ? { margins: [margin], hidden: [output.hidden ? encodeFloat16Base64(output.hidden) : null] } : {}),
+        };
+        questionMs.push(Math.round(performance.now() - questionStarted));
+        continue;
+      }
+      const suffix = tokenizer(`${decisionQuestionText(question)}${tailText}`, { add_special_tokens: false });
+      suffixTokens += suffix.input_ids.dims.at(-1);
+      stopIfCancelled();
+      const logits = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids);
+      const ids = decisionOptions(question).codes.map(codeId);
+      let top = -Infinity;
+      for (const value of logits) if (value > top) top = value;
+      let total = 0;
+      for (const value of logits) total += Math.exp(value - top);
+      const mass = ids.reduce((sum, tokenId) => sum + Math.exp(logits[tokenId] - top), 0) / total;
+      answers[id] = decisionAnswer(question, ids.map(tokenId => logits[tokenId]), { temperature, mass });
+      questionMs.push(Math.round(performance.now() - questionStarted));
+    }
+    noteWebgpuExecutionSuccess();
+    return {
+      model: modelId,
+      provider: 'webgpu',
+      answers,
+      usage: { input_tokens: prefixLength + suffixTokens, output_tokens: 0 },
+      diagnostics: {
+        generated_tokens: 0,
+        prefix_tokens: prefixLength,
+        images: request.images.length,
+        prefill_ms: Math.round(prefillMs),
+        question_ms: questionMs,
+        total_ms: Math.round(performance.now() - started),
+        temperature,
+        prompt_variant: variant,
+      },
+    };
+  } catch (error) {
+    if (isWebGpuExecutionFailure(error)) throw await handleWebGpuExecutionFailure(error);
+    throw error;
+  } finally {
+    if (cache) await cache.dispose().catch(() => {});
+  }
 }
 
 async function runText(payload) {
+  const requestKey = textRequestKey(payload);
+  throwIfTextCancelled(requestKey);
   const modelId = assertOnnxTextModel(payload?.modelId);
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
@@ -1771,6 +2081,7 @@ async function runText(payload) {
     throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
   }
   const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
+  throwIfTextCancelled(requestKey);
   if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
   const requestedTokens = Number(payload?.options?.maxTokens);
   const maxTokenLimit = usesLongOutputBudget
@@ -1782,12 +2093,14 @@ async function runText(payload) {
   const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
   lastWebGpuDeviceError = '';
   lastWebGpuDeviceLost = '';
+  const criteria = beginTextGeneration(requestKey, runtime.library);
   let output;
   try {
     output = await runtime.pipeline(prepareTextMessages(payload?.messages), {
       do_sample: Boolean(sampling),
       ...(sampling || {}),
       max_new_tokens: maxNewTokens,
+      ...(criteria ? { stopping_criteria: [criteria] } : {}),
       tools: tools.length ? tools : undefined,
       // Reasoning templates re-open `<think>` for the pending turn and collapse
       // completed thinking in history; the rest suppress thinking outright.
@@ -1798,7 +2111,10 @@ async function runText(payload) {
   } catch (error) {
     if (isWebGpuExecutionFailure(error)) throw await handleWebGpuExecutionFailure(error);
     throw error;
+  } finally {
+    endTextGeneration(requestKey);
   }
+  throwIfTextCancelled(requestKey);
   const generated = output?.[0]?.generated_text;
   const content = Array.isArray(generated)
     ? generated.at(-1)?.content
@@ -1811,7 +2127,11 @@ async function runText(payload) {
     throw new Error(`${modelId} used its generation budget before finishing reasoning. Retry with a shorter prompt.`);
   }
   noteWebgpuExecutionSuccess();
-  return { content: result.content, reasoningContent: result.reasoningContent };
+  return {
+    content: result.content,
+    reasoningContent: result.reasoningContent,
+    ...outputLimitField(countGeneratedTokens(runtime.tokenizer, content), maxNewTokens),
+  };
 }
 
 async function probeRuntime() {
@@ -1873,6 +2193,18 @@ self.addEventListener('message', async event => {
         queued: queued && !active,
         active,
       });
+      return;
+    }
+    if (type === 'cancel-text') {
+      const requestKey = typeof payload?.requestKey === 'string' ? payload.requestKey : '';
+      const queued = queuedTextGenerations.has(requestKey);
+      const active = activeTextGenerations.has(requestKey);
+      const cancellable = TEXT_REQUEST_KEY_PATTERN.test(requestKey) && (queued || active);
+      if (cancellable) {
+        cancelledTextGenerations.add(requestKey);
+        activeTextGenerations.get(requestKey)?.interrupt?.();
+      }
+      self.postMessage({ id, ok: true, cancelled: cancellable, queued: queued && !active, active });
       return;
     }
     if (type === 'init') {
@@ -2023,24 +2355,44 @@ self.addEventListener('message', async event => {
       }
       return;
     }
-    if (type === 'text-chat') {
-      const result = await enqueueModelOperation(() => runText(payload));
-      self.postMessage({
-        id,
-        ok: true,
-        ...result,
-        raw: { model: payload?.modelId || '' },
-      });
+    if (type === 'text-chat' || type === 'multimodal-text-chat') {
+      const requestKey = textRequestKey(payload);
+      if (requestKey) queuedTextGenerations.add(requestKey);
+      try {
+        const result = await enqueueModelOperation(
+          () => (type === 'text-chat' ? runText(payload) : runMultimodalText(payload)),
+        );
+        self.postMessage({
+          id,
+          ok: true,
+          ...result,
+          raw: { model: payload?.modelId || '' },
+        });
+      } finally {
+        if (requestKey) {
+          queuedTextGenerations.delete(requestKey);
+          cancelledTextGenerations.delete(requestKey);
+        }
+      }
       return;
     }
-    if (type === 'multimodal-text-chat') {
-      const result = await enqueueModelOperation(() => runMultimodalText(payload));
-      self.postMessage({
-        id,
-        ok: true,
-        ...result,
-        raw: { model: payload?.modelId || '' },
-      });
+    if (type === 'multimodal-decide') {
+      // Cancellable through `cancel` like vision generations, while queued or running.
+      queuedVisionGenerations.add(id);
+      try {
+        const result = await enqueueModelOperation(async () => {
+          activeVisionGenerations.set(id, {});
+          try {
+            return await runMultimodalDecision(payload, { isCancelled: () => cancelledVisionGenerations.has(id) });
+          } finally {
+            activeVisionGenerations.delete(id);
+          }
+        });
+        self.postMessage({ id, ok: true, ...result });
+      } finally {
+        queuedVisionGenerations.delete(id);
+        cancelledVisionGenerations.delete(id);
+      }
       return;
     }
     throw new Error(`Unknown WebGPU worker message: ${type || 'missing type'}`);

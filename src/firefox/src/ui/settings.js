@@ -1,4 +1,5 @@
 import { DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, resolveDecisionConfig } from '../agent/decision-config.js';
+import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
 import { D1_MODEL_ID } from '../providers/d1-config.js';
 import { initD1Settings } from './d1-settings.js';
 /**
@@ -84,7 +85,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '41.1.4';
+const EXT_VERSION = '42.0.0';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -106,6 +107,7 @@ const requestTimeoutRange = document.getElementById('range-request-timeout');
 const requestTimeoutValueLabel = document.getElementById('timeout-value');
 const clarifyTimeoutRange = document.getElementById('range-clarify-timeout');
 const clarifyTimeoutValueLabel = document.getElementById('clarify-timeout-value');
+const clarifyTimeoutPolicySelect = document.getElementById('select-clarify-timeout-policy');
 const costSessionLimitInput = document.getElementById('input-cost-session-limit');
 const costTotalLimitInput = document.getElementById('input-cost-total-limit');
 const costSpentValueLabel = document.getElementById('cost-spent-value');
@@ -132,6 +134,8 @@ const tracingToggle = document.getElementById('toggle-tracing');
 const feedbackDiagnosticsToggle = document.getElementById('toggle-feedback-diagnostics');
 const losslessTracingToggle = document.getElementById('toggle-lossless-tracing');
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
+const strictGuardsToggle = document.getElementById('toggle-strict-guards');
+const leanModeSelect = document.getElementById('select-lean-mode');
 const allowLocalNetworkToggle = document.getElementById('toggle-allow-local-network');
 const scheduledTasksToggle = document.getElementById('toggle-scheduled-tasks');
 const scheduledConfirmToggle = document.getElementById('toggle-scheduled-confirm');
@@ -607,7 +611,7 @@ async function init() {
   browser.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await browser.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'newTabEnabled', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await browser.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'newTabEnabled', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'strictGuards', 'leanMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'clarifyTimeoutPolicy', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -655,6 +659,10 @@ async function init() {
     clarifyTimeoutRange.value = cSec;
     clarifyTimeoutValueLabel.textContent = formatClarifyTimeoutLabel(cSec);
   }
+  // What a timeout answers: 'finish' (default) keeps the task moving.
+  if (clarifyTimeoutPolicySelect) {
+    clarifyTimeoutPolicySelect.value = stored.clarifyTimeoutPolicy === 'safe' ? 'safe' : 'finish';
+  }
   if (autoScreenshotSelect) autoScreenshotSelect.value = stored.autoScreenshot || 'state_change';
   if (imageDetailSelect) imageDetailSelect.value = stored.imageDetail || 'auto';
   if (maxScreenshotsSelect) maxScreenshotsSelect.value = String(stored.maxScreenshotsPerTurn != null ? stored.maxScreenshotsPerTurn : 0);
@@ -692,6 +700,8 @@ async function init() {
   if (costTotalLimitInput) costTotalLimitInput.value = totalLimit.toFixed(2);
   renderCostAllowanceSpent(totalSpent, totalLimit);
   if (strictSecretToggle) strictSecretToggle.checked = stored.strictSecretMode === true; // off by default
+  if (strictGuardsToggle) strictGuardsToggle.checked = stored.strictGuards === true; // off by default
+  if (leanModeSelect) leanModeSelect.value = normalizeLeanModeSetting(stored.leanMode); // auto by default
   if (allowLocalNetworkToggle) allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true;
   if (scheduledTasksToggle) scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false;
   if (scheduledConfirmToggle) scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false;
@@ -1347,6 +1357,11 @@ if (clarifyTimeoutRange) {
   });
 }
 
+clarifyTimeoutPolicySelect?.addEventListener('change', async () => {
+  const policy = clarifyTimeoutPolicySelect.value === 'safe' ? 'safe' : 'finish';
+  await browser.storage.local.set({ clarifyTimeoutPolicy: policy }).catch(() => {});
+});
+
 autoScreenshotSelect?.addEventListener('change', async () => {
   await browser.storage.local.set({ autoScreenshot: autoScreenshotSelect.value }).catch(() => {});
 });
@@ -1487,6 +1502,14 @@ btnResetCostSpend?.addEventListener('click', async () => {
 
 strictSecretToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ strictSecretMode: strictSecretToggle.checked }).catch(() => {});
+});
+
+strictGuardsToggle?.addEventListener('change', async () => {
+  await browser.storage.local.set({ strictGuards: strictGuardsToggle.checked }).catch(() => {});
+});
+
+leanModeSelect?.addEventListener('change', async () => {
+  await browser.storage.local.set({ leanMode: normalizeLeanModeSetting(leanModeSelect.value) }).catch(() => {});
 });
 
 allowLocalNetworkToggle?.addEventListener('change', async () => {

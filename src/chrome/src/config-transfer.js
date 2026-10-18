@@ -35,6 +35,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   requestTimeoutMs: 120_000,
   clarifyTimeoutSec: 60,
   clarifyTimeoutSemanticsV2: true,
+  clarifyTimeoutPolicy: 'finish',
   autoScreenshot: 'state_change',
   useSiteAdapters: true,
   researchEscalationEnabled: false,
@@ -56,6 +57,8 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   tracingEnabled: false,
   feedbackDiagnosticsEnabled: true,
   strictSecretMode: false,
+  strictGuards: false,
+  leanMode: 'auto',
   agentAllowLocalNetwork: false,
   scheduledTasksEnabled: true,
   scheduledRequireConsequentialConfirmation: true,
@@ -139,6 +142,7 @@ const BOOLEAN_KEYS = new Set([
   'tracingEnabled',
   'feedbackDiagnosticsEnabled',
   'strictSecretMode',
+  'strictGuards',
   'agentAllowLocalNetwork',
   'scheduledTasksEnabled',
   'scheduledRequireConsequentialConfirmation',
@@ -184,6 +188,8 @@ const NUMBER_KEYS = new Set([
 ]);
 const STRING_KEYS = new Set([
   'composerDeliveryMode',
+  'clarifyTimeoutPolicy',
+  'leanMode',
   'wbLocale',
   'themeMode',
   'autoScreenshot',
@@ -236,8 +242,9 @@ function sanitizeProviders(value, { strict = false } = {}) {
 }
 
 function validSettingValue(key, value) {
-  if (key === 'decisionProvider') return ['', 'openrouter', 'typesafe', 'local', 'webgpu_d1'].includes(value);
+  if (key === 'decisionProvider') return ['', 'openrouter', 'typesafe', 'local', 'webgpu_d1', 'webgpu_chat'].includes(value);
   if (key === 'decisionVisionMode') return ['auto', 'on', 'off'].includes(value);
+  if (key === 'leanMode') return ['auto', 'on', 'off'].includes(value);
   if (key === 'decisionBaseUrl') {
     if (typeof value !== 'string') return false;
     try { resolveDecisionConfig({ decisionProvider: 'local', decisionBaseUrl: value }); return true; }
@@ -283,7 +290,7 @@ function normalizeSettings(source, { strict = false } = {}) {
   settings.providers = sanitizeProviders(settings.providers, { strict });
   if (!Object.hasOwn(source, 'decisionInputRate')) {
     settings.decisionInputRate = source.decisionProvider === 'typesafe' || (!source.decisionProvider && source.typesafeApiKey)
-      ? .042 : ['local', 'webgpu_d1'].includes(source.decisionProvider) ? 0 : .02;
+      ? .042 : ['local', 'webgpu_d1', 'webgpu_chat'].includes(source.decisionProvider) ? 0 : .02;
   }
   return settings;
 }

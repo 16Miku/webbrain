@@ -15,6 +15,7 @@ import { createSafeSocialHost } from './safesocial/host.js';
 import { firefoxBidi } from './bidi/client.js';
 import { ProviderManager } from './providers/manager.js';
 import { Agent } from './agent/agent.js';
+import { normalizeLeanModeSetting } from './agent/lean-mode.js';
 import {
   CUSTOM_SKILLS_STORAGE_KEY,
   DEFAULT_SKILL_SOURCES,
@@ -66,7 +67,15 @@ import {
   SELECTION_ONLY_SOURCE_GROUNDING,
   SELECTION_TRANSLATION_LANGUAGES,
   buildContextMenuPrompt,
+  buildContinuationSelectionPrompt,
+  INLINE_CONTINUE_PARTIAL_MAX_CHARS,
+  capInlineAnswer,
+  buildFollowUpSelectionText,
   buildFullContextSelectionPrompt,
+  buildInlineSelectionMessages,
+  inlineAnswerWasCut,
+  inlineErrorWasCut,
+  inlineSelectionMaxTokens,
   buildSelectionPrompt,
   normalizeSelectionAction,
   normalizeSelectionSourceGrounding,
@@ -219,6 +228,7 @@ const scheduler = new ScheduledJobManager({
   systemOneJudge: createSystemOneJudge(),
   loadProviders: async () => {
     await customSkillsReady;
+    await clarifyTimeoutReady;
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await imageGenConfigReady;
@@ -484,7 +494,15 @@ function normalizeClarifyTimeoutSec(value) {
 }
 
 async function loadClarifyTimeout() {
-  const stored = await browser.storage.local.get(['clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2']);
+  let stored;
+  try {
+    stored = await browser.storage.local.get(['clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'clarifyTimeoutPolicy']);
+  } catch (error) {
+    // The user's choice could not be read: until a later load succeeds, a
+    // timeout takes the safe answer rather than the finish default.
+    agent.clarifyTimeoutPolicy = 'safe';
+    throw error;
+  }
   // One-shot: old 0 meant Off; new 0 means Instant and Off is >1200.
   if (!stored.clarifyTimeoutSemanticsV2) {
     const updates = { clarifyTimeoutSemanticsV2: true };
@@ -497,8 +515,12 @@ async function loadClarifyTimeout() {
   agent.clarifyTimeoutSec = normalizeClarifyTimeoutSec(
     stored.clarifyTimeoutSec != null ? stored.clarifyTimeoutSec : 60,
   );
+  agent.clarifyTimeoutPolicy = stored.clarifyTimeoutPolicy === 'safe' ? 'safe' : 'finish';
 }
-loadClarifyTimeout();
+// A question's timeout answer is decided when it is asked, so a run must
+// not start before the user's timeout setting is loaded (or found unreadable,
+// which leaves the safe answer).
+const clarifyTimeoutReady = loadClarifyTimeout().catch(() => {});
 
 async function loadAutoScreenshot() {
   const stored = await browser.storage.local.get('autoScreenshot');
@@ -520,8 +542,10 @@ async function loadResearchEscalation() {
 const researchEscalationReady = loadResearchEscalation().catch(() => {});
 
 async function loadStrictSecretMode() {
-  const stored = await browser.storage.local.get('strictSecretMode').catch(() => ({}));
+  const stored = await browser.storage.local.get(['strictSecretMode', 'strictGuards', 'leanMode']).catch(() => ({}));
   agent.strictSecretMode = stored?.strictSecretMode === true;
+  agent.strictGuards = stored?.strictGuards === true;
+  agent.leanMode = normalizeLeanModeSetting(stored?.leanMode);
 }
 const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
@@ -1155,6 +1179,9 @@ browser.storage.onChanged.addListener((changes, areaName) => {
   if (changes.clarifyTimeoutSec) {
     agent.clarifyTimeoutSec = normalizeClarifyTimeoutSec(changes.clarifyTimeoutSec.newValue);
   }
+  if (changes.clarifyTimeoutPolicy) {
+    agent.clarifyTimeoutPolicy = changes.clarifyTimeoutPolicy.newValue === 'safe' ? 'safe' : 'finish';
+  }
   if (changes.autoScreenshot) {
     agent.autoScreenshot = changes.autoScreenshot.newValue;
   }
@@ -1191,6 +1218,13 @@ browser.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && changes.browserBatchEnabled) {
     browserBatchSettingsRevision++;
     agent.setBrowserBatchEnabled(changes.browserBatchEnabled.newValue !== false);
+  }
+  if (changes.strictGuards) {
+    agent.strictGuards = changes.strictGuards.newValue === true;
+  }
+  // A running task keeps the mode it started with; the next run uses this.
+  if (changes.leanMode) {
+    agent.leanMode = normalizeLeanModeSetting(changes.leanMode.newValue);
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = changes.strictSecretMode.newValue === true;
@@ -1559,11 +1593,107 @@ browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   sendResponse({ ok: true, ...getSelectionShortcutLocalization(msg.locale) });
 });
 
+// Translate, Explain and Proofread in the page card answer in place, so they
+// take one tool-less model call here instead of a sidebar run. Only the
+// selection content script and the PDF viewer page can send this message; the
+// prompt builder keeps the selection inside the untrusted boundary and caps its
+// length, and the call goes through the normal cost allowance.
+const INLINE_SELECTION_TIMEOUT_MS = 90_000;
+// Calls still in flight, keyed by the card's job id, so a card that is closed,
+// retried or retargeted can cancel the paid request it no longer needs.
+const inlineSelectionJobs = new Map();
+const INLINE_JOB_ID_PATTERN = /^[a-z0-9]{8,64}$/;
+
+// The allowance notice a call carries when it was the one to reach the limit.
+function inlineCostNotice(source) {
+  return typeof source?.costAllowanceMessage === 'string' ? source.costAllowanceMessage.slice(0, 300) : '';
+}
+
+async function answerInlineSelection(msg) {
+  const messages = buildInlineSelectionMessages(msg.selectionText, msg.action, msg.language);
+  if (!messages) return { ok: false, error: 'Invalid selection request.' };
+  const controller = new AbortController();
+  const jobId = typeof msg.jobId === 'string' && INLINE_JOB_ID_PATTERN.test(msg.jobId) ? msg.jobId : '';
+  if (jobId) inlineSelectionJobs.set(jobId, controller);
+  const timer = setTimeout(
+    () => controller.abort(new Error('The model took too long to answer.')),
+    INLINE_SELECTION_TIMEOUT_MS,
+  );
+  try {
+    if (providerManager.providers.size === 0) await providerManager.load();
+    const provider = providerManager.getActive();
+    // Sized to the selection and never above what the provider accepts, prompt
+    // included; an answer that still hits the ceiling is flagged so the card can offer the side panel
+    // instead of presenting a cut-off translation as complete.
+    const maxTokens = inlineSelectionMaxTokens(msg.selectionText, msg.action, provider?.maxOutputTokens, {
+      contextWindow: provider?.contextWindow,
+      messages,
+    });
+    // The prompt alone fills the model's context window: no call could answer. This is a plain
+    // error, not a cut-off: the side panel sizes its reply to the same window and would refuse
+    // the same selection, so the card must not offer it as a way to finish the answer.
+    if (maxTokens === 0) {
+      return { ok: false, error: 'This selection is too long for the model\'s context window.' };
+    }
+    const result = await agent._chatWithCostAllowance(
+      provider,
+      messages,
+      { maxTokens, temperature: 0, signal: controller.signal },
+      agent._newCostRunState(),
+    );
+    const content = String(result?.content || '');
+    const { text, cut } = capInlineAnswer(content);
+    if (!content.trim()) {
+      const notice = inlineCostNotice(result);
+      return { ok: false, error: 'The model returned an empty answer.', ...(notice ? { notice } : {}) };
+    }
+    // The call that reaches the cost allowance still returns its answer; the card is told
+    // so it can say the next one will not run.
+    const notice = inlineCostNotice(result);
+    const answer = { ok: true, text, ...(notice ? { notice } : {}) };
+    return cut || inlineAnswerWasCut(result, maxTokens) ? { ...answer, truncated: true } : answer;
+  } catch (error) {
+    if (inlineErrorWasCut(error)) {
+      // The provider reported the output limit as an error. Show what it wrote, if
+      // anything, and let the card hand the rest to the side panel.
+      const partialContent = String(error.partialContent || '');
+      const partial = capInlineAnswer(partialContent).text;
+      const notice = inlineCostNotice(error);
+      return partialContent.trim()
+        ? { ok: true, text: partial, truncated: true, ...(notice ? { notice } : {}) }
+        : {
+          ok: false,
+          truncated: true,
+          error: 'The answer was cut off before any text was produced.',
+          ...(notice ? { notice } : {}),
+        };
+    }
+    const notice = inlineCostNotice(error);
+    return { ok: false, error: String(error?.message || error).slice(0, 300), ...(notice ? { notice } : {}) };
+  } finally {
+    clearTimeout(timer);
+    if (jobId && inlineSelectionJobs.get(jobId) === controller) inlineSelectionJobs.delete(jobId);
+  }
+}
+
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_INLINE') return;
+  answerInlineSelection(msg).then(sendResponse);
+  return true;
+});
+
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_INLINE_CANCEL') return;
+  const jobId = typeof msg.jobId === 'string' ? msg.jobId : '';
+  inlineSelectionJobs.get(jobId)?.abort(new Error('The card was closed.'));
+  sendResponse({ ok: true });
+});
+
 // Firefox does not treat a click in an injected page UI as an authorized
 // sidebarAction.open() gesture. Persist and notify the existing sidebar when
 // it is open; otherwise startup recovery will consume the prompt after the
 // user opens WebBrain manually.
-function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
+async function queueFirefoxSelectionShortcutPromptAfterProviders(msg, tab, sendResponse) {
   const selectionAction = normalizeSelectionAction(msg.action);
   const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
   const sourceGrounding = includePageContext
@@ -1571,14 +1701,39 @@ function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
     : selectionAction === 'custom'
       ? SELECTION_CONTEXT_SOURCE_GROUNDING
       : SELECTION_ONLY_SOURCE_GROUNDING;
-  const text = includePageContext
-    ? buildFullContextSelectionPrompt(msg.selectionText, msg.question)
-    : buildSelectionPrompt(
+  // A follow-up typed in a page card carries that card's answer as context.
+  // The provider metadata was loaded before this prompt was built, so its context
+  // window can trim the handoff before the side-panel run starts.
+  const contextWindow = providerManager.providers.size > 0 ? providerManager.getActive()?.contextWindow : undefined;
+  const selectionText = selectionAction === 'custom'
+    ? buildFollowUpSelectionText(
       msg.selectionText,
+      msg.priorAction,
+      msg.priorAnswer,
+      { contextWindow, question: msg.question, language: msg.language },
+    )
+    : msg.selectionText;
+  // A cut-off card answer resumes where it stopped instead of running the action again,
+  // which would meet the same output limit.
+  const resumesCutOffAnswer = selectionAction !== 'custom'
+    && typeof msg.continueFrom === 'string' && msg.continueFrom.trim() !== '';
+  const text = resumesCutOffAnswer
+    ? buildContinuationSelectionPrompt(
+      msg.selectionText,
+      selectionAction,
+      msg.continueFrom.slice(-INLINE_CONTINUE_PARTIAL_MAX_CHARS),
+      msg.language,
+      { contextWindow },
+    )
+    : includePageContext
+    ? buildFullContextSelectionPrompt(selectionText, msg.question, { trim: !msg.priorAnswer })
+    : buildSelectionPrompt(
+      selectionText,
       msg.action,
       msg.question,
       msg.language,
       sourceGrounding,
+      { trim: !msg.priorAnswer },
     );
   if (!tab?.id || !text) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid selection shortcut request.' });
@@ -1603,6 +1758,20 @@ function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
     notifySidePanelOfContextMenuPrompt(payload);
     return { ok: true, queued: true, requiresManualOpen: true };
   })().then(sendResponse).catch((error) => {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: error?.message || String(error) });
+  });
+  return true;
+}
+
+function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
+  if (!tab?.id) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid selection shortcut request.' });
+    return false;
+  }
+  (async () => {
+    if (providerManager.providers.size === 0) await providerManager.load();
+    return queueFirefoxSelectionShortcutPromptAfterProviders(msg, tab, sendResponse);
+  })().catch((error) => {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: error?.message || String(error) });
   });
   return true;
@@ -2909,7 +3078,7 @@ async function handleMessage(msg, sender) {
     }
     // Hydrate agent toggles and prompt add-ons once at boot (not per message);
     // onChanged keeps them in sync afterward.
-    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady]);
+    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady, clarifyTimeoutReady]);
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await screenshotRedactionReady;

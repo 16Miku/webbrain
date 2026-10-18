@@ -1779,6 +1779,37 @@
           </div>
           <div class="setting-row">
             <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.clarify_timeout_policy.label"></div>
+              <div class="setting-desc" data-i18n="st.display.clarify_timeout_policy.desc"></div>
+            </div>
+            <select id="select-clarify-timeout-policy" data-i18n-aria-label="st.display.clarify_timeout_policy.label">
+              <option value="finish" data-i18n="st.display.clarify_timeout_policy.finish"></option>
+              <option value="safe" data-i18n="st.display.clarify_timeout_policy.safe"></option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.strict_guards.label"></div>
+              <div class="setting-desc" data-i18n="st.display.strict_guards.desc"></div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="toggle-strict-guards">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label" data-i18n="st.display.lean_mode.label"></div>
+              <div class="setting-desc" data-i18n="st.display.lean_mode.desc"></div>
+            </div>
+            <select id="select-lean-mode" data-i18n-aria-label="st.display.lean_mode.label">
+              <option value="auto" data-i18n="st.display.lean_mode.auto"></option>
+              <option value="on" data-i18n="st.display.lean_mode.on"></option>
+              <option value="off" data-i18n="st.display.lean_mode.off"></option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
               <div class="setting-label" data-i18n="st.display.site_adapters.label"></div>
               <div class="setting-desc" data-i18n="st.display.site_adapters.desc"></div>
             </div>
@@ -2272,7 +2303,17 @@
             </div>
 
             <div class="field"><label for="decision-provider" data-i18n="st.decision.provider"></label>
-              <select id="decision-provider"><option value="openrouter">OpenRouter</option><option value="typesafe">TypeSafe</option><option value="local" data-i18n="st.decision.local"></option><option value="webgpu_d1" data-i18n="st.d1.provider"></option></select>
+              <select id="decision-provider"><option value="openrouter">OpenRouter</option><option value="typesafe">TypeSafe</option><option value="local" data-i18n="st.decision.local"></option><option value="webgpu_d1" data-i18n="st.d1.provider"></option><option value="webgpu_chat" data-i18n="st.decision.webgpu_chat"></option></select>
+            </div>
+            <p class="settings-description" id="webgpu-decision-note" hidden data-i18n="st.decision.webgpu_chat_note"></p>
+            <div class="info-box" id="decision-suggestion" hidden style="margin-top:10px;">
+              <p id="decision-suggest-chat" data-i18n="st.decision.suggest_chat" style="margin:0"></p>
+              <p id="decision-suggest-upgrade" data-i18n="st.decision.suggest_upgrade" style="margin:0" hidden></p>
+              <div class="btn-row" style="margin-top:10px;flex-wrap:wrap">
+                <button class="btn-secondary" id="btn-decision-use-chat" data-i18n="st.decision.use_chat"></button>
+                <button class="btn-secondary" id="btn-decision-use-d1" data-i18n="st.decision.use_d1"></button>
+                <button class="btn-secondary" id="btn-decision-suggest-dismiss" data-i18n="st.decision.suggest_dismiss"></button>
+              </div>
             </div>
             <div id="d1-controls" hidden>
               <p class="settings-description" data-i18n="st.d1.warning"></p>
