@@ -1137,8 +1137,6 @@ export default {
   "sp.export_traces.partial": "工具链已导出，但部分回合事件无法读取。",
   "sp.export_traces.truncated": "工具链已导出。如果此对话有很多跟踪记录，较早的回合可能缺失。",
   "st.display.help_improve.label": "帮助改进 WebBrain",
-  "st.display.newtab.label": "将 WebBrain 用作新标签页",
-  "st.display.newtab.desc": "新标签页将打开 WebBrain 页面，其中有可用于提问、执行或搜索的输入框。关闭后将保留浏览器自带的新标签页；你可以随时在“设置 → 常规”中更改。",
   "st.display.help_improve.desc_html": "允许保留选定的 WebBrain Compass 交互，并将其用于评估、改进、微调和训练。此选项默认开启。关闭后，未来的 Compass 交互将不会用于这些用途。<u>WebBrain 仅会收集您开启了“共享查询以用于研究”的服务商的本地模型和自备 API 请求。</u><a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">隐私政策 →</a>",
   "st.providers.webbrain_data_use.body": "WebBrain Compass 包含每日免费用量。帮助改进 WebBrain 默认开启时，选定的 Compass 对话可能会被保留，并用于评估、改进、微调和训练。可在“常规 → 高级”中关闭，以排除未来的 Compass 交互。<u>仅当您开启此服务商的“共享查询以用于研究”选项时，WebBrain 才会收集本地模型和自备 API 请求。</u>{privacyLink}。如需更多用量，请在 {subscribeLink} 订阅。在 {accountLink} 管理账单。",
   'st.providers.share_research.label': "共享查询以用于研究",

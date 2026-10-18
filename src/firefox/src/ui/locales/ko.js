@@ -1137,8 +1137,6 @@ export default {
   "sp.export_traces.partial": "도구 체인을 내보냈지만 일부 턴 이벤트를 읽지 못했습니다.",
   "sp.export_traces.truncated": "도구 체인을 내보냈습니다. 이 대화에 트레이스가 많으면 이전 턴이 빠질 수 있습니다.",
   "st.display.help_improve.label": "WebBrain 개선에 참여",
-  "st.display.newtab.label": "새 탭 페이지로 WebBrain 사용",
-  "st.display.newtab.desc": "새 탭을 열면 질문, 실행, 검색을 할 수 있는 입력창이 있는 WebBrain 페이지가 열립니다. 끄면 브라우저의 기본 새 탭 페이지가 유지됩니다. 설정 → 일반에서 언제든지 바꿀 수 있습니다.",
   "st.display.help_improve.desc_html": "선택된 WebBrain Compass 상호작용을 보관하고 평가, 개선, 미세 조정 및 학습에 사용하도록 허용합니다. 기본적으로 켜져 있습니다. 향후 Compass 상호작용이 이러한 목적으로 사용되지 않도록 하려면 끄세요. <u>로컬 모델 및 자체 API 요청은 “연구를 위해 쿼리 공유”를 켜 제공업체에 한해 WebBrain이 수집합니다.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">개인정보 처리방침 →</a>",
   "st.providers.webbrain_data_use.body": "WebBrain Compass에는 일일 무료 사용량이 포함됩니다. ‘WebBrain 개선에 참여’가 기본적으로 켜져 있는 동안 선택된 Compass 대화가 보관되어 평가, 개선, 미세 조정 및 학습에 사용될 수 있습니다. 향후 Compass 상호작용을 이러한 사용에서 제외하려면 일반 → 고급에서 끄세요. <u>로컬 모델 및 자체 API 요청은 이 제공업체의 “연구를 위해 쿼리 공유” 옵션을 켜 경우에만 WebBrain이 수집합니다.</u> {privacyLink}. 더 많은 사용량이 필요하면 {subscribeLink}에서 구독하세요. 청구는 {accountLink}에서 관리하세요.",
   'st.providers.share_research.label': "연구를 위해 쿼리 공유",

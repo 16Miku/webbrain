@@ -1137,8 +1137,6 @@ export default {
   "sp.export_traces.partial": "ツールチェーンを書き出しましたが、一部のターンのイベントを読めませんでした。",
   "sp.export_traces.truncated": "ツールチェーンを書き出しました。この会話にトレースが多い場合、古いターンが欠けることがあります。",
   "st.display.help_improve.label": "WebBrain の改善に協力する",
-  "st.display.newtab.label": "新しいタブページに WebBrain を使う",
-  "st.display.newtab.desc": "新しいタブで、質問・操作・検索ができる入力欄のある WebBrain のページが開きます。オフにするとブラウザー標準の新しいタブページのままになります。設定 → 一般 でいつでも変更できます。",
   "st.display.help_improve.desc_html": "選択された WebBrain Compass の操作を保持し、評価、改善、微調整、トレーニングに使用することを許可します。既定でオンです。今後の Compass 操作がこれらの目的に使用されないようにするにはオフにしてください。<u>ローカルモデルやご自身のAPIへのリクエストは、「研究のためにクエリを共有」をオンにしたプロバイダーからのみWebBrainが収集します。</u><a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">プライバシーポリシー →</a>",
   "st.providers.webbrain_data_use.body": "WebBrain Compass には毎日の無料利用枠が含まれます。「WebBrain の改善に協力する」は既定でオンであり、選択された Compass の会話が保持され、評価、改善、微調整、トレーニングに使用される場合があります。今後の Compass 操作をこれらの用途から除外するには、一般 → 詳細設定でオフにしてください。<u>ローカルモデルやご自身のAPIへのリクエストは、このプロバイダーの「研究のためにクエリを共有」オプションをオンにした場合のみWebBrainが収集します。</u>{privacyLink}。追加利用は {subscribeLink} で購読してください。請求は {accountLink} で管理できます。",
   'st.providers.share_research.label': "研究のためにクエリを共有",

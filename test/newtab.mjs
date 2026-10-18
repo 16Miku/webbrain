@@ -1480,9 +1480,16 @@ for (const browser of ['chrome', 'firefox']) {
 
   test(`${browser}: manifest and background are wired`, () => {
     const manifest = JSON.parse(readFileSync(path.join(root, 'src', browser, 'manifest.json'), 'utf8'));
-    assert.equal(manifest.chrome_url_overrides?.newtab, 'newtab/index.html');
-    assert.ok(manifest.permissions.includes('search'));
-    assert.ok(existsSync(path.join(root, 'src', browser, 'newtab/index.html')), 'run npm run build:newtab');
+    if (browser === 'chrome') {
+      assert.equal(manifest.chrome_url_overrides?.newtab, 'newtab/index.html');
+      assert.ok(manifest.permissions.includes('search'));
+      assert.ok(existsSync(path.join(root, 'src', browser, 'newtab/index.html')), 'run npm run build:newtab');
+    } else {
+      // Firefox cannot hand a tab to its own new tab page, so an opt-in page cannot exist there.
+      assert.equal(manifest.chrome_url_overrides, undefined);
+      assert.ok(!manifest.permissions.includes('search'));
+      assert.equal(existsSync(path.join(root, 'src', browser, 'newtab')), false);
+    }
     const bg = readFileSync(path.join(root, 'src', browser, 'src/background.js'), 'utf8');
     assert.match(bg, /WB_NEWTAB_PANEL_OPENED/);
     // Unclaimed records are cleaned up without waiting for another submission.
@@ -1508,12 +1515,10 @@ test('both extensions ship an identical handoff module', () => {
   assert.equal(a, b);
 });
 
-test('built new tab is identical in both extensions and calls no external host', () => {
-  const dirs = ['chrome', 'firefox'].map((b) => path.join(root, 'src', b, 'newtab'));
-  const html = dirs.map((d) => readFileSync(path.join(d, 'index.html'), 'utf8'));
-  assert.equal(html[0], html[1]);
-  assert.doesNotMatch(html[0], /https?:\/\//);
-  assert.doesNotMatch(html[0], /<script(?![^>]*src=)[^>]*>[^<]/, 'no inline script (MV3 CSP)');
+test('built new tab calls no external host and has no inline script', () => {
+  const html = readFileSync(path.join(root, 'src/chrome/newtab/index.html'), 'utf8');
+  assert.doesNotMatch(html, /https?:\/\//);
+  assert.doesNotMatch(html, /<script(?![^>]*src=)[^>]*>[^<]/, 'no inline script (MV3 CSP)');
 });
 
 test('every WebBrain locale has every new tab string', async (t) => {
@@ -2768,11 +2773,25 @@ test('opt-in: the new tab hands the tab to the browser unless newTabEnabled is t
   const on = chromeEnv({ stored: { newTabEnabled: true } });
   assert.equal(await gate.shouldShowWebBrainNewTab(on.env), true);
   assert.deepEqual(on.calls.filter((c) => c[0] === 'update'), []);
-  // Firefox goes to its Home page (about:newtab is a privileged URL there)
+  // Edge does not serve chrome://new-tab-page/, so it gets its own fallback (by brand or by UA)
+  for (const navigator of [
+    { userAgentData: { brands: [{ brand: 'Chromium' }, { brand: 'Microsoft Edge' }] }, userAgent: 'x' },
+    { userAgent: 'Mozilla/5.0 AppleWebKit/537.36 Chrome/141.0 Safari/537.36 Edg/141.0.0.0' },
+  ]) {
+    const edge = chromeEnv();
+    edge.env.navigator = navigator;
+    assert.equal(await gate.shouldShowWebBrainNewTab(edge.env), false);
+    assert.deepEqual(edge.calls.filter((c) => c[0] === 'update'), [['update', 7, { url: 'chrome-search://local-ntp/local-ntp.html' }]]);
+  }
+  const chromeUa = chromeEnv();
+  chromeUa.env.navigator = { userAgentData: { brands: [{ brand: 'Google Chrome' }] }, userAgent: 'Mozilla/5.0 Chrome/141.0 Safari/537.36' };
+  assert.equal(await gate.shouldShowWebBrainNewTab(chromeUa.env), false);
+  assert.deepEqual(chromeUa.calls.filter((c) => c[0] === 'update'), [['update', 7, { url: 'chrome://new-tab-page/' }]]);
+  // Firefox cannot load its own new tab page (about:home / about:newtab are "Illegal URL"), so
+  // there is nothing to hand over to: the page is never redirected and storage is never read
   const ffApi = makeApi();
-  const ffEnv = { browser: { sidebarAction: { open() {} }, ...ffApi } };
-  assert.equal(await gate.shouldShowWebBrainNewTab(ffEnv), false);
-  assert.deepEqual(ffApi.calls.filter((c) => c[0] === 'update'), [['update', 7, { url: 'about:home' }]]);
+  assert.equal(await gate.shouldShowWebBrainNewTab({ browser: { sidebarAction: { open() {} }, ...ffApi } }), true);
+  assert.deepEqual(ffApi.calls, []);
   // it fails towards showing a page, never a blank tab
   assert.equal(await gate.shouldShowWebBrainNewTab({}), true, 'no extension APIs (dev preview)');
   assert.equal(await gate.shouldShowWebBrainNewTab(chromeEnv({ failStorage: true }).env), true, 'unreadable storage');
@@ -2786,31 +2805,35 @@ test('opt-in: the new tab hands the tab to the browser unless newTabEnabled is t
   assert.match(readFileSync(nt('boot.jsx'), 'utf8'), /^\/\/[^\n]*\n\/\/[^\n]*\nimport 'lib\/storage-namespace';/);
 });
 
-test('opt-in: onboarding offers the new tab (ticked by default) and Settings can change it', async () => {
+test('opt-in: onboarding offers the new tab (ticked by default) and Settings can change it; Firefox has no new tab', async () => {
   const expected = 'en zh ar bn nl tl fr de he hi id ja ko ms fa pl pt ru es th tr uk vi'.split(' ');
-  for (const browser of ['chrome', 'firefox']) {
-    const api = browser === 'chrome' ? 'chrome' : 'browser';
-    const ui = (f) => readFileSync(path.join(root, 'src', browser, 'src/ui', f), 'utf8');
-    const html = ui('sidepanel.html');
-    // on the last onboarding step (the one with Help Improve WebBrain), ticked by default
-    const lastStep = html.slice(html.indexOf('data-step="2"'));
-    assert.match(lastStep, /id="ob-newtab-checkbox"[^>]*\schecked>/, browser);
-    assert.ok(lastStep.indexOf('ob-help-improve-checkbox') < lastStep.indexOf('ob-newtab-checkbox'), `${browser}: next to Help Improve`);
-    assert.match(html, /data-i18n="st\.display\.newtab\.desc"/, browser);
-    // written with onboardingComplete, whichever way onboarding is left
-    const js = ui('sidepanel.js');
-    assert.match(js, new RegExp(`${api}\\.storage\\.local\\.set\\(\\{\\s*onboardingComplete: true,\\s*\\.\\.\\.\\(newTabCheckbox \\? \\{ newTabEnabled: newTabCheckbox\\.checked \\} : \\{\\}\\),\\s*\\}\\)`), browser);
-    assert.equal((js.match(/onboardingComplete: true/g) || []).length, 1, `${browser}: one exit path`);
-    // Settings: off until chosen, saved on change
-    assert.match(ui('settings.html'), /id="toggle-newtab"/, browser);
-    const settings = ui('settings.js');
-    assert.match(settings, /newTabToggle\.checked = stored\.newTabEnabled === true/, browser);
-    assert.match(settings, new RegExp(`newTabToggle\\?\\.addEventListener\\('change'[\\s\\S]*?${api}\\.storage\\.local\\.set\\(\\{ newTabEnabled: newTabToggle\\.checked \\}\\)`), browser);
-    // translated everywhere
-    for (const code of expected) {
-      const dict = (await import(pathToFileURL(path.join(root, 'src', browser, 'src/ui/locales', `${code}.js`)).href)).default;
-      assert.ok(String(dict['st.display.newtab.label'] || '').trim(), `${browser}/${code} label`);
-      assert.ok(String(dict['st.display.newtab.desc'] || '').trim(), `${browser}/${code} desc`);
-    }
+  const ui = (browser, f) => readFileSync(path.join(root, 'src', browser, 'src/ui', f), 'utf8');
+  const browser = 'chrome';
+  const html = ui(browser, 'sidepanel.html');
+  // on the last onboarding step (the one with Help Improve WebBrain), ticked by default
+  const lastStep = html.slice(html.indexOf('data-step="2"'));
+  assert.match(lastStep, /id="ob-newtab-checkbox"[^>]*\schecked>/);
+  assert.ok(lastStep.indexOf('ob-help-improve-checkbox') < lastStep.indexOf('ob-newtab-checkbox'), 'next to Help Improve');
+  assert.match(html, /data-i18n="st\.display\.newtab\.desc"/);
+  // written with onboardingComplete, whichever way onboarding is left
+  const js = ui(browser, 'sidepanel.js');
+  assert.match(js, /chrome\.storage\.local\.set\(\{\s*onboardingComplete: true,\s*\.\.\.\(newTabCheckbox \? \{ newTabEnabled: newTabCheckbox\.checked \} : \{\}\),\s*\}\)/);
+  assert.equal((js.match(/onboardingComplete: true/g) || []).length, 1, 'one exit path');
+  // Settings: off until chosen, saved on change
+  assert.match(ui(browser, 'settings.html'), /id="toggle-newtab"/);
+  const settings = ui(browser, 'settings.js');
+  assert.match(settings, /newTabToggle\.checked = stored\.newTabEnabled === true/);
+  assert.match(settings, /newTabToggle\?\.addEventListener\('change'[\s\S]*?chrome\.storage\.local\.set\(\{ newTabEnabled: newTabToggle\.checked \}\)/);
+  // translated everywhere
+  for (const code of expected) {
+    const dict = (await import(pathToFileURL(path.join(root, 'src', browser, 'src/ui/locales', `${code}.js`)).href)).default;
+    assert.ok(String(dict['st.display.newtab.label'] || '').trim(), `${code} label`);
+    assert.ok(String(dict['st.display.newtab.desc'] || '').trim(), `${code} desc`);
   }
+  // Firefox cannot hand a tab to its own new tab page, so it has no new tab and no switch for one
+  for (const f of ['sidepanel.html', 'sidepanel.js', 'settings.html', 'settings.js']) {
+    assert.doesNotMatch(ui('firefox', f), /newTabEnabled|newtab-checkbox|toggle-newtab/, `firefox ${f}`);
+  }
+  assert.doesNotMatch(readFileSync(path.join(root, 'src/firefox/src/ui/locales/en.js'), 'utf8'), /st\.display\.newtab/);
 });
+
