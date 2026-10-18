@@ -208,7 +208,7 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 import {
   TINY_ASK_ACT_BLOCKED_MESSAGE, TINY_ASK_COMPACT_LINKED_MAX_CHARS, TINY_ASK_COMPACT_PAGE_MAX_CHARS,
   TINY_ASK_COMPACT_SELECTION_MAX_CHARS, TINY_ASK_READ_MAX_CHARS, TINY_ASK_READ_WINDOW_CHARS, TINY_ASK_SYSTEM_PROMPT,
-  tinyAskLinkedUrl, tinyAskScreenshotNote, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine, tinyAskWantsScreenshot,
+  TINY_ASK_SCREENSHOT_GATE_THRESHOLD, tinyAskLinkedUrl, tinyAskScreenshotGate, tinyAskScreenshotNote, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
 } from './tiny-ask.js';
 import { webgpuModelDisplayName } from '../providers/webgpu.js';
 
@@ -12007,8 +12007,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : { url: linkedUrl, text, incomplete: fetched.hasMore === true };
       if (linked.unavailable) onUpdate?.('thinking', { step: 0, note: 'Could not read the linked page.' });
     }
-    const screenshot = tinyAskWantsScreenshot({ question: questionText, page, imageAttachment, linkedPage: !!linkedUrl })
-      ? await this._tinyAskScreenshot(tabId, onUpdate) : null;
+    const screenshot = await this._tinyAskScreenshot(tabId, {
+      question: questionText, page, imageAttachment, linkedPage: !!linkedUrl, onUpdate,
+    });
     let modelLabel = '';
     try {
       const provider = this._activeProvider(tabId);
@@ -12055,23 +12056,45 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return enriched;
   }
 
-  // The visible page for a tiny Ask turn, only when the in-browser model reads
-  // images itself and Strict Secret Mode is off. Never a separate describing
-  // model: tiny Ask stays on the user's device. Same capture as the agent's
+  // The visible page for a tiny Ask turn, when the in-browser model reads
+  // images itself and its own Yes/No readout says the question needs it (see
+  // tinyAskScreenshotGate: language-independent, and blind to page content).
+  // Never in Strict Secret Mode, never through a separate describing model:
+  // tiny Ask stays on the user's device. Same capture as the agent's
   // automatic screenshots (redaction, size budget, per-turn screenshot limit).
-  async _tinyAskScreenshot(tabId, onUpdate = null) {
+  // Any failure leaves the turn text-only, as before.
+  async _tinyAskScreenshot(tabId, { question = '', page = null, imageAttachment = false, linkedPage = false, onUpdate = null } = {}) {
     // Redaction covers form fields, not text drawn in images or canvases.
-    if (this.strictSecretMode) return null;
+    if (this.strictSecretMode || !page?.kind) return null;
     let provider = null;
     let route = null;
     try {
       provider = this._activeProvider(tabId);
-      if (!this._isInBrowserProvider(provider)) return null;
+      if (!this._isInBrowserProvider(provider) || typeof provider.decide !== 'function') return null;
       route = await this._resolveVisionRoute(tabId, provider);
     } catch {
       return null;
     }
     if (route?.route !== 'active_raw' || route.rawImage !== true || route.provider !== provider) return null;
+    const started = Date.now();
+    let probability = null;
+    try {
+      const gate = tinyAskScreenshotGate({
+        question, pageChars: String(page.text || '').trim().length, imageAttachment, linkedPage,
+      });
+      const result = await provider.decide({ ...gate, promptVariant: 'readout', signal: this._runAbortSignal(tabId) });
+      probability = Number(result?.answers?.needs_screenshot?.noul);
+    } catch (error) {
+      if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+    }
+    const runId = this.currentRunId.get(tabId);
+    if (runId) {
+      trace.recordNote(runId, null, 'tiny_ask_screenshot_gate', {
+        probability: Number.isFinite(probability) ? Math.round(probability * 1000) / 1000 : null,
+        ms: Date.now() - started,
+      });
+    }
+    if (!(probability >= TINY_ASK_SCREENSHOT_GATE_THRESHOLD)) return null;
     onUpdate?.('thinking', { step: 0, note: 'Looking at the page…' });
     try {
       const shot = await this._captureBudgetedAutoScreenshot(tabId);

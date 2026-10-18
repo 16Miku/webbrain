@@ -113,11 +113,15 @@ const tasks = [
   { name: 'act-request', page: '/pricing.html', text: 'Click the Buy Pro button.', expect: /\S/, reject: /\b(?:I(?:'ve| have)? clicked|clicked the)\b/i },
   { name: 'linked-url', page: '/article.html', text: `Summarize ${base}/linked.html in one sentence.`, expect: /May|lettuce|Orbital/i },
   { name: 'browser-page', page: 'chrome://version/', text: 'hello', expect: /\S/ },
-  // A vision model also sees the visible page for visual questions and for
-  // pages with almost no text; text questions (price above) stay text-only.
+  // A vision model also sees the visible page when its own readout says the
+  // question needs it; text questions (price above) stay text-only.
   { name: 'image-color', page: '/image.html', text: 'What color is the mug in the photo?', expect: /green/i, screenshot: true },
   { name: 'image-turkish', page: '/image.html', text: 'Fotoğraftaki kupa ne renk?', expect: /yeşil|green/i, screenshot: true },
   { name: 'image-only-page', page: '/poster.html', text: 'What is on this page?', expect: /orange|circle|sun/i, screenshot: true },
+  // The decision to look is the model's own readout, so it works in any language.
+  { name: 'image-german', page: '/image.html', text: 'Welche Farbe hat die Tasse auf dem Foto?', expect: /grün|green/i, screenshot: true },
+  { name: 'image-spanish', page: '/image.html', text: '¿De qué color es la taza de la foto?', expect: /verde|green/i, screenshot: true },
+  { name: 'text-german', page: '/pricing.html', text: 'Wie viel kostet der Pro-Tarif im Monat?', expect: /29/, screenshot: false },
 ].filter(task => !taskFilter || taskFilter.has(task.name));
 
 await fs.mkdir(path.dirname(output), { recursive: true });

@@ -47,57 +47,33 @@ export const TINY_ASK_BACKGROUND_PAGE_MAX_CHARS = 3000;
 // up to this cap so the excerpt can come from anywhere in the document.
 export const TINY_ASK_READ_WINDOW_CHARS = 6000;
 export const TINY_ASK_READ_MAX_CHARS = 60000;
-// In-browser models that read images (Ternary Bonsai 2 2B Vision) also get
-// the visible part of the page when the question is about something visual,
-// or when the page has almost no readable text (an image, a canvas app, a
-// scanned PDF). Other questions stay text-only: a screenshot adds about a
-// second of prefill on a desktop GPU and up to ~1k image tokens of context.
+// In-browser models that read images (Ternary Bonsai 2 2B Vision) can also be
+// shown the visible part of the page. Whether a question needs it is decided
+// by the model itself: one Yes/No readout through WebGPUProvider.decide
+// before the answer (no text generated, about 0.2-0.4 s on a desktop GPU), so
+// it works in any language. The readout sees only the user's message and
+// facts WebBrain knows (how much page text there is, an attached image, a
+// linked page), never page content, so a page cannot steer the decision.
 export const TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS = 200;
-// A screenshot needs two things: the question points at the current page, and
-// what it asks is visual (or the page has almost no text to answer from).
-// "What does melanoma look like?" is visual but general; "Summarize this
-// page" points at the page but is answered from its text.
+export const TINY_ASK_SCREENSHOT_GATE_THRESHOLD = 0.5;
+export const TINY_ASK_SCREENSHOT_GATE_QUESTION = 'Does answering this message well require looking at a screenshot of '
+  + 'the current page? Yes only if the answer depends on what the current page visibly shows that its text does '
+  + 'not: images, photos, charts, colours, layout or design, or anything at all when the page has almost no text '
+  + 'and the message is about the page. No for questions answered from the page text, for general knowledge '
+  + 'questions, and for questions only about an attached image or a linked page.';
 
-// Visual: appearance words, colours and visual media, in English and Turkish.
-const HUES = 'red|green|blue|yellow|orange|purple|violet|pink|black|white|gr[ae]y|brown|beige|gold(?:en)?|silver';
-const VISUAL_WORDS = [
-  'images?', 'pictures?', 'photo(?:graph)?s?', 'pics?', 'screenshots?', 'screen', 'charts?', 'graphs?',
-  'diagrams?', 'maps?', 'logos?', 'icons?', 'colou?r(?:s|ed|ful)?', 'look(?:s|ing)? like', '(?:do|can) you see',
-  'visible', 'thumbnails?', 'banners?', 'layout', 'fonts?', 'illustrations?', 'drawings?', 'videos?', 'appearance',
-  `(?:${HUES})(?:dish)?`,
-  'resim\\p{L}*', 'resm\\p{L}*', 'görsel\\p{L}*', 'görüntü\\p{L}*', 'foto\\p{L}*', 'ekran\\p{L}*',
-  'grafi\\p{L}*', 'grafiğ\\p{L}*', 'şema\\p{L}*', 'diyagram\\p{L}*', 'harita\\p{L}*', 'logo\\p{L}*',
-  'ikon\\p{L}*', 'simge\\p{L}*', 'renk\\p{L}*', 'reng\\p{L}*', 'görünüyor\\p{L}*', 'görünüm\\p{L}*',
-  'görüyor\\p{L}*', 'çizim\\p{L}*', 'video\\p{L}*',
-  '(?:kırmızı|yeşil|mavi|sarı|turuncu|mor|pembe|siyah|beyaz|gri|kahverengi|lacivert)\\p{L}*',
-];
-const VISUAL_QUESTION = new RegExp(`(?<!\\p{L})(?:${VISUAL_WORDS.join('|')})(?!\\p{L})`, 'iu');
-
-// Pointing at the page: deictic words, the page itself, or a specific thing
-// on it ("the photo", "that Buy button"). Verbs such as "explain" do not
-// count on their own: "Explain what melanoma looks like" is general.
-const PAGE_THINGS = 'images?|pictures?|photo(?:graph)?s?|pics?|screenshots?|charts?|graphs?|diagrams?|maps?|logos?|icons?|videos?|thumbnails?|banners?|buttons?|links?|headers?|menus?|backgrounds?|illustrations?|drawings?|fonts?|text|headings?|titles?';
-const PAGE_REFERENCE = new RegExp([
-  '(?<!\\p{L})(?:this|here)(?!\\p{L})',
-  '(?<!\\p{L})on (?:the )?screen(?!\\p{L})',
-  '(?<!\\p{L})(?:the|current|open) (?:page|site|website|tab|screen|article|document)(?!\\p{L})',
-  `(?<!\\p{L})(?:the|that|these|those)\\s+(?:\\p{L}+\\s+){0,2}(?:${PAGE_THINGS})(?!\\p{L})`,
-  '(?<!\\p{L})(?:do|can) you see(?!\\p{L})',
-  "(?<!\\p{L})what(?:'s| is) (?:on|shown|happening)(?!\\p{L})",
-  // Turkish has no articles: demonstratives, the page itself, or a word for
-  // a thing on it ("fotoğraftaki", "logonun", "buton").
-  '(?<!\\p{L})(?:bu|şu|bunu|bunda|burada|buradaki|bunlar\\p{L}*)(?!\\p{L})',
-  '(?<!\\p{L})(?:sayfa|sekme|ekran)\\p{L}*',
-  '(?<!\\p{L})(?:resim|resm|görsel|görüntü|foto|grafi|grafiğ|şema|diyagram|harita|logo|ikon|simge|çizim|video|buton|düğme|başlık)\\p{L}*',
-  '(?<!\\p{L})ne (?:yazıyor|gösteriyor)(?!\\p{L})',
-].join('|'), 'iu');
-// The page named outright ("this page", "on screen", "sayfada"). With an
-// attached image or a linked page in the turn, "this image" means that
-// source, so only this explicit form still points at the current page.
-const EXPLICIT_PAGE_REFERENCE = /(?<!\p{L})(?:(?:the|this|current|open) (?:page|site|website|tab|screen)|on (?:the )?screen)(?!\p{L})|(?<!\p{L})(?:sayfa|sekme|ekran)\p{L}*/iu;
-// A bare request with nothing else to act on ("Summarize", "Describe it",
-// "Özetle", "Bunu açıkla") can only mean the current page.
-const BARE_PAGE_REQUEST = /^\s*(?:please\s+)?(?:summari[sz]e|describe|explain|tl;?dr)(?:\s+(?:it|(?:the|this) page))?(?:\s+please)?\s*[.?!]*\s*$|^\s*(?:bunu\s+|bu sayfayı\s+)?(?:özetle|açıkla|anlat)\p{L}*\s*[.?!]*\s*$/iu;
+export function tinyAskScreenshotGate({ question = '', pageChars = 0, imageAttachment = false, linkedPage = false } = {}) {
+  const chars = Math.max(0, Number(pageChars) || 0);
+  const facts = [
+    `Current page text: ${chars < TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS ? 'almost none' : `about ${chars} characters`}.`,
+    `The user attached an image: ${imageAttachment ? 'yes' : 'no'}.`,
+    `The message links another page: ${linkedPage ? 'yes' : 'no'}.`,
+  ];
+  return {
+    state: `The user's message to the browser assistant:\n${String(question || '').slice(0, 2000)}\n\n${facts.join('\n')}`,
+    questions: { needs_screenshot: { type: 'noul', instructions: TINY_ASK_SCREENSHOT_GATE_QUESTION } },
+  };
+}
 
 // Precedes the screenshot in the user message; the system prompt says the
 // same, so text inside the image is never taken as an instruction.
@@ -109,23 +85,6 @@ export const TINY_ASK_TEXTLESS_SCREENSHOT_NOTE = 'The current page has almost no
 export function tinyAskScreenshotNote(page = null) {
   return page?.kind && String(page.text || '').trim().length < TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS
     ? TINY_ASK_TEXTLESS_SCREENSHOT_NOTE : TINY_ASK_SCREENSHOT_NOTE;
-}
-
-// Whether a tiny Ask turn should also show the model the visible page. With
-// an attached image or a linked page, that source is the subject unless the
-// question names the current page outright ("compare the attached image with
-// the logo on this page"); otherwise a current-tab screenshot would be the
-// wrong source.
-export function tinyAskWantsScreenshot({ question = '', page = null, imageAttachment = false, linkedPage = false } = {}) {
-  const text = String(question || '');
-  if (imageAttachment || linkedPage) {
-    return EXPLICIT_PAGE_REFERENCE.test(text) && VISUAL_QUESTION.test(text);
-  }
-  if (!PAGE_REFERENCE.test(text) && !BARE_PAGE_REQUEST.test(text)) return false;
-  if (VISUAL_QUESTION.test(text)) return true;
-  // A page that was read but has almost no text: the answer is likely only
-  // in the pixels.
-  return !!page?.kind && String(page.text || '').trim().length < TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS;
 }
 
 const CHUNK_TARGET_CHARS = 700;
