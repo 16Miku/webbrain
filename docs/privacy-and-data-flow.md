@@ -619,7 +619,8 @@ The only outbound HTTP requests are:
     `/newtab-comm.html` at most once every 10 minutes per browser (only while the new tab is
     shown); Apocalypse Mode pages read `/apocalypse-comm.html` when they open. Both files ship
     empty, and an empty file shows nothing. Published markup is shown in a sandboxed frame
-    that cannot run scripts. See `docs/newtab.md` (WebBrain bulletin).
+    under a restrictive Content Security Policy that cannot run scripts or load external
+    subresources. See `docs/newtab.md` (WebBrain bulletin).
 
 The `webRequest` API shortcut observer is on by default and does not
 create outbound requests; it observes replay metadata for requests

@@ -263,7 +263,10 @@ export async function loadBulletin({
             latestCache = asCache(latestStored[BULLETIN_CACHE_KEY]);
           } catch {}
 
-          if (latestCache && Number.isFinite(latestCache.checkedAt) && latestCache.checkedAt > at && latestCache.leaseHolder !== leaseHolder) {
+          const newer = latestCache && ((Number.isFinite(latestCache.checkedAt) && latestCache.checkedAt > at)
+            || (Number.isFinite(latestCache.fetchedAt) && latestCache.fetchedAt > at))
+            && latestCache.leaseHolder !== leaseHolder;
+          if (newer) {
             cache = latestCache;
           } else if (result.ok) {
             cache = { checkedAt: finishAt, fetchedAt: finishAt, url: result.url, markup: result.markup };

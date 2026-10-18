@@ -3033,19 +3033,21 @@ test('bulletin: concurrent new tabs coordinate refreshes so only one request is 
 test('bulletin: out-of-order completions do not overwrite a newer successful cache', async () => {
   const storage = bulletinStore();
   let clock = 100_000;
-  // Pre-seed storage with a fresh successful bulletin
-  storage.data[bulletin.BULLETIN_CACHE_KEY] = {
-    checkedAt: 150_000,
-    fetchedAt: 150_000,
-    url: 'https://webbrain.one/newtab-comm.html',
-    markup: '<p>Newer</p>',
-  };
-  // An older fetch started at 100_000 that resolves later
+  // An older fetch starts at 100_000
   const res = await bulletin.loadBulletin({
     storage,
     location: extensionPage,
     now: () => clock,
-    fetchImpl: async () => bulletinResponse('<p>Older</p>'),
+    fetchImpl: async () => {
+      // While this fetch was in flight, another tab finished a newer fetch and stored it
+      storage.data[bulletin.BULLETIN_CACHE_KEY] = {
+        checkedAt: 150_000,
+        fetchedAt: 150_000,
+        url: 'https://webbrain.one/newtab-comm.html',
+        markup: '<p>Newer</p>',
+      };
+      return bulletinResponse('<p>Older</p>');
+    },
   });
   assert.equal(res?.markup, '<p>Newer</p>', 'newer cache entry is preserved');
   assert.equal(storage.data[bulletin.BULLETIN_CACHE_KEY].markup, '<p>Newer</p>');

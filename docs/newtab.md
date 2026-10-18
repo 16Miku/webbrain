@@ -119,14 +119,16 @@ bulletin (`src/*/src/ui/apocalypse-comm.js`), which reads its own file.
 - **What is sent.** One `GET` of that fixed URL: no cookies (`credentials: 'omit'`), no
   referrer, no query string, no identifiers. webbrain.one sees the request like any page
   fetch (IP address, user agent). The answer is cached in `chrome.storage.local`
-  (`wbNewtabBulletin`), so opening many tabs causes at most one request per 10 minutes.
-  If the file cannot be read, the last bulletin stays up for at most 24 hours and the next
-  attempt waits another 10 minutes. Offline or on any error the page shows nothing.
+  (`wbNewtabBulletin`), coordinated across tabs via a storage lease so opening many tabs
+  causes at most one request per 10 minutes. If the file cannot be read, the last bulletin
+  stays up for at most 24 hours and the next attempt waits another 10 minutes. Offline or on
+  any error the page shows nothing.
 - **Checks.** https only, the response (after redirects) must come from `webbrain.one` or
   `www.webbrain.one`, at most 128 KB, a 5 s deadline. The markup is shown in a sandboxed
-  `srcdoc` iframe that cannot run scripts (`allow-popups` only), with
-  `<base target="_blank">` so its links open on webbrain.one in a new tab and
-  `no-referrer`.
+  `srcdoc` iframe that cannot run scripts (`allow-popups` only), with a Content Security
+  Policy (`default-src 'none'; style-src 'unsafe-inline'; img-src data:;`) that prevents
+  external subresources, `<base target="_blank">` so its links open on webbrain.one in a
+  new tab, and `no-referrer`.
 - **Dismiss.** The × hides that bulletin on every new tab (`wbNewtabBulletinDismissed` keeps a
   hash of its markup); a different bulletin shows again.
 - It is shown whether or not the box itself is turned on, and only when the page is shown
