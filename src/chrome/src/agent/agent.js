@@ -6628,7 +6628,11 @@ export class Agent extends LoopDetector {
     if (guard.resourceMutationAuthorization?.key === this._resourceMutationActionKey(tabId, name, args, detectedSubmit)
         && guard.resourceMutationAuthorization.taskKey === guard.taskKey
         && guard.taskKey === this._progressTaskKeyHash(tabId) && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId)
-        && guard.steeringPriorSubmissionReconciliation?.verified === true) return null;
+        // A deletion that the latest request or the user's answer on
+        // WebBrain's card bound to this exact item cannot repeat the earlier
+        // submission; any other action needs that submission reconciled.
+        && (guard.steeringPriorSubmissionReconciliation?.verified === true
+          || (guard.resourceMutationAuthorization.deletion === true && detectedSubmit?.mutationKind === 'delete'))) return null;
     // An unidentified target says nothing about the earlier effect; report
     // what is actually missing instead of an unreconciled submission.
     const unresolvedTarget = detectedSubmit?.isSubmit !== true && !isNetworkMutation(name, args) && name !== 'chrome_web_store_publish';
@@ -7368,7 +7372,29 @@ export class Agent extends LoopDetector {
         } else if (formCommit && priorForm && priorForm === detected.actionUrl && inPlace
             && this._steeringPriorEffectObserved(tabId, prior)) observedKind = 'form_observation';
       }
-      if (prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource && !observedKind)) {
+      // A deletion cannot repeat an earlier post or commit or sit beside it, so
+      // an earlier result WebBrain cannot match does not hold it back: a
+      // Mastodon post, for one, sits on a timeline that WebBrain does not match
+      // to the form it was sent from. Which item to delete is still decided
+      // below, by the latest request or by the user on WebBrain's own card, and
+      // nothing is recorded as reconciled, so a later post or commit is still
+      // held. An earlier attempt that may itself have deleted this item still
+      // holds the deletion: this one could repeat it, and a run rebuilt from
+      // the conversation keeps no dispatch record that would catch the repeat.
+      // One that deleted another item, by its link or its row, does not; one
+      // whose item cannot be told apart from this one does.
+      const unreconciled = prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource && !observedKind);
+      const deletingLink = permalinked ? this._normalizeUrl(detected.actionResource.url) : '';
+      const deletingRow = record?.identity || '';
+      const mayRepeatThisDeletion = receipt => {
+        const link = receipt.actionResource?.complete && receipt.actionResource.url ? this._normalizeUrl(receipt.actionResource.url) : '';
+        const row = receipt.actionRecord?.identity || '';
+        if (link && deletingLink) return link === deletingLink;
+        if (row && deletingRow) return row === deletingRow;
+        return true;
+      };
+      const earlierDeletion = archivedAttempts.some(receipt => receipt.mutationKind === 'delete' && mayRepeatThisDeletion(receipt));
+      if (unreconciled && !(deletion && !earlierDeletion)) {
         return blocked('prior_effect_unreconciled', publication && !crossPlatform
           ? 'The earlier post from before the latest correction has not been matched yet. Read it on this platform (its permalink or the account\'s recent posts), then retry; do not repeat an uncertain publication.'
           : publication && siteCrossPlatform && prior.mutationKind !== 'delete'
@@ -7377,12 +7403,12 @@ export class Agent extends LoopDetector {
             ? `The earlier submission from before the latest correction${priorHost ? `, on ${priorHost},` : ''} has not been observed yet: no page was read since it was sent. Read the current page, then retry; nothing about it needs to be found here, and do not repeat it.`
             : 'The earlier submission from before the latest correction has not been observed yet. Read the page that shows its result, then retry; do not repeat an uncertain mutation.');
       }
-      if (matching.length === 1 || deletedVerifiedResource) {
+      if (!unreconciled && (matching.length === 1 || deletedVerifiedResource)) {
         guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: 'resource_identity', taskKey: guard.taskKey,
           actionSequence: prior.actionSequence, resourceUrl: matching[0]?.url || reconciled.resourceUrl,
           resourceScopeToken: matching[0]?.scopeToken || reconciled?.resourceScopeToken || '',
           deleted: deletedVerifiedResource, document: fresh.frameDocumentIdentity };
-      } else if (!(reconciled?.verified === true && reconciled.actionSequence === prior.actionSequence)) {
+      } else if (!unreconciled && !(reconciled?.verified === true && reconciled.actionSequence === prior.actionSequence)) {
         // Outcome knowledge without resource identity; never a resource URL
         // that a later deletion could treat as verified.
         guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: observedKind, taskKey: guard.taskKey,
@@ -7425,7 +7451,7 @@ export class Agent extends LoopDetector {
         return blocked('deletion_declined', 'The user chose not to delete this item, so it was not deleted. Do not try to delete it again; continue with the rest of the task and report that it was not deleted.', { retryable: false });
       }
       if (decision?.approved === true) {
-        guard.resourceMutationAuthorization = { key, taskKey: guard.taskKey };
+        guard.resourceMutationAuthorization = { key, taskKey: guard.taskKey, deletion: true };
         return null;
       }
       if (guard.resourceMutationAuthorization?.key === key && guard.resourceMutationAuthorization.taskKey === guard.taskKey) return null;
@@ -7461,7 +7487,7 @@ export class Agent extends LoopDetector {
       }
       const final = await this._detectLikelySubmitAction(tabId, name, args, { mutationReconciliation: true });
       if (!current() || this._resourceMutationActionKey(tabId, name, args, final) !== key) return blocked('resource_changed_after_authorization');
-      guard.resourceMutationAuthorization = { key, taskKey: guard.taskKey };
+      guard.resourceMutationAuthorization = { key, taskKey: guard.taskKey, deletion: true };
       return null;
     }
     if (guard.resourceMutationAuthorization?.key === key && guard.resourceMutationAuthorization.taskKey === guard.taskKey) return null;
