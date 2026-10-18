@@ -172,6 +172,56 @@ Use the tools in `scripts/models/bonsai/`:
   - Page text is ephemeral: durable history keeps only the question, and each
     turn reads the page again. Offline Wikipedia and Emergency Box references
     are added only when there is no page text.
+  - When the model reads images (Ternary Bonsai 2 2B Vision), a question
+    can also get a screenshot of the visible page. The model decides, so it
+    works in any language and there are no word lists (`tinyAskScreenshotGate`).
+    - Before the answer, one Yes/No readout on the same model returns a logit
+      margin and the decoder's last-position state. It costs about 0.22 s on
+      the RTX 5090 and generates no text.
+    - A small probe scores them (`tiny-ask-gate-probe.js`, 2,050 weights,
+      `scripts/models/bonsai/train_gate_probe.py`). The training data comes
+      from templates in 11 languages (`gate_dataset.py`).
+    - The readout sees only the user's message and facts WebBrain knows: how
+      much page text there is, an attached image, a linked page. It never
+      sees page content, so a page cannot steer it.
+    - Hand-written test, 72 questions: 64/72 correct and 1/38 false "yes".
+      The 28 questions in 7 languages absent from training scored 23/28.
+      The untrained readout scored 38/72.
+    - Misses lean towards no screenshot, which is the old behaviour; most are
+      colour-of-a-button questions in unseen languages. A wrong "yes" only
+      costs a screenshot, about 0.5 s.
+    - Follow-ups: the screenshot is gone from history, so "And the button?"
+      after a screenshot answer needs another look. The stored question is
+      marked (`webbrainTinyAskScreenshot`, never the image), and the next turn
+      uses a lower bar, 0.4 instead of 0.5. The readout still sees only the
+      new message: with the earlier question added it said yes to 11–13 of 30
+      text follow-ups such as "Thanks!".
+      - The bar was chosen on 60 follow-ups in 14 languages: 27/30 visual ones
+        (22/30 at 0.5), 0/30 false "yes".
+      - It was also chosen on 42 that point back with a pronoun: 10/17 visual
+        ("Does it have a handle?"; 8/17 at 0.5) and 3/25 false "yes" (2/25).
+        Some text ones look anyway: "How much does it hold?" scores 0.73 alone.
+      - Checked on 52 others in 16 languages, written afterwards: 21/26
+        (18/26), 0/26 false "yes".
+      - `check-tiny-ask-screenshot-gate.mjs --follow-ups` runs all three.
+    - A page with almost no text gets a note to answer from the image. A
+      screenshot alone never suppresses offline references. With an attached
+      image both images can be sent, when the readout says the page is needed
+      too.
+    - If the readout fails, the turn stays text-only. That includes a model
+      that cannot run it (only Bonsai 2 2B Vision can) and a cached decoder
+      graph from before `decision_hidden`. There is no fallback to the
+      untrained readout.
+    - The capture is the same as automatic screenshots: redaction, size
+      budget and the per-turn limit. It is ephemeral like page text, and it
+      never goes to a separate vision model.
+    - Redaction covers form fields, not text drawn in images, so the prompt's
+      no-secrets rule names screenshots too, and Strict Secret Mode takes no
+      tiny Ask screenshot.
+    - On the RTX 5090 a screenshot adds about 0.5–1 s. `scripts/check-webgpu-ask.mjs`
+      has image tasks in English, Turkish, German and Spanish, and text tasks
+      that must take no screenshot (18/18). `scripts/check-tiny-ask-screenshot-gate.mjs`
+      measures the readout alone.
   - It reuses the standalone WebGPU run machinery but not its prompt or
     history: the standalone window still has no page access, and the two
     profiles' history segments never cross (`webbrainStandaloneChat` and

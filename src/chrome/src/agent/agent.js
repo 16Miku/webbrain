@@ -208,7 +208,7 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 import {
   TINY_ASK_ACT_BLOCKED_MESSAGE, TINY_ASK_COMPACT_LINKED_MAX_CHARS, TINY_ASK_COMPACT_PAGE_MAX_CHARS,
   TINY_ASK_COMPACT_SELECTION_MAX_CHARS, TINY_ASK_READ_MAX_CHARS, TINY_ASK_READ_WINDOW_CHARS, TINY_ASK_SYSTEM_PROMPT,
-  tinyAskLinkedUrl, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
+  TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD, TINY_ASK_SCREENSHOT_GATE_THRESHOLD, TINY_ASK_SCREENSHOT_GATE_TIMEOUT_MS, tinyAskLinkedUrl, tinyAskScreenshotGate, tinyAskScreenshotGateProbability, tinyAskScreenshotNote, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
 } from './tiny-ask.js';
 import { webgpuModelDisplayName } from '../providers/webgpu.js';
 
@@ -1094,6 +1094,9 @@ export class Agent extends LoopDetector {
     this._screenshotCaptureCounter = 0;
     this.pendingVisionRouteTraces = new Map();
     this.pendingVisionStatusTraces = new Map();
+    // tiny Ask screenshot-gate notes: the gate runs during enrichment, before
+    // the trace run starts (flushed in _startTraceRun).
+    this.pendingTinyAskGateTraces = new Map();
     this.pendingVisionSubCallTraces = new Map();
     this.visionStatusNotices = new Map(); // tabId -> Set of route/status notices surfaced this run
     this.carouselTraversalStates = new Map();
@@ -11996,11 +11999,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // A tiny Ask turn carries a one-line trusted clock and the page (or PDF)
   // text and selection, read by WebBrain before the single model call. Those
   // blocks are ephemeral: the persisted turn keeps only the user's question.
-  async _enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata = {}, onUpdate = null) {
+  async _enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata = {}, onUpdate = null, { imageAttachment = false, followsScreenshot = false } = {}) {
     const { tabUrl: url, tabTitle: title } = await this._getTabUrlTitle(tabId);
     let page = null;
     let selection = '';
-    if (tinyAskPageReadable(url) || isPdfHandlerTabUrl(url)) {
+    // A page WebBrain may read, and so capture; a failed text read below
+    // still leaves the screenshot path open.
+    const pageReadable = tinyAskPageReadable(url) || isPdfHandlerTabUrl(url);
+    if (pageReadable) {
       onUpdate?.('thinking', { step: 0, note: 'Reading the page…' });
       page = await this._readTinyAskPage(tabId);
       if (page?.kind !== 'pdf') {
@@ -12033,6 +12039,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : { url: linkedUrl, text, incomplete: fetched.hasMore === true };
       if (linked.unavailable) onUpdate?.('thinking', { step: 0, note: 'Could not read the linked page.' });
     }
+    const screenshot = await this._tinyAskScreenshot(tabId, {
+      question: questionText, page, pageReadable, imageAttachment, linkedPage: !!linkedUrl, followsScreenshot, onUpdate,
+    });
     let modelLabel = '';
     try {
       const provider = this._activeProvider(tabId);
@@ -12060,25 +12069,129 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const question = Array.isArray(userMessage)
       ? userMessage
       : [{ type: 'text', text: typeof userMessage === 'string' ? userMessage : this._messageText(userMessage) }];
+    // The screenshot is ephemeral like the page text: the persisted turn
+    // keeps only the question, and each turn looks at the page afresh.
+    const screenshotBlocks = screenshot ? [
+      { type: 'text', text: tinyAskScreenshotNote(page), webbrainEphemeralPageContext: true },
+      { type: 'image_url', image_url: this._withImageDetail({ url: screenshot.dataUrl }), webbrainEphemeralPageContext: true },
+    ] : [];
     const enriched = {
       role: 'user',
-      content: [block, ...question],
+      content: [block, ...screenshotBlocks, ...question],
       ...userAuthoredMetadata,
+      // Kept on the stored question (never the image): the next turn's gate
+      // reads it as a follow-up. Model-facing copies drop it.
+      ...(screenshot ? { webbrainTinyAskScreenshot: true } : {}),
     };
+    // A screenshot alone does not ground the turn: offline references are
+    // still looked up when the question asks for them.
     if (String(page?.text || '').trim() || String(selection || '').trim() || String(linked?.text || '').trim()) {
       this._tinyAskPageGrounded.add(enriched);
     }
     return enriched;
   }
 
-  async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null, runOptions = {}, onUpdate = null) {
+  // The gate's readout, bounded: a stalled offscreen worker must not hold the
+  // turn at enrichment. A timeout or the run's own abort cancels the worker
+  // operation (WebGPUProvider.decide sends webgpu-decide-cancel) and settles
+  // at once; only a run abort propagates.
+  async _tinyAskGateDecision(tabId, provider, gate) {
+    const controller = new AbortController();
+    const parent = this._runAbortSignal(tabId);
+    let timer = null;
+    let onAbort = null;
+    const settled = new Promise((_, reject) => {
+      onAbort = () => {
+        const reason = parent?.reason;
+        controller.abort(reason);
+        reject(reason instanceof Error ? reason : Object.assign(new Error('The run was stopped.'), { name: 'AbortError' }));
+      };
+      if (parent?.aborted) onAbort();
+      else parent?.addEventListener?.('abort', onAbort, { once: true });
+      timer = setTimeout(() => {
+        const error = new Error('The screenshot gate timed out.');
+        controller.abort(error);
+        reject(error);
+      }, Number(this.tinyAskGateTimeoutMs) > 0 ? Number(this.tinyAskGateTimeoutMs) : TINY_ASK_SCREENSHOT_GATE_TIMEOUT_MS);
+    });
+    settled.catch(() => {});
+    try {
+      return await Promise.race([provider.decide({ ...gate, promptVariant: 'gate', signal: controller.signal }), settled]);
+    } finally {
+      clearTimeout(timer);
+      parent?.removeEventListener?.('abort', onAbort);
+    }
+  }
+
+  // The visible page for a tiny Ask turn, when the in-browser model reads
+  // images itself and its own readout says the question needs it (see
+  // tinyAskScreenshotGate: language-independent, and blind to page content).
+  // Never in Strict Secret Mode, never through a separate describing model:
+  // tiny Ask stays on the user's device. Same capture as the agent's
+  // automatic screenshots (redaction, size budget, per-turn screenshot limit).
+  // Any failure leaves the turn text-only, as before.
+  async _tinyAskScreenshot(tabId, { question = '', page = null, pageReadable = false, imageAttachment = false, linkedPage = false, followsScreenshot = false, onUpdate = null } = {}) {
+    // Redaction covers form fields, not text drawn in images or canvases.
+    // Browser-internal pages cannot be captured; a page whose text read
+    // failed still can, and is offered to the gate as having no text.
+    if (this.strictSecretMode || !pageReadable) return null;
+    let provider = null;
+    let route = null;
+    try {
+      provider = this._activeProvider(tabId);
+      if (!this._isInBrowserProvider(provider) || typeof provider.decide !== 'function') return null;
+      route = await this._resolveVisionRoute(tabId, provider);
+    } catch {
+      return null;
+    }
+    if (route?.route !== 'active_raw' || route.rawImage !== true || route.provider !== provider) return null;
+    const started = Date.now();
+    let probability = null;
+    try {
+      const gate = tinyAskScreenshotGate({
+        question, pageChars: String(page.text || '').trim().length, imageAttachment, linkedPage,
+      });
+      const result = await this._tinyAskGateDecision(tabId, provider, gate);
+      probability = tinyAskScreenshotGateProbability(result?.answers);
+    } catch (error) {
+      if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+    }
+    const threshold = followsScreenshot ? TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD : TINY_ASK_SCREENSHOT_GATE_THRESHOLD;
+    const gateNote = {
+      probability: Number.isFinite(probability) ? Math.round(probability * 1000) / 1000 : null,
+      threshold,
+      ms: Date.now() - started,
+    };
+    const runId = this.currentRunId.get(tabId);
+    if (runId) trace.recordNote(runId, null, 'tiny_ask_screenshot_gate', gateNote);
+    else this.pendingTinyAskGateTraces.set(tabId, gateNote);
+    if (!(probability >= threshold)) return null;
+    onUpdate?.('thinking', { step: 0, note: 'Looking at the page…' });
+    try {
+      const shot = await this._captureBudgetedAutoScreenshot(tabId);
+      if (shot?.dataUrl) {
+        this._recordVisionRouteTrace(tabId, route, shot, 'tiny_ask');
+        return shot;
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+    }
+    return null;
+  }
+
+  async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null, runOptions = {}, onUpdate = null, { imageAttachment = false } = {}) {
     const hasPriorUserTurn = messages.some(m => m.role === 'user');
     const selectionScoped = isSelectionSourceGrounding(runOptions?.sourceGrounding);
     const standaloneChat = runOptions?.standaloneChat === true;
     const userAuthoredMetadata = runOptions?.scheduledResume === true
       ? {} : { webbrainUserAuthoredText: this._messageText(userMessage) };
     if (this._isTinyAskRun(runOptions)) {
-      return this._enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata, onUpdate);
+      // The previous turn is the last stored user message (this one is
+      // stored after enrichment).
+      const previous = [...messages].reverse().find(message => message?.role === 'user');
+      return this._enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata, onUpdate, {
+        imageAttachment, followsScreenshot: previous?.webbrainTinyAskScreenshot === true,
+      });
     }
     // Standalone is intentionally plain chat regardless of provider.
     // Do not add runtime state, recording/API guidance, tab metadata, adapter
@@ -12710,6 +12823,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const {
           webbrainStandaloneChat: _standalone,
           webbrainTinyAsk: _tinyAsk,
+          webbrainTinyAskScreenshot: _tinyAskScreenshot,
           tool_calls: _toolCalls,
           tool_call_id: _toolCallId,
           responseItems: _responseItems,
@@ -25328,6 +25442,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.pendingVisionRouteTraces.delete(tabId);
       this.pendingVisionStatusTraces.delete(tabId);
       this.pendingVisionSubCallTraces.delete(tabId);
+      this.pendingTinyAskGateTraces.delete(tabId);
       return null;
     }
     if (runId) {
@@ -25354,6 +25469,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const pendingVisionSubCalls = this.pendingVisionSubCallTraces.get(tabId) || [];
       this.pendingVisionSubCallTraces.delete(tabId);
       for (const payload of pendingVisionSubCalls) trace.recordVisionSubCall(runId, payload);
+      const pendingGate = this.pendingTinyAskGateTraces.get(tabId);
+      this.pendingTinyAskGateTraces.delete(tabId);
+      if (pendingGate) trace.recordNote(runId, null, 'tiny_ask_screenshot_gate', pendingGate);
       if (typeof runOptions?.onTraceStarted === 'function') {
         try { runOptions.onTraceStarted(runId); } catch {}
       }
@@ -25362,6 +25480,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.pendingVisionRouteTraces.delete(tabId);
       this.pendingVisionStatusTraces.delete(tabId);
       this.pendingVisionSubCallTraces.delete(tabId);
+      this.pendingTinyAskGateTraces.delete(tabId);
     }
     return runId;
   }
@@ -35753,6 +35872,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.pendingVisionRouteTraces.delete(tabId);
     this.pendingVisionStatusTraces.delete(tabId);
     this.pendingVisionSubCallTraces.delete(tabId);
+    this.pendingTinyAskGateTraces.delete(tabId);
     this.carouselTraversalStates.delete(tabId);
     this._chromeProtectedGalleryStates.delete(tabId);
     void this._clearBackgroundFocusEmulation(tabId);
@@ -54053,6 +54173,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.pendingVisionRouteTraces.delete(tabId);
     this.pendingVisionStatusTraces.delete(tabId);
     this.pendingVisionSubCallTraces.delete(tabId);
+    this.pendingTinyAskGateTraces.delete(tabId);
     this.visionStatusNotices.delete(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
     this.autoScreenshotBursts.delete(tabId);
@@ -54119,6 +54240,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     userTurnKind.catch(() => {});
     const enriched = await this._enrichUserMessageWithCurrentPage(
       tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions, onUpdate,
+      { imageAttachment: !selectionOnly && Array.isArray(attachments) && attachments.some(attachment => attachment?.kind === 'image') },
     );
     if (autoModeRoute) {
       ({ mode, runOptions } = await this._settleAutoModeRun(tabId, autoModeRoute, enriched, onUpdate, runOptions));
@@ -55829,6 +55951,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.pendingVisionRouteTraces.delete(tabId);
     this.pendingVisionStatusTraces.delete(tabId);
     this.pendingVisionSubCallTraces.delete(tabId);
+    this.pendingTinyAskGateTraces.delete(tabId);
     this.visionStatusNotices.delete(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
     this.autoScreenshotBursts.delete(tabId);
