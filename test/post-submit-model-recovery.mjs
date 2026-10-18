@@ -153,6 +153,18 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: non-limit response failures retain their allowance notice`, async () => {
+    const f = fixture(); f.agent._persist = () => {};
+    const notice = 'Cloud cost allowance reached: total cloud/router usage is $5.00 against the $5.00 limit.';
+    f.agent._generateContextOnlyResponse = async () => {
+      throw Object.assign(new Error('The provider filtered the response.'), { costAllowanceMessage: notice });
+    };
+    const answer = await f.agent._completeResponseOnlyTurn(f.tab, f.messages, f.update, {}, {}, null);
+    assert.equal(answer.status, 'error');
+    assert.match(answer.content, /cost allowance reached/i);
+    assert.equal(f.updates.some(x => x.type === 'failure_recovery'), true);
+  });
+
   test(`${browser}: textless response-only cutoffs retain their allowance notice`, async () => {
     const f = fixture(); f.agent._persist = () => {};
     const notice = 'Cloud cost allowance reached: total cloud/router usage is $5.00 against the $5.00 limit.';

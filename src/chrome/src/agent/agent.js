@@ -26369,9 +26369,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         quotaFailure = true;
         onUpdate('quota', { quota: error.quota });
       }
-      status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
-      finalResponse = this._isCostAllowanceError(error)
+      const costAllowance = this._isCostAllowanceError(error);
+      const allowanceNotice = typeof error?.costAllowanceMessage === 'string' ? error.costAllowanceMessage.trim() : '';
+      status = costAllowance ? 'cost_limit' : 'error';
+      finalResponse = costAllowance
         ? error.message
+        : allowanceNotice
+          ? `${(recoveryDetails = modelFailureRecovery(error, { phase: 'response_generation' })).message}\n\n${allowanceNotice}`
         : (recoveryDetails = modelFailureRecovery(error, { phase: 'response_generation' })).message;
     }
     const stopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
