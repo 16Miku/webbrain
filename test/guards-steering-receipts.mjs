@@ -1046,6 +1046,30 @@ for (const build of ['chrome', 'firefox']) {
     } finally { declined.close(); }
   });
 
+  test(`${build}: after a correction, an earlier deletion whose result is unknown still holds a deletion`, async () => {
+    // The earlier attempt was itself this deletion (the receipt Mastodon's
+    // confirmation records), and its response was lost.
+    const h = await fixture('delete my test post on mastoturk.org', { pageUrl: timelineHome });
+    try {
+      h.agent._recordCompletionSubmitAttempt(h.tab, { ...timelineDelete, isSubmit: true }, 'click_ax', { ref_id: 'ref_7' }, timelineHome, timelineHome,
+        { success: true, dispatched: true }, 'home-doc', 'home-doc');
+      const guard = await h.steer('now delete it');
+      h.read(timelineHome);
+      assert.equal(guard.steeringPriorSubmission?.mutationKind, 'delete');
+      assert.deepEqual(guard.resourceMutationDispatches || [], [], 'As in a run rebuilt from the conversation');
+      assert.equal((await h.check(timelineDelete))?.actionGuard?.reason, 'prior_effect_unreconciled');
+      assert.equal(h.decisions('deletion_request').length, 0, 'The repeat is not put to the deletion question');
+      assert.notEqual(h.steeringBlock(timelineDelete), null);
+    } finally { h.close(); }
+    // A deletion archived at an earlier correction holds it the same way.
+    const archived = await timelinePostThen('now delete it');
+    try {
+      archived.guard.steeringMutationReceipts = [...(archived.guard.steeringMutationReceipts || []),
+        { dispatched: true, actionSequence: 2, mutationKind: 'delete', actionResource: { complete: true, url: timelinePost } }];
+      assert.equal((await archived.check(timelineDelete))?.actionGuard?.reason, 'prior_effect_unreconciled');
+    } finally { archived.close(); }
+  });
+
   test(`${build}: after a correction an unidentified target says so; commits still need reconciliation`, async () => {
     const h = await fixture('Save the owned profile name as Original.');
     try {

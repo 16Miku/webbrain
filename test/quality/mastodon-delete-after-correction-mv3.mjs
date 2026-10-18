@@ -267,7 +267,8 @@ try {
   assert.equal((await message('set_active_provider', { providerId: 'openrouter' })).ok, true);
   await worker.evaluate(() => { afterCorrectionAgent.clarifyTimeoutSec = -1; });
   page = await context.newPage(); await page.goto('https://mastoturk.org/home');
-  tabId = await settings.evaluate(async () => (await chrome.tabs.query({})).find(tab => tab.url.startsWith('https://mastoturk.org'))?.id);
+  tabId = await settings.evaluate(async () => (await chrome.tabs.query({}))
+    .find(tab => { try { return new URL(tab.url).origin === 'https://mastoturk.org'; } catch { return false; } })?.id);
   // WebBrain's own cards are answered "Go ahead" ('once'); every card is recorded.
   let answering = true;
   const answerer = (async () => {
@@ -283,8 +284,14 @@ try {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
   })();
-  const result = await message('chat', { tabId, text: request, mode: 'act', requestId: 'owned-delete-after-correction', locale: 'en' });
-  answering = false; await answerer;
+  // The poller stops however the run ends, so a failed run fails the test
+  // instead of leaving it waiting.
+  let result;
+  try {
+    result = await message('chat', { tabId, text: request, mode: 'act', requestId: 'owned-delete-after-correction', locale: 'en' });
+  } finally {
+    answering = false; await answerer;
+  }
   const toolResults = (result.updates || []).filter(event => event.type === 'tool_result').map(event => ({ name: event.data?.name,
     success: event.data?.result?.success, guard: event.data?.result?.actionGuard || null,
     error: event.data?.result?.error ? String(event.data.result.error).slice(0, 400) : null }));

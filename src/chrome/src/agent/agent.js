@@ -7372,14 +7372,18 @@ export class Agent extends LoopDetector {
         } else if (formCommit && priorForm && priorForm === detected.actionUrl && inPlace
             && this._steeringPriorEffectObserved(tabId, prior)) observedKind = 'form_observation';
       }
-      // A deletion cannot repeat the earlier submission or sit beside it, so an
-      // earlier result WebBrain cannot match does not hold it back: a Mastodon
-      // post, for one, sits on a timeline that WebBrain does not match to the
-      // form it was sent from. Which item to delete is still decided below, by
-      // the latest request or by the user on WebBrain's own card, and nothing
-      // is recorded as reconciled, so a later post or commit is still held.
+      // A deletion cannot repeat an earlier post or commit or sit beside it, so
+      // an earlier result WebBrain cannot match does not hold it back: a
+      // Mastodon post, for one, sits on a timeline that WebBrain does not match
+      // to the form it was sent from. Which item to delete is still decided
+      // below, by the latest request or by the user on WebBrain's own card, and
+      // nothing is recorded as reconciled, so a later post or commit is still
+      // held. An earlier attempt that may itself have deleted something still
+      // holds a deletion: this one could repeat it, and a run rebuilt from the
+      // conversation keeps no dispatch record that would catch the repeat.
       const unreconciled = prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource && !observedKind);
-      if (unreconciled && !deletion) {
+      const earlierDeletion = archivedAttempts.some(receipt => receipt.mutationKind === 'delete');
+      if (unreconciled && !(deletion && !earlierDeletion)) {
         return blocked('prior_effect_unreconciled', publication && !crossPlatform
           ? 'The earlier post from before the latest correction has not been matched yet. Read it on this platform (its permalink or the account\'s recent posts), then retry; do not repeat an uncertain publication.'
           : publication && siteCrossPlatform && prior.mutationKind !== 'delete'
