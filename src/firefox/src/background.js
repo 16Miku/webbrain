@@ -1559,8 +1559,9 @@ async function answerInlineSelection(msg) {
       { maxTokens, temperature: 0, signal: controller.signal },
       agent._newCostRunState(),
     );
-    const { text, cut } = capInlineAnswer(String(result?.content || '').trim());
-    if (!text) {
+    const content = String(result?.content || '');
+    const { text, cut } = capInlineAnswer(content);
+    if (!content.trim()) {
       const notice = inlineCostNotice(result);
       return { ok: false, error: 'The model returned an empty answer.', ...(notice ? { notice } : {}) };
     }
@@ -1573,9 +1574,10 @@ async function answerInlineSelection(msg) {
     if (inlineErrorWasCut(error)) {
       // The provider reported the output limit as an error. Show what it wrote, if
       // anything, and let the card hand the rest to the side panel.
-      const partial = capInlineAnswer(String(error.partialContent || '').trim()).text;
+      const partialContent = String(error.partialContent || '');
+      const partial = capInlineAnswer(partialContent).text;
       const notice = inlineCostNotice(error);
-      return partial
+      return partialContent.trim()
         ? { ok: true, text: partial, truncated: true, ...(notice ? { notice } : {}) }
         : {
           ok: false,

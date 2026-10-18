@@ -2218,6 +2218,19 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
+  test(`${label}: inline responses preserve edge whitespace`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    const answer = '    key: value\n';
+    await page.evaluate((text) => {
+      window.__selectionInlineHandler = async () => ({ ok: true, text });
+    }, answer);
+    await openInlineCard(page, 'translate');
+    const state = await waitForCardStatus(page, 'ready');
+    if (state.cardText !== answer) {
+      throw new Error(`an inline response should preserve edge whitespace: ${JSON.stringify(state.cardText)}`);
+    }
+  });
+
   test(`${label}: a failed card answer offers a retry, and a follow-up waits for an answer`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     await page.evaluate(() => {
