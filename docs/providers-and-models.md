@@ -73,10 +73,10 @@ action) so the chat model does not have to. Settings asks one question first:
   nothing.
 - **On** uses the provider configured below for every decision: completion,
   scheduled watches and completions, fast classifications, fast browser
-  actions and semantic decisions. Each has a switch in the collapsed
-  "Choose which decisions use it" section; an unset switch is on. Profiles
-  saved before modes existed with System One enabled read as On and keep their
-  opt-in switches.
+  actions and semantic decisions. The first five each have a switch in the collapsed
+  "Choose which decisions use it" section (an unset switch is on), while semantic
+  decisions always use the selected provider. Profiles saved before modes existed
+  with System One enabled read as On and keep their opt-in switches.
 - **Off** uses no decision model, Compass's managed one included. The active
   chat model keeps verifying completion.
 
