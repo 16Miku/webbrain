@@ -464,7 +464,8 @@ saved metadata and must ask the user again for any still-needed value.
 
 ### New Tab Page
 
-The new tab page (`docs/newtab.md`) makes no network requests of its own: backgrounds
+The new tab page (`docs/newtab.md`) makes one network request of its own, the WebBrain
+bulletin check (item 11 below). Apart from that: backgrounds
 are bundled, there are no fonts, favicons, link-title lookups, weather, quotes or
 analytics requests, and no error reporting. Custom backgrounds are images you upload;
 they are stored in the browser and never leave it. The exceptions are things you
@@ -613,6 +614,12 @@ The only outbound HTTP requests are:
     same authorized bytes. Full traces that exceed the attachment limit use an
     explicitly disclosed diagnostic fallback; the original stays available as
     a local download.
+11. **WebBrain bulletins**: a `GET` of a fixed static file on `https://webbrain.one`, with no
+    cookies, referrer, query string or identifiers. The new tab page reads
+    `/newtab-comm.html` at most once every 10 minutes per browser (only while the new tab is
+    shown); Apocalypse Mode pages read `/apocalypse-comm.html` when they open. Both files ship
+    empty, and an empty file shows nothing. Published markup is shown in a sandboxed frame
+    that cannot run scripts. See `docs/newtab.md` (WebBrain bulletin).
 
 The `webRequest` API shortcut observer is on by default and does not
 create outbound requests; it observes replay metadata for requests

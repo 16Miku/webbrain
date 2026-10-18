@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>WebBrain new tab bulletin</title>
+  <style>
+    :root {
+      --surface: #ffffff;
+      --ink: #15171c;
+      --muted: #5b6070;
+      --accent: #5b4fe0;
+      --accent-ink: #ffffff;
+      --line: rgba(21, 23, 28, .12);
+      color-scheme: light dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body {
+      color: var(--ink);
+      background: var(--surface);
+      font: 14px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .bulletin {
+      height: 100%;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 16px;
+      /* Room on the right for the new tab's dismiss button. */
+      padding: 14px 48px 14px 18px;
+    }
+    .tag {
+      padding: 6px 10px;
+      color: var(--accent-ink);
+      background: var(--accent);
+      border-radius: 999px;
+      font: 700 11px/1 system-ui, sans-serif;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .copy { min-width: 0; }
+    .copy h1 {
+      margin: 0;
+      overflow: hidden;
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.25;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .copy p {
+      margin: 3px 0 0;
+      overflow: hidden;
+      color: var(--muted);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    a {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 12px;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    a:hover, a:focus-visible { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); outline: none; }
+    @media (prefers-color-scheme: dark) {
+      :root { --surface: #1d1f26; --ink: #eef0f6; --muted: #a9adbb; --accent: #8a80ff; --accent-ink: #12131a; --line: rgba(255, 255, 255, .16); }
+    }
+    @media (max-width: 620px) {
+      .bulletin { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 8px 12px; padding: 12px 44px 12px 14px; }
+      .tag { justify-self: start; }
+      .copy { grid-column: 1 / -1; grid-row: 2; }
+      .copy h1, .copy p { white-space: normal; }
+      .copy p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+      a { grid-column: 2; grid-row: 1; padding: 6px 10px; }
+    }
+  </style>
+</head>
+<body>
+  <article class="bulletin" aria-labelledby="bulletin-title">
+    <span class="tag">Notice</span>
+    <div class="copy">
+      <h1 id="bulletin-title">A short notice from WebBrain goes here.</h1>
+      <p>Shown while newtab-comm.html has content.</p>
+    </div>
+    <a href="/docs/" target="_blank" rel="noopener noreferrer"><span>Read more</span><span aria-hidden="true">→</span></a>
+  </article>
+</body>
+</html>

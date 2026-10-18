@@ -291,13 +291,14 @@ test('editing a link uses the same normalisation as adding one', () => {
   }
 });
 
-test('the only remaining fetch in the new tab source loads the chosen background image', () => {
+test('the only fetches in the new tab source load the chosen background image and the WebBrain bulletin', () => {
   const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]);
   const hits = walk(nt()).filter((f) => /\.(jsx?|mjs)$/.test(f))
-    .filter((f) => /\bfetch\(|XMLHttpRequest|sendBeacon|new WebSocket/.test(readFileSync(f, 'utf8')))
+    .filter((f) => /\bfetch\(|globalThis\.fetch|window\.fetch|XMLHttpRequest|sendBeacon|new WebSocket/.test(readFileSync(f, 'utf8')))
     .map((f) => path.relative(nt(), f).split(path.sep).join('/'));
-  assert.deepEqual(hits, ['features/background/api/blobUrl.js']);
+  // The bulletin under the task box reads one fixed file from webbrain.one (features/bulletin).
+  assert.deepEqual(hits, ['features/background/api/blobUrl.js', 'features/bulletin/bulletin.js']);
 });
 
 for (const browser of ['chrome', 'firefox']) {
@@ -1536,7 +1537,7 @@ test('every WebBrain locale has every new tab string', async (t) => {
   const expected = 'en zh ar bn nl tl fr de he hi id ja ko ms fa pl pt ru es th tr uk vi'.split(' ');
   assert.deepEqual(Object.keys(WB_STRINGS).sort(), [...expected].sort());
   const keys = Object.keys(WB_STRINGS.en);
-  assert.equal(keys.length, 18);
+  assert.equal(keys.length, 20);
   for (const lang of expected) {
     for (const k of keys) {
       assert.ok(String(WB_STRINGS[lang][k] ?? '').trim(), `${lang} is missing ${k}`);
@@ -2833,3 +2834,184 @@ test('opt-in: onboarding offers the new tab (ticked by default) and Settings can
   assert.doesNotMatch(readFileSync(path.join(root, 'src/firefox/src/ui/locales/en.js'), 'utf8'), /st\.display\.newtab/);
 });
 
+
+
+// ---------------------------------------------------------------------------
+// WebBrain bulletin under the task box (newtab/src/features/bulletin)
+// ---------------------------------------------------------------------------
+const bulletin = await load(nt('features/bulletin/bulletin.js'));
+
+function bulletinResponse(body, { url = 'https://webbrain.one/newtab-comm.html', ok = true, length = null } = {}) {
+  return {
+    ok,
+    url,
+    headers: { get: (name) => (name.toLowerCase() === 'content-length' && length != null ? String(length) : null) },
+    text: async () => body,
+  };
+}
+
+function bulletinStore(seed = {}) {
+  const data = { ...seed };
+  return {
+    data,
+    async get(keys) { return Object.fromEntries([].concat(keys).filter((k) => k in data).map((k) => [k, data[k]])); },
+    async set(values) { Object.assign(data, values); },
+  };
+}
+
+const extensionPage = { protocol: 'chrome-extension:', hostname: 'abc', origin: 'chrome-extension://abc', search: '' };
+
+test('bulletin: the published file is newtab-comm.html on webbrain.one, with a placeholder preview', () => {
+  assert.equal(bulletin.bulletinUrl(extensionPage).href, 'https://webbrain.one/newtab-comm.html');
+  assert.equal(bulletin.bulletinUrl({ ...extensionPage, search: '?newtab-comm=placeholder' }).href,
+    'https://webbrain.one/newtab-comm-placeholder.html');
+  // A local preview of the web site reads its own copy, like apocalypse-comm.js.
+  const local = { protocol: 'http:', hostname: '127.0.0.1', origin: 'http://127.0.0.1:4173', search: '' };
+  assert.equal(bulletin.bulletinUrl(local).href, 'http://127.0.0.1:4173/newtab-comm.html');
+});
+
+test('bulletin: empty and comment-only markup renders nothing, exactly like the Apocalypse bulletin', async () => {
+  const apocalypse = await load(path.join(root, 'src/chrome/src/ui/apocalypse-comm.js'));
+  const inputs = ['', ' \t\r\n ﻿', '<!DOCTYPE html>', '<!-- reserved -->', '﻿<!doctype html>\n<!--a--><!--b-->',
+    'text', '<p>Notice</p>', '<!--unterminated', '<!doctype html', '<!-->visible', 'x'.repeat(128_000), 'x'.repeat(128_001)];
+  for (const input of inputs) {
+    assert.equal(bulletin.isRenderableMarkup(input), apocalypse.isRenderableMarkup(input), JSON.stringify(input.slice(0, 40)));
+  }
+  for (const value of [null, undefined, {}, 0]) assert.equal(bulletin.isRenderableMarkup(value), false);
+});
+
+test('bulletin: the shipped file is empty and the placeholder is a self-contained sample', () => {
+  const shipped = readFileSync(path.join(root, 'web/newtab-comm.html'), 'utf8');
+  assert.equal(bulletin.isRenderableMarkup(shipped), false, 'the new tab bulletin must ship switched off');
+  const sample = readFileSync(path.join(root, 'web/newtab-comm-placeholder.html'), 'utf8');
+  assert.equal(bulletin.isRenderableMarkup(sample), true);
+  assert.doesNotMatch(sample, /<script|https?:\/\//i, 'the sample stays script-free and self-contained');
+  assert.ok(Buffer.byteLength(sample) <= bulletin.MAX_BULLETIN_BYTES);
+});
+
+test('bulletin: one private request, accepted only from webbrain.one and within the size cap', async () => {
+  const url = new URL('https://webbrain.one/newtab-comm.html');
+  let options;
+  const ok = await bulletin.fetchBulletin(url, { fetchImpl: async (href, init) => { options = init; return bulletinResponse('<p>Hi</p>'); } });
+  assert.deepEqual(ok, { ok: true, url: 'https://webbrain.one/newtab-comm.html', markup: '<p>Hi</p>' });
+  assert.equal(options.credentials, 'omit');
+  assert.equal(options.referrerPolicy, 'no-referrer');
+  assert.equal(options.cache, 'no-store');
+  const www = await bulletin.fetchBulletin(url, { fetchImpl: async () => bulletinResponse('<p>Hi</p>', { url: 'https://www.webbrain.one/newtab-comm.html' }) });
+  assert.equal(www.ok, true);
+  for (const response of [
+    bulletinResponse('<p>x</p>', { url: 'https://evil.example/newtab-comm.html' }),
+    bulletinResponse('<p>x</p>', { url: 'http://webbrain.one/newtab-comm.html' }),
+    bulletinResponse('<p>x</p>', { ok: false }),
+    bulletinResponse('<p>x</p>', { length: 128_001 }),
+    bulletinResponse('x'.repeat(128_001)),
+  ]) {
+    assert.deepEqual(await bulletin.fetchBulletin(url, { fetchImpl: async () => response }), { ok: false });
+  }
+  assert.deepEqual(await bulletin.fetchBulletin(url, { fetchImpl: async () => { throw new TypeError('offline'); } }), { ok: false });
+  assert.deepEqual(await bulletin.fetchBulletin(url, { fetchImpl: async () => bulletinResponse('  <!-- off -->') }),
+    { ok: true, url: 'https://webbrain.one/newtab-comm.html', markup: '' });
+});
+
+test('bulletin: a request at most every ten minutes, with the answer cached in extension storage', async () => {
+  const storage = bulletinStore();
+  let calls = 0;
+  let body = '';
+  let clock = 1_000_000;
+  const run = () => bulletin.loadBulletin({
+    storage, location: extensionPage, now: () => clock,
+    fetchImpl: async () => { calls++; return bulletinResponse(body); },
+  });
+  assert.equal(await run(), null, 'empty file: nothing shown');
+  assert.equal(calls, 1);
+  body = '<p>Storm warning</p>';
+  clock += bulletin.BULLETIN_REFRESH_MS - 1;
+  assert.equal(await run(), null, 'still the cached empty answer');
+  assert.equal(calls, 1, 'no request inside the interval');
+  clock += 1;
+  const shown = await run();
+  assert.equal(calls, 2);
+  assert.equal(shown.markup, '<p>Storm warning</p>');
+  assert.equal(shown.url, 'https://webbrain.one/newtab-comm.html');
+  assert.equal(shown.hash, bulletin.bulletinHash('<p>Storm warning</p>'));
+  assert.equal((await run()).markup, '<p>Storm warning</p>', 'served from the cache');
+  assert.equal(calls, 2);
+  assert.deepEqual(Object.keys(storage.data).sort(), [bulletin.BULLETIN_CACHE_KEY]);
+});
+
+test('bulletin: an unreachable file keeps the last bulletin for a day, then drops it', async () => {
+  const storage = bulletinStore();
+  let clock = 5_000_000;
+  let online = true;
+  const run = () => bulletin.loadBulletin({
+    storage, location: extensionPage, now: () => clock,
+    fetchImpl: async () => { if (!online) throw new TypeError('offline'); return bulletinResponse('<p>Evacuate</p>'); },
+  });
+  assert.ok(await run());
+  online = false;
+  clock += bulletin.BULLETIN_REFRESH_MS;
+  assert.equal((await run())?.markup, '<p>Evacuate</p>', 'kept while the network is down');
+  clock += bulletin.BULLETIN_STALE_LIMIT_MS;
+  assert.equal(await run(), null, 'not shown forever');
+  const checkedAt = storage.data[bulletin.BULLETIN_CACHE_KEY].checkedAt;
+  assert.equal(checkedAt, clock, 'a failed check still waits a full interval before the next request');
+});
+
+test('bulletin: dismissing hides that bulletin on every new tab, but a new one shows', async () => {
+  const storage = bulletinStore();
+  let body = '<p>First</p>';
+  let clock = 9_000_000;
+  const run = () => bulletin.loadBulletin({ storage, location: extensionPage, now: () => clock, fetchImpl: async () => bulletinResponse(body) });
+  const first = await run();
+  await bulletin.dismissBulletin(first.hash, storage);
+  assert.equal(storage.data[bulletin.BULLETIN_DISMISSED_KEY], first.hash);
+  assert.equal(await run(), null);
+  body = '<p>Second</p>';
+  clock += bulletin.BULLETIN_REFRESH_MS;
+  assert.equal((await run())?.markup, '<p>Second</p>');
+});
+
+test('bulletin: previews read the file afresh and never touch the cache', async () => {
+  const storage = bulletinStore();
+  let requested;
+  const shown = await bulletin.loadBulletin({
+    storage,
+    location: { ...extensionPage, search: '?newtab-comm=placeholder' },
+    fetchImpl: async (href) => { requested = href; return bulletinResponse('<p>Sample</p>', { url: href }); },
+  });
+  assert.equal(requested, 'https://webbrain.one/newtab-comm-placeholder.html');
+  assert.equal(shown.markup, '<p>Sample</p>');
+  assert.deepEqual(storage.data, {});
+});
+
+test('bulletin: never throws, even with broken storage or no fetch', async () => {
+  const broken = { get: async () => { throw new Error('quota'); }, set: async () => { throw new Error('quota'); } };
+  assert.equal(await bulletin.loadBulletin({ storage: broken, location: extensionPage, fetchImpl: undefined }), null);
+  const shown = await bulletin.loadBulletin({ storage: broken, location: extensionPage, fetchImpl: async () => bulletinResponse('<p>x</p>') });
+  assert.equal(shown?.markup, '<p>x</p>');
+  await bulletin.dismissBulletin('abc', broken);
+  assert.equal(bulletin.bulletinStorage({}), null);
+});
+
+test('bulletin: the frame keeps relative links on webbrain.one and cannot run scripts', () => {
+  const framed = bulletin.bulletinDocument('<head></head><p>Hi</p>', new URL('https://webbrain.one/newtab-comm.html'));
+  assert.match(framed, /^<head><base href="https:\/\/webbrain\.one\/newtab-comm\.html" target="_blank"><meta name="referrer" content="no-referrer"><\/head>/);
+  const view = readFileSync(nt('features/bulletin/Bulletin.jsx'), 'utf8');
+  const sandbox = view.match(/sandbox="([^"]*)"/)?.[1];
+  assert.equal(sandbox, 'allow-popups allow-popups-to-escape-sandbox');
+  assert.match(view, /srcDoc=\{bulletinDocument\(/, 'markup goes in through srcdoc, never by framing webbrain.one');
+  assert.doesNotMatch(view, /\bsrc=\{/);
+  // Under the task box, rendered whether or not the box is shown.
+  const widgets = readFileSync(nt('features/misc/views/Widgets.jsx'), 'utf8');
+  assert.match(widgets, /\{enabled\('taskBox'\) && <TaskBox \/>\}\s*\{\/\*[^*]*\*\/\}\s*<Bulletin \/>/);
+});
+
+test('bulletin: both built new tabs carry the same bulletin code', () => {
+  const assets = (b) => path.join(root, 'src', b, 'newtab', 'assets');
+  const withBulletin = (b) => readdirSync(assets(b)).filter((f) => f.endsWith('.js')
+    && readFileSync(path.join(assets(b), f), 'utf8').includes('newtab-comm.html'));
+  const chrome = withBulletin('chrome');
+  assert.equal(chrome.length, 1, 'the bulletin is bundled once');
+  assert.deepEqual(withBulletin('firefox'), chrome);
+  assert.equal(readFileSync(path.join(assets('chrome'), chrome[0]), 'utf8'), readFileSync(path.join(assets('firefox'), chrome[0]), 'utf8'));
+});
