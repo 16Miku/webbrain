@@ -1720,7 +1720,14 @@ export class ScheduledJobManager {
     if (!isWatch && runMeta.completionVerdict?.outcome === 'succeeded') return { decision: 'keep', reason: 'done_verified', model: runMeta.completionVerdict.model };
     // The switches stay as stored: decision-config.js reads an unset one as on
     // in On mode and applies the Auto and Off modes.
-    const config = await resolveCurrentDecisionConfig(settings);
+    const activeProvider = runMeta.provider
+      || (job.tabId != null && this.agent?._activeProvider?.(job.tabId))
+      || this.agent?._activeProvider?.()
+      || this.agent?.providerManager?.getActive?.()
+      || null;
+    const compass = runMeta.compass
+      ?? (String(activeProvider?.config?.providerName || '').trim().toLowerCase() === 'webbrain-cloud' ? activeProvider.config : null);
+    const config = runMeta.decisionConfig || await resolveCurrentDecisionConfig(settings, compass);
     if (!this.systemOneJudge || !decisionFeatureEnabled(config, isWatch ? 'watch' : 'completion')) return skip('disabled');
     if (settings.strictSecretMode || runMeta.sidecarAllowed === false || runMeta.signal?.aborted) return skip('unavailable');
     const state = systemOneEvidenceState(job.prompt || job.resumeInstruction || job.reason || '', runMeta.evidence, isWatch ? job.watch?.systemOneBaseline : null);
@@ -2461,12 +2468,15 @@ export class ScheduledJobManager {
             && askRunSucceeded(result, sawFailureLikeUpdate)
             ? 'success'
             : null);
+        const activeProvider = tabId != null ? this.agent?._activeProvider?.(tabId) : this.agent?.providerManager?.getActive?.();
+        const compass = String(activeProvider?.config?.providerName || '').trim().toLowerCase() === 'webbrain-cloud' ? activeProvider.config : null;
         await this._complete(running, result, effectiveOutcome, {
           watchAlert, completionVerdict,
           evidence: evidence.snapshot(),
           judgeContext,
           executionId: execution.id,
           settings,
+          compass,
           signal: execution.controller.signal,
           sidecarAllowed: runStatus !== 'cost_limit',
           needsUserInput: endedForUserInput,

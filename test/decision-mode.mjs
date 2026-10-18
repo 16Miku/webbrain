@@ -123,7 +123,7 @@ for (const build of ['chrome', 'firefox']) {
     const judge = { evaluate: async () => { calls++; return { model: 'judge', answers: { condition_met: { noul: .95 }, task_complete: { noul: .95 }, task_completeness: { score: 2 } } }; } };
     const h = makeSchedulerHarness(scheduler, { systemOneJudge: judge });
     const evidence = { observations: [{ data: 'Status: done' }] };
-    const run = (settings, source = 'watch') => h.manager._evaluateSystemOne({ source, prompt: 'Watch status', tabId: 77 }, '', 'success', { settings, evidence });
+    const run = (settings, source = 'watch', runMeta = {}) => h.manager._evaluateSystemOne({ source, prompt: 'Watch status', tabId: 77 }, '', 'success', { settings, evidence, ...runMeta });
     assert.equal((await run({ decisionMode: 'off', systemOneEnabled: true, typesafeApiKey: 'k', systemOneWatchEnabled: true })).reason, 'disabled');
     assert.equal((await run({ decisionMode: 'on', decisionProvider: 'typesafe', typesafeApiKey: 'k' })).decision, 'keep', 'On checks a watch with no switch saved');
     assert.equal((await run({ decisionMode: 'on', decisionProvider: 'typesafe', typesafeApiKey: 'k', systemOneCompletionEnabled: false }, 'scheduled')).reason, 'disabled');
@@ -133,6 +133,10 @@ for (const build of ['chrome', 'firefox']) {
       const verdict = await run({});
       if (build === 'chrome') assert.equal(verdict.decision, 'keep', 'Auto checks with the downloaded in-browser model');
       else assert.equal(verdict.reason, 'disabled', 'Firefox has no in-browser model');
+      const compassVerdict = await run({}, 'watch', { compass: COMPASS });
+      assert.equal(compassVerdict.reason, 'disabled', 'Auto with Compass leaves watches to the main model');
+      const compassProviderVerdict = await run({}, 'watch', { provider: { config: { providerName: 'webbrain-cloud', ...COMPASS } } });
+      assert.equal(compassProviderVerdict.reason, 'disabled', 'Auto with active Compass provider leaves watches to the main model');
     });
   });
 
