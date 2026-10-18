@@ -1815,8 +1815,8 @@ function renderPermissionGateControl() {
 
 function setPermissionGateFromHeader(askBefore) {
   const write = permissionGateWriteQueue.then(async () => {
-    await chrome.storage.local.set({ [PERMISSION_GATE_KEY]: askBefore });
     const changed = askBeforeConsequential !== askBefore;
+    await chrome.storage.local.set({ [PERMISSION_GATE_KEY]: askBefore });
     askBeforeConsequential = askBefore;
     updateActWarning();
     updateInputPlaceholder();

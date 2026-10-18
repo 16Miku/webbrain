@@ -1990,8 +1990,8 @@ function renderPermissionGateControl() {
 
 function setPermissionGateFromHeader(askBefore) {
   const write = permissionGateWriteQueue.then(async () => {
-    await browser.storage.local.set({ [PERMISSION_GATE_KEY]: askBefore });
     const changed = askBeforeConsequential !== askBefore;
+    await browser.storage.local.set({ [PERMISSION_GATE_KEY]: askBefore });
     askBeforeConsequential = askBefore;
     updateActWarning();
     updateInputPlaceholder();

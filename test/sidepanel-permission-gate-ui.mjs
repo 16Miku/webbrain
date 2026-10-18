@@ -18,7 +18,10 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
       const end = source.indexOf('\nrenderPermissionGateControl();\n', start);
       assert.ok(start >= 0 && end > start, 'Use the entire production switch block.');
       block = source.slice(start, end + '\nrenderPermissionGateControl();\n'.length);
-      html = (await read(build, 'src/ui/sidepanel.html')).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+      html = (await read(build, 'src/ui/sidepanel.html'))
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('<script'))
+        .join('\n');
     });
     after(async () => { await browser?.close(); });
 
@@ -50,6 +53,10 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
             storage: { local: { async set(values) {
               if (failNextWrite) { failNextWrite = false; throw new Error('storage unavailable'); }
               log.writes.push(values);
+              if (PERMISSION_GATE_KEY in values) {
+                // Chromium dispatches storage.onChanged before the set() callback resumes
+                askBeforeConsequential = values[PERMISSION_GATE_KEY] !== false;
+              }
             } } },
             runtime: { getURL: (path) => 'ext://webbrain/' + path, openOptionsPage() { log.opened.push('options'); } },
             tabs: { async create({ url }) { log.opened.push(url); } },
