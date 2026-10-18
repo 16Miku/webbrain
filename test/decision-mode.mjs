@@ -118,6 +118,40 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(config.decisionFeatureEnabled(importedConfig, 'browser'), true);
   });
 
+  test(`${build}: fresh or Auto profile preserves implicit On defaults across export and import`, () => {
+    for (const autoProfile of [{}, { decisionMode: 'auto' }]) {
+      const exported = transfer.createConfigExport(autoProfile);
+      assert.equal(exported.settings.systemOneWatchEnabled, true);
+      assert.equal(exported.settings.systemOneCompletionEnabled, true);
+      assert.equal(exported.settings.systemOneFastClassifications, true);
+      assert.equal(exported.settings.systemOneFastBrowser, true);
+
+      const imported = transfer.parseConfigImport(JSON.stringify(exported)).settings;
+      assert.equal(imported.systemOneWatchEnabled, true);
+      assert.equal(imported.systemOneCompletionEnabled, true);
+      assert.equal(imported.systemOneFastClassifications, true);
+      assert.equal(imported.systemOneFastBrowser, true);
+
+      // When the user later switches to On, all four features are enabled
+      const onLater = config.resolveDecisionConfig({ ...imported, decisionMode: 'on', decisionProvider: 'local' });
+      assert.equal(config.decisionFeatureEnabled(onLater, 'watch'), true);
+      assert.equal(config.decisionFeatureEnabled(onLater, 'completion'), true);
+      assert.equal(config.decisionFeatureEnabled(onLater, 'classifications'), true);
+      assert.equal(config.decisionFeatureEnabled(onLater, 'browser'), true);
+    }
+
+    // But a legacy profile keeps its opt-in switches false
+    const legacyExport = transfer.parseConfigImport(JSON.stringify({
+      schema: transfer.CONFIG_SCHEMA,
+      settings: { systemOneEnabled: true, typesafeApiKey: 'legacy' },
+    })).settings;
+    const legacyConfig = config.resolveDecisionConfig(legacyExport);
+    assert.equal(config.decisionFeatureEnabled(legacyConfig, 'watch'), false);
+    assert.equal(config.decisionFeatureEnabled(legacyConfig, 'completion'), false);
+    assert.equal(config.decisionFeatureEnabled(legacyConfig, 'classifications'), false);
+    assert.equal(config.decisionFeatureEnabled(legacyConfig, 'browser'), false);
+  });
+
   test(`${build}: scheduled checks follow the mode`, async () => {
     let calls = 0;
     const judge = { evaluate: async () => { calls++; return { model: 'judge', answers: { condition_met: { noul: .95 }, task_complete: { noul: .95 }, task_completeness: { score: 2 } } }; } };

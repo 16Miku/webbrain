@@ -13,7 +13,7 @@ import {
 import { AUTO_GROUP_TABS_KEY } from './tab-group-preference.js';
 import { normalizeSettings as normalizeSafeSocialSettings, SETTINGS_KEY as SAFE_SOCIAL_SETTINGS_KEY } from './safesocial/config.js';
 import { normalizeUiScale, UI_SCALE_STORAGE_KEY } from './ui/ui-scale.js';
-import { DECISION_FEATURE_KEYS, DECISION_MODES, resolveDecisionConfig } from './agent/decision-config.js';
+import { DECISION_FEATURE_KEYS, DECISION_MODES, resolveDecisionConfig, resolveDecisionMode } from './agent/decision-config.js';
 
 export const CONFIG_SCHEMA = 'webbrain-config/1';
 export const MAX_CONFIG_IMPORT_CHARS = 10_000_000;
@@ -296,7 +296,10 @@ function normalizeSettings(source, { strict = false } = {}) {
     settings.decisionInputRate = source.decisionProvider === 'typesafe' || (!source.decisionProvider && source.typesafeApiKey)
       ? .042 : ['local', 'webgpu_d1', 'webgpu_chat'].includes(source.decisionProvider) ? 0 : .02;
   }
-  if (source?.decisionMode === 'on') {
+  const isLegacyPreModeProfile = !DECISION_MODES.includes(source?.decisionMode) && Object.hasOwn(source, 'systemOneEnabled');
+  const isExplicitOn = source?.decisionMode === 'on';
+  const isModernAuto = resolveDecisionMode(source) === 'auto' && !isLegacyPreModeProfile;
+  if (isExplicitOn || isModernAuto) {
     for (const key of Object.values(DECISION_FEATURE_KEYS)) {
       if (!Object.hasOwn(source, key)) {
         settings[key] = true;
