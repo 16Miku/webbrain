@@ -92,6 +92,32 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(config.resolveDecisionMode(transfer.parseConfigImport(JSON.stringify({ schema: transfer.CONFIG_SCHEMA, settings: {} })).settings), 'auto');
   });
 
+  test(`${build}: explicit On profile preserves implicit feature defaults across export and import`, () => {
+    const onSparse = { decisionMode: 'on', decisionProvider: 'local' };
+    const runtimeConfig = config.resolveDecisionConfig(onSparse);
+    assert.equal(config.decisionFeatureEnabled(runtimeConfig, 'watch'), true);
+    assert.equal(config.decisionFeatureEnabled(runtimeConfig, 'completion'), true);
+    assert.equal(config.decisionFeatureEnabled(runtimeConfig, 'classifications'), true);
+    assert.equal(config.decisionFeatureEnabled(runtimeConfig, 'browser'), true);
+
+    const exported = transfer.createConfigExport(onSparse);
+    assert.equal(exported.settings.systemOneWatchEnabled, true);
+    assert.equal(exported.settings.systemOneCompletionEnabled, true);
+    assert.equal(exported.settings.systemOneFastClassifications, true);
+    assert.equal(exported.settings.systemOneFastBrowser, true);
+
+    const imported = transfer.parseConfigImport(JSON.stringify(exported)).settings;
+    assert.equal(imported.systemOneWatchEnabled, true);
+    assert.equal(imported.systemOneCompletionEnabled, true);
+    assert.equal(imported.systemOneFastClassifications, true);
+    assert.equal(imported.systemOneFastBrowser, true);
+    const importedConfig = config.resolveDecisionConfig(imported);
+    assert.equal(config.decisionFeatureEnabled(importedConfig, 'watch'), true);
+    assert.equal(config.decisionFeatureEnabled(importedConfig, 'completion'), true);
+    assert.equal(config.decisionFeatureEnabled(importedConfig, 'classifications'), true);
+    assert.equal(config.decisionFeatureEnabled(importedConfig, 'browser'), true);
+  });
+
   test(`${build}: scheduled checks follow the mode`, async () => {
     let calls = 0;
     const judge = { evaluate: async () => { calls++; return { model: 'judge', answers: { condition_met: { noul: .95 }, task_complete: { noul: .95 }, task_completeness: { score: 2 } } }; } };

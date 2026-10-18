@@ -13,7 +13,7 @@ import {
 import { AUTO_GROUP_TABS_KEY } from './tab-group-preference.js';
 import { normalizeSettings as normalizeSafeSocialSettings, SETTINGS_KEY as SAFE_SOCIAL_SETTINGS_KEY } from './safesocial/config.js';
 import { normalizeUiScale, UI_SCALE_STORAGE_KEY } from './ui/ui-scale.js';
-import { DECISION_MODES, resolveDecisionConfig } from './agent/decision-config.js';
+import { DECISION_FEATURE_KEYS, DECISION_MODES, resolveDecisionConfig } from './agent/decision-config.js';
 
 export const CONFIG_SCHEMA = 'webbrain-config/1';
 export const MAX_CONFIG_IMPORT_CHARS = 10_000_000;
@@ -311,6 +311,13 @@ function normalizeSettings(source, { strict = false } = {}) {
     const decisionProvider = settings.decisionProvider;
     settings.decisionInputRate = decisionProvider === 'typesafe' || (!decisionProvider && source.typesafeApiKey)
       ? .042 : ['local', 'webgpu_d1'].includes(decisionProvider) ? 0 : .02;
+  }
+  if (source?.decisionMode === 'on') {
+    for (const key of Object.values(DECISION_FEATURE_KEYS)) {
+      if (!Object.hasOwn(source, key)) {
+        settings[key] = true;
+      }
+    }
   }
   return settings;
 }
