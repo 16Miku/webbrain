@@ -159,7 +159,7 @@ import { clarifyQuestionIsHard, clarifyTimedAnswer, clarifyTimeoutChoice, normal
 import { guardAdvisory, guardEntry, guardOutcome, withGuardAdvisories } from './guard-policy.js';
 import { UNVERIFIED_STEP_CONTENT_LIMIT, UNVERIFIED_STEP_PROMPT_KIND, clipUnverifiedStepContent, normalizeUnverifiedStepConfirmation } from './unverified-step.js';
 import { leanSkipsGuard, normalizeLeanModeSetting, resolveLeanMode } from './lean-mode.js';
-import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
+import { RESPONSE_CUT_OFF_NOTICE, cutOffPartialFromError, emptyOutputFailureMessage, modelOutputDiagnostics, outputWasCutOff } from './model-output-diagnostics.js';
 import { stepLimitUserMessage, terminalGuardUserMessage } from './terminal-messages.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
 import { OTP_EMAIL_PROVIDER_IDS, OTP_EMAIL_SKILL_ID, OTP_EMAIL_TOOL_NAME, otpEmailCandidates, otpEmailProviderForUrl, otpEmailUrlLooksLikeMessage, otpOpenMessageRootRef, otpRedactRefs, otpServiceDisplay, otpServiceKey, otpVerificationMessageExcerpt, selectOtpMailboxTab, selectUniqueOtpCandidateByPreview } from './otp-email-tool.js';
@@ -184,12 +184,14 @@ import {
 import { mergeRedactionFrameRegions, mapRegionsToImage, pixelateDataUrl } from './screenshot-redaction.js';
 import { buildTrustedRuntimeContext, stripTrustedRuntimeContext } from './runtime-context.js';
 import {
+  fitAnswerToContext,
   isSelectionSourceGrounding,
   isSelectionProseAction,
   normalizeSelectionAction,
   normalizeSelectionSourceGrounding,
   SELECTION_CONTEXT_SOURCE_GROUNDING,
   SELECTION_ONLY_SOURCE_GROUNDING,
+  SELECTION_TOO_LONG_FOR_CONTEXT,
 } from '../context-menu-storage.js';
 import { firefoxHostPermissionFailure, firefoxRestrictedDomainFailure } from '../firefox-restricted-domains.js';
 import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
@@ -9229,6 +9231,18 @@ export class Agent extends LoopDetector {
     const after = await this._recordCostUsage(provider, result?.usage, costState);
     if (after) result.costAllowanceMessage = after;
     return result;
+    } catch (error) {
+      // A call that ends in a provider error can still have been billed (OpenAI Responses
+      // stopped at max_output_tokens): count what it reports before the error moves on.
+      if (error?.billedUsage) {
+        try {
+          // A call that is the one to reach the allowance says so on the error, as a
+          // completed call says so on its result, for callers that show it.
+          const stopped = await this._recordCostUsage(provider, error.billedUsage, costState);
+          if (stopped) error.costAllowanceMessage = stopped;
+        } catch { /* the original error matters more */ }
+      }
+      throw error;
     } finally {
       hold?.release();
       linked.dispose();
@@ -25498,13 +25512,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...modelMessages.slice(modelMessages[0]?.role === 'system' ? 1 : 0),
     ];
     const prunedMessages = this._pruneOldImages(this._completionEvidenceMessages(tabId, contextMessages, runOptions), provider);
+    // A selection-only run skips context management, and a resumed or follow-up prompt carries
+    // the earlier answer as well as the selection, so the reply is sized to what the model's
+    // window leaves rather than to the provider's full output ceiling.
+    let maxTokens = this._providerMaxOutputTokens(provider);
+    if (selectionScoped && phase === 'response_only') {
+      maxTokens = fitAnswerToContext({ contextWindow: provider?.contextWindow, messages: prunedMessages, wanted: maxTokens });
+      if (maxTokens === 0) return SELECTION_TOO_LONG_FOR_CONTEXT;
+    }
     // Voluntary research sharing needs the exact model-facing request (with
     // the context-only system prompt). Callers pass a holder when the result
     // may be shared; recovery phases omit it and are never shared.
     if (shareCapture) shareCapture.request = prunedMessages;
     const chatOpts = {
       temperature: ['delivery_recovery', 'step_limit_recovery'].includes(phase) ? 0.2 : 0.3,
-      maxTokens: this._providerMaxOutputTokens(provider),
+      maxTokens,
       ...(Array.isArray(tools) && tools.length ? { tools } : {}),
       ...(toolChoice ? { toolChoice } : {}),
     };
@@ -25532,13 +25554,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } catch {}
     }
     const startedAt = Date.now();
-    const result = await this._chatWithCostAllowance(
-      provider,
-      prunedMessages,
-      chatOpts,
-      costState,
-      { tabId, generationName: phase },
-    );
+    let result;
+    try {
+      result = await this._chatWithCostAllowance(
+        provider,
+        prunedMessages,
+        chatOpts,
+        costState,
+        { tabId, generationName: phase },
+      );
+    } catch (error) {
+      // A reply that stopped at the output limit is an error on some providers. The
+      // side-panel answer still shows what was written, marked as cut off below.
+      const partial = phase === 'response_only' ? cutOffPartialFromError(error) : '';
+      if (!partial) {
+        // OpenAI Responses can spend the entire output budget on reasoning. If that
+        // same call exhausted the allowance, retain its notice rather than routing
+        // it through generic failure recovery, which does not preserve it.
+        if (phase === 'response_only'
+          && error?.costAllowanceMessage
+          && ['length', 'max_tokens', 'max_output_tokens', 'max_completion_tokens'].includes(String(error?.incompleteReason))) {
+          return `${RESPONSE_CUT_OFF_NOTICE.trim()}\n\n${error.costAllowanceMessage}`;
+        }
+        throw error;
+      }
+      result = {
+        content: Agent._stripReasoningTags(partial),
+        toolCalls: [],
+        finishReason: String(error.incompleteReason),
+        // The call that was cut off can also be the one that reached the cost allowance.
+        ...(error.costAllowanceMessage ? { costAllowanceMessage: error.costAllowanceMessage } : {}),
+      };
+    }
     const latencyMs = Date.now() - startedAt;
     this._logDebug({
       type: `${phase}_response`,
@@ -25564,7 +25611,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const displayContent = phase === 'terminal_recovery'
       ? terminalRecoveryFinalText(result?.content)
       : String(result?.content || '').trim();
-    return repairAssistantDisplayText(displayContent);
+    const displayText = repairAssistantDisplayText(displayContent);
+    // A reply that ran into the output limit must not read as finished. A selection
+    // card's "Continue" lands here too, and the remainder can be cut off again.
+    if (phase !== 'response_only' || !displayText) return displayText;
+    const answer = outputWasCutOff(result) ? `${displayText}${RESPONSE_CUT_OFF_NOTICE}` : displayText;
+    // The call that reached the cost allowance says so, so the next one does not fail unexplained.
+    return result?.costAllowanceMessage ? `${answer}\n\n${result.costAllowanceMessage}` : answer;
   }
 
   _consumeContextOnlyAbort(tabId, messages, onUpdate) {
@@ -25606,9 +25659,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         quotaFailure = true;
         onUpdate('quota', { quota: error.quota });
       }
-      status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
-      finalResponse = this._isCostAllowanceError(error)
+      const costAllowance = this._isCostAllowanceError(error);
+      const allowanceNotice = typeof error?.costAllowanceMessage === 'string' ? error.costAllowanceMessage.trim() : '';
+      status = costAllowance ? 'cost_limit' : 'error';
+      finalResponse = costAllowance
         ? error.message
+        : allowanceNotice
+          ? `${(recoveryDetails = modelFailureRecovery(error, { phase: 'response_generation' })).message}\n\n${allowanceNotice}`
         : (recoveryDetails = modelFailureRecovery(error, { phase: 'response_generation' })).message;
     }
     const stopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
