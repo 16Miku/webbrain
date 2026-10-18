@@ -41608,8 +41608,8 @@ test('tiny Ask answers in-browser side-panel Ask turns from the page in one tool
 });
 
 test('tiny Ask shows a vision-capable in-browser model the visible page when its own readout says so', async () => {
-  const { tinyAskScreenshotGate, TINY_ASK_SCREENSHOT_GATE_QUESTION, TINY_ASK_SCREENSHOT_NOTE, TINY_ASK_TEXTLESS_SCREENSHOT_NOTE,
-    TINY_ASK_SYSTEM_PROMPT } = TinyAskCh;
+  const { tinyAskScreenshotGate, tinyAskScreenshotGateProbability, TINY_ASK_SCREENSHOT_GATE_OPTIONS, TINY_ASK_SCREENSHOT_NOTE,
+    TINY_ASK_TEXTLESS_SCREENSHOT_NOTE, TINY_ASK_SYSTEM_PROMPT } = TinyAskCh;
   // The gate is language-independent: no word lists, only the user's message
   // and facts WebBrain knows.
   const gate = tinyAskScreenshotGate({ question: 'Welche Farbe hat der Knopf?', pageChars: 5400, imageAttachment: true, linkedPage: false });
@@ -41617,7 +41617,12 @@ test('tiny Ask shows a vision-capable in-browser model the visible page when its
   assert.match(gate.state, /Current page text: about 5400 characters\./);
   assert.match(gate.state, /The user attached an image: yes\./);
   assert.match(gate.state, /The message links another page: no\./);
-  assert.deepEqual(gate.questions, { needs_screenshot: { type: 'noul', instructions: TINY_ASK_SCREENSHOT_GATE_QUESTION } });
+  assert.equal(gate.questions.needs_screenshot.type, 'choice');
+  assert.deepEqual(Object.keys(gate.questions.needs_screenshot.criteria), ['looks', 'page_text', 'general', 'other_source']);
+  assert.deepEqual(gate.questions.needs_screenshot.criteria, { ...TINY_ASK_SCREENSHOT_GATE_OPTIONS });
+  assert.match(gate.state, /^Examples:\n"/, 'few-shot examples in several languages come first');
+  assert.equal(tinyAskScreenshotGateProbability({ needs_screenshot: { type: 'choice', choice: 'looks', probabilities: { looks: 0.8, page_text: 0.1 } } }), 0.8);
+  assert.equal(tinyAskScreenshotGateProbability({}), null);
   assert.match(tinyAskScreenshotGate({ question: 'x', pageChars: 12 }).state, /Current page text: almost none\./);
   assert.match(TINY_ASK_SYSTEM_PROMPT, /a screenshot of its visible part/);
   assert.match(TINY_ASK_SYSTEM_PROMPT, /one-time codes that appear in page text or a screenshot/, 'the no-secrets rule covers screenshots');
@@ -41636,7 +41641,8 @@ test('tiny Ask shows a vision-capable in-browser model the visible page when its
         decisions.push(request);
         const value = gate(request);
         if (value instanceof Error) throw value;
-        return { answers: { needs_screenshot: { type: 'noul', noul: value } } };
+        return { answers: { needs_screenshot: { type: 'choice', choice: value >= 0.5 ? 'looks' : 'page_text',
+          probabilities: { looks: value, page_text: 1 - value, general: 0, other_source: 0 } } } };
       },
     };
     const agent = new AgentCh({
@@ -41676,7 +41682,7 @@ test('tiny Ask shows a vision-capable in-browser model the visible page when its
     const { agent, tabId, requests, decisions, captures, run } = setup();
     assert.equal(await run('¿De qué color es el botón de compra?'), 'Answer.');
     assert.equal(decisions.length, 1, 'one readout before the answer');
-    assert.equal(decisions[0].promptVariant, 'readout');
+    assert.equal(decisions[0].promptVariant, 'classify');
     assert.match(decisions[0].state, /¿De qué color es el botón de compra\?/, 'the readout sees the question, in any language');
     assert.doesNotMatch(decisions[0].state, /Blue plan|shop\.example|Plans/, 'and never page content, URL or title');
     assert.equal(captures.length, 1, 'a Yes takes one screenshot');

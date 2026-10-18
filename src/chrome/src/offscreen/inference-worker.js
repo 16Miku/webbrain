@@ -1931,7 +1931,7 @@ async function runMultimodalDecision(payload, { isCancelled = () => false } = {}
     { role: 'system', content: [{ type: 'text', text: decisionSystemPrompt(payload?.promptVariant) }] },
     { role: 'user', content: [
       ...request.images.map(() => ({ type: 'image' })),
-      { type: 'text', text: `${decisionStateText(request.state)}\n\n${DECISION_QUESTION_MARKER}` },
+      { type: 'text', text: `${payload?.promptVariant === 'classify' ? String(request.state || '') : decisionStateText(request.state)}\n\n${DECISION_QUESTION_MARKER}` },
     ] },
   ];
   const rendered = runtime.processor.apply_chat_template(messages, { add_generation_prompt: true, enable_thinking: false });
@@ -1971,9 +1971,10 @@ async function runMultimodalDecision(payload, { isCancelled = () => false } = {}
     const prefillMs = performance.now() - started;
     // `probe` (the default) scores each option's verify continuation with the
     // trained probe; `verify` returns the raw Yes margins; `readout` and
-    // `strict` read the option codes in one pass. All but `probe` are for the
-    // diagnostic fixture path.
-    const variant = ['readout', 'default', 'strict', 'verify', 'probe'].includes(payload?.promptVariant) ? payload.promptVariant : 'probe';
+    // `strict` read the option codes in one pass. `classify` is a readout that
+    // sorts a user's message (tiny Ask's screenshot gate); the others are for
+    // the diagnostic fixture path.
+    const variant = ['readout', 'default', 'strict', 'verify', 'probe', 'classify'].includes(payload?.promptVariant) ? payload.promptVariant : 'probe';
     const verify = variant === 'verify' || variant === 'probe';
     if (variant === 'probe' && modelId !== BONSAI_DECISION_PROBE.model) {
       throw new Error(`No decision probe is trained for ${modelId}.`);

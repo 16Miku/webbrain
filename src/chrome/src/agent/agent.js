@@ -208,7 +208,7 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 import {
   TINY_ASK_ACT_BLOCKED_MESSAGE, TINY_ASK_COMPACT_LINKED_MAX_CHARS, TINY_ASK_COMPACT_PAGE_MAX_CHARS,
   TINY_ASK_COMPACT_SELECTION_MAX_CHARS, TINY_ASK_READ_MAX_CHARS, TINY_ASK_READ_WINDOW_CHARS, TINY_ASK_SYSTEM_PROMPT,
-  TINY_ASK_SCREENSHOT_GATE_THRESHOLD, tinyAskLinkedUrl, tinyAskScreenshotGate, tinyAskScreenshotNote, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
+  TINY_ASK_SCREENSHOT_GATE_THRESHOLD, tinyAskLinkedUrl, tinyAskScreenshotGate, tinyAskScreenshotGateProbability, tinyAskScreenshotNote, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
 } from './tiny-ask.js';
 import { webgpuModelDisplayName } from '../providers/webgpu.js';
 
@@ -12083,7 +12083,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // The visible page for a tiny Ask turn, when the in-browser model reads
-  // images itself and its own Yes/No readout says the question needs it (see
+  // images itself and its own readout says the question needs it (see
   // tinyAskScreenshotGate: language-independent, and blind to page content).
   // Never in Strict Secret Mode, never through a separate describing model:
   // tiny Ask stays on the user's device. Same capture as the agent's
@@ -12108,8 +12108,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const gate = tinyAskScreenshotGate({
         question, pageChars: String(page.text || '').trim().length, imageAttachment, linkedPage,
       });
-      const result = await provider.decide({ ...gate, promptVariant: 'readout', signal: this._runAbortSignal(tabId) });
-      probability = Number(result?.answers?.needs_screenshot?.noul);
+      const result = await provider.decide({ ...gate, promptVariant: 'classify', signal: this._runAbortSignal(tabId) });
+      probability = tinyAskScreenshotGateProbability(result?.answers);
     } catch (error) {
       if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
     }

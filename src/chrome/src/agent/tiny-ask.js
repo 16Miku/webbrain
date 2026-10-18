@@ -49,30 +49,54 @@ export const TINY_ASK_READ_WINDOW_CHARS = 6000;
 export const TINY_ASK_READ_MAX_CHARS = 60000;
 // In-browser models that read images (Ternary Bonsai 2 2B Vision) can also be
 // shown the visible part of the page. Whether a question needs it is decided
-// by the model itself: one Yes/No readout through WebGPUProvider.decide
-// before the answer (no text generated, about 0.2-0.4 s on a desktop GPU), so
-// it works in any language. The readout sees only the user's message and
-// facts WebBrain knows (how much page text there is, an attached image, a
-// linked page), never page content, so a page cannot steer the decision.
+// by the model itself: one readout through WebGPUProvider.decide before the
+// answer (no text generated, about 0.25 s on a desktop GPU), so it works in
+// any language. The readout sorts the user's message into four categories and
+// sees only that message and facts WebBrain knows (how much page text there
+// is, an attached image, a linked page), never page content, so a page cannot
+// steer the decision. The examples are in several languages on purpose.
 export const TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS = 200;
 export const TINY_ASK_SCREENSHOT_GATE_THRESHOLD = 0.5;
-export const TINY_ASK_SCREENSHOT_GATE_QUESTION = 'Does answering this message well require looking at a screenshot of '
-  + 'the current page? Yes only if the answer depends on what the current page visibly shows that its text does '
-  + 'not: images, photos, charts, colours, layout or design, or anything at all when the page has almost no text '
-  + 'and the message is about the page. No for questions answered from the page text, for general knowledge '
-  + 'questions, and for questions only about an attached image or a linked page.';
+export const TINY_ASK_SCREENSHOT_GATE_OPTIONS = Object.freeze({
+  looks: 'Needs to see the current page: how something on it looks (an image, photo, chart, colour, logo, button, layout), or what the page shows when it has almost no text',
+  page_text: 'Answered from the current page\'s text: facts, prices, dates, names, a summary',
+  general: 'General knowledge, not about the current page',
+  other_source: 'Only about an attached image or a linked page, not the current page',
+});
+const TINY_ASK_SCREENSHOT_GATE_EXAMPLES = [
+  ['Is the header image a mountain or a beach?', 'A'],
+  ['¿Qué hay en la ilustración de la portada?', 'A'],
+  ['Sayfada iade süresi kaç gün yazıyor?', 'B'],
+  ['What time does the store open, according to this page?', 'B'],
+  ['How tall is the Eiffel Tower?', 'C'],
+  ['Was ist ein Schwarzes Loch?', 'C'],
+  ['What breed is the dog in the photo I attached?', 'D'],
+];
 
 export function tinyAskScreenshotGate({ question = '', pageChars = 0, imageAttachment = false, linkedPage = false } = {}) {
   const chars = Math.max(0, Number(pageChars) || 0);
+  const examples = TINY_ASK_SCREENSHOT_GATE_EXAMPLES.map(([text, letter]) => `"${text}" -> ${letter}`).join('\n');
   const facts = [
     `Current page text: ${chars < TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS ? 'almost none' : `about ${chars} characters`}.`,
     `The user attached an image: ${imageAttachment ? 'yes' : 'no'}.`,
     `The message links another page: ${linkedPage ? 'yes' : 'no'}.`,
   ];
   return {
-    state: `The user's message to the browser assistant:\n${String(question || '').slice(0, 2000)}\n\n${facts.join('\n')}`,
-    questions: { needs_screenshot: { type: 'noul', instructions: TINY_ASK_SCREENSHOT_GATE_QUESTION } },
+    state: `Examples:\n${examples}\n\nThe user's message:\n${String(question || '').slice(0, 2000)}\n\n${facts.join('\n')}`,
+    questions: {
+      needs_screenshot: {
+        type: 'choice',
+        instructions: 'Which category fits the user\'s message?',
+        criteria: { ...TINY_ASK_SCREENSHOT_GATE_OPTIONS },
+      },
+    },
   };
+}
+
+// The share of the readout that falls on "needs to see the current page".
+export function tinyAskScreenshotGateProbability(answers) {
+  const value = Number(answers?.needs_screenshot?.probabilities?.looks);
+  return Number.isFinite(value) ? value : null;
 }
 
 // Precedes the screenshot in the user message; the system prompt says the

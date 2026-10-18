@@ -13,7 +13,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { tinyAskScreenshotGate, TINY_ASK_SCREENSHOT_GATE_THRESHOLD } from '../src/chrome/src/agent/tiny-ask.js';
+import { tinyAskScreenshotGate, tinyAskScreenshotGateProbability, TINY_ASK_SCREENSHOT_GATE_THRESHOLD } from '../src/chrome/src/agent/tiny-ask.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -117,16 +117,17 @@ try {
   for (const [index, [expected, language, question, facts]] of CASES.entries()) {
     const gate = tinyAskScreenshotGate({ question, ...facts });
     const started = Date.now();
-    const reply = await message('webgpu_decide_fixture', { fixture: { ...gate, promptVariant: 'readout' } });
+    const reply = await message('webgpu_decide_fixture', { fixture: { ...gate, promptVariant: 'classify' } });
     const seconds = (Date.now() - started) / 1000;
-    const probability = Number(reply?.result?.answers?.needs_screenshot?.noul);
+    const probability = tinyAskScreenshotGateProbability(reply?.result?.answers);
+    const choice = reply?.result?.answers?.needs_screenshot?.choice || null;
     const entry = {
-      expected, language, question, ...facts, probability: Number.isFinite(probability) ? probability : null,
+      expected, language, question, ...facts, choice, probability,
       predicted: probability >= threshold, seconds, ...(reply?.success ? {} : { error: reply?.error || 'no reply' }),
     };
     entry.correct = entry.error ? false : entry.predicted === expected;
     if (index > 0) result.cases.push(entry); else result.cold = entry;
-    console.log(JSON.stringify({ ok: entry.correct, p: entry.probability?.toFixed(3), s: seconds, language, question }));
+    console.log(JSON.stringify({ ok: entry.correct, p: entry.probability?.toFixed(3), choice, s: seconds, language, question }));
   }
   // The first call loads the model; score it, but keep it out of the latency.
   const all = [result.cold, ...result.cases];
