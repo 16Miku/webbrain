@@ -57,6 +57,8 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   tracingEnabled: false,
   feedbackDiagnosticsEnabled: true,
   strictSecretMode: false,
+  strictGuards: false,
+  leanMode: 'auto',
   agentAllowLocalNetwork: false,
   scheduledTasksEnabled: true,
   scheduledRequireConsequentialConfirmation: true,
@@ -140,6 +142,7 @@ const BOOLEAN_KEYS = new Set([
   'tracingEnabled',
   'feedbackDiagnosticsEnabled',
   'strictSecretMode',
+  'strictGuards',
   'agentAllowLocalNetwork',
   'scheduledTasksEnabled',
   'scheduledRequireConsequentialConfirmation',
@@ -186,6 +189,7 @@ const NUMBER_KEYS = new Set([
 const STRING_KEYS = new Set([
   'composerDeliveryMode',
   'clarifyTimeoutPolicy',
+  'leanMode',
   'wbLocale',
   'themeMode',
   'autoScreenshot',
@@ -240,6 +244,7 @@ function sanitizeProviders(value, { strict = false } = {}) {
 function validSettingValue(key, value) {
   if (key === 'decisionProvider') return ['', 'openrouter', 'typesafe', 'local', 'webgpu_d1'].includes(value);
   if (key === 'decisionVisionMode') return ['auto', 'on', 'off'].includes(value);
+  if (key === 'leanMode') return ['auto', 'on', 'off'].includes(value);
   if (key === 'decisionBaseUrl') {
     if (typeof value !== 'string') return false;
     try { resolveDecisionConfig({ decisionProvider: 'local', decisionBaseUrl: value }); return true; }

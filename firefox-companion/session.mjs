@@ -93,13 +93,23 @@ function readDraftJsText(el) {
   return texts.join('\n');
 }
 
-function readRichTextFieldValue(el, semanticKind = '') {
+// The field's text and the reader that produced it: the editor's own model
+// (DraftJS, ProseMirror), a native <input> or <textarea>'s exact value, or
+// an editor's rendered text (innerText), whose spacing is layout.
+function readRichTextFieldReading(el, semanticKind = '') {
   if (!el?.isConnected) return null;
   const draftJs = semanticKind === 'draftjs' || isDraftJsEditor(el);
   const proseMirror = semanticKind === 'prosemirror' || el.classList?.contains('ProseMirror');
   const semantic = draftJs ? readDraftJsText(el) : readProseMirrorText(el);
   if ((draftJs || proseMirror) && semantic === null) return null;
-  return semantic !== null ? semantic : (el.isContentEditable ? el.innerText : el.value);
+  if (semantic !== null) return { value: semantic, reader: 'semantic' };
+  if (el.isContentEditable) return { value: el.innerText, reader: 'rendered' };
+  return { value: el.value, reader: ['INPUT', 'TEXTAREA'].includes(String(el.tagName || '').toUpperCase()) ? 'exact' : 'unknown' };
+}
+
+function readRichTextFieldValue(el, semanticKind = '') {
+  const reading = readRichTextFieldReading(el, semanticKind);
+  return reading ? reading.value : null;
 }
 
 function proseMirrorSelectionMatches(el, bound) {
@@ -116,7 +126,7 @@ function proseMirrorSelectionMatches(el, bound) {
     && range.endContainer === bound.endNode && range.endOffset === bound.endOffset;
 }
 
-const FIELD_TEXT_READBACK_SOURCE = [readProseMirrorText, isDraftJsEditor, readDraftJsText, readRichTextFieldValue]
+const FIELD_TEXT_READBACK_SOURCE = [readProseMirrorText, isDraftJsEditor, readDraftJsText, readRichTextFieldReading, readRichTextFieldValue]
   .map(fn => fn.toString()).join('\n');
 
 const sipMask = (1n << 64n) - 1n;
@@ -815,17 +825,32 @@ export class BidiSession {
       await new Promise(resolve => setTimeout(resolve, 100));
       assertLive();
       const expected = clear ? payload.text : String(beforeSnapshot.value || '') + payload.text;
-      const verified = await this.call(match, `(el, expected, semanticKind, bound) => {
+      // The settled readback names the reader that compared the value, so
+      // the extension can tell a field known to hold another value (an exact
+      // or semantic reading) from one whose rendered text only differs, or
+      // one that could not be read.
+      const settled = await this.call(match, `(el, expected, semanticKind, bound) => {
         ${FIELD_TEXT_READBACK_SOURCE}
-        if (bound && (el !== bound.editor || el.ownerDocument !== bound.document || el.getRootNode() !== bound.root)) return false;
-        const actual = readRichTextFieldValue(el, semanticKind);
-        if (actual === null) return false;
-        if (!el.isContentEditable) return actual === expected;
+        if (bound && (el !== bound.editor || el.ownerDocument !== bound.document || el.getRootNode() !== bound.root))
+          return { verified: false, compared: false, reason: 'element_replaced' };
+        const settledReading = readRichTextFieldReading(el, semanticKind);
+        if (settledReading === null) return { verified: false, compared: false, reason: 'readback_unavailable' };
+        const actual = settledReading.value;
+        if (!el.isContentEditable) return { verified: actual === expected, compared: true, reader: settledReading.reader };
         const normalize = value => String(value).replace(/\\r\\n?/g, '\\n');
-        return normalize(actual) === normalize(expected);
+        return { verified: normalize(actual) === normalize(expected), compared: true, reader: settledReading.reader };
       }`, [{ type: 'string', value: expected }, { type: 'string', value: beforeSnapshot.semanticKind || '' },
         proseMirrorBinding ? { handle: proseMirrorBinding } : { type: 'null' }]);
-      if (verified.result?.value !== true) return { success: false, dispatched: true, verified: false, submitted: false, outcomeUnknown: true, retryable: false, error: 'Trusted typing did not match the requested value; inspect before another write.' };
+      const readback = unpackRemoteObjectValue(settled.result?.type ? settled.result : settled.result?.value);
+      if (readback !== true && readback?.verified !== true) {
+        const reading = readback && typeof readback === 'object' ? { readback: {
+          compared: readback.compared === true,
+          ...(['exact', 'semantic', 'rendered'].includes(readback.reader) ? { reader: readback.reader } : {}),
+          ...(['element_replaced', 'readback_unavailable'].includes(readback.reason) ? { reason: readback.reason } : {}),
+        } } : {};
+        return { success: false, dispatched: true, verified: false, submitted: false, outcomeUnknown: true, retryable: false, ...reading,
+          error: 'Trusted typing did not match the requested value; inspect before another write.' };
+      }
       if (action === 'field' && payload.submit === true) {
         assertLive();
         await press('\uE007');

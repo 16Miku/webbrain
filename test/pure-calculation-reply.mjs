@@ -275,6 +275,8 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(requests, 3);
           return call('honest-missing-calculation', 'done', { summary: 'The required calculation was not executed.', outcome: 'failed' });
         });
+        // Strict checks: the guard's refusal itself is under test.
+        agent.strictGuards = true;
         agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => {
           send = bind(agent, tab); return { role: 'user', content };
         };
@@ -313,6 +315,8 @@ for (const build of ['chrome', 'firefox']) {
         return messages.some(m => m.role === 'tool' && String(m.content).includes(expected))
           ? { content: answer } : call('calc-without-terminal', 'calculate', { expression });
       });
+      // Strict checks: the guard's refusal itself is under test.
+      agent.strictGuards = true;
       agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => {
         send = bind(agent, tab); return { role: 'user', content };
       };
@@ -336,6 +340,40 @@ for (const build of ['chrome', 'firefox']) {
         // The chat answer is plain language; the guard's diagnostic stays in traces.
         assert.match(result, /couldn't verify the requested result, so I stopped\. Nothing was changed, submitted, or sent\./);
         assert.doesNotMatch(result, /\[|\]|recovery attempt|task tools/);
+      } finally { documents.delete(tab); }
+    });
+  }
+
+  for (const streaming of [false, true]) {
+    test(`${build}: ${streaming ? 'stream' : 'chat'} a plain arithmetic answer accepted before any calculation ends as partial`, async () => {
+      // The model never calls calculate. By default the plan guard's notes are
+      // given once each, then the plain answer is accepted, but not as a
+      // success: WebBrain knows the result was not computed.
+      const tab = nextTab++, updates = []; let agent, send, requests = 0;
+      agent = makeAgent(Agent, async () => {
+        requests++; send({});
+        return { content: answer };
+      });
+      agent.maxSteps = 8;
+      agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => {
+        send = bind(agent, tab); return { role: 'user', content };
+      };
+      agent._runPlannerIntentGate = async () => ({ proceed: true, requestKind: 'execute',
+        requiresStateChange: false, requiresSubmission: false,
+        ...agent._plannerCompletionGateFields({ read_scope: 'none', deliverables: scope.deliverables }) });
+      agent.executeTool = async (_tab, name) => {
+        if (name === 'get_accessibility_tree') return { success: true, pageContent: 'text "Owned passive counter"' };
+        assert.fail(`No tool runs in this task: ${name}`);
+      };
+      const update = (type, data) => updates.push({ type, data });
+      const options = { detachedRequestId: `plain-before-calc-${tab}`, askStreamingEnabled: false };
+      try {
+        const result = streaming ? await agent.processMessageStream(tab, ORIGINAL_CALC_CORRECTION, update, 'act', options)
+          : await agent.processMessage(tab, ORIGINAL_CALC_CORRECTION, update, 'act', [], options);
+        assert.ok(requests >= 2, 'the plain answer gets a note before it is accepted');
+        assert.equal(updates.some(e => e.type === 'tool_call' && e.data.name === 'calculate'), false);
+        assert.match(result, /The result was not computed with the calculator\./);
+        assert.ok(updates.some(e => e.type === 'run_status' && e.data?.status === 'partial'), 'the run ends as partial');
       } finally { documents.delete(tab); }
     });
   }
