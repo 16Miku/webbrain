@@ -545,7 +545,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
         images,
         questions,
         ...(Number(temperature) > 0 ? { temperature: Number(temperature) } : {}),
-        ...(['readout', 'strict', 'verify', 'probe'].includes(promptVariant) ? { promptVariant } : {}),
+        ...(['readout', 'strict', 'verify', 'probe', 'gate'].includes(promptVariant) ? { promptVariant } : {}),
         ...(returnHidden === true ? { returnHidden: true } : {}),
         ...(prefillSliceTokens == null ? {} : { prefillSliceTokens }),
       });

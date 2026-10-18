@@ -5998,6 +5998,7 @@ test('model-callable chat tools bind the thread, send once, and require outgoing
     assert.equal(boundedView.newMessages.at(-1).truncated, true, `${label}: oversized chat delta was not marked truncated`);
     assert.equal(boundedView.deltaTruncated, true, `${label}: dropped chat delta entries were not disclosed`);
     const staleAgent = new AgentClass({});
+    staleAgent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
     staleAgent._persist = () => { throw new Error('stale preflight must not commit chat state'); };
     staleAgent._persistNow = async () => { throw new Error('stale preflight must not persist chat state'); };
     staleAgent.chatSessions.set(tabId, agent.chatSessions.get(tabId));
@@ -9472,6 +9473,8 @@ test('carousel slide count prefers an explicit total over the current index', ()
 test('Instagram carousel navigation enumerates 16 slides monotonically and records 15 hotel rows', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const tabId = label === 'chrome' ? 551 : 552;
     let currentUrl = 'https://www.instagram.com/p/ABC123/';
     const recordedRows = [];
@@ -11633,6 +11636,8 @@ test('whole-thread guard blocks done before an incomplete read can become a fina
 test('Ask returns a fixed limitation when Gmail expansion cannot be verified', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const tabId = label === 'chrome' ? 52705 : 52706;
     let executed = false;
     agent._persist = () => { };
@@ -18557,7 +18562,8 @@ test('a reading older than the ones handed to the page still reaches it when the
     const wall = 'Bu içerik abonelere özeldir Okumaya devam etmek için abone olun. Abone ol';
     const agent = new AgentClass({});
     const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker'
-      ? (item.text === wall ? 'subscription' : 'other') : kind === 'message_control' ? 'other' : null));
+      ? (item.text === wall ? 'subscription' : 'other') : kind === 'message_control' ? 'other'
+        : kind === 'control_effect' ? (item.text === 'Paylaş' ? 'publish' : 'view') : null));
     await agent._readPageTexts(1, 'page_blocker', [wall], {}, { maxChars: 400 });
     // Many texts read since push it out of the readings a page read carries.
     await agent._readPageTexts(1, 'page_blocker', Array.from({ length: 450 }, (_, index) => `Bülten kutusu ${index}`), {}, { maxChars: 400 });
@@ -18581,6 +18587,14 @@ test('a reading older than the ones handed to the page still reaches it when the
     assert.equal(agent._messagingPageReadings().message_control['Gönder'], undefined);
     assert.equal(await agent._readUnreadPageTexts(1, [{ kind: 'message_control', text: 'Gönder' }]), true);
     assert.equal(agent._messagingPageReadings().message_control['Gönder'], 'other', `${build}: a held control reading did not reach the page`);
+    // So does what a clicked control does, which the submit probe reads.
+    await agent._readPageTexts(1, 'control_effect', ['Paylaş'], {}, { maxChars: 200 });
+    await agent._readPageTexts(1, 'control_effect', Array.from({ length: 450 }, (_, index) => `Sekme ${index}`), {}, { maxChars: 200 });
+    assert.equal(agent._controlEffectReadingsForProbe()['Paylaş'], undefined);
+    asked.length = 0;
+    await agent._readControlEffects(1, ['Paylaş']);
+    assert.equal(agent._controlEffectReadingsForProbe()['Paylaş'], 'publish', `${build}: a held caption reading did not reach the submit probe`);
+    assert.deepEqual(asked, [], `${build}: a held caption reading was asked of a model again`);
     // Overlay and article-block texts stay out of the dialog-title readings
     // the CAPTCHA scans carry, which are at most 200 characters.
     const window = `${'Önizleme paragrafı. '.repeat(12)}Okumaya devam etmek için abone olun.`;
@@ -28401,6 +28415,8 @@ test('completion recovery keeps scoped observations read-only and target-specifi
     ['firefox', AgentFx, CompletionInvariantFx, getToolsForModeFx],
   ]) {
     const agent = new AgentClass({});
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const tabId = label === 'chrome' ? 24852 : 24853;
     agent.conversationModes.set(tabId, 'act');
     const state = invariant.recordCompletionToolResult(
@@ -28835,7 +28851,9 @@ test('field tool contracts advertise settled verification and recovery', () => {
     const typeText = tools.find(tool => tool.function.name === 'type_text');
     assert.match(typeAx.function.description, /settle[\s\S]*verified:true/i, `${label}: type_ax verification contract missing`);
     assert.match(setField.function.description, /verify the exact settled value/i, `${label}: set_field exact verification contract missing`);
-    assert.match(setField.function.description, /recoveryRequired:"verify_or_restore_field"/, `${label}: set_field recovery contract missing`);
+    // Default mode reports an unconfirmed readback as verified:false with a
+    // note instead of a recovery lock (Strict checks keep recoveryRequired).
+    assert.match(setField.function.description, /exact readback fails, the result reports verified:false and says what to check/, `${label}: set_field recovery contract missing`);
     for (const tool of [typeAx, setField, typeText]) {
       assert.equal(tool.function.parameters.properties.lang, undefined, `${label}: ${tool.function.name} still exposes a hidden language transform`);
     }
@@ -41589,6 +41607,208 @@ test('tiny Ask answers in-browser side-panel Ask turns from the page in one tool
   }
 });
 
+test('tiny Ask shows a vision-capable in-browser model the visible page when its own readout says so', async () => {
+  const { tinyAskScreenshotGate, tinyAskScreenshotGateProbability, TINY_ASK_SCREENSHOT_GATE_QUESTION, TINY_ASK_SCREENSHOT_NOTE,
+    TINY_ASK_TEXTLESS_SCREENSHOT_NOTE, TINY_ASK_SYSTEM_PROMPT } = TinyAskCh;
+  // The gate is language-independent: no word lists, only the user's message
+  // and facts WebBrain knows.
+  const gate = tinyAskScreenshotGate({ question: 'Welche Farbe hat der Knopf?', pageChars: 5400, imageAttachment: true, linkedPage: false });
+  assert.match(gate.state, /Welche Farbe hat der Knopf\?/);
+  assert.match(gate.state, /Current page text: about 5400 characters\./);
+  assert.match(gate.state, /The user attached an image: yes\./);
+  assert.match(gate.state, /The message links another page: no\./);
+  assert.deepEqual(gate.questions, { needs_screenshot: { type: 'noul', instructions: TINY_ASK_SCREENSHOT_GATE_QUESTION } });
+  assert.equal(tinyAskScreenshotGateProbability({ needs_screenshot: { type: 'noul', noul: 0.8 } }), 0.8);
+  assert.equal(tinyAskScreenshotGateProbability({}), null);
+  assert.match(tinyAskScreenshotGate({ question: 'x', pageChars: 12 }).state, /Current page text: almost none\./);
+  const long = tinyAskScreenshotGate({ question: `${'Background notes. '.repeat(300)}Compare this with the logo on the current page.` }).state;
+  assert.match(long, /Compare this with the logo on the current page\./, 'a long message keeps its end, where the request is');
+  assert.match(long, /^The user's message to the browser assistant:\nBackground notes\./, 'and its opening');
+  assert.ok(long.length < 2300, 'bounded');
+  assert.match(TINY_ASK_SYSTEM_PROMPT, /a screenshot of its visible part/);
+  assert.match(TINY_ASK_SYSTEM_PROMPT, /one-time codes that appear in page text or a screenshot/, 'the no-secrets rule covers screenshots');
+  assert.match(TINY_ASK_SCREENSHOT_NOTE, /never repeat passwords, keys, tokens or one-time codes/);
+  assert.match(TINY_ASK_TEXTLESS_SCREENSHOT_NOTE, /never repeat passwords, keys, tokens or one-time codes/);
+  assert.ok(TINY_ASK_SYSTEM_PROMPT.length <= 1600);
+
+  const setup = ({ supportsVision = true, visionOverride = null, pageText = 'Blue plan: $5 per month. '.repeat(20), gate = () => 0.9, tabUrl = 'https://shop.example/plans', readFails = false } = {}) => {
+    const requests = [];
+    const decisions = [];
+    const provider = {
+      name: 'webgpu', supportsTools: true, supportsVision, promptTier: 'compact', contextWindow: 16384,
+      model: 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision',
+      chat: async messages => { requests.push(JSON.parse(JSON.stringify(messages))); return { content: 'Answer.', toolCalls: null }; },
+      decide: async request => {
+        decisions.push(request);
+        const value = gate(request);
+        if (value instanceof Error) throw value;
+        return { answers: { needs_screenshot: { type: 'noul', noul: value } } };
+      },
+    };
+    const agent = new AgentCh({
+      getActive: () => provider,
+      getProvider: id => (id === 'webgpu' ? provider : null),
+      getVisionProvider: async () => null,
+      ...(visionOverride ? { resolveVisionRoute: async () => ({ provider: visionOverride, route: 'explicit_override', rawImage: false }) } : {}),
+    });
+    const tabId = 1730;
+    agent.conversationModes.set(tabId, 'ask');
+    agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt('ask', tabId) }]);
+    agent._hydrate = async () => { };
+    agent._startTraceRun = async () => null;
+    agent._endTraceRun = () => { };
+    agent._persist = () => { };
+    agent._checkCostAllowance = async () => null;
+    agent._recordCostUsage = async () => null;
+    agent._getTabUrlTitle = async () => ({ tabUrl, tabTitle: 'Plans' });
+    agent.executeTool = async (_tabId, name) => {
+      if (name === 'read_page') return readFails ? { success: false, error: 'Cannot access contents of the page' } : { text: pageText, hasMore: false, nextOffset: null };
+      if (name === 'get_selection') return { text: '' };
+      if (name === 'fetch_url') return { success: true, text: 'Linked page text.', hasMore: false };
+      throw new Error(`unexpected tool ${name}`);
+    };
+    const captures = [];
+    agent._captureBudgetedAutoScreenshot = async id => {
+      captures.push(id);
+      return { dataUrl: 'data:image/jpeg;base64,c2NyZWVu', width: 800, height: 600, captureId: 'cap_1' };
+    };
+    const run = (text, attachments = []) => agent.processMessage(tabId, text, () => { }, 'ask', attachments, {});
+    return { agent, tabId, requests, decisions, captures, run };
+  };
+  const imagesOf = request => request.flatMap(message => (Array.isArray(message.content) ? message.content : []))
+    .filter(block => block.type === 'image_url').map(block => block.image_url.url);
+
+  {
+    const { agent, tabId, requests, decisions, captures, run } = setup();
+    assert.equal(await run('¿De qué color es el botón de compra?'), 'Answer.');
+    assert.equal(decisions.length, 1, 'one readout before the answer');
+    assert.equal(decisions[0].promptVariant, 'gate');
+    assert.match(decisions[0].state, /¿De qué color es el botón de compra\?/, 'the readout sees the question, in any language');
+    assert.doesNotMatch(decisions[0].state, /Blue plan|shop\.example|Plans/, 'and never page content, URL or title');
+    assert.equal(captures.length, 1, 'a Yes takes one screenshot');
+    assert.equal(requests.length, 1, 'still one answer call');
+    const user = requests[0].at(-1);
+    const noteIndex = user.content.findIndex(block => block.type === 'text' && block.text === TINY_ASK_SCREENSHOT_NOTE);
+    assert.equal(user.content[noteIndex + 1]?.type, 'image_url', 'the untrusted-content note precedes the screenshot');
+    assert.deepEqual(imagesOf(requests[0]), ['data:image/jpeg;base64,c2NyZWVu']);
+    assert.match(JSON.stringify(user.content), /Blue plan: \$5 per month/, 'the page text still goes along');
+    assert.equal(user.content.at(-1).text, '¿De qué color es el botón de compra?', 'the question comes last');
+    assert.doesNotMatch(JSON.stringify(agent.conversations.get(tabId)), /data:image|c2NyZWVu/, 'the screenshot is not persisted');
+    // The gate runs during enrichment, before the trace run starts: its note
+    // is queued (this harness never starts a trace), then flushed below.
+    assert.equal(agent.pendingTinyAskGateTraces.get(tabId)?.probability, 0.9, 'the gate note is kept for the trace');
+    const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+    const start = agentSource.slice(agentSource.indexOf('async _startTraceRun('), agentSource.indexOf('async _endTraceRun('));
+    assert.match(start, /const pendingGate = this\.pendingTinyAskGateTraces\.get\(tabId\);\n\s*this\.pendingTinyAskGateTraces\.delete\(tabId\);\n\s*if \(pendingGate\) trace\.recordNote\(runId, null, 'tiny_ask_screenshot_gate', pendingGate\);/,
+      '_startTraceRun records the queued gate note');
+    assert.equal((start.match(/this\.pendingTinyAskGateTraces\.delete\(tabId\)/g) || []).length, 3, 'and drops it when no trace starts');
+  }
+  {
+    const { requests, captures, run } = setup({ gate: () => 0.1 });
+    await run('How much is the blue plan?');
+    assert.equal(captures.length, 0, 'a No takes no screenshot');
+    assert.deepEqual(imagesOf(requests[0]), []);
+  }
+  {
+    // The turn after one answered from a screenshot: the stored question is
+    // marked (never the image), and a short follow-up clears a lower bar. The
+    // readout still sees only the new message. A text-only turn resets it.
+    const { TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD, TINY_ASK_SCREENSHOT_GATE_THRESHOLD } = TinyAskCh;
+    assert.ok(TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD < 0.45 && TINY_ASK_SCREENSHOT_GATE_THRESHOLD > 0.45);
+    const values = [0.9, 0.45, 0.45, 0.1, 0.45];
+    const { agent, tabId, requests, decisions, captures, run } = setup({ gate: () => values[decisions.length - 1] });
+    await run('What colour is the banner?');
+    assert.equal(captures.length, 1);
+    const stored = () => agent.conversations.get(tabId).filter(message => message.role === 'user');
+    assert.equal(stored()[0].webbrainTinyAskScreenshot, true, 'the stored question remembers the screenshot');
+    await run('And the button?');
+    assert.doesNotMatch(decisions[1].state, /banner/, 'the readout sees only the new message');
+    assert.equal(captures.length, 2, 'a follow-up at 0.45 looks again');
+    assert.equal(agent.pendingTinyAskGateTraces.get(tabId)?.threshold, TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD, 'the trace shows the bar used');
+    assert.deepEqual(imagesOf(requests[1]), ['data:image/jpeg;base64,c2NyZWVu'], 'only this turn\'s screenshot reaches the model');
+    assert.doesNotMatch(JSON.stringify(requests[1]), /webbrainTinyAskScreenshot/, 'the marker never reaches the model');
+    await run('Ya logo?');
+    assert.equal(captures.length, 3, 'a chain of visual follow-ups keeps looking');
+    await run('How much is the blue plan?');
+    assert.equal(captures.length, 3);
+    assert.equal(stored()[3].webbrainTinyAskScreenshot, undefined);
+    await run('And the yellow one?');
+    assert.equal(captures.length, 3, 'after a text-only turn the usual bar applies');
+    assert.equal(agent.pendingTinyAskGateTraces.get(tabId)?.threshold, TINY_ASK_SCREENSHOT_GATE_THRESHOLD);
+    assert.doesNotMatch(JSON.stringify(agent.conversations.get(tabId)), /data:image|c2NyZWVu/, 'no screenshot is persisted');
+  }
+  {
+    const { requests, captures, run } = setup({ gate: () => new Error('worker busy') });
+    assert.equal(await run('What color is the Buy button?'), 'Answer.', 'a failed readout still answers');
+    assert.equal(captures.length, 0, 'text-only, as before');
+    assert.deepEqual(imagesOf(requests[0]), []);
+  }
+  {
+    const { requests, decisions, captures, run } = setup({ pageText: '' });
+    await run('Was ist auf dieser Seite?');
+    assert.match(decisions[0].state, /Current page text: almost none\./);
+    assert.equal(captures.length, 1);
+    assert.ok(requests[0].at(-1).content.some(block => block.text === TINY_ASK_TEXTLESS_SCREENSHOT_NOTE),
+      'a textless page tells the model to answer from the image');
+  }
+  {
+    // A stalled worker: the readout never answers. The turn goes ahead
+    // text-only after the gate's deadline, and the readout is cancelled.
+    let gateSignal = null;
+    const { agent, requests, captures, run } = setup();
+    agent.tinyAskGateTimeoutMs = 30;
+    agent._providerForRunOptions(1730, {}).decide = request => { gateSignal = request.signal; return new Promise(() => {}); };
+    const started = Date.now();
+    assert.equal(await run('What colour is the banner?'), 'Answer.', 'a stalled readout does not hold the turn');
+    assert.ok(Date.now() - started < 2000);
+    assert.equal(gateSignal?.aborted, true, 'the readout is cancelled at the deadline');
+    assert.equal(captures.length, 0);
+    assert.deepEqual(imagesOf(requests[0]), []);
+  }
+  {
+    // A gate note left by a turn that ended before its trace started must not
+    // reach the next turn's trace.
+    const { agent, tabId, decisions, run } = setup({ supportsVision: false });
+    agent.pendingTinyAskGateTraces.set(tabId, { probability: 0.42, ms: 7 });
+    await run('How much is the blue plan?');
+    assert.equal(decisions.length, 0);
+    assert.equal(agent.pendingTinyAskGateTraces.has(tabId), false, 'each turn starts without a stale gate note');
+  }
+  {
+    const { requests, decisions, captures, run } = setup({ readFails: true });
+    await run('What colour is the banner?');
+    assert.equal(decisions.length, 1, 'a failed text read on a normal page still reaches the gate');
+    assert.match(decisions[0].state, /Current page text: almost none\./);
+    assert.equal(captures.length, 1);
+    assert.ok(requests[0].at(-1).content.some(block => block.text === TINY_ASK_TEXTLESS_SCREENSHOT_NOTE));
+  }
+  {
+    const { requests, decisions, captures, run } = setup();
+    await run('What is in this image?', [{ kind: 'image', name: 'cat.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,Y2F0' }]);
+    assert.match(decisions[0].state, /The user attached an image: yes\./, 'the readout knows about the attachment');
+    assert.equal(captures.length, 1);
+    assert.deepEqual(imagesOf(requests[0]), ['data:image/jpeg;base64,c2NyZWVu', 'data:image/png;base64,Y2F0'],
+      'when the readout asks for the page as well, both images reach the model');
+  }
+  {
+    const { decisions, run } = setup({ gate: () => 0.1 });
+    await run('What color is the logo at https://brand.example/about?');
+    assert.match(decisions[0].state, /The message links another page: yes\./, 'the readout knows about the linked page');
+  }
+  for (const [label, options, before] of [
+    ['a text-only in-browser model', { supportsVision: false }],
+    ['an override vision model (tiny Ask stays on the device)', { visionOverride: { name: 'openai', supportsVision: true } }],
+    ['Strict Secret Mode', {}, agent => { agent.strictSecretMode = true; }],
+    ['an unreadable page', { tabUrl: 'chrome://settings/' }],
+  ]) {
+    const { agent, decisions, captures, run } = setup(options);
+    before?.(agent);
+    await run('What color is the Buy button?');
+    assert.equal(decisions.length, 0, `${label}: no readout`);
+    assert.equal(captures.length, 0, `${label}: no screenshot`);
+  }
+});
+
 test('tiny Ask leaves the standalone WebGPU window and other providers unchanged', async () => {
   const agent = new AgentCh({ getActive() { throw new Error('standalone prompt must not consult the provider'); } });
   // Byte-identical to the standalone prompt before tiny Ask existed.
@@ -50268,6 +50488,8 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const agent = new AgentClass({});
     const tabId = AgentClass === AgentCh ? 4801 : 4802;
     agent.clarifyTimeoutSec = 1205;
+    // The safe timeout setting: a timed-out answer is not authorization.
+    agent.clarifyTimeoutPolicy = 'safe';
 
     const waitedTimeout = await agent.executeTool(
       tabId,
@@ -50285,7 +50507,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const guardedSafeFirst = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue browsing?', options: ['Continue browsing', 'Stop'], safe_first: true },
+      { question: 'Continue browsing?', options: ['Continue browsing', 'Stop'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Continue browsing', 'timeout');
       },
@@ -50308,7 +50530,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const blankOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', options: [' '], safe_first: true },
+      { question: 'Continue?', options: [' '], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '', 'timeout');
       },
@@ -50320,7 +50542,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const invisibleOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', options: ['\u200B'], safe_first: true },
+      { question: 'Continue?', options: ['\u200B'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '\u200B', 'timeout');
       },
@@ -50331,7 +50553,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const brailleBlankOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', options: ['\u2800'], safe_first: true },
+      { question: 'Continue?', options: ['\u2800'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '\u2800', 'timeout');
       },
@@ -50343,7 +50565,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
       const fillerTimeout = await agent.executeTool(
         tabId,
         'clarify',
-        { question: 'Continue?', options: [filler], safe_first: true },
+        { question: 'Continue?', options: [filler], safe_first: true, consequence: 'none' },
         (type, data) => {
           if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, filler, 'timeout');
         },
@@ -50356,7 +50578,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const emojiOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', options: ['👩‍💻 Continue', 'Stop'], safe_first: true },
+      { question: 'Continue?', options: ['👩‍💻 Continue', 'Stop'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '👩‍💻 Continue', 'timeout');
       },
@@ -50367,7 +50589,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const promotedOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Delete everything?', options: [' ', 'Yes, delete them'], safe_first: true },
+      { question: 'Delete everything?', options: [' ', 'Yes, delete them'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
       },
@@ -50378,7 +50600,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const truncatedInvisibleOptionTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Delete everything?', options: [`${'\u200B'.repeat(200)}Yes`, 'Yes, delete them'], safe_first: true },
+      { question: 'Delete everything?', options: [`${'\u200B'.repeat(200)}Yes`, 'Yes, delete them'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
       },
@@ -50389,7 +50611,7 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const affirmativeTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', options: ['Yes', 'No'], safe_first: true },
+      { question: 'Continue?', options: ['Yes', 'No'], safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes', 'timeout');
       },
@@ -50398,6 +50620,24 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     assert.equal(affirmativeTimeout.authorized, true, `${AgentClass.name}: timed-out safe_first Yes was not accepted`);
     assert.equal(affirmativeTimeout.requiresExplicitConfirmation, false, `${AgentClass.name}: timed-out safe_first Yes still required confirmation`);
     assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: timed-out safe_first Yes left a timeout guard armed`);
+
+    // safe_first is the model's hint: it never lets a consequential or
+    // unclassified question approve itself on a timeout.
+    for (const consequence of ['deletion', undefined]) {
+      await agent._recordClarificationAuthorization(tabId, 'user');
+      const hardSafeFirst = await agent.executeTool(
+        tabId,
+        'clarify',
+        { question: 'Delete everything?', options: ['Yes, delete them', 'No, keep them'], safe_first: true,
+          ...(consequence ? { consequence } : {}) },
+        (type, data) => {
+          if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, 'Yes, delete them', 'timeout');
+        },
+      );
+      assert.equal(hardSafeFirst.authorized, false, `${AgentClass.name}: safe_first authorized a ${consequence || 'unclassified'} question`);
+      assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: ${consequence || 'unclassified'} safe_first timeout left no guard`);
+    }
+    await agent._recordClarificationAuthorization(tabId, 'user');
 
     const unsafeTimeout = await agent.executeTool(
       tabId,
@@ -50413,23 +50653,52 @@ test('clarify result distinguishes waited timeout from user and Instant authoriz
     const emptyOptionsTimeout = await agent.executeTool(
       tabId,
       'clarify',
-      { question: 'Continue?', safe_first: true },
+      { question: 'Continue?', safe_first: true, consequence: 'none' },
       (type, data) => {
         if (type === 'clarify') agent.submitClarifyResponse(tabId, data.clarifyId, '(no response - timed out)', 'timeout');
       },
     );
     assert.equal(emptyOptionsTimeout.authorized, false, `${AgentClass.name}: safe_first without options was accepted`);
 
+    // Instant (source=auto) answers by the same timeout policy as a waited
+    // timeout. Under the safe setting, an option that was not marked
+    // safe_first is not authorization, and an armed guard stays armed.
     agent.clarifyTimeoutSec = 0;
-    const instant = await agent.executeTool(
+    const instantSafe = await agent.executeTool(
       tabId,
       'clarify',
       { question: 'Which record?', options: ['First', 'Second'] },
       () => { },
     );
+    assert.equal(instantSafe.source, 'auto', `${AgentClass.name}: Instant did not use source=auto`);
+    assert.equal(instantSafe.authorized, false, `${AgentClass.name}: Instant under the safe setting authorized a non-safe_first option`);
+    assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: Instant under the safe setting cleared the timeout guard`);
+
+    // Under the default setting (finish), Instant keeps the task moving for
+    // a question the model classified as consequence 'none'.
+    await agent._recordClarificationAuthorization(tabId, 'user');
+    agent.clarifyTimeoutPolicy = 'finish';
+    const instant = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Which record?', options: ['First', 'Second'], consequence: 'none' },
+      () => { },
+    );
     assert.equal(instant.source, 'auto', `${AgentClass.name}: Instant did not use source=auto`);
     assert.equal(instant.authorized, true, `${AgentClass.name}: configured Instant mode was not authorized`);
     assert.equal(agent._clarificationAuthorizationGuards.has(tabId), false, `${AgentClass.name}: Instant unexpectedly armed the timeout guard`);
+
+    // A question about a hard-list consequence is never answered by Instant.
+    const instantDeletion = await agent.executeTool(
+      tabId,
+      'clarify',
+      { question: 'Delete the records?', options: ['Keep them', 'Delete them'], consequence: 'deletion' },
+      () => { },
+    );
+    assert.equal(instantDeletion.source, 'auto', `${AgentClass.name}: Instant consequence question did not use source=auto`);
+    assert.equal(instantDeletion.authorized, false, `${AgentClass.name}: Instant authorized a deletion question`);
+    assert.equal(agent._clarificationAuthorizationGuards.get(tabId)?.authorized, false, `${AgentClass.name}: Instant deletion question left no guard armed`);
+    agent.clarifyTimeoutPolicy = 'safe';
 
     const unscopedTabId = tabId + 100;
     await agent._recordClarificationAuthorization(unscopedTabId, 'timeout');
@@ -50449,6 +50718,8 @@ test('waited clarify timeout guard is persisted before clarify returns', async (
     const agent = new AgentClass({});
     const tabId = 4803 + index;
     agent.clarifyTimeoutSec = 1205;
+    // The safe timeout setting: a timed-out answer is not authorization.
+    agent.clarifyTimeoutPolicy = 'safe';
     agent.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
     agent.conversationIds.set(tabId, `conv_${tabId}`);
 
@@ -51017,7 +51288,10 @@ test('agent propagates status-bearing terminal tool-batch returns to callers', (
     ['firefox', 'src/firefox/src/agent/agent.js'],
   ]) {
     const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const emissions = source.match(/onUpdate\('run_status', \{ status: batchResult\.status, message: batchResult\.value \}\);/g) || [];
+    // A batch status, or the end status of a done downgraded to partial.
+    const statuses = source.match(/const endStatus = batchResult\.status \|\| batchResult\.endStatus;/g) || [];
+    const emissions = source.match(/onUpdate\('run_status', \{ status: endStatus, message: batchResult\.value \}\);/g) || [];
+    assert.equal(statuses.length, 2, `${label}: streaming and non-streaming terminal returns must both read the run status`);
     assert.equal(emissions.length, 2, `${label}: streaming and non-streaming terminal returns must both propagate run status`);
   }
 });
@@ -56326,8 +56600,8 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.equal(
       (clarifySource.match(/scrollToBottom\(\{ force: true \}\);/g) || []).length,
-      6,
-      `${label}: workflow healing, submit, recipient, deletion, permission, and clarify prompts should override reading-first scroll suppression`,
+      7,
+      `${label}: workflow healing, submit, recipient, deletion, unverified-step, permission, and clarify prompts should override reading-first scroll suppression`,
     );
     assert.match(
       panel,
@@ -57918,6 +58192,8 @@ test('terminal schedule_resume settles its parent checkpoint only after durable 
 test('schedule_resume pauses unfinished chat work without running success completion guards', async () => {
   for (const [label, AgentClass, SchedulerMod] of [['chrome', AgentCh, SchedulerCh], ['firefox', AgentFx, SchedulerFx]]) {
     const h = makeResumeBatchHarness(AgentClass, SchedulerMod);
+    // Strict checks: the guard's refusal itself is under test.
+    h.agent.strictGuards = true;
     const guard = h.agent._startPlanExecutionGuard(77, 'act', {
       requestKind: 'execute', requiresStateChange: true, requiresSubmission: true,
     });
@@ -62594,6 +62870,7 @@ test('Chrome focused replacement blocks when clear is unproven and propagates fi
     cdpClientCh.sendCommand = async () => ({});
     cdpClientCh.verifyTextEntry = async () => null;
     const agent = new AgentCh({});
+    agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
     const uncleared = await agent.executeTool(42, 'type_text', { text: 'hello', clear: true });
     assert.equal(uncleared.success, false);
     assert.equal(uncleared.verified, false);
@@ -81512,6 +81789,8 @@ test('form validation classifier surfaces native and custom submission errors', 
 test('unchanged failed-submit state permits one verify_form then directs checkbox recovery', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const tabId = 5120;
     const states = [{
       frameId: 0,
@@ -82678,6 +82957,8 @@ test('agent returns form validation messages and blocks unchanged repeat submits
 
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const tabId = 5117;
     let executions = 0;
     let prompts = 0;
@@ -84677,6 +84958,8 @@ test('Chrome controlled-field fallback skips retry when the original dispatch is
     };
 
     const agent = new AgentCh({});
+
+    agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
     const result = await agent._maybeFallbackFieldWithCdp(
       42,
       'set_field',
@@ -84761,6 +85044,8 @@ test('Chrome controlled-field fallback recovers exactly once and never submits a
     };
 
     const agent = new AgentCh({});
+
+    agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
     const recovered = await agent._maybeFallbackFieldWithCdp(
       42,
       'set_field',
@@ -84961,6 +85246,7 @@ test('uncertain text mutation debt blocks blind retries until the document chang
     globalThis.browser = { tabs };
     for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       const tabId = label === 'chrome' ? 9441 : 9442;
       agent._lastAxScopes.set(tabId, {
         documentToken: 'doc-one',
@@ -85089,6 +85375,7 @@ test('an exact same-field readback resolves uncertain replacement without dispat
       ['firefox', AgentFx, 9444],
     ]) {
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       agent._lastAxScopes.set(tabId, {
         documentToken: 'doc-readback',
         pageUrl: 'https://github.com/example/repo/edit/main/docs/plan.md',
@@ -85129,6 +85416,7 @@ test('an uncertain contenteditable write invalidates stale proof across locator 
     ['firefox', AgentFx, 9448],
   ]) {
     const agent = new AgentClass({});
+    agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
     const pageUrl = 'https://github.com/example/repo/edit/main/docs/plan.md';
     agent._lastAxScopes.set(tabId, { documentToken: 'doc', pageUrl });
     agent._verifiedTextReplacements.set(tabId, new Map([
@@ -85162,6 +85450,7 @@ test('uncertain text mutation debt survives same-document route changes and back
     ['firefox', AgentFx, 9454],
   ]) {
     const agent = new AgentClass({});
+    agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
     const pageUrl = 'https://github.com/example/repo/edit/main/docs/plan.md';
     agent._lastAxScopes.set(tabId, { documentToken: 'doc-route', pageUrl });
     const uncertain = await agent._finalizeTextMutationResult(
@@ -85214,6 +85503,7 @@ test('uncertain text mutation recovery requires same-field identity', async () =
       ['firefox', AgentFx, 9456],
     ]) {
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       agent._lastAxScopes.set(tabId, {
         documentToken: 'doc-identity',
         pageUrl: 'https://github.com/example/repo/edit/main/docs/plan.md',
@@ -85802,6 +86092,9 @@ test('GitHub edit-file workflow verifies the exact committed raw blob', async ()
       ['firefox', AgentFx, resolveAdapterWorkflowJobFx, true],
     ]) {
       const agent = new AgentClass({});
+      // Strict checks: the guard's refusal itself is under test (the
+      // conditional variants expect the re-arm to defer the editor action).
+      agent.strictGuards = conditional;
       const tabId = label === 'chrome' ? 9445 : 9446;
       // Proofs bind to the active task token, minted here as _startTraceRun does.
       agent._taskTokens.set(tabId, `task-blob-${tabId}`);
@@ -86148,6 +86441,8 @@ test('GitHub edit-file workflow blocks compound submit actions on existing bindi
     ['firefox', AgentFx, 9462],
   ]) {
     const agent = new AgentClass({});
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     agent._planExecutionGuards.set(tabId, {
       enabled: true,
       siteWorkflow: { adapterName: 'github', job: { id: 'edit-file-and-commit' } },
@@ -87102,6 +87397,7 @@ test('uncertain selector writes capture live metadata for distinctness', async (
       ['firefox', AgentFx, 9527],
     ]) {
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       agent._lastAxScopes.set(tabId, { documentToken: 'doc-multi', pageUrl });
       const tabs = {
         captureMeta: false,
@@ -87173,6 +87469,7 @@ test('selector writes to proven-distinct fields bypass unrelated debt', async ()
       ['firefox', AgentFx, 9501, 9503],
     ]) {
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       agent._lastAxScopes.set(tabId, { documentToken: 'doc-multi', pageUrl });
       const tabs = {
         async sendMessage(_tabId, message) {
@@ -87205,6 +87502,7 @@ test('selector writes to proven-distinct fields bypass unrelated debt', async ()
         `${label}: distinct-field dispatch dropped the original debt`);
       // Shared identity field: fail-closed, still blocked.
       const control = new AgentClass({});
+      control.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       control._lastAxScopes.set(controlTabId, { documentToken: 'doc-multi', pageUrl });
       await control._finalizeTextMutationResult(
         controlTabId, 'type_text', { selector: '#a', text: 'alpha', clear: true },
@@ -87236,6 +87534,7 @@ test('distinctness escape covers focused and mixed-locator debts', async () => {
       ['firefox', AgentFx, 9531, 9533],
     ]) {
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       agent._lastAxScopes.set(tabId, { documentToken: 'doc-cross', pageUrl });
       const tabs = {
         async sendMessage(_tabId, message) {
@@ -87274,6 +87573,7 @@ test('distinctness escape covers focused and mixed-locator debts', async () => {
         `${label}: distinct-field dispatch dropped the focused debt`);
       // Reverse direction: selector debt, focused retry on a distinct field.
       const control = new AgentClass({});
+      control.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       control._lastAxScopes.set(controlTabId, { documentToken: 'doc-cross', pageUrl });
       const controlTabs = {
         async sendMessage(_tabId, message) {
@@ -87345,6 +87645,7 @@ test('focused field_value_digest and live scope cover selectorless writes', asyn
       liveDoc.documentToken = 'doc-old';
       liveDoc.refScopeUrl = 'https://example.test/form';
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       agent._lastAxScopes.set(tabId, { documentToken: 'doc-old', pageUrl: 'https://example.test/form' });
       await agent._finalizeTextMutationResult(
         tabId, 'type_text', { selector: '#field', text: 'draft', clear: true },
@@ -87379,6 +87680,7 @@ test('uncertain write after navigation records live scoped debt', async () => {
       ['firefox', AgentFx, 9491],
     ]) {
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       // Cached scope predates a full navigation no AX read ever observed;
       // the live page is already the new document.
       agent._lastAxScopes.set(tabId, { documentToken: 'doc-old', pageUrl: 'https://example.test/form' });
@@ -87428,6 +87730,7 @@ test('focused uncertain writes recover on exact same-field readback', async () =
       ['firefox', AgentFx, 9519, 9521],
     ]) {
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       agent._lastAxScopes.set(tabId, { documentToken: 'doc-focus', pageUrl: 'https://example.test/form' });
       // Commit-proof workflow so recovery mints a full readback record.
       agent._planExecutionGuards.set(tabId, {
@@ -87475,6 +87778,7 @@ test('focused uncertain writes recover on exact same-field readback', async () =
       // Control: record-time focus already lost (identity capture fails), so
       // even a later exact readback cannot prove the same field.
       const control = new AgentClass({});
+      control.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       control._lastAxScopes.set(controlTabId, { documentToken: 'doc-focus', pageUrl: 'https://example.test/form' });
       const controlTabs = {
         async sendMessage(_tabId, message) {
@@ -87667,6 +87971,7 @@ test('first live token bootstraps tokenless debt by URL', async () => {
       globalThis.chrome = { tabs: { async sendMessage() { return { success: false }; } } };
       globalThis.browser = globalThis.chrome;
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       agent._currentUrl = async () => oldUrl;
       await agent._finalizeTextMutationResult(
         tabId, 'type_text', { selector: '#field', text: 'draft', clear: true },
@@ -87696,6 +88001,7 @@ test('first live token bootstraps tokenless debt by URL', async () => {
       globalThis.chrome = { tabs: { async sendMessage() { return { success: false }; } } };
       globalThis.browser = globalThis.chrome;
       const samePage = new AgentClass({});
+      samePage.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       samePage._currentUrl = async () => oldUrl;
       await samePage._finalizeTextMutationResult(
         controlTabId, 'type_text', { selector: '#field', text: 'draft', clear: true },
@@ -87730,6 +88036,7 @@ test('clearConversation preserves document-scoped mutation debt', async () => {
     ['firefox', AgentFx, 9525],
   ]) {
     const agent = new AgentClass({});
+    agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
     agent._lastAxScopes.set(tabId, { documentToken: 'doc-conv', pageUrl: 'https://example.test/form' });
     await agent._finalizeTextMutationResult(
       tabId, 'type_text', { selector: '#field', text: 'maybe landed', clear: true },
@@ -87778,6 +88085,7 @@ test('clearConversation retains scope for first-try debt recovery', async () => 
       ['firefox', AgentFx, 9541],
     ]) {
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       agent._lastAxScopes.set(tabId, { documentToken: 'doc-scope', pageUrl: 'https://example.test/form' });
       await agent._finalizeTextMutationResult(
         tabId, 'set_field', { ref_id: 'ref_a', text: 'hello' },
@@ -88202,6 +88510,7 @@ test('Firefox selector debt recovers on exact digest readback', async () => {
     globalThis.chrome = { tabs };
     globalThis.browser = { tabs };
     const agent = new AgentFx({});
+    agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
     const tabId = 9465;
     agent._lastAxScopes.set(tabId, {
       documentToken: 'doc-fx-selector',
@@ -88299,6 +88608,7 @@ test('navigation scopes stale text-mutation debt to its document', async () => {
       liveDoc.documentToken = 'doc-old';
       liveDoc.refScopeUrl = 'https://example.test/form';
       const agent = new AgentClass({});
+      agent.strictGuards = true; // Strict checks: the guard's refusal itself is under test.
       agent._lastAxScopes.set(tabId, {
         documentToken: 'doc-old',
         pageUrl: 'https://example.test/form',
@@ -92486,6 +92796,8 @@ test('non-stream and stream runs keep forced done active across empty and reject
       getActive: () => provider,
       getVisionProvider: async () => null,
     });
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const tabId = streaming ? 24812 : 24811;
     agent.planBeforeAct = false;
     agent._maybeRunPlannerGate = async () => ({
@@ -92638,6 +92950,8 @@ test('non-stream and stream runs expose failure completion after a verifier make
         getActive: () => provider,
         getVisionProvider: async () => null,
       });
+      // Strict checks: the guard's refusal itself is under test.
+      agent.strictGuards = true;
       const tabId = streaming ? 24816 : 24815;
       agent.planBeforeAct = false;
       agent._maybeRunPlannerGate = async () => ({
@@ -92791,6 +93105,8 @@ test('non-stream and stream runs release forced done when progress work remains'
         getActive: () => provider,
         getVisionProvider: async () => null,
       });
+      // Strict checks: the guard's refusal itself is under test.
+      agent.strictGuards = true;
       const tabId = streaming ? 24814 : 24813;
       agent.planBeforeAct = false;
       agent._maybeRunPlannerGate = async () => ({
@@ -92914,6 +93230,8 @@ test('navigation auto-screenshot verification turns terminal prose into a forced
       getActive: () => provider,
       getVisionProvider: async () => null,
     });
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const tabId = 24830 + browserIndex;
     agent.planBeforeAct = false;
     agent._maybeRunPlannerGate = async () => ({
@@ -93067,6 +93385,8 @@ test('repeated plain finals stop after two completion-protocol recovery turns wi
           getActive: () => provider,
           getVisionProvider: async () => null,
         });
+        // Strict checks: the guard's refusal itself is under test.
+        agent.strictGuards = true;
         const tabId = 24820 + (streaming ? 100 : 0) + (verified ? 10 : 0) + browserIndex;
         agent.planBeforeAct = false;
         agent._maybeRunPlannerGate = async () => ({
@@ -93190,6 +93510,8 @@ test('repeated plain finals at the step limit emit partial instead of max_steps'
         getActive: () => provider,
         getVisionProvider: async () => null,
       });
+      // Strict checks: the guard's refusal itself is under test.
+      agent.strictGuards = true;
       const tabId = 24900 + (streaming ? 100 : 0) + browserIndex;
       agent.planBeforeAct = false;
       agent._maybeRunPlannerGate = async () => ({
@@ -93944,6 +94266,8 @@ test('decision completion recognizes published Reddit content while preserving v
       cdpClientCh.evaluate = async () => ({ result: { value: page } });
       const provider = { model: 'test-model', supportsVision: false, config: { category: 'local' } };
       const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      // Strict checks: the guard's refusal itself is under test.
+      agent.strictGuards = true;
       agent.conversationModes.set(tabId, 'act');
       agent.autoScreenshot = 'off';
       agent._persist = () => {};
@@ -94113,6 +94437,8 @@ test('decision completion releases forced done into read-only recovery and then 
     };
     else provider.chat = async (_messages, options) => next(options);
     const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const tabId = 24960 + (streaming ? 1 : 0);
     agent.planBeforeAct = false;
     agent._maybeRunPlannerGate = async () => ({ proceed: true, requestKind: 'execute', requiresStateChange: true });
@@ -95123,6 +95449,8 @@ test('structured blockers may describe future requirements without becoming plan
 test('false Ask-mode completions receive a focused Act recovery and honest terminal evidence', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const tabId = 8625 + index;
     agent._startPlanExecutionGuard(tabId, 'act', {
       requestKind: 'execute',
@@ -95906,6 +96234,8 @@ test('future-promise prose is read by the completion judge, not by words', () =>
 test('completion words do not mask mixed progress plus plan terminals', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const tabId = 8633 + index;
     agent._startPlanExecutionGuard(tabId, 'act', {
       requestKind: 'execute',
@@ -96879,6 +97209,10 @@ test('conditional resumed GitHub repair re-arms commit guards before dispatch an
       const runUrl = 'https://github.com/Example/Repo/actions/runs/123';
       const editUrl = `https://github.com/${variant === 'other_repository' ? 'Other/Repo' : 'Example/Repo'}/${variant === 'new_file' ? 'new' : 'edit'}/main/.github/workflows/main.yml`;
       const agent = new AgentClass({ getActive: () => ({ supportsVision: false }), getVisionProvider: async () => null });
+      // Strict checks: the guard's refusal itself is under test. Only the
+      // re-arm is a quality guard; every other variant is refused by the
+      // unrequested-publication guard, which must hold with Strict checks off.
+      agent.strictGuards = variant === 'authorized';
       configurePlanOnlyGuardAgent(agent, tabId);
       agent.conversations.get(tabId).push({ role: 'user', content: 'Check CI; if it failed, fix the workflow and commit.' });
       agent._currentUrl = async () => editUrl;
@@ -96937,6 +97271,8 @@ test('conditional resumed GitHub repair re-arms commit guards before dispatch an
 test('planned scheduling requires successful evidence from the matching scheduling tool', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const missingTabId = 8570 + index;
     const missingState = agent._startPlanExecutionGuard(missingTabId, 'act', {
       requestKind: 'execute',
@@ -97297,6 +97633,8 @@ test('only explicitly requested app-state tools count as execution evidence', ()
 test('repeated plan failure distinguishes read-only progress from possible side effects', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const readTabId = 8618 + index;
     agent._startPlanExecutionGuard(readTabId, 'act', {
       requestKind: 'execute',
@@ -103610,6 +103948,8 @@ test('generic submission evidence failure does not claim that a site workflow jo
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const tabId = 8965 + index;
     const agent = new AgentClass({});
+    // Strict checks: the guard's refusal itself is under test.
+    agent.strictGuards = true;
     const guard = agent._startPlanExecutionGuard(tabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: true,
@@ -114443,7 +114783,9 @@ test('Chrome Web Store release uses an always-on protected-page guard and opt-in
   assert.match(getActiveAdapterFx(dashboard)?.notes || '', /Continue manually in the dashboard/);
 
   const chromeAgentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
-  const guardIndex = chromeAgentSource.indexOf('const protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);');
+  // Declared before the call's timer starts (its stages may report a stop
+  // first); assigned here, ahead of every preparation and dispatch below.
+  const guardIndex = chromeAgentSource.indexOf('protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);');
   const webMcpPreparationIndex = chromeAgentSource.indexOf('const webMcpPreparation = protectedPageFailure', guardIndex);
   const toolbarPreflightIndex = chromeAgentSource.indexOf('const pipelineToolbarPreflight = await this._preflightRichTextToolbarTarget(', webMcpPreparationIndex);
   const chatPreflightIndex = chromeAgentSource.indexOf('const genericChatBlock = pipelineToolbarPreflight.block || socialDispatchBlock ? null', toolbarPreflightIndex);

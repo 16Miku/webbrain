@@ -432,14 +432,23 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(steered.guard.resourceMutationAuthorization, undefined);
   });
 
-  test(`${build}: an unreconciled earlier submission after a correction still blocks first`, async () => {
+  // A deletion cannot repeat the earlier submission or sit beside it, so an
+  // earlier submission WebBrain has not matched does not hold it: the row is
+  // bound to the latest request as any deletion is. The earlier submission is
+  // still unmatched, so a form commit stays held.
+  test(`${build}: an unreconciled earlier submission after a correction does not hold a deletion the request names`, async () => {
     const f = fixture('Remove the Wool socks from my cart.');
     f.guard.steeringPriorSubmission = { dispatched: true, actionSequence: 3, mutationKind: 'submit', observedAfterSubmit: false,
       submittedActionUrl: 'https://shop.example/checkout', submittedFields: [{ label: 'Coupon', type: 'text', value: 'SAVE10' }],
       originatingUrl: pageUrl, currentUrl: pageUrl };
-    assert.equal(reason(await f.check()), 'prior_effect_unreconciled');
-    assert.equal(f.calls.length, 0);
-    assert.notEqual(f.agent._steeringPriorSubmissionBlock(f.tab, 'click_ax', f.args, f.detected), null);
+    assert.equal(await f.check(), null);
+    assert.equal(decisions(f).length, 1, 'The row is bound to the request as any deletion is');
+    assert.equal(f.agent._steeringPriorSubmissionBlock(f.tab, 'click_ax', f.args, f.detected), null);
+    assert.notEqual(f.guard.steeringPriorSubmissionReconciliation?.verified, true);
+    const coupon = { isSubmit: true, validationSubmitEvidence: 'strong', url: pageUrl, actionUrl: 'https://shop.example/checkout',
+      method: 'POST', frameDocumentIdentity: documentIdentity, fields: [{ label: 'Coupon', type: 'text', value: 'SAVE20' }] };
+    assert.equal(f.agent._steeringPriorSubmissionBlock(f.tab, 'click_ax', { ref_id: 'ref_43' }, coupon)?.actionGuard?.reason,
+      'prior_effect_unreconciled', 'A form commit is still held to the earlier submission');
   });
 }
 

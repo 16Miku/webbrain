@@ -18,6 +18,7 @@ import {
   normalizeDecisionRequest,
 } from './webgpu-decisions.js';
 import { BONSAI_DECISION_PROBE, bonsaiProbeScores } from './bonsai-decision-probe.js';
+import { tinyAskGateProbability } from './tiny-ask-gate-probe.js';
 
 let libraryPromise = null;
 let libraryVersion = null;
@@ -1931,7 +1932,7 @@ async function runMultimodalDecision(payload, { isCancelled = () => false } = {}
     { role: 'system', content: [{ type: 'text', text: decisionSystemPrompt(payload?.promptVariant) }] },
     { role: 'user', content: [
       ...request.images.map(() => ({ type: 'image' })),
-      { type: 'text', text: `${decisionStateText(request.state)}\n\n${DECISION_QUESTION_MARKER}` },
+      { type: 'text', text: `${payload?.promptVariant === 'gate' ? String(request.state || '') : decisionStateText(request.state)}\n\n${DECISION_QUESTION_MARKER}` },
     ] },
   ];
   const rendered = runtime.processor.apply_chat_template(messages, { add_generation_prompt: true, enable_thinking: false });
@@ -1971,15 +1972,18 @@ async function runMultimodalDecision(payload, { isCancelled = () => false } = {}
     const prefillMs = performance.now() - started;
     // `probe` (the default) scores each option's verify continuation with the
     // trained probe; `verify` returns the raw Yes margins; `readout` and
-    // `strict` read the option codes in one pass. All but `probe` are for the
-    // diagnostic fixture path.
-    const variant = ['readout', 'default', 'strict', 'verify', 'probe'].includes(payload?.promptVariant) ? payload.promptVariant : 'probe';
+    // `strict` read the option codes in one pass. `gate` reads one Yes/No
+    // question about a user's message with its hidden state and scores it with
+    // the screenshot gate probe (tiny Ask); the others are for the diagnostic
+    // fixture path.
+    const variant = ['readout', 'default', 'strict', 'verify', 'probe', 'gate'].includes(payload?.promptVariant) ? payload.promptVariant : 'probe';
     const verify = variant === 'verify' || variant === 'probe';
     if (variant === 'probe' && modelId !== BONSAI_DECISION_PROBE.model) {
       throw new Error(`No decision probe is trained for ${modelId}.`);
     }
     const returnHidden = payload?.returnHidden === true;
-    const yesId = verify ? codeId('Yes') : null, noId = verify ? codeId('No') : null;
+    const yesNo = verify || variant === 'gate';
+    const yesId = yesNo ? codeId('Yes') : null, noId = yesNo ? codeId('No') : null;
     for (const [id, question] of request.entries) {
       const questionStarted = performance.now();
       if (verify) {
@@ -2001,6 +2005,26 @@ async function runMultimodalDecision(payload, { isCancelled = () => false } = {}
         answers[id] = {
           ...decisionAnswer(question, scores, { temperature }),
           ...(returnHidden ? { margins, hidden: hidden.map(vector => (vector ? encodeFloat16Base64(vector) : null)) } : {}),
+        };
+        questionMs.push(Math.round(performance.now() - questionStarted));
+        continue;
+      }
+      if (variant === 'gate') {
+        if (question.type !== 'noul') throw new Error('The screenshot gate takes Yes/No questions only.');
+        const suffix = tokenizer(`${decisionQuestionText(question)}${tailText}`, { add_special_tokens: false });
+        suffixTokens += suffix.input_ids.dims.at(-1);
+        stopIfCancelled();
+        const output = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids, { withHidden: true });
+        const margin = output.logits[yesId] - output.logits[noId];
+        const probability = tinyAskGateProbability(modelId, margin, output.hidden);
+        // Collecting training data needs only the margin and hidden state.
+        if (probability === null && !(returnHidden && output.hidden)) {
+          throw new Error('The screenshot gate needs the updated Ternary Bonsai 2 2B Vision decoder. Download the model again in Settings > Providers > WebGPU.');
+        }
+        answers[id] = {
+          type: 'noul',
+          noul: probability,
+          ...(returnHidden ? { margins: [margin], hidden: [output.hidden ? encodeFloat16Base64(output.hidden) : null] } : {}),
         };
         questionMs.push(Math.round(performance.now() - questionStarted));
         continue;
@@ -2350,6 +2374,8 @@ self.addEventListener('message', async event => {
           cancelledTextGenerations.delete(requestKey);
         }
       }
+      return;
+    }
     if (type === 'multimodal-decide') {
       // Cancellable through `cancel` like vision generations, while queued or running.
       queuedVisionGenerations.add(id);
@@ -2367,8 +2393,6 @@ self.addEventListener('message', async event => {
         queuedVisionGenerations.delete(id);
         cancelledVisionGenerations.delete(id);
       }
-      return;
-    }
       return;
     }
     throw new Error(`Unknown WebGPU worker message: ${type || 'missing type'}`);
