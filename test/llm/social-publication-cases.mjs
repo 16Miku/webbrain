@@ -88,6 +88,8 @@ add('delete-only', 'no-publication', 'Delete my latest post on X. Do not publish
 add('delete-instead', 'no-publication', 'Post a short test tweet on X.', empty('none'),
   { sources: { ...sources('Post a short test tweet on X.'), steering_message0: "Actually, don't post it; just delete the draft." } });
 add('delete-condition', 'clarification', 'If the stock price rises tomorrow, post exactly "Hello" on X without attachments, and delete it an hour later.', empty('clarify'));
+const deletePrecondition = 'Post exactly "Hello" on X without attachments, but only if you can delete it immediately afterwards.';
+add('delete-precondition', 'clarification', deletePrecondition, empty('clarify'));
 
 // These well-formed but incorrect proposals isolate the independent audit.
 // They do not pretend the compiler actually generated the forged contract.
@@ -109,6 +111,7 @@ for (const [id, request] of [
   ['deny-missing-context', `Reply exactly Hello to ${parent} on X.`],
   ['deny-schedule', 'Schedule Hello on X for tomorrow; do not publish it now.'],
   ['deny-delete-only', 'Delete my latest post on X; do not publish anything.'],
+  ['deny-delete-precondition', deletePrecondition],
 ]) challenge(id, request);
 challenge('deny-wrong-body', 'Post exactly Goodbye on X without attachments.');
 challenge('deny-wrong-choice', 'Post exactly Hello on either X or Bluesky, but not both. No attachments.', null, 'both');

@@ -207,7 +207,7 @@ for (const browser of ['chrome', 'firefox']) {
   test(`${browser}: deleting the post afterwards stays outside the publication contract and its audit`, () => {
     const compile = api.publicationContractMessages({ request: 'post a test tweet' }, {})[0].content;
     for (const rule of [
-      'This contract covers publication only. An action that publishes nothing, such as deleting the post afterwards, is checked separately when it happens: compile the publication it accompanies, mention that action in reason, and never return clarify or none because of it. A condition on whether to publish at all still belongs to this contract.',
+      'This contract covers publication only. An action that publishes nothing, such as deleting the post afterwards, is checked separately when it happens: compile the publication it accompanies, mention that action in reason, and never return clarify or none because of it. A condition on whether to publish at all still belongs to this contract, including one that depends on such an action ("post it only if you can delete it right after").',
       'Never drop an unsupported constraint on a publication: use clarify.',
       'ready requires complete supported publication intent, actions and requirements.',
       'clarify means missing/unsupported/ambiguous publication intent, actions=[], requirements=null.',
@@ -215,6 +215,7 @@ for (const browser of ['chrome', 'firefox']) {
     const audit = api.publicationAuditMessages({ request: 'post a test tweet' }, {}, {}, {}, 'key')[0].content;
     for (const rule of [
       'Check that the contract neither omits requested publications nor adds unauthorized ones; an action that publishes nothing, such as deleting the post afterwards, is checked separately when it happens and is neither an omission nor a reason to deny.',
+      'A condition on whether to publish at all still belongs to the publication, including one that depends on such an action ("post it only if you can delete it right after").',
       'If any instruction, field or constraint of the publication is unresolved, missing, or contradictory, deny.',
     ]) assert(audit.includes(rule), rule);
   });
