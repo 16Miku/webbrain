@@ -1066,7 +1066,7 @@
       let answer = typeof response?.text === 'string' ? response.text : '';
       cardState.truncated = response?.truncated === true;
       // This also applies to a textless cut-off, where it warns that continuing
-      // in the sidebar would be blocked by the exhausted allowance.
+      // in the panel would be blocked by the exhausted allowance.
       cardState.notice = typeof response?.notice === 'string' ? response.notice.slice(0, 300) : '';
       if (!response?.ok || !answer.trim()) {
         throw new Error(typeof response?.error === 'string' && !cardState.truncated ? response.error : '');

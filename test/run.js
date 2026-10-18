@@ -52540,7 +52540,7 @@ test('inline card answers are one tool-less, bounded model call behind validated
     assert.match(body, /if \(maxTokens === 0\) \{\s*return \{ ok: false, error: [^}]*context window[^}]*\};\s*\}\s*const result = await agent\._chatWithCostAllowance/, `${prefix}: a prompt that fills the context window is reported as an error without a model call`);
     assert.doesNotMatch(body.slice(body.indexOf('if (maxTokens === 0)'), body.indexOf('const result = await')), /truncated/, `${prefix}: and is not offered as a cut-off to finish in the side panel, which would refuse it too`);
     assert.match(body, /inlineAnswerWasCut\(result, maxTokens\) \? \{ \.\.\.answer, truncated: true \} : answer/, `${prefix}: a capped answer is flagged instead of passing as complete`);
-    assert.match(body, /catch \(error\) \{\s*if \(inlineErrorWasCut\(error\)\) \{[\s\S]*?\{ ok: true, text: partial, truncated: true, \.\.\.\(notice \? \{ notice \} : \{\}\) \}[\s\S]*?\{ ok: false, truncated: true, error:/, `${prefix}: a provider that reports the output limit as an error still ends in the cut-off state`);
+    assert.match(body, /catch \(error\) \{\s*if \(inlineErrorWasCut\(error\)\) \{[\s\S]*?\? \{ ok: true, text: partial, truncated: true, \.\.\.\(notice \? \{ notice \} : \{\}\) \}[\s\S]*?\{\s*ok: false,\s*truncated: true,\s*error:/, `${prefix}: a provider that reports the output limit as an error still ends in the cut-off state`);
 
     // A card that is closed, retried or retargeted cancels the paid call it no longer needs.
     assert.match(body, /const jobId = typeof msg\.jobId === 'string' && INLINE_JOB_ID_PATTERN\.test\(msg\.jobId\) \? msg\.jobId : '';\s*if \(jobId\) inlineSelectionJobs\.set\(jobId, controller\);/, `${prefix}: only well-formed job ids are tracked`);
@@ -52583,7 +52583,7 @@ test('inline card answers tell the card when that request reached the cost allow
 
     assert.deepEqual(
       await run({ chat: async () => ({ content: ' Bonjour ', costAllowanceMessage: NOTICE }) }),
-      { ok: true, text: 'Bonjour', notice: NOTICE },
+      { ok: true, text: ' Bonjour ', notice: NOTICE },
       `${prefix}: the request that reaches the allowance still returns its answer, with the notice`,
     );
     assert.deepEqual(
@@ -53578,7 +53578,7 @@ test('inline card claims its request before waiting, cancels what it abandons an
     assert.match(body('function cancelInline()', 'async function runInline()'), /type: INLINE_CANCEL_MESSAGE, jobId/, `${prefix}: cancellation names the job`);
 
     // A capped answer is never shown as complete.
-    assert.match(run, /cardState\.truncated = response\?\.truncated === true;\s*if \(!response\?\.ok \|\| !answer\) \{\s*throw new Error\(typeof response\?\.error === 'string' && !cardState\.truncated \? response\.error : ''\);/, `${prefix}: the card records the cut-off flag even when no text came back`);
+    assert.match(run, /cardState\.truncated = response\?\.truncated === true;[\s\S]*?if \(!response\?\.ok \|\| !answer\.trim\(\)\) \{\s*throw new Error\(typeof response\?\.error === 'string' && !cardState\.truncated \? response\.error : ''\);/, `${prefix}: the card records the cut-off flag while treating only whitespace as empty`);
     assert.match(content, /const cutOffOnly = status === 'error' && cardState\.truncated;[\s\S]*?parts\.error\.hidden = status !== 'error' \|\| cutOffOnly;\s*parts\.cut\.hidden = !\(\(status === 'ready' \|\| cutOffOnly\) && cardState\.truncated\);/, `${prefix}: the notice shows for a cut-off answer only, and a cut-off with no text drops the retry`);
     assert.match(body('function continueInPanel()', 'function resetCard()'), /if \(!cardState\?\.truncated\) return;[\s\S]*submitSelection\(kind, '', kind === 'translate' \? target : interfaceLanguage, \{\s*continueFrom: cardState\.text \|\| '',\s*\}\)/, `${prefix}: continuing is only offered for a cut-off answer and hands the same action, with its unfinished text, to the side panel`);
   }
