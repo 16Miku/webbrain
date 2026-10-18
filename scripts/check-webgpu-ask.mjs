@@ -216,16 +216,20 @@ try {
     const passed = !error && task.expect.test(answer) && !(task.reject && task.reject.test(answer.trim()));
     // The trace export names each model request's prompt variant, which
     // shows which profile actually answered (for example tiny_ask or ask).
+    // It also counts the image blocks each request carried: the last request
+    // is this task's, so a screenshot is counted only if it reached the model.
     let promptVariants = [];
+    let imageBlocks = null;
     try {
       const exported = await message('export_traces', { tabId });
-      promptVariants = [...String(exported?.markdown || '').matchAll(/\bprompt ([a-z_]+)/g)].map(match => match[1]);
+      const markdown = String(exported?.markdown || '');
+      promptVariants = [...markdown.matchAll(/\bprompt ([a-z_]+)/g)].map(match => match[1]);
+      imageBlocks = [...markdown.matchAll(/\b(\d+) image blocks?\b/g)].map(match => Number(match[1])).at(-1) ?? null;
     } catch { /* Tracing is diagnostic only. */ }
     const notes = updates.filter(update => update.type === 'thinking' && update.data?.note).map(update => update.data.note);
-    // Tiny Ask announces a screenshot with this note (agent._tinyAskScreenshot).
-    const screenshot = notes.includes('Looking at the page…');
-    const passedAll = passed && (task.screenshot === undefined || task.screenshot === screenshot);
-    const entry = { name: task.name, seconds, steps, passed: passedAll, screenshot, promptVariants, notes, answer, ...(error ? { error } : {}) };
+    const screenshot = imageBlocks > 0;
+    const passedAll = passed && (task.screenshot === undefined || (imageBlocks !== null && task.screenshot === screenshot));
+    const entry = { name: task.name, seconds, steps, passed: passedAll, screenshot, imageBlocks, promptVariants, notes, answer, ...(error ? { error } : {}) };
     result.tasks.push(entry);
     console.log(JSON.stringify({ ...entry, answer: answer.slice(0, 160) }));
   }
