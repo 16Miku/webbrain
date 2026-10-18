@@ -7,6 +7,7 @@ import { VertexAnthropicProvider } from './vertex-anthropic.js';
 import { signOutClaude } from './oauth-claude.js';
 import { AwsBedrockProvider } from './aws-bedrock.js';
 import {
+  WebGPUBonsaiVisionProvider,
   WebGPUProvider,
   WebGPUVisionProvider,
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
@@ -14,18 +15,27 @@ import {
   WEBGPU_MODEL_ID,
   WEBGPU_RUNTIME_BITGPU,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_BONSAI_MODEL_ID,
+  WEBGPU_VISION_CHOICE_AUTO,
+  WEBGPU_VISION_CHOICE_BONSAI,
+  WEBGPU_VISION_CHOICE_KEY,
+  WEBGPU_VISION_CHOICE_WEBBRAIN_VL,
+  WEBGPU_VISION_CHOICES,
   WEBGPU_VISION_CONSENT_VERSION,
   WEBGPU_VISION_CONSENT_VERSION_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
   hasWebgpuVisionCache,
+  resolveWebgpuVisionChoice,
+  storedWebgpuVisionChoice,
   normalizeWebgpuModelId,
   webgpuModelDisplayName,
   webgpuModelDtype,
   webgpuModelPreset,
   webgpuModelRuntime,
 } from './webgpu.js';
+import { isLocalAssistModelReady } from './webgpu-model-cache.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
 import { purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
 import {
@@ -1684,12 +1694,19 @@ export class ProviderManager {
     }
   }
 
-  /** Return the Chrome-only WebBrain VL fallback, but only when explicitly enabled and ready. */
+  /**
+   * The Chrome-only in-browser vision model, only when the stored choice
+   * resolves to a model that is ready. Auto uses Ternary Bonsai 2 2B Vision
+   * once it is downloaded; WebBrain VL 2 450M still needs its explicit,
+   * consented enable from Settings.
+   */
   async getLocalVisionFallbackProvider() {
     try {
       const readiness = await this.getWebgpuVisionReadiness();
       if (readiness.enabled && readiness.consented && readiness.status === 'ready') {
-        return new WebGPUVisionProvider();
+        return readiness.modelId === WEBGPU_VISION_BONSAI_MODEL_ID
+          ? new WebGPUBonsaiVisionProvider()
+          : new WebGPUVisionProvider();
       }
     } catch (e) {
       console.warn('[providers] getLocalVisionFallbackProvider failed:', e);
@@ -1697,7 +1714,82 @@ export class ProviderManager {
     return null;
   }
 
+  /** The stored in-browser vision choice and the model it resolves to now. */
+  async getWebgpuVisionChoice() {
+    const stored = await chrome.storage.local.get([
+      WEBGPU_VISION_CHOICE_KEY,
+      WEBGPU_VISION_ENABLED_KEY,
+      WEBGPU_VISION_CONSENT_VERSION_KEY,
+    ]);
+    const choice = storedWebgpuVisionChoice(stored);
+    // One Cache Storage lookup; it never starts the offscreen document.
+    const bonsaiReady = await isLocalAssistModelReady().catch(() => false);
+    return { choice, model: resolveWebgpuVisionChoice(choice, { bonsaiReady }), bonsaiReady };
+  }
+
+  /**
+   * Record the in-browser vision choice from Settings or Apocalypse Mode.
+   * Leaving WebBrain VL 2 450M releases its runtime and enable flag (its cache
+   * stays). Choosing it again re-enables it only when consent for the current
+   * model version was already given; a first download still needs
+   * enable_webgpu_vision. Nothing here starts a download.
+   */
+  async setWebgpuVisionChoice(choice) {
+    if (!WEBGPU_VISION_CHOICES.includes(choice)) throw new Error('Unknown in-browser vision choice.');
+    const stored = await chrome.storage.local.get([WEBGPU_VISION_CONSENT_VERSION_KEY]);
+    await chrome.storage.local.set({ [WEBGPU_VISION_CHOICE_KEY]: choice });
+    if (choice === WEBGPU_VISION_CHOICE_WEBBRAIN_VL) {
+      if (stored[WEBGPU_VISION_CONSENT_VERSION_KEY] === WEBGPU_VISION_CONSENT_VERSION) {
+        await chrome.storage.local.set({ [WEBGPU_VISION_ENABLED_KEY]: true });
+      }
+    } else {
+      await chrome.storage.local.remove([WEBGPU_VISION_ENABLED_KEY, WEBGPU_VISION_AUTO_SELECTED_KEY]);
+      await this.disposeWebgpuVisionRuntime().catch(() => {});
+    }
+    return { ok: true, ...await this.getWebgpuVisionChoice(), readiness: await this.getWebgpuVisionReadiness() };
+  }
+
+  /**
+   * Readiness of the in-browser vision model the choice resolves to, in one
+   * shape for both models. Auto without Bonsai and Off report `disabled`.
+   */
   async getWebgpuVisionReadiness() {
+    const { choice, model, bonsaiReady } = await this.getWebgpuVisionChoice();
+    if (model === WEBGPU_VISION_CHOICE_BONSAI) {
+      // A Bonsai download is the chat preset's transfer; its progress lives
+      // with the text model, so this cheap check reports only ready or not.
+      return {
+        enabled: true,
+        consented: true,
+        status: bonsaiReady ? 'ready' : 'not-downloaded',
+        progress: bonsaiReady ? 100 : 0,
+        loaded: 0,
+        total: 0,
+        error: '',
+        updatedAt: 0,
+        modelId: WEBGPU_VISION_BONSAI_MODEL_ID,
+        choice,
+      };
+    }
+    if (model === WEBGPU_VISION_CHOICE_WEBBRAIN_VL) {
+      return { ...await this.getWebbrainVlVisionReadiness(), choice };
+    }
+    return {
+      enabled: false,
+      consented: false,
+      status: 'disabled',
+      progress: 0,
+      loaded: 0,
+      total: 0,
+      error: '',
+      updatedAt: 0,
+      modelId: choice === WEBGPU_VISION_CHOICE_AUTO ? WEBGPU_VISION_BONSAI_MODEL_ID : WEBGPU_VISION_MODEL_ID,
+      choice,
+    };
+  }
+
+  /** WebBrain VL 2 450M's own enable, consent and download state. */
+  async getWebbrainVlVisionReadiness() {
     const stored = await chrome.storage.local.get([
       WEBGPU_VISION_ENABLED_KEY,
       WEBGPU_VISION_CONSENT_VERSION_KEY,
@@ -1776,7 +1868,7 @@ export class ProviderManager {
         total: 0,
         error: '',
         updatedAt: 0,
-        modelId: WEBGPU_VISION_MODEL_ID,
+        modelId: fallback.model || WEBGPU_VISION_MODEL_ID,
       }));
       return {
         provider: fallback,
@@ -1823,10 +1915,12 @@ export class ProviderManager {
     await chrome.storage.local.set({
       [WEBGPU_VISION_ENABLED_KEY]: true,
       [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION,
+      // Enabling this model is choosing it, not an Auto pick.
+      [WEBGPU_VISION_CHOICE_KEY]: WEBGPU_VISION_CHOICE_WEBBRAIN_VL,
     });
     await chrome.storage.local.remove(WEBGPU_VISION_AUTO_SELECTED_KEY);
 
-    const readiness = await this.getWebgpuVisionReadiness();
+    const readiness = await this.getWebbrainVlVisionReadiness();
     if (readiness.status === 'ready') {
       return { ok: true, started: false, ready: true };
     }
@@ -1835,7 +1929,7 @@ export class ProviderManager {
   }
 
   async startWebgpuVisionDownload() {
-    const readiness = await this.getWebgpuVisionReadiness();
+    const readiness = await this.getWebbrainVlVisionReadiness();
     if (!readiness.enabled || !readiness.consented) {
       return {
         ok: false,
@@ -1850,7 +1944,7 @@ export class ProviderManager {
   }
 
   async resumeWebgpuVisionDownload() {
-    const readiness = await this.getWebgpuVisionReadiness();
+    const readiness = await this.getWebbrainVlVisionReadiness();
     if (!readiness.enabled || !['queued', 'downloading', 'loading'].includes(readiness.status)) {
       return { ok: true, resumed: false, ...readiness };
     }
@@ -2244,7 +2338,9 @@ export class ProviderManager {
     } catch (error) {
       return { ok: false, error: error.message };
     }
-    const isLocalWebgpu = provider.name === 'webgpu-vision';
+    // Both in-browser readers (WebBrain VL 2 450M and Ternary Bonsai 2 2B
+    // Vision) get the colour probe; small local models misread tiny glyphs.
+    const isLocalWebgpu = provider.name === 'webgpu-vision' || provider.config?.providerName === 'webgpu-vision';
     const probePrompt = isLocalWebgpu
       ? 'The image contains three solid vertical color panels. Name their colors from left to right. Reply with only the three color names, in English.'
       : 'Read the three-character black code centered in the attached image. Reply with only that code.';
