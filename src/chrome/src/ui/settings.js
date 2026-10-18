@@ -2618,6 +2618,12 @@ const WEBGPU_CONTEXT_WINDOW_FIELD = {
   placeholder: '32768',
 };
 
+// Matches LOCAL_OPENAI_PROXY_CONTEXT_WINDOW (providers/context-windows.js).
+const LOCAL_PROXY_CONTEXT_WINDOW_FIELD = {
+  ...CONTEXT_WINDOW_FIELD,
+  placeholder: '65536',
+};
+
 const MAX_OUTPUT_TOKENS_FIELD = {
   key: 'maxOutputTokens',
   labelKey: 'st.provider.field.max_output_tokens',
@@ -3363,7 +3369,7 @@ function renderProviders() {
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:8317/v1' },
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'required — use the proxy client API key' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model exposed by the proxy' },
-        CONTEXT_WINDOW_FIELD,
+        LOCAL_PROXY_CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
       ],

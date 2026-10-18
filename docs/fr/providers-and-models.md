@@ -149,7 +149,13 @@ carte proxy générique exige une clé client :
 - **LocalAI** : `http://localhost:8080/v1` — le serveur compatible OpenAI de LocalAI
 - **GPT4All** : `http://localhost:4891/v1` — le serveur API local de GPT4All
 - **Proxy local compatible OpenAI** : `http://127.0.0.1:8317/v1` — passerelle
-  locale générique authentifiée ; le modèle et la clé API client sont requis
+  locale générique authentifiée ; le modèle et la clé API client sont requis.
+  Après « Charger les modèles », le choix d'un modèle ou « Tester la connexion »,
+  la fenêtre de contexte est réglée automatiquement : carte du modèle choisi dans
+  `/v1/models` du proxy, puis `n_ctx` live d'un serveur llama.cpp derrière lui
+  (`GET /props?model=`), puis le nom d'un modèle hébergé connu (128k au plus),
+  sinon la valeur par défaut du proxy, **64k** (16k auparavant). Un nom ou la
+  valeur par défaut ne remplace qu'une valeur par défaut, jamais un nombre saisi
 
 #### Exemple de proxy d'abonnement (CLIProxyAPI)
 

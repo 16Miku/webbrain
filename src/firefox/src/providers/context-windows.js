@@ -2,6 +2,15 @@ import { deepSeekModelCapabilities } from './deepseek-config.js';
 
 export const DEFAULT_LOCAL_CONTEXT_WINDOW = 16384;
 export const DEFAULT_CLOUD_CONTEXT_WINDOW = 128000;
+// The Local OpenAI-compatible Proxy usually fronts hosted models through a
+// subscription CLI gateway (CLIProxyAPI style), whose windows start at 128k,
+// so the 16k local fallback starved them. 64k is the fallback when the proxy
+// reports nothing: it can overflow a small local model behind the proxy, which
+// a reported or live window then corrects (manager._detectLocalContextWindow).
+export const LOCAL_OPENAI_PROXY_CONTEXT_WINDOW = 65536;
+// Gateways can serve less context than the vendor API advertises for the same
+// model id, so a window taken from the model name alone stays at 128k or less.
+export const LOCAL_OPENAI_PROXY_MAX_NAMED_CONTEXT_WINDOW = DEFAULT_CLOUD_CONTEXT_WINDOW;
 export const MIN_CONTEXT_WINDOW = 4096;
 export const MAX_CONTEXT_WINDOW = 1048576;
 
@@ -74,6 +83,9 @@ export function shouldApplyDetectedContextWindow(current, detected, options = {}
   const cur = Number(current);
   if (!Number.isFinite(cur) || cur <= 0) return true;
   if (cur === DEFAULT_LOCAL_CONTEXT_WINDOW) return true;
+  // A provider's own shipped default, or a value WebBrain filled in itself,
+  // is not a user override either.
+  if (Array.isArray(options.replaceable) && options.replaceable.some((value) => Number(value) === cur)) return true;
   if (next >= cur) return false;
   return options.shrinkOverride === true;
 }
@@ -226,6 +238,39 @@ export function parseOpenAiModelListContextWindow(data, preferredModel = '') {
 }
 
 /**
+ * Local OpenAI-compatible Proxy `GET /v1/models`. Gateways describe a model's
+ * window in different fields (vLLM-style `max_model_len`, OpenRouter-style
+ * `context_length`, Gemini-style `input_token_limit`, …). Only the selected
+ * model's card counts: never borrow another model's window.
+ */
+export function parseOpenAiProxyModelListContextWindow(data, preferredModel = '') {
+  const want = String(preferredModel || '').trim();
+  const source = Array.isArray(data?.data) ? data.data : [];
+  if (!want || !source.length) return null;
+  const card = source.find((m) => m && typeof m === 'object' && modelIdsMatch(m.id, want));
+  if (!card) return null;
+  return openAiModelCardContextWindow(card) ?? normalizeDetectedContextWindow(
+    card.context_length ??
+    card.contextLength ??
+    card.max_input_tokens ??
+    card.maxInputTokens ??
+    card.input_token_limit ??
+    card.inputTokenLimit ??
+    card.top_provider?.context_length
+  );
+}
+
+/**
+ * Known hosted model behind the proxy, by name only (`claude-…`, `gpt-5…`,
+ * `gemini-…`, …), capped at LOCAL_OPENAI_PROXY_MAX_NAMED_CONTEXT_WINDOW.
+ * Null for names WebBrain does not know: the proxy fallback applies then.
+ */
+export function inferLocalProxyModelContextWindow(model) {
+  const known = inferKnownModelContextWindow({ providerName: 'local-openai-proxy', model });
+  return known == null ? null : Math.min(known, LOCAL_OPENAI_PROXY_MAX_NAMED_CONTEXT_WINDOW);
+}
+
+/**
  * LocalAI `GET /api/models/config-json/:name` — use configured runtime
  * `context_size` only. Do not infer from architecture/model maxima.
  */
@@ -266,17 +311,28 @@ export function lmStudioContextWindowIsLive(data, preferredModel = '') {
 /**
  * Best-effort context-window metadata for cloud/router models. Local models
  * are runtime-configured by the user/server; they stay on the conservative 16k
- * default until Settings supplies `config.contextWindow` (including values
- * filled by Test connection / Load models auto-detect).
+ * default (64k for the Local OpenAI-compatible Proxy) until Settings supplies
+ * `config.contextWindow` (including values filled by Test connection / Load
+ * models auto-detect).
  */
 export function inferContextWindow(config = {}) {
   const category = clean(config.category);
-  if (category === 'local') return DEFAULT_LOCAL_CONTEXT_WINDOW;
+  const provider = clean(config.providerName || config.type || config.label);
+  if (category === 'local') {
+    return provider === 'local-openai-proxy' ? LOCAL_OPENAI_PROXY_CONTEXT_WINDOW : DEFAULT_LOCAL_CONTEXT_WINDOW;
+  }
+  if (!clean(config.model)) return DEFAULT_CLOUD_CONTEXT_WINDOW;
+  return inferKnownModelContextWindow(config) ?? DEFAULT_CLOUD_CONTEXT_WINDOW;
+}
 
+/**
+ * Context window of a model WebBrain knows by name, or null for any other
+ * name (callers pick their own fallback).
+ */
+export function inferKnownModelContextWindow(config = {}) {
   const provider = clean(config.providerName || config.type || config.label);
   const model = clean(config.model);
-
-  if (!model) return DEFAULT_CLOUD_CONTEXT_WINDOW;
+  if (!model) return null;
 
   // OpenAI
   if (/(?:^|\/)gpt-6(?:\.1)?-(?:luna-pro|sol|astra)(?:[.\-:]|$)/.test(model)) return 1050000;
@@ -340,7 +396,7 @@ export function inferContextWindow(config = {}) {
   if (model.includes('qwen-max')) return K128;
   if (/qwen3-(?:235b|30b|32b|next)/.test(model)) return K128;
 
-  return DEFAULT_CLOUD_CONTEXT_WINDOW;
+  return null;
 }
 
 export const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
