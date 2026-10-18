@@ -130,6 +130,15 @@ of `renderClarifyCard` in `ui/sidepanel.js`. Tests: `test/guard-ask-cards.mjs`.
 | `credentials` | `chat-user-input-required`, `otp-mailbox-scope`, `strict-secret-credential-handling` | One-time codes, passwords and payment details are the user's to enter. |
 | `unrequested_publication` | `bot-memory-reservation`, `click-duplicate-submit`, `clickax-task-click-lock`, `consequential-durability-checkpoint`, `github-conditional-commit-unbound`, `recipient-guard-unrequested-send`, `sched-reconciliation-required`, `social-api-publication-route`, `social-publication-audit`, `social-publication-authorization-guard`, `steer-post-correction-commit-guard`, `steer-prior-submission-unreconciled` | A post, commit, submit or send the user did not ask for, or a second copy of one that may already have gone out, is public or hard to undo. |
 
+After a correction, `steer-post-correction-commit-guard` and
+`steer-prior-submission-unreconciled` hold a post, commit or submit until
+WebBrain has matched what the attempt before the correction did. A deletion
+is not held to that, because it cannot repeat that attempt: the latest
+request, or the user on WebBrain's deletion card, decides which item goes. A
+Mastodon post is one WebBrain cannot match after the fact (the home timeline
+shows it, not a page of its own), and "now delete it" used to be refused on
+every click there.
+
 The `permission_gate`, `host_check`, `budget`, `infra` and `user_control`
 entries in the registry document checks that are not guards; they are listed
 there so the registry covers every refusal.
