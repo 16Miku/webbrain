@@ -12108,7 +12108,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const gate = tinyAskScreenshotGate({
         question, pageChars: String(page.text || '').trim().length, imageAttachment, linkedPage,
       });
-      const result = await provider.decide({ ...gate, promptVariant: 'classify', signal: this._runAbortSignal(tabId) });
+      const result = await provider.decide({ ...gate, promptVariant: 'gate', signal: this._runAbortSignal(tabId) });
       probability = tinyAskScreenshotGateProbability(result?.answers);
     } catch (error) {
       if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;

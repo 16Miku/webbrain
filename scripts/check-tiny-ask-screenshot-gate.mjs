@@ -9,6 +9,10 @@
 //
 // --extension DIR    unpacked extension (default src/chrome); use a fresh profile per build
 // --threshold P      Yes threshold to report (default TINY_ASK_SCREENSHOT_GATE_THRESHOLD)
+// --dataset FILE     labelled rows from scripts/models/bonsai/gate_dataset.py instead of
+//                    the built-in cases ({label, language, question, pageChars, ...})
+// --return-hidden    also record each row's margin and hidden state, for
+//                    scripts/models/bonsai/train_gate_probe.py
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,7 +97,12 @@ const CASES = [
   [false, 'es', 'Resume https://news.example/launch en una frase.', { ...TEXT_PAGE, linkedPage: true }],
 ];
 
-const result = { model, extension, threshold, startedAt: new Date().toISOString(), cases: [] };
+const returnHidden = args.includes('--return-hidden');
+const rows = option('--dataset', '')
+  ? JSON.parse(await fs.readFile(option('--dataset'), 'utf8')).map(row => [Boolean(row.label), row.language, row.question,
+    { pageChars: row.pageChars, imageAttachment: row.imageAttachment === true, linkedPage: row.linkedPage === true }])
+  : CASES;
+const result = { model, extension, threshold, dataset: option('--dataset', ''), startedAt: new Date().toISOString(), cases: [] };
 let context;
 try {
   context = await chromium.launchPersistentContext(profile, {
@@ -114,20 +123,21 @@ try {
   await message('update_provider', { providerId: 'webgpu', config: { model, dtype: preset.dtype } });
   const status = await message('get_webgpu_download_status', { model });
   if (!status?.ready) throw new Error(`${model} is not cached in this profile`);
-  for (const [index, [expected, language, question, facts]] of CASES.entries()) {
+  for (const [index, [expected, language, question, facts]] of rows.entries()) {
     const gate = tinyAskScreenshotGate({ question, ...facts });
     const started = Date.now();
-    const reply = await message('webgpu_decide_fixture', { fixture: { ...gate, promptVariant: 'classify' } });
+    const reply = await message('webgpu_decide_fixture', { fixture: { ...gate, promptVariant: 'gate', returnHidden } });
     const seconds = (Date.now() - started) / 1000;
     const probability = tinyAskScreenshotGateProbability(reply?.result?.answers);
-    const choice = reply?.result?.answers?.needs_screenshot?.choice || null;
     const entry = {
-      expected, language, question, ...facts, choice, probability,
+      expected, language, question, ...facts, probability,
       predicted: probability >= threshold, seconds, ...(reply?.success ? {} : { error: reply?.error || 'no reply' }),
+      ...(returnHidden ? { margin: reply?.result?.answers?.needs_screenshot?.margins?.[0] ?? null,
+        hidden: reply?.result?.answers?.needs_screenshot?.hidden?.[0] ?? null } : {}),
     };
     entry.correct = entry.error ? false : entry.predicted === expected;
     if (index > 0) result.cases.push(entry); else result.cold = entry;
-    console.log(JSON.stringify({ ok: entry.correct, p: entry.probability?.toFixed(3), choice, s: seconds, language, question }));
+    if (!returnHidden || index % 25 === 0) console.log(JSON.stringify({ index, ok: entry.correct, p: entry.probability?.toFixed(3), s: seconds, language, question }));
   }
   // The first call loads the model; score it, but keep it out of the latency.
   const all = [result.cold, ...result.cases];
