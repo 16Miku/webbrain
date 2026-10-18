@@ -132,8 +132,9 @@ function selectionSourceContract(sourceGrounding) {
     : SELECTION_ONLY_SOURCE_CONTRACT;
 }
 
-function wrapSelectedPageText(selectionText, instruction, sourceGrounding = SELECTION_ONLY_SOURCE_GROUNDING) {
-  const text = String(selectionText || '').trim();
+function wrapSelectedPageText(selectionText, instruction, sourceGrounding = SELECTION_ONLY_SOURCE_GROUNDING, { trim = true } = {}) {
+  const raw = String(selectionText || '');
+  const text = trim ? raw.trim() : raw;
   if (!text) return '';
   const nonce = `ctx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const safe = text.replace(/<\/?untrusted_page_content\b[^>]*>/gi, '[markup stripped]');
@@ -509,7 +510,7 @@ export function buildContinuationSelectionPrompt(selectionText, action, partialA
       trimmed = true;
     }
   }
-  return wrapSelectedPageText(`${head}${trimmed ? '…' : ''}${body}`, trusted, SELECTION_ONLY_SOURCE_GROUNDING);
+  return wrapSelectedPageText(`${head}${trimmed ? '…' : ''}${body}`, trusted, SELECTION_ONLY_SOURCE_GROUNDING, { trim: false });
 }
 
 const CONTEXT_MENU_PENDING_PREFIX = 'contextMenuPrompt:';
