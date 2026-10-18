@@ -102,9 +102,10 @@ export function tinyAskScreenshotNote(page = null) {
 // Whether a tiny Ask turn should also show the model the visible page: a
 // visual question about the page, or any question about a page that was read
 // but has almost no text (the answer is likely only in the pixels). Never
-// with an attached image, which is then what the question is about.
-export function tinyAskWantsScreenshot({ question = '', page = null, imageAttachment = false } = {}) {
-  if (imageAttachment) return false;
+// with an attached image or a linked page, which is then what the question is
+// about: a screenshot of the current tab would be the wrong source.
+export function tinyAskWantsScreenshot({ question = '', page = null, imageAttachment = false, linkedPage = false } = {}) {
+  if (imageAttachment || linkedPage) return false;
   const text = String(question || '');
   if (!PAGE_QUESTION.test(text) && !PAGE_VISUAL_REFERENCE.test(text)) return false;
   if (VISUAL_QUESTION.test(text)) return true;

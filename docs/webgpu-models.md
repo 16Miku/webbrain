@@ -181,7 +181,8 @@ Use the tools in `scripts/models/bonsai/`:
     - General questions take none, even on an image page: "what does
       melanoma look like?", "who was Ada Lovelace?". A screenshot alone never
       suppresses offline references.
-    - Neither does a turn with an attached image: that image is the subject.
+    - Neither does a turn with an attached image or a linked page: that is
+      the subject, and the current tab would be the wrong source.
     - The capture is the same as automatic screenshots: redaction, size
       budget and the per-turn limit. It is ephemeral like page text, and it
       never goes to a separate vision model.

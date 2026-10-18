@@ -12007,7 +12007,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : { url: linkedUrl, text, incomplete: fetched.hasMore === true };
       if (linked.unavailable) onUpdate?.('thinking', { step: 0, note: 'Could not read the linked page.' });
     }
-    const screenshot = tinyAskWantsScreenshot({ question: questionText, page, imageAttachment })
+    const screenshot = tinyAskWantsScreenshot({ question: questionText, page, imageAttachment, linkedPage: !!linkedUrl })
       ? await this._tinyAskScreenshot(tabId, onUpdate) : null;
     let modelLabel = '';
     try {

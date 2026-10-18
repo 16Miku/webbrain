@@ -41621,6 +41621,8 @@ test('tiny Ask shows a vision-capable in-browser model the visible page for visu
   }
   assert.equal(tinyAskWantsScreenshot({ question: 'What is in this image?', page, imageAttachment: true }), false,
     'an attached image is the subject, not the page');
+  assert.equal(tinyAskWantsScreenshot({ question: 'What color is the logo at https://example.com?', page, linkedPage: true }), false,
+    'a linked page is the subject, not the current tab');
   const textless = { kind: 'page', text: '  ' };
   for (const question of ['Summarize', 'What is on this page?', 'Describe it', 'Bu sayfada ne var?', 'Burada ne yazıyor?']) {
     assert.equal(tinyAskWantsScreenshot({ question, page: textless }), true, `a page question on a textless page: ${question}`);
@@ -41663,6 +41665,7 @@ test('tiny Ask shows a vision-capable in-browser model the visible page for visu
     agent.executeTool = async (_tabId, name) => {
       if (name === 'read_page') return { text: pageText, hasMore: false, nextOffset: null };
       if (name === 'get_selection') return { text: '' };
+      if (name === 'fetch_url') return { success: true, text: 'Linked page text.', hasMore: false };
       throw new Error(`unexpected tool ${name}`);
     };
     const captures = [];
@@ -41714,6 +41717,12 @@ test('tiny Ask shows a vision-capable in-browser model the visible page for visu
     assert.equal(captures.length, 0, 'an attached image is not joined by a page screenshot');
     const images = requests[0].at(-1).content.filter(block => block.type === 'image_url');
     assert.deepEqual(images.map(block => block.image_url.url), ['data:image/png;base64,Y2F0'], 'only the attached image reaches the model');
+  }
+  {
+    const { requests, captures, run } = setup();
+    await run('What color is the logo at https://brand.example/about?');
+    assert.equal(captures.length, 0, 'a question about a linked page takes no current-tab screenshot');
+    assert.match(JSON.stringify(requests[0].at(-1).content), /Linked page text\./);
   }
   {
     const { agent, captures, run } = setup();
