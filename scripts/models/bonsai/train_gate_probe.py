@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 from scipy.optimize import minimize
 
-TRAIN_LANGUAGES = {'en', 'tr', 'de', 'es', 'fr', 'it', 'pt', 'ru'}
+TRAIN_LANGUAGES = {'en', 'tr', 'de', 'es', 'fr', 'it', 'pt', 'ru', 'ja', 'zh', 'ar'}
 
 
 def decode(text):
@@ -118,7 +118,7 @@ def main():
         source = Path(args.js).read_text(encoding='utf-8')
         header = source.split('export const TINY_ASK_GATE_PROBE')[0]
         tail = source.split('});', 1)[1]
-        body = (f"// Validation (generated templates, eight languages): {report['validation']['accuracy']}. Test (hand-written, "
+        body = (f"// Validation (generated templates, {len(TRAIN_LANGUAGES)} languages): {report['validation']['accuracy']}. Test (hand-written, "
                 f"including {len({r['language'] for r in test_rows} - TRAIN_LANGUAGES)} languages absent from training): "
                 f"{test['accuracy']}, unseen languages {test.get('unseen_languages', 'n/a')}.\n"
                 "export const TINY_ASK_GATE_PROBE = Object.freeze({\n"

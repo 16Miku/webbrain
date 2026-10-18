@@ -1,10 +1,11 @@
 """Labelled questions for tiny Ask's screenshot gate (does a question need a
 screenshot of the current page?).
 
-Training and validation questions come from templates in eight languages.
-The test set is separate: hand-written questions, including six languages the
-probe never trains on (ja, ar, zh, nl, pl, ko), so it measures whether the
-gate is language-independent rather than memorised. Training templates avoid
+Training and validation questions come from templates in eleven languages.
+The test set is separate: hand-written questions, including languages the
+probe never trains on (ko, nl, pl, sv, id, vi, hi), so it measures whether the
+gate is language-independent rather than memorised. Japanese, Chinese and
+Arabic are in training; their test questions are still hand-written. Training templates avoid
 the test phrasings (no "Buy button", no flamingo, no melanoma).
 
     python scripts/models/bonsai/gate_dataset.py <out dir>   # writes train.json, validation.json, test.json
@@ -20,10 +21,11 @@ TEXT, NONE = 5000, 0  # page text length: a normal page, or almost none
 # label 1 = needs a screenshot of the current page.
 L = {
  'en': dict(
-  el=['Sign up button', 'header', 'logo', 'banner', 'menu bar', 'background', 'search box', 'footer'],
+  el=['Sign up button', 'Add to cart button', 'Checkout button', 'header', 'logo', 'banner', 'menu bar', 'background', 'search box', 'footer'],
   media=['photo', 'picture', 'image', 'chart', 'graph', 'diagram', 'map', 'illustration'],
   hue=['green', 'red', 'yellow', 'purple', 'black', 'orange'],
-  visual=['What colour is the {el}?', 'Is the {el} {hue}?', 'What does the {media} on this page show?',
+  obj=['car', 'dress', 'umbrella', 'house'],
+  visual=['What colour is the {obj} in the {media}?', 'What colour is the {el}?', 'Is the {el} {hue}?', 'What does the {media} on this page show?',
           'Describe the {media} next to the title.', 'How many people are in the {media}?',
           'What is written in the {media} at the top?', 'Does this page use a dark theme?', 'Where is the {el} on the screen?'],
   textless=['What is on this page?', 'What does this page show?', 'Explain this page.', 'What am I looking at here?'],
@@ -39,10 +41,11 @@ L = {
   animal=['zebra', 'peacock', 'axolotl'], thing=['ruby', 'banana', 'lime'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=['inflation', 'photosynthesis', 'a black hole'], task=['change a tyre', 'boil an egg', 'reset a router']),
  'tr': dict(
-  el=['Kayıt ol butonu', 'üst menü', 'logo', 'afiş', 'arka plan', 'arama kutusu', 'alt bilgi'],
+  el=['Kayıt ol butonu', 'Sepete ekle butonu', 'Ödeme butonu', 'üst menü', 'logo', 'afiş', 'arka plan', 'arama kutusu', 'alt bilgi'],
   media=['fotoğraf', 'resim', 'görsel', 'grafik', 'diyagram', 'harita', 'çizim'],
   hue=['yeşil', 'kırmızı', 'sarı', 'mor', 'siyah', 'turuncu'],
-  visual=['{el} ne renk?', '{el} {hue} mi?', 'Bu sayfadaki {media} neyi gösteriyor?', 'Başlığın yanındaki {media} nasıl?',
+  obj=['araba', 'elbise', 'şemsiye', 'ev'],
+  visual=['{media} içindeki {obj} ne renk?', '{el} ne renk?', '{el} {hue} mi?', 'Bu sayfadaki {media} neyi gösteriyor?', 'Başlığın yanındaki {media} nasıl?',
           '{media} içinde kaç kişi var?', 'Üstteki {media} üzerinde ne yazıyor?', 'Bu sayfa koyu temalı mı?', '{el} ekranın neresinde?'],
   textless=['Bu sayfada ne var?', 'Bu sayfa ne gösteriyor?', 'Bu sayfayı açıkla.', 'Burada neye bakıyorum?'],
   mixed=['Eklediğim resim bu sayfadaki {el} ile aynı mı?', 'Gönderdiğim fotoğrafı buradaki {media} ile karşılaştır.'],
@@ -56,10 +59,11 @@ L = {
   animal=['Zebra', 'Tavus kuşu', 'Aksolotl'], thing=['Yakut', 'Muz', 'Misket limonu'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=['Enflasyon', 'Fotosentez', 'Kara delik'], task=['lastik değiştirilir', 'yumurta haşlanır', 'modem sıfırlanır']),
  'de': dict(
-  el=['Registrieren-Button', 'Kopfzeile', 'Logo', 'Banner', 'Menüleiste', 'Hintergrund', 'Suchfeld'],
+  el=['Registrieren-Button', 'In-den-Warenkorb-Button', 'Zur-Kasse-Button', 'Kopfzeile', 'Logo', 'Banner', 'Menüleiste', 'Hintergrund', 'Suchfeld'],
   media=['Foto', 'Bild', 'Diagramm', 'Grafik', 'Karte', 'Illustration'],
   hue=['grün', 'rot', 'gelb', 'lila', 'schwarz', 'orange'],
-  visual=['Welche Farbe hat das {el}?', 'Ist das {el} {hue}?', 'Was zeigt das {media} auf dieser Seite?', 'Beschreibe das {media} neben dem Titel.',
+  obj=['Auto', 'Kleid', 'Haus'],
+  visual=['Welche Farbe hat das {obj} auf dem {media}?', 'Welche Farbe hat das {el}?', 'Ist das {el} {hue}?', 'Was zeigt das {media} auf dieser Seite?', 'Beschreibe das {media} neben dem Titel.',
           'Wie viele Personen sind auf dem {media}?', 'Was steht oben im {media}?', 'Hat diese Seite ein dunkles Design?', 'Wo ist das {el} auf dem Bildschirm?'],
   textless=['Was ist auf dieser Seite?', 'Was zeigt diese Seite?', 'Erkläre diese Seite.', 'Was sehe ich hier?'],
   mixed=['Passt mein angehängtes Bild zum {el} auf dieser Seite?', 'Vergleiche mein Foto mit dem {media} hier.'],
@@ -74,10 +78,11 @@ L = {
   animal=['Zebra', 'Pfau', 'Axolotl'], thing=['Banane', 'Limette', 'Tomate'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=['Inflation', 'Photosynthese', 'ein Schwarzes Loch'], task=['einen Reifen wechseln', 'ein Ei kochen', 'den Router zurücksetzen']),
  'es': dict(
-  el=['botón de registro', 'encabezado', 'logotipo', 'banner', 'menú', 'fondo', 'cuadro de búsqueda'],
+  el=['botón de registro', 'botón de añadir al carrito', 'botón de pagar', 'encabezado', 'logotipo', 'banner', 'menú', 'fondo', 'cuadro de búsqueda'],
   media=['foto', 'imagen', 'gráfico', 'diagrama', 'mapa', 'ilustración'],
   hue=['verde', 'rojo', 'amarillo', 'morado', 'negro', 'naranja'],
-  visual=['¿De qué color es el {el}?', '¿El {el} es {hue}?', '¿Qué muestra la {media} de esta página?', 'Describe la {media} junto al título.',
+  obj=['coche', 'vestido', 'paraguas'],
+  visual=['¿De qué color es el {obj} de la {media}?', '¿De qué color es el {el}?', '¿El {el} es {hue}?', '¿Qué muestra la {media} de esta página?', 'Describe la {media} junto al título.',
           '¿Cuántas personas hay en la {media}?', '¿Qué pone en la {media} de arriba?', '¿Esta página usa un tema oscuro?', '¿Dónde está el {el} en la pantalla?'],
   textless=['¿Qué hay en esta página?', '¿Qué muestra esta página?', 'Explica esta página.', '¿Qué estoy viendo aquí?'],
   mixed=['¿Mi imagen adjunta coincide con el {el} de esta página?', 'Compara la foto que adjunté con la {media} de aquí.'],
@@ -91,10 +96,11 @@ L = {
   animal=['cebra', 'pavo real', 'ajolote'], thing=['rubí', 'plátano', 'limón'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=['la inflación', 'la fotosíntesis', 'un agujero negro'], task=['cambiar una rueda', 'cocer un huevo', 'reiniciar el router']),
  'fr': dict(
-  el=["bouton d'inscription", 'en-tête', 'logo', 'bandeau', 'menu', 'arrière-plan', 'champ de recherche'],
+  el=["bouton d'inscription", 'bouton Ajouter au panier', 'bouton Payer', 'en-tête', 'logo', 'bandeau', 'menu', 'arrière-plan', 'champ de recherche'],
   media=['photo', 'image', 'graphique', 'diagramme', 'carte', 'illustration'],
   hue=['vert', 'rouge', 'jaune', 'violet', 'noir', 'orange'],
-  visual=['De quelle couleur est le {el} ?', 'Le {el} est-il {hue} ?', 'Que montre la {media} de cette page ?', 'Décris la {media} à côté du titre.',
+  obj=['voiture', 'robe', 'maison'],
+  visual=['De quelle couleur est la {obj} sur la {media} ?', 'De quelle couleur est le {el} ?', 'Le {el} est-il {hue} ?', 'Que montre la {media} de cette page ?', 'Décris la {media} à côté du titre.',
           'Combien de personnes y a-t-il sur la {media} ?', "Qu'est-il écrit sur la {media} en haut ?", 'Cette page utilise-t-elle un thème sombre ?',
           "Où se trouve le {el} à l'écran ?"],
   textless=["Qu'y a-t-il sur cette page ?", 'Que montre cette page ?', 'Explique cette page.', 'Que suis-je en train de regarder ici ?'],
@@ -110,10 +116,11 @@ L = {
   animal=['zèbre', 'paon', 'axolotl'], thing=['rubis', 'citron vert', 'kiwi'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=["l'inflation", 'la photosynthèse', 'un trou noir'], task=['changer un pneu', 'cuire un œuf', 'réinitialiser la box']),
  'it': dict(
-  el=['pulsante Iscriviti', 'intestazione', 'logo', 'banner', 'menu', 'sfondo', 'casella di ricerca'],
+  el=['pulsante Iscriviti', 'pulsante Aggiungi al carrello', 'pulsante Paga', 'intestazione', 'logo', 'banner', 'menu', 'sfondo', 'casella di ricerca'],
   media=['foto', 'immagine', 'grafico', 'diagramma', 'mappa', 'illustrazione'],
   hue=['verde', 'rosso', 'giallo', 'viola', 'nero', 'arancione'],
-  visual=['Di che colore è il {el}?', 'Il {el} è {hue}?', 'Cosa mostra la {media} in questa pagina?', 'Descrivi la {media} accanto al titolo.',
+  obj=['auto', 'vestito', 'ombrello'],
+  visual=['Di che colore è il {obj} nella {media}?', 'Di che colore è il {el}?', 'Il {el} è {hue}?', 'Cosa mostra la {media} in questa pagina?', 'Descrivi la {media} accanto al titolo.',
           'Quante persone ci sono nella {media}?', "Cosa c'è scritto nella {media} in alto?", 'Questa pagina usa un tema scuro?', "Dov'è il {el} sullo schermo?"],
   textless=["Cosa c'è in questa pagina?", 'Cosa mostra questa pagina?', 'Spiega questa pagina.', 'Cosa sto guardando qui?'],
   mixed=["L'immagine che ho allegato corrisponde al {el} di questa pagina?", 'Confronta la foto allegata con la {media} qui.'],
@@ -128,10 +135,11 @@ L = {
   animal=['zebra', 'pavone', 'axolotl'], thing=['rubino', 'limone', 'kiwi'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=["l'inflazione", 'la fotosintesi', 'un buco nero'], task=['cambiare una gomma', 'cuocere un uovo', 'resettare il router']),
  'pt': dict(
-  el=['botão Cadastrar', 'cabeçalho', 'logotipo', 'banner', 'menu', 'fundo', 'caixa de pesquisa'],
+  el=['botão Cadastrar', 'botão Adicionar ao carrinho', 'botão Finalizar compra', 'cabeçalho', 'logotipo', 'banner', 'menu', 'fundo', 'caixa de pesquisa'],
   media=['foto', 'imagem', 'gráfico', 'diagrama', 'mapa', 'ilustração'],
   hue=['verde', 'vermelho', 'amarelo', 'roxo', 'preto', 'laranja'],
-  visual=['De que cor é o {el}?', 'O {el} é {hue}?', 'O que mostra a {media} desta página?', 'Descreva a {media} ao lado do título.',
+  obj=['carro', 'vestido', 'guarda-chuva'],
+  visual=['De que cor é o {obj} na {media}?', 'De que cor é o {el}?', 'O {el} é {hue}?', 'O que mostra a {media} desta página?', 'Descreva a {media} ao lado do título.',
           'Quantas pessoas há na {media}?', 'O que está escrito na {media} no topo?', 'Esta página usa um tema escuro?', 'Onde fica o {el} na tela?'],
   textless=['O que há nesta página?', 'O que esta página mostra?', 'Explique esta página.', 'O que estou vendo aqui?'],
   mixed=['A imagem que anexei combina com o {el} desta página?', 'Compare a foto anexada com a {media} daqui.'],
@@ -145,10 +153,11 @@ L = {
   animal=['zebra', 'pavão', 'axolote'], thing=['rubi', 'limão', 'kiwi'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=['a inflação', 'a fotossíntese', 'um buraco negro'], task=['trocar um pneu', 'cozinhar um ovo', 'reiniciar o roteador']),
  'ru': dict(
-  el=['кнопка «Регистрация»', 'шапка сайта', 'логотип', 'баннер', 'меню', 'фон', 'поле поиска'],
+  el=['кнопка «Регистрация»', 'кнопка «В корзину»', 'кнопка «Оформить заказ»', 'шапка сайта', 'логотип', 'баннер', 'меню', 'фон', 'поле поиска'],
   media=['фото', 'картинка', 'изображение', 'график', 'диаграмма', 'карта'],
   hue=['зелёный', 'красный', 'жёлтый', 'фиолетовый', 'чёрный', 'оранжевый'],
-  visual=['Какого цвета {el}?', '{el} — {hue}?', 'Что показывает {media} на этой странице?', 'Опиши {media} рядом с заголовком.',
+  obj=['машина', 'платье', 'зонт'],
+  visual=['Какого цвета {obj} на картинке?', 'Какого цвета {el}?', '{el} — {hue}?', 'Что показывает {media} на этой странице?', 'Опиши {media} рядом с заголовком.',
           'Сколько людей на {media}?', 'Что написано на {media} вверху?', 'На этой странице тёмная тема?', 'Где {el} на экране?'],
   textless=['Что на этой странице?', 'Что показывает эта страница?', 'Объясни эту страницу.', 'На что я здесь смотрю?'],
   mixed=['Совпадает ли моя прикреплённая картинка с элементом «{el}» на этой странице?', 'Сравни моё фото с тем, что здесь: {media}.'],
@@ -162,6 +171,59 @@ L = {
   plan=['Базовый', 'Команда', 'Бизнес'], topic=['доставка', 'возврат', 'гарантия'], product=['Синий чайник', 'Настольная лампа'],
   animal=['зебра', 'павлин', 'аксолотль'], thing=['рубин', 'банан', 'лайм'], person=['Мария Кюри', 'Алан Тьюринг', 'Фрида Кало'],
   concept=['инфляция', 'фотосинтез', 'чёрная дыра'], task=['поменять колесо', 'сварить яйцо', 'сбросить роутер']),
+ 'ja': dict(
+  el=['登録ボタン', 'カートに入れるボタン', '購入手続きボタン', 'ヘッダー', 'ロゴ', 'バナー', '背景', '検索ボックス'],
+  obj=['車', 'ドレス', '傘', '家'],
+  media=['写真', '画像', 'グラフ', '図', '地図', 'イラスト'],
+  hue=['緑', '赤', '黄色', '紫', '黒', 'オレンジ'],
+  visual=['{media}の中の{obj}は何色ですか？', '{el}は何色ですか？', '{el}は{hue}ですか？', 'このページの{media}は何を示していますか？',
+          'タイトルの横の{media}を説明してください。', '{media}には何人写っていますか？', '上の{media}には何と書いてありますか？',
+          'このページはダークテーマですか？', '{el}は画面のどこにありますか？'],
+  textless=['このページには何が表示されていますか？', 'このページを説明してください。', 'ここで私は何を見ていますか？'],
+  mixed=['添付した画像はこのページの{el}と同じですか？', '送った写真とここの{media}を比べてください。'],
+  text=['{plan}プランはいくらですか？', 'このページには{topic}について何と書いてありますか？', 'この記事の要点を挙げてください。',
+        'このページの電話番号は何ですか？', 'この記事はいつ公開されましたか？', '最初の段落を翻訳してください。', '記事を要約してください。', '{product}の在庫はありますか？'],
+  general=['{animal}はどんな見た目ですか？', '{thing}は何色ですか？', '{person}とは誰ですか？', '{concept}とは何ですか？',
+           '{task}方法を教えてください。', '{concept}を簡単に説明してください。', '短いジョークを言ってください。'],
+  other_att=['この画像には何が写っていますか？', '私の写真を説明してください。', '私の画像の犬は何という犬種ですか？', '送ったスクリーンショットの文字を読んでください。'],
+  other_link=['{url} を要約してください。', '{url} のロゴは何色ですか？'],
+  plan=['ベーシック', 'チーム', 'エンタープライズ'], topic=['配送', '返品', '保証'], product=['青いケトル', 'デスクライト'],
+  animal=['シマウマ', 'クジャク', 'ウーパールーパー'], thing=['ルビー', 'バナナ', 'ライム'], person=['マリー・キュリー', 'アラン・チューリング', 'フリーダ・カーロ'],
+  concept=['インフレ', '光合成', 'ブラックホール'], task=['タイヤを交換する', '卵をゆでる', 'ルーターをリセットする']),
+ 'zh': dict(
+  el=['注册按钮', '加入购物车按钮', '结账按钮', '页眉', '标志', '横幅', '背景', '搜索框'],
+  obj=['汽车', '裙子', '雨伞', '房子'],
+  media=['照片', '图片', '图表', '示意图', '地图', '插图'],
+  hue=['绿色', '红色', '黄色', '紫色', '黑色', '橙色'],
+  visual=['{media}里的{obj}是什么颜色？', '{el}是什么颜色？', '{el}是{hue}的吗？', '这个页面上的{media}显示了什么？',
+          '描述一下标题旁边的{media}。', '{media}里有几个人？', '上面的{media}里写着什么？', '这个页面是深色主题吗？', '{el}在屏幕的什么位置？'],
+  textless=['这个页面上有什么？', '这个页面显示的是什么？', '解释一下这个页面。', '我在这里看到的是什么？'],
+  mixed=['我附上的图片和这个页面上的{el}一样吗？', '把我发的照片和这里的{media}比较一下。'],
+  text=['{plan}套餐多少钱？', '这个页面关于{topic}说了什么？', '列出这篇文章的要点。', '这个页面上的电话号码是多少？',
+        '这篇文章是什么时候发布的？', '翻译第一段。', '总结这篇文章。', '{product}有货吗？'],
+  general=['{animal}长什么样？', '{thing}是什么颜色的？', '{person}是谁？', '什么是{concept}？', '怎么{task}？', '简单解释一下{concept}。', '讲个短笑话。'],
+  other_att=['这张图片里有什么？', '描述一下我的照片。', '我图片里的狗是什么品种？', '读一下我发的截图里的文字。'],
+  other_link=['总结 {url}。', '{url} 上的标志是什么颜色？'],
+  plan=['基础', '团队', '企业'], topic=['配送', '退货', '保修'], product=['蓝色水壶', '台灯'],
+  animal=['斑马', '孔雀', '美西螈'], thing=['红宝石', '香蕉', '青柠'], person=['居里夫人', '图灵', '弗里达·卡罗'],
+  concept=['通货膨胀', '光合作用', '黑洞'], task=['换轮胎', '煮鸡蛋', '重置路由器']),
+ 'ar': dict(
+  el=['زر التسجيل', 'زر الإضافة إلى السلة', 'زر الدفع', 'رأس الصفحة', 'الشعار', 'اللافتة', 'الخلفية', 'مربع البحث'],
+  obj=['السيارة', 'الفستان', 'المظلة', 'البيت'],
+  media=['الصورة', 'الرسم البياني', 'المخطط', 'الخريطة', 'الرسم التوضيحي'],
+  hue=['أخضر', 'أحمر', 'أصفر', 'بنفسجي', 'أسود', 'برتقالي'],
+  visual=['ما لون {obj} في {media}؟', 'ما لون {el}؟', 'هل {el} {hue}؟', 'ماذا يظهر في {media} في هذه الصفحة؟', 'صف {media} بجانب العنوان.',
+          'كم شخصًا في {media}؟', 'ماذا مكتوب في {media} في الأعلى؟', 'هل تستخدم هذه الصفحة سمة داكنة؟', 'أين {el} على الشاشة؟'],
+  textless=['ماذا يوجد في هذه الصفحة؟', 'ماذا تعرض هذه الصفحة؟', 'اشرح هذه الصفحة.', 'إلى ماذا أنظر هنا؟'],
+  mixed=['هل الصورة التي أرفقتها تشبه {el} في هذه الصفحة؟', 'قارن الصورة التي أرسلتها مع {media} هنا.'],
+  text=['كم سعر باقة {plan}؟', 'ماذا تقول هذه الصفحة عن {topic}؟', 'اذكر النقاط الرئيسية في المقال.', 'ما رقم الهاتف في هذه الصفحة؟',
+        'متى نُشر هذا المقال؟', 'ترجم الفقرة الأولى.', 'لخص المقال.', 'هل {product} متوفر؟'],
+  general=['كيف يبدو {animal}؟', 'ما لون {thing}؟', 'من هو {person}؟', 'ما هو {concept}؟', 'كيف {task}؟', 'اشرح {concept} ببساطة.', 'أخبرني نكتة قصيرة.'],
+  other_att=['ماذا يوجد في هذه الصورة؟', 'صف صورتي.', 'ما سلالة الكلب في صورتي؟', 'اقرأ النص في لقطة الشاشة التي أرسلتها.'],
+  other_link=['لخص {url}.', 'ما لون الشعار في {url}؟'],
+  plan=['الأساسية', 'الفريق', 'الشركات'], topic=['الشحن', 'الإرجاع', 'الضمان'], product=['الغلاية الزرقاء', 'مصباح المكتب'],
+  animal=['الحمار الوحشي', 'الطاووس', 'الأكسولوتل'], thing=['الياقوت', 'الموز', 'الليمون الأخضر'], person=['ماري كوري', 'آلان تورينغ', 'فريدا كاهلو'],
+  concept=['التضخم', 'التمثيل الضوئي', 'الثقب الأسود'], task=['أغير إطار السيارة', 'أسلق بيضة', 'أعيد ضبط الراوتر']),
 }
 URLS = ['https://news.example/launch', 'https://brand.example/about', 'https://shop.example/item/42']
 
@@ -197,12 +259,20 @@ TEST = [
  (0, 'pl', 'Streść ten artykuł.', TEXT, 0, 0), (0, 'pl', 'Jak wygląda flaming?', TEXT, 0, 0),
  (1, 'ko', '구매 버튼은 무슨 색인가요?', TEXT, 0, 0), (1, 'ko', '이 페이지의 사진에는 무엇이 있나요?', TEXT, 0, 0),
  (0, 'ko', '이 페이지를 요약해 주세요.', TEXT, 0, 0), (0, 'ko', '세종대왕은 누구인가요?', TEXT, 0, 0),
+ (1, 'sv', 'Vilken färg har Köp-knappen?', TEXT, 0, 0), (1, 'sv', 'Vad visar bilden på den här sidan?', TEXT, 0, 0),
+ (0, 'sv', 'Sammanfatta den här sidan.', TEXT, 0, 0), (0, 'sv', 'Vem var Astrid Lindgren?', TEXT, 0, 0),
+ (1, 'id', 'Apa warna tombol Beli?', TEXT, 0, 0), (1, 'id', 'Apa yang ditunjukkan grafik di halaman ini?', TEXT, 0, 0),
+ (0, 'id', 'Berapa harga paket Pro per bulan?', TEXT, 0, 0), (0, 'id', 'Seperti apa bentuk flamingo?', TEXT, 0, 0),
+ (1, 'vi', 'Nút Mua có màu gì?', TEXT, 0, 0), (1, 'vi', 'Trang này đang hiển thị gì?', NONE, 0, 0),
+ (0, 'vi', 'Tóm tắt bài viết này.', TEXT, 0, 0), (0, 'vi', 'Ai là Hồ Xuân Hương?', TEXT, 0, 0),
+ (1, 'hi', 'खरीदें बटन किस रंग का है?', TEXT, 0, 0), (1, 'hi', 'इस पेज की तस्वीर में क्या है?', TEXT, 0, 0),
+ (0, 'hi', 'इस पेज का सारांश दो।', TEXT, 0, 0), (0, 'hi', 'ताजमहल कब बना था?', TEXT, 0, 0),
 ]
 
 
 def fill(template, slots, rng):
     out = template
-    for key in ('el', 'media', 'hue', 'plan', 'topic', 'product', 'animal', 'thing', 'person', 'concept', 'task'):
+    for key in ('el', 'obj', 'media', 'hue', 'plan', 'topic', 'product', 'animal', 'thing', 'person', 'concept', 'task'):
         while '{' + key + '}' in out:
             out = out.replace('{' + key + '}', rng.choice(slots[key]), 1)
     while '{url}' in out:
