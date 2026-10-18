@@ -73072,6 +73072,49 @@ test('Local OpenAI-compatible Proxy context window: model card, live props, mode
         assert.equal(config().contextWindow, 128000);
       }
 
+      // 5f. Settings UI: edits made while detection is pending are preserved
+      {
+        const settingsSource = fs.readFileSync(path.join(ROOT, label === 'chrome' ? 'src/chrome/src/ui/settings.js' : 'src/firefox/src/ui/settings.js'), 'utf8');
+        const start = settingsSource.indexOf('const providerContextPendingSnapshots = new Map();');
+        const end = settingsSource.indexOf('\nasync function detectProviderContextWindowForModel', start);
+        assert.ok(start >= 0 && end > start, `${label}: context snapshot runtime missing`);
+
+        const inputEl = {
+          value: '65536',
+          dataset: { provider: 'local_openai_proxy', key: 'contextWindow', manuallyEdited: 'false' },
+        };
+        const providersData = {
+          local_openai_proxy: { contextWindow: 65536, manualContextWindow: false },
+        };
+        const document = {
+          querySelector: (sel) => (sel.includes('contextWindow') ? inputEl : null),
+        };
+
+        const { markProviderContextDetectionStart, clearProviderContextDetectionStart, applyProviderContextWindow } = Function(
+          'document', 'providersData',
+          `${settingsSource.slice(start, end)}\nreturn { markProviderContextDetectionStart, clearProviderContextDetectionStart, applyProviderContextWindow };`,
+        )(document, providersData);
+
+        // Case A: Detection starts with default 65536. User edits to 32768 while pending.
+        markProviderContextDetectionStart('local_openai_proxy');
+        inputEl.value = '32768';
+        inputEl.dataset.manuallyEdited = 'true';
+        // Detected window 128000 arrives:
+        applyProviderContextWindow('local_openai_proxy', 128000);
+        assert.equal(inputEl.value, '32768', `${label}: user edit made while pending is not overwritten`);
+        assert.equal(inputEl.dataset.manuallyEdited, 'true');
+        assert.equal(providersData.local_openai_proxy.contextWindow, 65536, `${label}: providersData was not overwritten with detected window`);
+
+        // Case B: Detection starts untouched, user does not edit. Detected window applies.
+        inputEl.value = '65536';
+        inputEl.dataset.manuallyEdited = 'false';
+        markProviderContextDetectionStart('local_openai_proxy');
+        applyProviderContextWindow('local_openai_proxy', 128000);
+        assert.equal(inputEl.value, '128000', `${label}: untouched input is updated by detection`);
+        assert.equal(inputEl.dataset.manuallyEdited, 'false');
+        assert.equal(providersData.local_openai_proxy.contextWindow, 128000);
+      }
+
       // 6. A manual override is never enlarged by a name or the fallback...
       {
         const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {

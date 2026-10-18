@@ -3720,28 +3720,61 @@ function applyProviderBaseUrl(id, baseUrl) {
   refreshVisionStatus(id);
 }
 
+const providerContextPendingSnapshots = new Map();
+
+function markProviderContextDetectionStart(id) {
+  const input = document.querySelector(`input[data-provider="${id}"][data-key="contextWindow"]`);
+  if (!input) return;
+  providerContextPendingSnapshots.set(id, {
+    value: input.value,
+    manuallyEdited: input.dataset.manuallyEdited === 'true',
+  });
+}
+
+function clearProviderContextDetectionStart(id) {
+  providerContextPendingSnapshots.delete(id);
+}
+
 function applyProviderContextWindow(id, contextWindow) {
   const n = Number(contextWindow);
   if (!Number.isFinite(n) || n <= 0) return;
+  const input = document.querySelector(`input[data-provider="${id}"][data-key="contextWindow"]`);
+  const snapshot = providerContextPendingSnapshots.get(id);
+  providerContextPendingSnapshots.delete(id);
+  if (input) {
+    if (snapshot) {
+      const isCurrentlyEdited = input.dataset.manuallyEdited === 'true';
+      if (input.value !== snapshot.value || isCurrentlyEdited !== snapshot.manuallyEdited) {
+        return;
+      }
+    }
+    if (input.dataset.manuallyEdited === 'true') return;
+    if (input.value !== String(n)) input.value = String(n);
+    input.dataset.manuallyEdited = 'false';
+  } else if (providersData[id]?.manualContextWindow === true) {
+    return;
+  }
   if (providersData[id]) {
     providersData[id].contextWindow = n;
     providersData[id].manualContextWindow = false;
-  }
-  const input = document.querySelector(`input[data-provider="${id}"][data-key="contextWindow"]`);
-  if (input) {
-    if (input.value !== String(n)) input.value = String(n);
-    input.dataset.manuallyEdited = 'false';
   }
 }
 
 async function detectProviderContextWindowForModel(id, model) {
   const value = String(model || '').trim();
   if (!value) return;
+  if (typeof markProviderContextDetectionStart === 'function') {
+    markProviderContextDetectionStart(id);
+  }
   try {
     const res = await sendToBackground('detect_provider_context_window', { providerId: id, model: value });
     if (res?.ok) applyProviderContextWindow(id, res.contextWindow);
   } catch {
     // Model picking should still succeed if the backend cannot report a window.
+  } finally {
+    if (typeof clearProviderContextDetectionStart === 'function') {
+      clearProviderContextDetectionStart(id);
+    }
   }
 }
 
@@ -3803,18 +3836,26 @@ async function loadProviderModels(id) {
 
   if (!isCurrent()) return;
   setProviderLoadModelsStatus(id, t('st.providers.loading'));
+  if (typeof markProviderContextDetectionStart === 'function') markProviderContextDetectionStart(id);
   let res;
   try {
     res = await sendToBackground('list_provider_models', { providerId: id });
   } catch (e) {
+    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id);
     if (!isCurrent()) return;
     setProviderLoadModelsStatus(id, providerModelLoadErrorMessage(e.message), 'var(--danger, #c33)');
     return;
   }
 
-  if (!isCurrent()) return;
+  if (!isCurrent()) {
+    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id);
+    return;
+  }
   datalistEl = document.getElementById(`models-${id}`);
-  if (!datalistEl) return;
+  if (!datalistEl) {
+    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id);
+    return;
+  }
   if (res?.ok) {
     applyProviderBaseUrl(id, res.baseUrl);
     applyProviderContextWindow(id, res.contextWindow);
@@ -3934,6 +3975,7 @@ async function testProvider(id) {
 
   if (!setProviderTestResult(id, '', t('st.providers.testing'), 'var(--text2)')) return;
 
+  if (typeof markProviderContextDetectionStart === 'function') markProviderContextDetectionStart(id);
   try {
     const res = await sendToBackground('test_provider', { providerId: id });
     if (res.ok) {
@@ -3945,6 +3987,8 @@ async function testProvider(id) {
     }
   } catch (e) {
     setProviderTestResult(id, 'fail', t('st.providers.failed', { error: e.message }));
+  } finally {
+    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id);
   }
 }
 
