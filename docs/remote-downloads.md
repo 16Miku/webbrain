@@ -92,8 +92,11 @@ flowchart TD
 4. **WebGPU text model (`apocalypse-mode.html`)**:
    - The picker offers only Compass Tiny v2.1 (about 1.87 GB); starting its
      download caches that repository.
-   - The separate 810 MB local vision fallback is downloaded only after the
-     user enables it in **Settings -> Assistive Models -> Vision**.
+   - Local vision never downloads on its own. Ternary Bonsai 2 2B Vision
+     (1.45 GB) is the chat preset's download, started by a click on its
+     Download button here, in Settings or in the Text Model picker; the separate
+     810 MB WebBrain VL 2 450M is downloaded only after the user consents to it
+     in **Settings -> Assistive Models -> Vision**.
 
 ---
 

@@ -387,8 +387,8 @@
     }
     .vision-local-option {
       display: grid;
-      grid-template-columns: 42px minmax(0, 1fr) auto;
-      align-items: center;
+      grid-template-columns: 42px minmax(0, 1fr);
+      align-items: start;
       gap: 12px;
       margin: 2px 0 16px;
       padding: 13px;
@@ -438,7 +438,39 @@
       font-size: 11px;
       line-height: 1.45;
     }
+    .vision-local-main { min-width: 0; }
+    .vision-local-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .vision-local-controls select {
+      flex: 1 1 260px;
+      min-width: 0;
+      max-width: 420px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 7px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+    }
+    .vision-local-controls select:focus-visible { border-color: var(--accent); }
     .vision-local-action { white-space: nowrap; }
+    .vision-local-action[hidden] { display: none; }
+    .vision-local-status {
+      margin-top: 8px;
+      color: var(--text2);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .vision-local-status:empty { display: none; }
+    .vision-local-status[data-kind="ready"] { color: var(--success); }
+    .vision-local-status[data-kind="error"] { color: var(--error); }
     .vision-endpoint-divider {
       display: flex;
       align-items: center;
@@ -467,8 +499,8 @@
     .vision-endpoint-fields:disabled { opacity: 0.48; }
     .vision-test-actions { margin-top: 4px; }
     @media (max-width: 620px) {
-      .vision-local-option { grid-template-columns: 42px minmax(0, 1fr); }
-      .vision-local-action { grid-column: 2; justify-self: start; }
+      .vision-local-option { grid-template-columns: minmax(0, 1fr); }
+      .vision-local-iris { display: none; }
     }
     .provider-name { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; max-width: 100%; }
     .provider-type { color: var(--text2); font-size: 11px; }
@@ -2096,14 +2128,23 @@
             <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/>
           </svg>
         </div>
-        <div>
+        <div class="vision-local-main">
           <div class="vision-local-heading">
-            <strong data-i18n="st.vision.local.title"></strong>
+            <strong id="webgpu-vision-choice-label" data-i18n="st.vision.local.title"></strong>
             <span class="vision-local-kicker">IN-BROWSER</span>
           </div>
-          <div class="vision-local-desc" data-i18n="st.vision.local.desc"></div>
+          <div class="vision-local-desc" id="webgpu-vision-choice-desc" data-i18n="st.vision.local.desc"></div>
+          <div class="vision-local-controls">
+            <select id="webgpu-vision-choice" aria-labelledby="webgpu-vision-choice-label" aria-describedby="webgpu-vision-choice-desc webgpu-vision-status">
+              <option value="auto" data-i18n="st.vision.local.choice.auto"></option>
+              <option value="bonsai" data-i18n="st.vision.local.choice.bonsai"></option>
+              <option value="webbrain-vl" data-i18n="st.vision.local.choice.webbrain_vl"></option>
+              <option value="off" data-i18n="st.vision.local.choice.off"></option>
+            </select>
+            <button class="btn-secondary vision-local-action" id="btn-use-webgpu-vision" type="button" hidden data-i18n="st.vision.local.download"></button>
+          </div>
+          <div class="vision-local-status" id="webgpu-vision-status" role="status" aria-live="polite"></div>
         </div>
-        <button class="btn-secondary vision-local-action" id="btn-use-webgpu-vision" type="button" aria-pressed="false" data-i18n="st.vision.local.enable"></button>
       </div>
       <div class="vision-endpoint-divider"><span data-i18n="st.vision.endpoint_alternative"></span></div>
       <fieldset class="vision-endpoint-fields" id="vision-endpoint-fields">

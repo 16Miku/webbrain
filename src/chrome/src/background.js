@@ -4821,6 +4821,23 @@ async function handleMessage(msg, sender) {
       }
       return await startExplicitVisionModelDownload();
     }
+    case 'get_webgpu_vision_choice': {
+      return {
+        ok: true,
+        ...await providerManager.getWebgpuVisionChoice(),
+        readiness: await providerManager.getWebgpuVisionReadiness(),
+      };
+    }
+    case 'set_webgpu_vision_choice': {
+      // Choosing WebBrain VL 2 450M can re-enable it under consent already
+      // given, so only the two pages that show the choice may change it.
+      const senderPage = String(sender?.url || '').split(/[?#]/)[0];
+      const allowedPages = ['src/ui/settings.html', 'src/ui/apocalypse-mode.html'].map(page => chrome.runtime.getURL(page));
+      if (!allowedPages.includes(senderPage)) {
+        return { ok: false, code: 'vision_choice_page', error: 'The in-browser vision model can only be chosen in Settings or Apocalypse Mode.' };
+      }
+      return await providerManager.setWebgpuVisionChoice(msg.choice);
+    }
     case 'start_webgpu_vision_download': {
       return await providerManager.startWebgpuVisionDownload();
     }
