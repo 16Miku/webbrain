@@ -75,8 +75,16 @@ import {
   WEBGPU_MODEL_PRESETS,
   WEBGPU_SELECTABLE_MODEL_PRESETS,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
+  WEBGPU_VISION_BONSAI_MODEL_ID,
+  WEBGPU_VISION_CHOICE_AUTO,
+  WEBGPU_VISION_CHOICE_BONSAI,
+  WEBGPU_VISION_CHOICE_KEY,
+  WEBGPU_VISION_CHOICE_OFF,
+  WEBGPU_VISION_CHOICE_WEBBRAIN_VL,
+  WEBGPU_VISION_CHOICES,
   WEBGPU_VISION_CONSENT_VERSION,
   WEBGPU_VISION_CONSENT_VERSION_KEY,
+  WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_ENABLED_KEY,
   normalizeWebgpuModelId,
   webgpuModelSupportsVision,
@@ -95,7 +103,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '42.0.0';
+const EXT_VERSION = '42.0.1';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -156,6 +164,8 @@ const visionApiKeyInput = document.getElementById('vision-api-key');
 const visionModelInput = document.getElementById('vision-model');
 const btnSaveVision = document.getElementById('btn-save-vision');
 const webgpuVisionOption = document.getElementById('webgpu-vision-option');
+const webgpuVisionChoiceSelect = document.getElementById('webgpu-vision-choice');
+const webgpuVisionStatus = document.getElementById('webgpu-vision-status');
 const btnUseWebgpuVision = document.getElementById('btn-use-webgpu-vision');
 const visionEndpointFields = document.getElementById('vision-endpoint-fields');
 const skillNameInput = document.getElementById('skill-name');
@@ -526,13 +536,20 @@ let activeProviderId = '';
 let providerActivationRequestId = 0;
 let requestedActiveProviderId = '';
 let currentVisionConfig = {};
-let webgpuVisionEnabled = false;
+// In-browser vision: the stored choice, the model it resolves to now, and the
+// state the status line and action button need (see renderLocalVision).
+let webgpuVisionChoice = WEBGPU_VISION_CHOICE_AUTO;
+let webgpuVisionLocal = { model: null, bonsaiReady: false, readiness: null, bonsaiDownload: null };
+let webgpuVisionPollTimer = null;
 
 if (globalThis.chrome?.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes[WEBGPU_VISION_ENABLED_KEY] || changes[WEBGPU_VISION_CONSENT_VERSION_KEY]) {
       loadVisionConfig().catch(() => {});
+    } else if (changes[WEBGPU_VISION_CHOICE_KEY] || changes[WEBGPU_VISION_DOWNLOAD_STATE_KEY]) {
+      // Download progress lands here often; coalesce it into one refresh.
+      scheduleLocalVisionRefresh();
     }
     if (!changes.providers?.newValue) return;
     for (const [id, next] of Object.entries(changes.providers.newValue)) {
@@ -1777,40 +1794,172 @@ btnTestSystemOne?.addEventListener('click', async () => {
 
 // --- Vision Model ---
 
+const WEBGPU_VISION_LOCAL_CHOICES = new Set([WEBGPU_VISION_CHOICE_BONSAI, WEBGPU_VISION_CHOICE_WEBBRAIN_VL]);
+
+// An explicitly chosen in-browser model takes the place of the endpoint form;
+// Auto and Off leave the endpoint editable.
 function isWebgpuVisionEnabled() {
-  return webgpuVisionEnabled;
+  return WEBGPU_VISION_LOCAL_CHOICES.has(webgpuVisionChoice);
 }
 
-function renderVisionConfig(config = {}, localEnabled = webgpuVisionEnabled) {
+function bonsaiVisionDownloadState() {
+  const state = webgpuVisionLocal.bonsaiDownload;
+  if (!state) return null;
+  const sameModel = model => String(model || '').trim() === WEBGPU_VISION_BONSAI_MODEL_ID;
+  if (sameModel(state.modelId)) return state;
+  // A Bonsai transfer started elsewhere shows up as the active transfer.
+  return state.activeTransfer && sameModel(state.activeTransfer.modelId) ? state.activeTransfer : state;
+}
+
+function webgpuVisionLocalView() {
+  const choice = webgpuVisionChoice;
+  if (choice === WEBGPU_VISION_CHOICE_OFF) {
+    return { kind: '', status: t('st.vision.local.status.off'), action: '' };
+  }
+  if (choice === WEBGPU_VISION_CHOICE_WEBBRAIN_VL) {
+    const readiness = webgpuVisionLocal.readiness || {};
+    if (!readiness.consented || !readiness.enabled) {
+      return { kind: '', status: t('st.vision.local.status.needs_consent'), action: 'enable' };
+    }
+    const progress = Math.round(Number(readiness.progress) || 0);
+    switch (readiness.status) {
+      case 'ready':
+        return { kind: 'ready', status: t('st.vision.local.status.ready', { model: 'WebBrain VL 2 450M' }), action: '' };
+      case 'queued':
+      case 'loading':
+        return { kind: '', status: t('st.vision.local.status.preparing'), action: '', busy: true };
+      case 'downloading':
+        return { kind: '', status: t('st.providers.webgpu_download.downloading', { progress }), action: '', busy: true };
+      case 'paused':
+        return { kind: '', status: t('st.providers.webgpu_download.paused', { progress }), action: 'resume' };
+      case 'error':
+        return { kind: 'error', status: `${t('st.providers.webgpu_download.error')}: ${readiness.error || t('st.providers.webgpu_download.error_detail')}`, action: 'start' };
+      default:
+        return { kind: '', status: t('st.vision.local.status.not_downloaded'), action: 'start' };
+    }
+  }
+  // Auto and Ternary Bonsai 2 2B Vision.
+  if (webgpuVisionLocal.bonsaiReady) {
+    return { kind: 'ready', status: t('st.vision.local.status.ready', { model: 'Ternary Bonsai 2 2B Vision' }), action: '' };
+  }
+  const download = bonsaiVisionDownloadState();
+  if (download && ['downloading', 'checking'].includes(download.status)) {
+    return {
+      kind: '',
+      status: t('st.vision.local.status.bonsai_downloading', { progress: Math.round(Number(download.progress) || 0) }),
+      action: 'stop-bonsai',
+      busy: true,
+    };
+  }
+  if (download?.status === 'paused') {
+    return { kind: '', status: t('st.providers.webgpu_download.paused', { progress: Math.round(Number(download.progress) || 0) }), action: 'bonsai' };
+  }
+  if (download?.status === 'error') {
+    return { kind: 'error', status: `${t('st.providers.webgpu_download.error')}: ${download.error || t('st.providers.webgpu_download.error_detail')}`, action: 'bonsai' };
+  }
+  return {
+    kind: '',
+    status: t(choice === WEBGPU_VISION_CHOICE_AUTO ? 'st.vision.local.status.auto_off' : 'st.vision.local.status.not_downloaded'),
+    action: 'bonsai',
+  };
+}
+
+const WEBGPU_VISION_ACTION_LABELS = {
+  enable: 'st.vision.local.download_webbrain_vl',
+  start: 'st.vision.local.download_webbrain_vl',
+  resume: 'st.providers.webgpu_download.resume',
+  bonsai: 'st.vision.local.download_bonsai',
+  'stop-bonsai': 'st.providers.webgpu_download.stop',
+};
+
+function renderLocalVision() {
+  if (webgpuVisionChoiceSelect) webgpuVisionChoiceSelect.value = webgpuVisionChoice;
+  const view = webgpuVisionLocalView();
+  const active = isWebgpuVisionEnabled() || (webgpuVisionChoice === WEBGPU_VISION_CHOICE_AUTO && webgpuVisionLocal.bonsaiReady);
+  webgpuVisionOption?.classList.toggle('enabled', active);
+  if (webgpuVisionStatus) {
+    webgpuVisionStatus.textContent = view.status;
+    webgpuVisionStatus.dataset.kind = view.kind;
+  }
+  if (btnUseWebgpuVision) {
+    const key = WEBGPU_VISION_ACTION_LABELS[view.action];
+    btnUseWebgpuVision.hidden = !key;
+    btnUseWebgpuVision.dataset.action = view.action || '';
+    if (key) {
+      btnUseWebgpuVision.dataset.i18n = key;
+      btnUseWebgpuVision.textContent = t(key);
+    }
+  }
+  if (visionEndpointFields) visionEndpointFields.disabled = isWebgpuVisionEnabled();
+  if (view.busy && !webgpuVisionPollTimer) {
+    webgpuVisionPollTimer = setInterval(scheduleLocalVisionRefresh, 2000);
+  } else if (!view.busy && webgpuVisionPollTimer) {
+    clearInterval(webgpuVisionPollTimer);
+    webgpuVisionPollTimer = null;
+  }
+}
+
+function renderVisionConfig(config = {}) {
   currentVisionConfig = config && typeof config === 'object' && config.type !== 'webgpu'
     ? config
     : {};
-  webgpuVisionEnabled = localEnabled === true;
-  const isWebgpu = isWebgpuVisionEnabled();
   visionBaseUrlInput.value = currentVisionConfig.baseUrl || '';
   visionApiKeyInput.value = currentVisionConfig.apiKey || '';
   visionModelInput.value = currentVisionConfig.model || '';
-  webgpuVisionOption?.classList.toggle('enabled', isWebgpu);
-  btnUseWebgpuVision?.setAttribute('aria-pressed', String(isWebgpu));
-  if (btnUseWebgpuVision) {
-    const buttonKey = isWebgpu
-      ? 'st.vision.local.disable'
-      : 'st.vision.local.enable';
-    btnUseWebgpuVision.dataset.i18n = buttonKey;
-    btnUseWebgpuVision.textContent = t(buttonKey);
-  }
-  if (visionEndpointFields) visionEndpointFields.disabled = isWebgpu;
+  renderLocalVision();
   updateMultimodalDetectedProvider('vision');
 }
 
 async function saveVisionConfig(config) {
   if (config && Object.keys(config).length) {
     await chrome.storage.local.set({ visionModel: config });
-    renderVisionConfig(config, webgpuVisionEnabled);
+    renderVisionConfig(config);
     return;
   }
   await chrome.storage.local.remove('visionModel');
-  renderVisionConfig({}, webgpuVisionEnabled);
+  renderVisionConfig({});
+}
+
+let localVisionRefresh = null;
+let localVisionRefreshAgain = false;
+function scheduleLocalVisionRefresh() {
+  if (localVisionRefresh) {
+    localVisionRefreshAgain = true;
+    return;
+  }
+  localVisionRefresh = refreshLocalVision().catch(() => {}).finally(() => {
+    localVisionRefresh = null;
+    if (localVisionRefreshAgain) {
+      localVisionRefreshAgain = false;
+      scheduleLocalVisionRefresh();
+    }
+  });
+}
+
+/** Reread the choice and the readiness of the model it points at. */
+async function refreshLocalVision() {
+  const result = await sendToBackground('get_webgpu_vision_choice').catch(() => null);
+  if (result?.ok) {
+    webgpuVisionChoice = WEBGPU_VISION_CHOICES.includes(result.choice) ? result.choice : WEBGPU_VISION_CHOICE_AUTO;
+    webgpuVisionLocal = {
+      ...webgpuVisionLocal,
+      model: result.model || null,
+      bonsaiReady: result.bonsaiReady === true,
+      readiness: result.readiness || null,
+    };
+  }
+  // Only a Bonsai choice that is not ready needs the transfer status; asking
+  // for it starts the offscreen document, so a ready or other choice skips it.
+  const wantsBonsai = [WEBGPU_VISION_CHOICE_AUTO, WEBGPU_VISION_CHOICE_BONSAI].includes(webgpuVisionChoice)
+    && !webgpuVisionLocal.bonsaiReady;
+  if (wantsBonsai) {
+    const snapshot = await sendToBackground('get_webgpu_download_status', { model: WEBGPU_VISION_BONSAI_MODEL_ID }).catch(() => null);
+    webgpuVisionLocal.bonsaiDownload = snapshot ? normalizeWebgpuDownloadSnapshot(snapshot) : null;
+    if (webgpuVisionLocal.bonsaiDownload?.ready) webgpuVisionLocal.bonsaiReady = true;
+  } else {
+    webgpuVisionLocal.bonsaiDownload = null;
+  }
+  renderLocalVision();
 }
 
 async function loadVisionConfig() {
@@ -1821,41 +1970,46 @@ async function loadVisionConfig() {
     WEBGPU_VISION_AUTO_SELECTED_KEY,
   ]);
   let vision = stored.visionModel || {};
-  let localEnabled = stored[WEBGPU_VISION_ENABLED_KEY] === true
-    && stored[WEBGPU_VISION_CONSENT_VERSION_KEY] === WEBGPU_VISION_CONSENT_VERSION;
   if (vision?.type === 'webgpu') {
     // Early PR builds stored the Chromium-only choice in the portable endpoint
     // slot. Migrate that shape once so it cannot sync to Firefox again.
-    localEnabled = true;
     vision = {};
     await chrome.storage.local.set({
       [WEBGPU_VISION_ENABLED_KEY]: true,
       [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION,
     });
     await chrome.storage.local.remove('visionModel');
-  } else if (stored[WEBGPU_VISION_ENABLED_KEY] === true && !localEnabled) {
+  } else if (stored[WEBGPU_VISION_ENABLED_KEY] === true
+      && stored[WEBGPU_VISION_CONSENT_VERSION_KEY] !== WEBGPU_VISION_CONSENT_VERSION) {
     // Older Apocalypse builds could enable this without a dedicated Settings
     // action. Require one explicit re-enable while retaining cached weights.
     await chrome.storage.local.remove([WEBGPU_VISION_ENABLED_KEY, WEBGPU_VISION_AUTO_SELECTED_KEY]);
   }
-  renderVisionConfig(vision, localEnabled);
+  renderVisionConfig(vision);
+  await refreshLocalVision();
 }
 
-async function setWebgpuVisionEnabled(enabled) {
-  const nextEnabled = enabled === true;
-  if (nextEnabled) {
+async function setWebgpuVisionChoice(choice) {
+  const result = await sendToBackground('set_webgpu_vision_choice', { choice });
+  if (!result?.ok) throw new Error(result?.error || 'The in-browser vision model could not be changed.');
+  await refreshLocalVision();
+}
+
+async function runWebgpuVisionAction(action) {
+  if (action === 'enable') {
+    // First download of WebBrain VL 2 450M: checks WebGPU, records consent,
+    // and starts the transfer from this explicit click.
     const result = await sendToBackground('enable_webgpu_vision');
     if (!result?.ok) throw new Error(result?.error || 'The local vision model download could not be started.');
-  } else {
-    // Release GPU allocations, but keep the browser-cached model download so
-    // re-enabling does not require another ~810 MB transfer.
-    await sendToBackground('dispose_webgpu_vision').catch(() => {});
-    await chrome.storage.local.remove([
-      WEBGPU_VISION_ENABLED_KEY,
-      WEBGPU_VISION_AUTO_SELECTED_KEY,
-    ]);
+  } else if (action === 'start' || action === 'resume') {
+    const result = await sendToBackground('start_webgpu_vision_download');
+    if (result?.ok === false) throw new Error(result.error || 'The local vision model download could not be started.');
+  } else if (action === 'bonsai') {
+    await sendToBackground('start_webgpu_download', { model: WEBGPU_VISION_BONSAI_MODEL_ID });
+  } else if (action === 'stop-bonsai') {
+    await sendToBackground('stop_webgpu_download', { model: WEBGPU_VISION_BONSAI_MODEL_ID });
   }
-  renderVisionConfig(currentVisionConfig, nextEnabled);
+  await refreshLocalVision();
 }
 
 function updateMultimodalDetectedProvider(kind) {
@@ -1889,18 +2043,30 @@ function flashVisionResult(className, text) {
   setTimeout(() => resultEl.classList.remove('show'), 2000);
 }
 
-btnUseWebgpuVision?.addEventListener('click', async () => {
+webgpuVisionChoiceSelect?.addEventListener('change', async () => {
+  const choice = webgpuVisionChoiceSelect.value;
   try {
-    if (isWebgpuVisionEnabled()) {
-      await setWebgpuVisionEnabled(false);
-      flashVisionResult('ok', t('st.vision.cleared'));
-      return;
-    }
-    showVisionResult('', t('st.providers.webgpu_download.start'));
-    await setWebgpuVisionEnabled(true);
-    flashVisionResult('ok', t('st.vision.local.saved'));
+    await setWebgpuVisionChoice(choice);
+    flashVisionResult('ok', t('st.vision.saved'));
   } catch (error) {
     showVisionResult('error', error?.message || String(error));
+    await refreshLocalVision().catch(() => {});
+  }
+});
+
+btnUseWebgpuVision?.addEventListener('click', async () => {
+  const action = btnUseWebgpuVision.dataset.action || '';
+  if (!action) return;
+  btnUseWebgpuVision.disabled = true;
+  try {
+    if (action !== 'stop-bonsai') showVisionResult('', t('st.providers.webgpu_download.start'));
+    await runWebgpuVisionAction(action);
+    if (action === 'stop-bonsai') flashVisionResult('ok', t('st.vision.cleared'));
+    else visionTestResult.classList.remove('show');
+  } catch (error) {
+    showVisionResult('error', error?.message || String(error));
+  } finally {
+    btnUseWebgpuVision.disabled = false;
   }
 });
 
@@ -1920,10 +2086,11 @@ btnSaveVision.addEventListener('click', async () => {
 });
 
 btnTestVision.addEventListener('click', async () => {
-  const isWebgpu = isWebgpuVisionEnabled();
   const baseUrl = normalizeOpenAICompatibleBaseUrl(visionBaseUrlInput.value);
   const apiKey = visionApiKeyInput.value.trim();
   const model = visionModelInput.value.trim();
+  // An empty endpoint form under Auto tests Bonsai when Auto resolved to it.
+  const isWebgpu = isWebgpuVisionEnabled() || (!baseUrl && !model && !!webgpuVisionLocal.model);
 
   if (!isWebgpu && (!baseUrl || !model)) {
     const resultEl = showVisionResult('fail', t('st.vision.fill_required'));
@@ -1952,7 +2119,8 @@ btnTestVision.addEventListener('click', async () => {
 
 btnClearVision.addEventListener('click', async () => {
   if (isWebgpuVisionEnabled()) {
-    await setWebgpuVisionEnabled(false);
+    // Back to Auto; downloaded files stay cached.
+    await setWebgpuVisionChoice(WEBGPU_VISION_CHOICE_AUTO);
     flashVisionResult('ok', t('st.vision.cleared'));
     return;
   }
@@ -2189,11 +2357,7 @@ async function reloadProfileSyncData() {
   if (stored.visionModel?.type === 'webgpu') {
     await loadVisionConfig();
   } else {
-    renderVisionConfig(
-      stored.visionModel || {},
-      stored[WEBGPU_VISION_ENABLED_KEY] === true
-        && stored[WEBGPU_VISION_CONSENT_VERSION_KEY] === WEBGPU_VISION_CONSENT_VERSION,
-    );
+    renderVisionConfig(stored.visionModel || {});
   }
   const transcription = stored.transcriptionModel || {};
   if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || '';

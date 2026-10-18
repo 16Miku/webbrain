@@ -218,6 +218,121 @@ h1 {
   color: var(--error);
 }
 
+/* Optional local model (Chrome hero). Firefox has no in-browser runtime, so
+   its page has no .local-model block and these rules stay unused there. */
+.local-model {
+  margin-top: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.local-model .open-panel-button {
+  margin-top: 0;
+}
+
+.local-model-icon--pause,
+.local-model-icon--ready,
+.local-model[data-state="downloading"] .local-model-icon--download,
+.local-model[data-state="ready"] .local-model-icon--download {
+  display: none;
+}
+
+.local-model[data-state="downloading"] .local-model-icon--pause,
+.local-model[data-state="ready"] .local-model-icon--ready {
+  display: block;
+}
+
+.local-model-button:hover svg {
+  transform: translateY(2px);
+}
+
+/* While the transfer runs the button only pauses it, so it steps back. */
+.local-model[data-state="downloading"] .local-model-button {
+  background: var(--surface-strong);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.local-model[data-state="downloading"] .local-model-button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, var(--line));
+}
+
+.local-model[data-state="downloading"] .local-model-button:hover svg {
+  transform: none;
+}
+
+.local-model[data-state="ready"] .local-model-button:disabled {
+  background: color-mix(in srgb, var(--success) 13%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 42%, transparent);
+  color: var(--success);
+  cursor: default;
+  opacity: 1;
+}
+
+.local-model-progress {
+  width: min(100%, 340px);
+  height: 6px;
+  margin-top: 16px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+.local-model-progress[hidden] {
+  display: none;
+}
+
+.local-model-progress > i {
+  display: block;
+  width: var(--local-model-progress, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent));
+  transition: width 400ms ease;
+}
+
+.local-model-status {
+  max-width: 440px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 520;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.local-model-status:empty {
+  display: none;
+}
+
+.local-model-status.is-error {
+  color: var(--error);
+}
+
+.local-model-note {
+  max-width: 440px;
+  margin: 10px 0 0;
+  color: var(--quiet);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.local-model[data-state="ready"] .local-model-note {
+  display: none;
+}
+
+/* In the closing call-to-action the empty status line should not push the
+   shortcut hint away from the button it refers to. */
+.install-cta .open-panel-status:empty {
+  display: none;
+}
+
+.install-cta .shortcut-hint {
+  margin-top: 14px;
+}
+
 .shortcut-hint {
   margin: 5px 0 0;
   color: var(--muted);
@@ -585,7 +700,9 @@ body::after {
 }
 
 @media (max-width: 420px) {
-  .open-panel-button {
+  .open-panel-button,
+  .local-model,
+  .local-model-progress {
     width: 100%;
   }
 
@@ -597,6 +714,7 @@ body::after {
 @media (prefers-reduced-motion: reduce) {
   .open-panel-button,
   .open-panel-button svg,
+  .local-model-progress > i,
   .feature-tab {
     transition: none;
   }

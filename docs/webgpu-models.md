@@ -253,7 +253,12 @@ Use the tools in `scripts/models/bonsai/`:
   - Apply the same pattern to any new model that serves long prompts on
     shared GPUs.
 - **Cache-only inference.** Chat never downloads. Only explicit download or
-  preload flows fetch model files.
+  preload flows fetch model files: Settings → Providers → WebGPU, Apocalypse
+  Mode, and the first-install page (Chrome), which offers Ternary Bonsai 2 2B
+  Vision behind its optional "Download a local model" button. The install page
+  checks for hardware WebGPU before fetching anything, never changes the
+  active provider, and only points an idle WebGPU provider at Bonsai when the
+  configured model is not already downloaded.
 
 ## Decisions on WebGPU
 

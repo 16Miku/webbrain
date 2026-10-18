@@ -1062,6 +1062,7 @@ const { refreshSubscription: refreshSubscriptionFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/providers/oauth-subscriptions.js').replace(/\\/g, '/')
 );
 const {
+  WebGPUBonsaiVisionProvider,
   WebGPUProvider,
   WebGPUVisionProvider,
   WEBGPU_DTYPE,
@@ -1094,6 +1095,10 @@ const {
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
   WEBGPU_VISION_READY_MARKER_VERSION,
+  WEBGPU_VISION_BONSAI_MODEL_ID,
+  WEBGPU_VISION_CHOICE_KEY,
+  resolveWebgpuVisionChoice,
+  storedWebgpuVisionChoice,
   normalizeWebgpuModelId,
   isShippedWebgpuPreset,
   isSelectableWebgpuPreset,
@@ -1102,6 +1107,9 @@ const {
   webgpuVisionReadyMarkerUrl,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu.js').replace(/\\/g, '/')
+);
+const { webgpuTextReadyMarkerUrl } = await import(
+  'file://' + path.join(ROOT, 'src/chrome/src/providers/webgpu-model-cache.js').replace(/\\/g, '/')
 );
 const ProviderCatalogCh = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/providers/provider-catalog.js').replace(/\\/g, '/')
@@ -43128,6 +43136,7 @@ test('Apocalypse Mode copy is translated instead of inherited from English in ev
 });
 
 test('vision Settings copy is explicit, bounded, and mirrored across every locale', async () => {
+  const englishChrome = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
   for (const filename of fs.readdirSync(path.join(ROOT, 'src/chrome/src/ui/locales'))
     .filter(name => name.endsWith('.js')).sort()) {
     const chromeLocale = (await import(pathToFileURL(
@@ -43142,14 +43151,22 @@ test('vision Settings copy is explicit, bounded, and mirrored across every local
       `${label}: automatic screenshot policy copy diverged across browsers`);
     assert.ok(chromeLocale['st.display.auto_screenshot.desc']?.trim(),
       `${label}: automatic screenshot policy copy is missing`);
-    assert.match(chromeLocale['st.vision.local.title'], /WebBrain VL 2 450M/,
-      `${label}: local vision title does not identify the shipped WebBrain VL model`);
+    assert.ok(chromeLocale['st.vision.local.title']?.trim(), `${label}: in-browser vision title is missing`);
+    for (const model of ['Ternary Bonsai 2 2B Vision', 'WebBrain VL 2 450M']) {
+      assert.ok(chromeLocale['st.vision.local.desc'].includes(model),
+        `${label}: in-browser vision copy does not name ${model}`);
+    }
     assert.match(chromeLocale['st.vision.local.desc'], /WebGPU/,
       `${label}: local vision copy does not identify the explicit hardware probe`);
-    assert.match(chromeLocale['st.vision.local.desc'], /webbrain-one\/webbrain-vl-2-450M-onnx/,
-      `${label}: local vision copy does not identify the shipped WebBrain VL model`);
     assert.match(chromeLocale['st.vision.local.desc'], /810/,
-      `${label}: local vision copy omits the explicit download size`);
+      `${label}: local vision copy omits the WebBrain VL download size`);
+    assert.match(chromeLocale['st.vision.local.desc'], /1[.,]45/,
+      `${label}: local vision copy omits the Ternary Bonsai download size`);
+    assert.match(chromeLocale['st.vision.local.status.needs_consent'], /WebGPU[\s\S]*810/,
+      `${label}: the WebBrain VL consent line must name the probe and the download size`);
+    for (const key of ['st.vision.local.choice.auto', 'st.vision.local.choice.off', 'st.vision.local.status.auto_off', 'st.vision.local.status.off']) {
+      if (label !== 'en') assert.notEqual(chromeLocale[key], englishChrome[key], `${label}: ${key} is still English`);
+    }
     assert.doesNotMatch(chromeLocale['st.vision.local.testing'], /810|Hugging Face/,
       `${label}: testing copy still claims that inference can initiate a download`);
   }
@@ -44731,7 +44748,15 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     assert.match(sceneCss, /@media \(prefers-reduced-motion: reduce\)/, `${label}: feature scenes should respect reduced motion`);
     assert.match(sceneCss, /\.js-motion \[data-reveal\]/, `${label}: content should only be hidden for reveal once the motion script is running`);
     assert.match(html, /\/screenshot --full-page|data-i18n-html="install\.shot\.body_html"/, `${label}: the screenshot card should show its command`);
-    assert.match(html, /<button class="open-panel-button" type="button" data-open-panel-mirror disabled>/, `${label}: closing call-to-action should start disabled like the primary one`);
+    if (label === 'firefox') {
+      assert.match(html, /<button class="open-panel-button" type="button" data-open-panel-mirror disabled>/, `${label}: closing call-to-action should start disabled like the primary one`);
+    } else {
+      // Chrome's hero offers the optional local model; the closing call-to-action
+      // owns the only open button, so nothing mirrors it.
+      assert.doesNotMatch(html, /data-open-panel-mirror/, 'chrome: the closing call-to-action should be the primary open button, not a mirror');
+      assert.match(html, /<section class="install-cta"[\s\S]*?id="open-panel-button"[\s\S]*?id="open-panel-status"[\s\S]*?id="shortcut-hint"[\s\S]*?<\/section>/, 'chrome: the open button, its status line and the shortcut hint should live in the closing call-to-action');
+      assert.doesNotMatch(html.match(/<section class="install-hero"[\s\S]*?<\/section>/)[0], /id="open-panel-button"/, 'chrome: the hero should no longer open the side panel');
+    }
     assert.equal((html.match(/id="open-panel-button"/g) || []).length, 1, `${label}: only one primary panel-open button should exist`);
     // The hero looks complete in a laptop-sized window, so a permanent row of pills says what is
     // further down and jumps to it. The page has no header: people know which product they installed.
@@ -45052,7 +45077,7 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     const chromeLocale = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales', filename)).href)).default;
     const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales', filename)).href)).default;
     const installKeys = Object.keys(chromeLocale).filter((key) => key.startsWith('install.'));
-    assert.equal(installKeys.length, 64, `${filename}: install guide should translate every user-facing string`);
+    assert.equal(installKeys.length, 80, `${filename}: install guide should translate every user-facing string`);
     assert.ok(chromeLocale['install.showcase.ask.title'], `${filename}: Ask showcase headline should be translated`);
     assert.ok(chromeLocale['install.showcase.apocalypse.body'], `${filename}: Apocalypse showcase body should be translated`);
     for (const key of [
@@ -45064,9 +45089,14 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       'install.mock.files', 'install.mock.offline', 'install.mock.not_robot', 'install.mock.captcha_blocked',
       'install.mock.captcha_sent', 'install.mock.captcha_waiting', 'install.mock.captcha_note',
       'install.mock.show_image', 'install.mock.safesocial_note', 'install.mock.tab', 'install.mock.screen',
+      ...['intro', 'download', 'note', 'checking', 'downloading', 'pause', 'resume', 'paused', 'working', 'ready',
+        'ready_detail', 'retry', 'error', 'unsupported', 'busy', 'progress_label'].map((key) => `install.local_model.${key}`),
     ]) {
       assert.ok(chromeLocale[key], `${filename}: ${key} should be translated`);
     }
+    assert.ok(chromeLocale['install.local_model.downloading'].includes('{progress}'), `${filename}: download progress must keep its placeholder`);
+    assert.ok(chromeLocale['install.local_model.paused'].includes('{progress}'), `${filename}: paused progress must keep its placeholder`);
+    assert.ok(chromeLocale['install.local_model.error'].includes('{error}'), `${filename}: the download error must keep its placeholder`);
     assert.ok(chromeLocale['install.shot.body_html'].includes('<code>/screenshot --full-page</code>'), `${filename}: the screenshot command must survive translation verbatim`);
     assert.ok(chromeLocale['install.record.body_html'].includes('<code>/record</code>'), `${filename}: the record command must survive translation verbatim`);
     assert.ok(chromeLocale['install.pin.confirm'], `${filename}: pin coachmark should translate its confirmation action`);
@@ -45085,6 +45115,239 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
   assert.match(englishLocale['install.pin.body'], /browser toolbar/i, 'chrome: pin guidance should separately explain the toolbar icon that pinning adds');
   assert.match(englishLocale['install.open_failed_chromium'], /Alt\+Shift\+W[\s\S]*Extensions/i, 'chrome: failed open should offer shortcut and Extensions-menu recovery');
   assert.match(englishLocale['install.open_failed_firefox'], /Firefox Extensions/i, 'firefox: failed open should point to Firefox Extensions');
+});
+
+test('chrome install page offers the shipped in-browser model with progress instead of opening the panel first', async () => {
+  const chromeHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/install.html'), 'utf8');
+  const firefoxHtml = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/install.html'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/install.css'), 'utf8');
+  const webgpu = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/providers/webgpu.js')).href);
+  const install = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/install.js')).href);
+  const english = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
+
+  const hero = chromeHtml.match(/<section class="install-hero"[\s\S]*?<\/section>/)[0];
+  const modelId = hero.match(/<div id="local-model" class="local-model" data-model="([^"]+)"/)?.[1];
+  assert.equal(modelId, webgpu.WEBGPU_BONSAI2_VL_2B_MODEL_ID, 'the install page should download the Ternary Bonsai 2 2B Vision preset');
+  assert.ok(webgpu.isSelectableWebgpuPreset(modelId), 'the install page should offer a model the WebGPU pickers already offer');
+  assert.match(hero, /id="local-model-button"[^>]*\sdisabled(?:\s|>)/, 'the download button should start disabled until its state is known');
+  assert.match(hero, /id="local-model-progress"[^>]*role="progressbar"[^>]*hidden/, 'progress should be an accessible progress bar, hidden until a transfer runs');
+  assert.match(hero, /id="local-model-status"[^>]*aria-live="polite"/, 'download status should be announced');
+  assert.match(hero, /id="local-model-note" class="local-model-note" data-i18n="install\.local_model\.note"/, 'the optional note should sit under the button');
+  assert.match(hero, /id="install-intro"[^>]*data-i18n="install\.local_model\.intro"/, 'the hero intro should point to the open button at the bottom of the page');
+  assert.doesNotMatch(firefoxHtml, /id="local-model"|install\.local_model\./, 'firefox: no in-browser model runtime, so the page keeps its sidebar button');
+  assert.match(css, /\.local-model-note \{[\s\S]*?color: var\(--quiet\);[\s\S]*?font-size: 12px;/, 'the optional note should be small and gray');
+  assert.match(english['install.local_model.note'], /^Optional\b/, 'the note should say up front that the download is optional');
+  assert.match(english['install.local_model.note'], /1\.45 GB/, 'the note should state the download size of the preset');
+  const preset = webgpu.WEBGPU_MODEL_PRESETS.find((entry) => entry.id === modelId);
+  assert.equal(preset.size, '1.45 GB', 'the note quotes the preset size; update the copy if the preset changes');
+
+  const normalize = install.normalizeLocalModelSnapshot;
+  assert.deepEqual(normalize({ status: 'starting' }, modelId), { status: 'downloading', progress: 0, error: '' });
+  assert.deepEqual(normalize({ status: 'downloading', loaded: 25, total: 100 }, modelId), { status: 'downloading', progress: 25, error: '' });
+  assert.deepEqual(normalize({ status: 'not-downloaded', ready: true }, modelId), { status: 'ready', progress: 100, error: '' });
+  assert.deepEqual(normalize({ status: 'error', error: 'Failed to fetch' }, modelId), { status: 'error', progress: 0, error: 'Failed to fetch' });
+  assert.equal(normalize({ status: 'mystery' }, modelId).status, 'not-downloaded');
+  for (const otherStatus of ['downloading', 'paused', 'stopping']) {
+    assert.equal(
+      normalize({ status: 'not-downloaded', activeTransfer: { status: otherStatus, modelId: webgpu.WEBGPU_COMPASS_TINY_V2_MODEL_ID } }, modelId).status,
+      'busy',
+      `another model ${otherStatus} holds the worker's single download slot`,
+    );
+  }
+  assert.equal(normalize({ status: 'not-downloaded', activeTransfer: { status: 'ready', modelId: 'x/y' } }, modelId).status, 'not-downloaded');
+  assert.equal(normalize({ status: 'downloading', activeTransfer: { status: 'downloading', modelId } }, modelId).status, 'downloading');
+
+  const view = install.localModelView;
+  assert.equal(view({ status: 'not-downloaded' }).action, 'start');
+  assert.equal(view({ status: 'downloading', progress: 41.6 }).action, 'pause');
+  assert.equal(view({ status: 'downloading', progress: 41.6 }).progress, 42);
+  assert.equal(view({ status: 'paused', progress: 63 }).action, 'resume');
+  assert.equal(view({ status: 'error' }).action, 'start');
+  assert.equal(view({ status: 'error' }).isError, true);
+  for (const status of ['ready', 'checking', 'stopping', 'busy', 'unsupported']) {
+    assert.equal(view({ status }).action, null, `${status}: the button should not act`);
+  }
+  for (const status of ['not-downloaded', 'downloading', 'paused', 'ready', 'checking', 'stopping', 'busy', 'unsupported', 'error']) {
+    const { labelKey, statusKey } = view({ status });
+    assert.ok(english[labelKey], `${status}: label ${labelKey} should be translated`);
+    if (statusKey) assert.ok(english[statusKey], `${status}: status ${statusKey} should be translated`);
+  }
+
+  function fakeRuntime(responses) {
+    const sent = [];
+    const listeners = [];
+    return {
+      sent,
+      listeners,
+      onMessage: { addListener(fn) { listeners.push(fn); } },
+      async sendMessage(message) {
+        sent.push(message);
+        const reply = responses[message.action];
+        return typeof reply === 'function' ? reply(message) : reply;
+      },
+    };
+  }
+
+  // Never change the model of the active chat provider, or a model the user has.
+  for (const [name, providers, status, expected] of [
+    ['active WebGPU', { providers: { webgpu: { model: '' } }, active: 'webgpu' }, { status: 'not-downloaded' }, false],
+    ['configured model ready', { providers: { webgpu: { model: webgpu.WEBGPU_COMPASS_TINY_V2_MODEL_ID } }, active: 'webbrain_cloud' }, { status: 'ready', ready: true }, false],
+    ['configured model downloading', { providers: { webgpu: { model: webgpu.WEBGPU_COMPASS_TINY_V2_MODEL_ID } }, active: 'webbrain_cloud' }, { status: 'downloading' }, false],
+    ['already pointed', { providers: { webgpu: { model: modelId } }, active: 'webbrain_cloud' }, { status: 'not-downloaded' }, false],
+    ['default not downloaded', { providers: { webgpu: { model: webgpu.WEBGPU_COMPASS_TINY_V2_MODEL_ID } }, active: 'webbrain_cloud' }, { status: 'not-downloaded' }, true],
+  ]) {
+    const runtime = fakeRuntime({ get_providers: providers, get_webgpu_download_status: status, update_provider: { ok: true } });
+    assert.equal(await install.pointWebgpuProviderAtModel(modelId, { runtime }), expected, `${name}: repoint decision`);
+    const update = runtime.sent.find((message) => message.action === 'update_provider');
+    if (expected) {
+      assert.deepEqual(update, { target: 'background', action: 'update_provider', providerId: 'webgpu', config: { model: modelId }, markConfigured: false }, `${name}: only the WebGPU model changes`);
+    } else {
+      assert.equal(update, undefined, `${name}: the WebGPU provider should stay as it is`);
+    }
+    assert.ok(!runtime.sent.some((message) => message.action === 'set_active_provider'), `${name}: the active provider never changes`);
+  }
+
+  function fakeDocument() {
+    const element = (id, extra = {}) => {
+      const attributes = new Map();
+      const classes = new Set();
+      const listeners = new Map();
+      return {
+        id,
+        dataset: {},
+        hidden: false,
+        disabled: true,
+        textContent: '',
+        style: { props: {}, setProperty(name, value) { this.props[name] = value; } },
+        classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, contains: (name) => classes.has(name) },
+        setAttribute(name, value) { attributes.set(name, String(value)); },
+        removeAttribute(name) { attributes.delete(name); },
+        getAttribute(name) { return attributes.get(name) ?? null; },
+        addEventListener(type, fn) { listeners.set(type, fn); },
+        fire(type) { return listeners.get(type)?.(); },
+        ...extra,
+      };
+    };
+    const nodes = {
+      'local-model': element('local-model', { dataset: { model: modelId, state: 'checking' } }),
+      'local-model-button': element('local-model-button'),
+      'local-model-label': element('local-model-label'),
+      'local-model-progress': element('local-model-progress', { hidden: true }),
+      'local-model-status': element('local-model-status'),
+    };
+    return { nodes, getElementById: (id) => nodes[id] || null };
+  }
+  const translate = (key, params = {}) => `${key}${params.progress != null ? `|${params.progress}` : ''}${params.error ? `|${params.error}` : ''}`;
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(install.initializeLocalModelDownload({ documentLike: { getElementById: () => null }, runtime: fakeRuntime({}) }), null, 'firefox: no local-model block, nothing to wire');
+
+  {
+    const documentLike = fakeDocument();
+    let status = { status: 'not-downloaded', modelId };
+    const runtime = fakeRuntime({
+      get_webgpu_download_status: (message) => (message.model === modelId ? status : { status: 'not-downloaded' }),
+      test_provider: { ok: true },
+      get_providers: { providers: { webgpu: { model: webgpu.WEBGPU_COMPASS_TINY_V2_MODEL_ID } }, active: 'webbrain_cloud' },
+      update_provider: { ok: true },
+      start_webgpu_download: () => { status = { status: 'downloading', modelId, loaded: 400, total: 1000 }; return { ok: true }; },
+      pause_webgpu_download: () => { status = { status: 'paused', modelId, progress: 40 }; return { ok: true }; },
+    });
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    const { nodes } = documentLike;
+    assert.equal(nodes['local-model'].dataset.state, 'not-downloaded');
+    assert.equal(nodes['local-model-button'].disabled, false, 'the button should become usable once the state is known');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.download');
+    assert.equal(nodes['local-model-progress'].hidden, true);
+
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.deepEqual(
+      runtime.sent.map((message) => message.action),
+      ['get_webgpu_download_status', 'test_provider', 'get_providers', 'get_webgpu_download_status', 'update_provider', 'start_webgpu_download', 'get_webgpu_download_status'],
+      'start should probe WebGPU, point the idle WebGPU provider at the model, download it, then read progress',
+    );
+    assert.deepEqual(runtime.sent.find((message) => message.action === 'test_provider'), { target: 'background', action: 'test_provider', providerId: 'webgpu' });
+    assert.deepEqual(runtime.sent.find((message) => message.action === 'start_webgpu_download'), { target: 'background', action: 'start_webgpu_download', model: modelId });
+    assert.equal(nodes['local-model'].dataset.state, 'downloading');
+    assert.equal(nodes['local-model-progress'].hidden, false, 'progress should show while downloading');
+    assert.equal(nodes['local-model-progress'].getAttribute('aria-valuenow'), '40');
+    assert.equal(nodes['local-model-progress'].style.props['--local-model-progress'], '40%');
+    assert.equal(nodes['local-model-status'].textContent, 'install.local_model.downloading|40');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.pause');
+
+    // Pushed progress from the offscreen host updates without waiting for a poll.
+    runtime.listeners[0]({ type: 'webgpu-text-download-state', state: { status: 'downloading', modelId, progress: 55 } });
+    assert.equal(nodes['local-model-status'].textContent, 'install.local_model.downloading|55');
+    runtime.listeners[0]({ type: 'webgpu-text-download-state', state: { status: 'downloading', modelId: 'other/model', progress: 90 } });
+    assert.equal(nodes['local-model-status'].textContent, 'install.local_model.downloading|55', 'another model\'s progress is not ours');
+
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.equal(runtime.sent.filter((message) => message.action === 'pause_webgpu_download').length, 1, 'the running download can be paused');
+    assert.equal(nodes['local-model'].dataset.state, 'paused');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.resume');
+
+    const before = runtime.sent.length;
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.deepEqual(runtime.sent.slice(before).map((message) => message.action), ['start_webgpu_download', 'get_webgpu_download_status'], 'resume continues the transfer without probing again');
+
+    runtime.listeners[0]({ type: 'webgpu-text-download-state', state: { status: 'ready', ready: true, modelId } });
+    assert.equal(nodes['local-model'].dataset.state, 'ready');
+    assert.equal(nodes['local-model-button'].disabled, true, 'a downloaded model leaves nothing to click');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.ready');
+    assert.equal(nodes['local-model-progress'].hidden, true);
+    controller.dispose();
+  }
+
+  {
+    const documentLike = fakeDocument();
+    const runtime = fakeRuntime({
+      get_webgpu_download_status: { status: 'not-downloaded', modelId },
+      test_provider: { ok: false, error: 'Hardware WebGPU is unavailable.' },
+    });
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    await documentLike.nodes['local-model-button'].fire('click');
+    await settle();
+    assert.equal(documentLike.nodes['local-model'].dataset.state, 'unsupported', 'no hardware WebGPU: say so instead of downloading files that cannot run');
+    assert.ok(!runtime.sent.some((message) => ['start_webgpu_download', 'update_provider'].includes(message.action)), 'nothing is downloaded or reconfigured without hardware WebGPU');
+    assert.equal(documentLike.nodes['local-model-button'].disabled, true);
+    controller.dispose();
+  }
+
+  {
+    const documentLike = fakeDocument();
+    const runtime = fakeRuntime({
+      get_webgpu_download_status: { status: 'not-downloaded', modelId },
+      test_provider: { ok: true },
+      get_providers: { providers: { webgpu: { model: modelId } }, active: 'webbrain_cloud' },
+      start_webgpu_download: { error: 'webbrain-one/webbrain-compass-tiny-v2.1 is still downloading. Pause it before switching models.', status: 500 },
+    });
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    await documentLike.nodes['local-model-button'].fire('click');
+    await settle();
+    assert.equal(documentLike.nodes['local-model'].dataset.state, 'error');
+    assert.match(documentLike.nodes['local-model-status'].textContent, /^install\.local_model\.error\|.*still downloading/, 'a refused start should show the background error');
+    assert.equal(documentLike.nodes['local-model-status'].classList.contains('is-error'), true);
+    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.retry');
+    assert.equal(documentLike.nodes['local-model-button'].disabled, false, 'errors can be retried');
+    controller.dispose();
+  }
+
+  {
+    // Reopening the guide after a finished download shows the done state at once.
+    const documentLike = fakeDocument();
+    const runtime = fakeRuntime({ get_webgpu_download_status: { status: 'ready', ready: true, modelId } });
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    assert.equal(documentLike.nodes['local-model'].dataset.state, 'ready');
+    assert.match(documentLike.nodes['local-model-status'].textContent, /^install\.local_model\.ready_detail\b/);
+    controller.dispose();
+  }
 });
 
 test('chrome /record reports mic denial as a warning, not recording failure', () => {
@@ -68563,6 +68826,8 @@ test('local vision defaults off and migration requires re-consent without deleti
     };
 
     const fresh = new ProviderManagerCh();
+    // A fresh profile is on Auto, which stays off until Ternary Bonsai 2 2B
+    // Vision is downloaded.
     assert.deepEqual(await fresh.getWebgpuVisionReadiness(), {
       enabled: false,
       consented: false,
@@ -68572,7 +68837,8 @@ test('local vision defaults off and migration requires re-consent without deleti
       total: 0,
       error: '',
       updatedAt: 0,
-      modelId: WEBGPU_VISION_MODEL_ID,
+      modelId: WEBGPU_VISION_BONSAI_MODEL_ID,
+      choice: 'auto',
     });
     assert.equal(await fresh.getLocalVisionFallbackProvider(), null);
     assert.deepEqual(sentMessages, [], 'a fresh readiness check must not create a worker or start a download');
@@ -68705,6 +68971,212 @@ test('local vision readiness probes cache before advertising a ready fallback', 
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
   }
+});
+
+test('in-browser vision choice defaults to Auto and keeps a consented WebBrain VL selection', () => {
+  assert.equal(WEBGPU_VISION_CHOICE_KEY, 'webgpuVisionChoice');
+  assert.equal(WEBGPU_VISION_BONSAI_MODEL_ID, WEBGPU_BONSAI2_VL_2B_MODEL_ID);
+  assert.equal(storedWebgpuVisionChoice({}), 'auto');
+  assert.equal(storedWebgpuVisionChoice(undefined), 'auto');
+  assert.equal(storedWebgpuVisionChoice({
+    [WEBGPU_VISION_ENABLED_KEY]: true,
+    [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION,
+  }), 'webbrain-vl', 'an explicit, consented WebBrain VL enable from an older build must stay that model');
+  assert.equal(storedWebgpuVisionChoice({
+    [WEBGPU_VISION_ENABLED_KEY]: true,
+    [WEBGPU_VISION_CONSENT_VERSION_KEY]: 1,
+  }), 'auto', 'consent for an older model version must not become an explicit choice');
+  for (const choice of ['auto', 'bonsai', 'webbrain-vl', 'off']) {
+    assert.equal(storedWebgpuVisionChoice({ [WEBGPU_VISION_CHOICE_KEY]: choice, [WEBGPU_VISION_ENABLED_KEY]: true, [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION }), choice);
+  }
+  assert.equal(storedWebgpuVisionChoice({ [WEBGPU_VISION_CHOICE_KEY]: 'gpt-4o' }), 'auto');
+  assert.equal(resolveWebgpuVisionChoice('auto', { bonsaiReady: false }), null, 'Auto stays off until Bonsai is downloaded');
+  assert.equal(resolveWebgpuVisionChoice('auto', { bonsaiReady: true }), 'bonsai');
+  assert.equal(resolveWebgpuVisionChoice('bonsai', { bonsaiReady: false }), 'bonsai');
+  assert.equal(resolveWebgpuVisionChoice('webbrain-vl', { bonsaiReady: true }), 'webbrain-vl');
+  assert.equal(resolveWebgpuVisionChoice('off', { bonsaiReady: true }), null);
+});
+
+test('in-browser vision routes screenshots to Ternary Bonsai only through the choice and behind explicit and raw routes', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousCaches = globalThis.caches;
+  const state = {};
+  const sentMessages = [];
+  let bonsaiMarker = false;
+  const bonsaiMarkerUrl = webgpuTextReadyMarkerUrl(WEBGPU_VISION_BONSAI_MODEL_ID);
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          if (message.type === 'webgpu-download-status') callback({ ok: true, status: 'ready', ready: true });
+          else if (message.type === 'webgpu-chat') callback({ ok: true, content: 'A login form with two fields.', toolCalls: [] });
+          else callback({ ok: true, disposed: true });
+        },
+      },
+      storage: {
+        local: {
+          get: async keys => {
+            if (!keys) return { ...state };
+            const requested = Array.isArray(keys) ? keys : [keys];
+            return Object.fromEntries(requested.filter(key => Object.hasOwn(state, key)).map(key => [key, state[key]]));
+          },
+          set: async patch => Object.assign(state, patch),
+          remove: async keys => {
+            for (const key of Array.isArray(keys) ? keys : [keys]) delete state[key];
+          },
+        },
+      },
+    };
+    globalThis.caches = {
+      match: async (request, options = {}) => {
+        const url = typeof request === 'string' ? request : request.url;
+        return options.cacheName === 'transformers-cache' && bonsaiMarker && url === bonsaiMarkerUrl ? { ok: true } : undefined;
+      },
+    };
+    const manager = new ProviderManagerCh();
+    manager.getVisionOverrideProvider = async () => null;
+    const textOnly = { name: 'text-only', supportsVision: false };
+
+    let route = await manager.resolveVisionRoute(textOnly);
+    assert.equal(route.provider, null, 'Auto must not route screenshots before Bonsai is downloaded');
+    assert.equal(route.route, 'none');
+    assert.equal(route.visionStatus.status, 'disabled');
+    assert.equal(route.visionStatus.choice, 'auto');
+    assert.deepEqual(sentMessages, [], 'checking Auto must not start the offscreen document');
+
+    bonsaiMarker = true;
+    route = await manager.resolveVisionRoute(textOnly);
+    assert.ok(route.provider instanceof WebGPUBonsaiVisionProvider, 'Auto must use Bonsai once its ready marker exists');
+    assert.equal(route.route, 'local_fallback');
+    assert.equal(route.visionStatus.status, 'ready');
+    assert.equal(route.visionStatus.modelId, WEBGPU_VISION_BONSAI_MODEL_ID);
+    assert.deepEqual(sentMessages, [], 'a ready Bonsai is found from Cache Storage alone');
+
+    const activeVision = { name: 'cloud', supportsVision: true };
+    route = await manager.resolveVisionRoute(activeVision);
+    assert.equal(route.route, 'active_raw', 'a vision-capable active model still wins over Auto');
+    const override = { name: 'endpoint', supportsVision: true, config: { model: 'remote' } };
+    manager.getVisionOverrideProvider = async () => override;
+    route = await manager.resolveVisionRoute(textOnly);
+    assert.equal(route.route, 'explicit_override', 'a saved endpoint stays an explicit override');
+    assert.equal(route.provider, override);
+    manager.getVisionOverrideProvider = async () => null;
+
+    const vision = route.provider === override ? await manager.getLocalVisionFallbackProvider() : route.provider;
+    assert.equal(vision.name, 'webgpu-vision-bonsai');
+    assert.equal(vision.supportsTools, false);
+    assert.equal(vision.supportsVision, true);
+    assert.equal(vision.config.providerName, 'webgpu-vision', 'the Settings test must use the local colour probe');
+    assert.equal(vision.config.category, 'local');
+    const messages = [{ role: 'user', content: [
+      { type: 'text', text: 'Describe this screenshot.' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } },
+    ] }];
+    const controller = new AbortController();
+    const described = await vision.chat(messages, { maxTokens: 800, tools: [{ type: 'function', function: { name: 'click' } }], signal: controller.signal });
+    assert.equal(described.content, 'A login form with two fields.');
+    const chat = sentMessages.find(message => message.type === 'webgpu-chat');
+    assert.equal(chat.model, WEBGPU_VISION_BONSAI_MODEL_ID);
+    assert.equal(chat.runtime, 'onnx-vl');
+    assert.deepEqual(chat.options.tools, [], 'the screenshot reader must never be offered tools');
+    assert.equal(chat.options.maxTokens, 800);
+    assert.ok(chat.requestKey, 'a deadline-bound vision call must carry a cancellation key');
+
+    state[WEBGPU_VISION_CHOICE_KEY] = 'off';
+    assert.equal(await manager.getLocalVisionFallbackProvider(), null, 'Off must not use a downloaded Bonsai');
+    assert.equal((await manager.resolveVisionRoute(textOnly)).route, 'none');
+
+    bonsaiMarker = false;
+    state[WEBGPU_VISION_CHOICE_KEY] = 'bonsai';
+    route = await manager.resolveVisionRoute(textOnly);
+    assert.equal(route.provider, null);
+    assert.equal(route.route, 'local_fallback_unavailable', 'an explicit Bonsai choice reports that it is not downloaded');
+    assert.equal(route.visionStatus.status, 'not-downloaded');
+    assert.equal(route.visionStatus.modelId, WEBGPU_VISION_BONSAI_MODEL_ID);
+  } finally {
+    if (previousCaches === undefined) delete globalThis.caches;
+    else globalThis.caches = previousCaches;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('choosing an in-browser vision model never downloads and only reuses consent already given', async () => {
+  const previousChrome = globalThis.chrome;
+  const state = {};
+  const sentMessages = [];
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: null,
+        sendMessage(message, callback) {
+          sentMessages.push(message);
+          callback({ ok: true, disposed: true });
+        },
+      },
+      storage: {
+        local: {
+          get: async keys => {
+            const requested = Array.isArray(keys) ? keys : [keys];
+            return Object.fromEntries(requested.filter(key => Object.hasOwn(state, key)).map(key => [key, state[key]]));
+          },
+          set: async patch => Object.assign(state, patch),
+          remove: async keys => {
+            for (const key of Array.isArray(keys) ? keys : [keys]) delete state[key];
+          },
+        },
+      },
+    };
+    const manager = new ProviderManagerCh();
+    await assert.rejects(manager.setWebgpuVisionChoice('gpt-4o'), /Unknown in-browser vision choice/);
+
+    let result = await manager.setWebgpuVisionChoice('webbrain-vl');
+    assert.equal(result.choice, 'webbrain-vl');
+    assert.equal(state[WEBGPU_VISION_ENABLED_KEY], undefined, 'choosing WebBrain VL without consent must not enable it');
+    assert.equal(result.readiness.status, 'disabled');
+
+    state[WEBGPU_VISION_CONSENT_VERSION_KEY] = WEBGPU_VISION_CONSENT_VERSION;
+    result = await manager.setWebgpuVisionChoice('webbrain-vl');
+    assert.equal(state[WEBGPU_VISION_ENABLED_KEY], true, 'consent already given lets the model come back without another click');
+
+    sentMessages.length = 0;
+    result = await manager.setWebgpuVisionChoice('bonsai');
+    assert.equal(state[WEBGPU_VISION_CHOICE_KEY], 'bonsai');
+    assert.equal(state[WEBGPU_VISION_ENABLED_KEY], undefined, 'leaving WebBrain VL must clear its enable flag');
+    assert.equal(state[WEBGPU_VISION_CONSENT_VERSION_KEY], WEBGPU_VISION_CONSENT_VERSION, 'consent itself is kept');
+    assert.deepEqual(sentMessages.map(message => message.type), ['webgpu-vision-dispose'],
+      'leaving WebBrain VL releases its runtime and starts nothing');
+
+    sentMessages.length = 0;
+    await manager.setWebgpuVisionChoice('auto');
+    await manager.setWebgpuVisionChoice('off');
+    assert.ok(sentMessages.every(message => /dispose/.test(message.type)),
+      'no choice may start a download');
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('the in-browser vision choice stays Chrome-local and only Settings or Apocalypse Mode can change it', () => {
+  const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  assert.match(background, /case 'set_webgpu_vision_choice':[\s\S]*?src\/ui\/settings\.html[\s\S]*?src\/ui\/apocalypse-mode\.html[\s\S]*?setWebgpuVisionChoice\(msg\.choice\)/);
+  for (const file of ['src/chrome/src/config-transfer.js', 'src/chrome/src/profile-sync.js', 'src/firefox/src/config-transfer.js', 'src/firefox/src/profile-sync.js']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, file), 'utf8'), /webgpuVisionChoice|WEBGPU_VISION_CHOICE_KEY/,
+      `${file}: the in-browser vision choice must not be exported or synced to Firefox`);
+  }
+  const settingsHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
+  const choice = settingsHtml.slice(settingsHtml.indexOf('id="webgpu-vision-choice"'), settingsHtml.indexOf('</select>', settingsHtml.indexOf('id="webgpu-vision-choice"')));
+  assert.deepEqual([...choice.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), ['auto', 'bonsai', 'webbrain-vl', 'off']);
+  const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
+  const apocalypseChoice = apocalypseHtml.slice(apocalypseHtml.indexOf('id="vision-model-choice"'), apocalypseHtml.indexOf('</select>', apocalypseHtml.indexOf('id="vision-model-choice"')));
+  assert.deepEqual([...apocalypseChoice.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), ['auto', 'bonsai', 'webbrain-vl', 'off']);
+  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings.html'), 'utf8'), /webgpu-vision-choice/,
+    'Firefox has no in-browser vision runtime to choose');
 });
 
 test('Apocalypse text download fixes the Compass preset and avoids duplicate starts', async () => {
@@ -68922,7 +69394,7 @@ test('Apocalypse controls retain Settings transfers while the preset stays on Co
           return { ok: true, ...transfer };
         },
       });
-      vm.runInContext(`${helpers}\nupdateOverallModelsReadiness = () => {};`, context);
+      vm.runInContext(`${helpers}\nupdateOverallModelsReadiness = () => {};\nvar renderVisionDownload = () => {};`, context);
       await context.refreshWebgpuDownloadStatus();
       assert.equal(configuredModel, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
       assert.equal(context.webgpuDownloadActionState().modelId, modelId);
@@ -69287,10 +69759,12 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(settingsScript, /enable_webgpu_vision/);
   assert.match(settingsScript, /WEBGPU_VISION_CONSENT_VERSION_KEY/);
   assert.match(settingsScript, /addEventListener\('focus'[\s\S]{0,180}loadVisionConfig/);
-  assert.match(settingsScript, /changes\[WEBGPU_VISION_ENABLED_KEY\][\s\S]{0,100}loadVisionConfig/);
+  assert.match(settingsScript, /changes\[WEBGPU_VISION_ENABLED_KEY\][\s\S]{0,100}loadVisionConfig[\s\S]{0,120}changes\[WEBGPU_VISION_CHOICE_KEY\][\s\S]{0,200}scheduleLocalVisionRefresh/);
   assert.match(settingsScript, /WEBGPU_VISION_AUTO_SELECTED_KEY/,
     'local-vision settings migration must clear automatic-selection provenance');
-  assert.match(settingsScript, /dispose_webgpu_vision/);
+  assert.match(settingsScript, /set_webgpu_vision_choice/,
+    'the Settings choice must go through the manager, which releases WebBrain VL 2 450M when it is left');
+  assert.match(managerSource, /async setWebgpuVisionChoice[\s\S]*?disposeWebgpuVisionRuntime/);
   assert.match(apocalypseHtml, /id="webgpu-provider-card"[^>]*hidden/);
   assert.match(apocalypseHtml, /data-webgpu-download-action="start"/);
   assert.match(apocalypseHtml, /data-webgpu-download-action="pause"/);
@@ -69444,9 +69918,11 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?config: preserveConfig \? \{\} : \{ model, dtype \}/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
-  assert.match(englishLocale, /Selecting “Use local fallback” checks WebGPU, records your consent,[\s\S]*Tasks report its status and never wait for it; keep Chrome open/);
-  assert.match(apocalypseCopy, /Local vision is optional and never starts automatically/);
-  assert.match(apocalypseDocs, /Apocalypse Mode never enables or downloads it/);
+  assert.match(englishLocale, /Auto uses Ternary Bonsai 2 2B Vision once it is downloaded[\s\S]*WebBrain VL 2 450M[\s\S]*about 810 MB from Hugging Face[\s\S]*Nothing downloads until you click Download; tasks never wait for it, so keep Chrome open/);
+  assert.match(englishLocale, /checks WebGPU, records your consent and fetches about 810 MB/,
+    'the WebBrain VL 2 450M download button must say it records consent');
+  assert.match(apocalypseCopy, /Local vision is optional and never downloads on its own/);
+  assert.match(apocalypseDocs, /Apocalypse Mode\s+never enables or downloads a vision model/);
   assert.doesNotMatch(apocalypseDocs, /enabling Apocalypse Mode also enables[\s\S]{0,80}vision/i);
   assert.match(englishLocale, /Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat[\s\S]*It does not replace your selected provider/);
 

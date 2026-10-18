@@ -1148,8 +1148,10 @@ html[dir="rtl"] .language-picker-menu {
   #header { padding-inline: 8px; }
 }
 
+/* First child of #input-area, so it shares the composer's gutters; the gap
+   below matches the queued-message and attachment rows. */
 .composer-toast {
-  margin: 0 12px 6px 12px;
+  margin: 0 0 8px;
   padding: 7px 11px;
   background: var(--bg-input);
   border: 1px solid var(--border);

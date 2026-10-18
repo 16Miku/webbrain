@@ -1708,8 +1708,10 @@ export class Agent extends LoopDetector {
     if (phase === 'loading') return 'Local vision is loading into the GPU.';
     if (phase === 'paused') return 'Local vision download is paused.';
     if (phase === 'error') return `Local vision is unavailable: ${status.error || 'download failed'}.`;
-    if (phase === 'disabled') return 'Local vision is disabled. Enable it explicitly in Settings → Multimodal → Vision.';
-    return 'Local vision is not downloaded. Enable it explicitly in Settings → Multimodal → Vision.';
+    // Auto stays off until Ternary Bonsai 2 2B Vision is downloaded, and no
+    // choice downloads on its own, so both point at the one place to fix it.
+    if (phase === 'disabled') return 'Local vision is off. Choose an in-browser vision model in Settings → Assistive Models → Vision.';
+    return 'Local vision is not downloaded. Download it in Settings → Assistive Models → Vision.';
   }
 
   _recordVisionStatusTrace(tabId, context, route) {
