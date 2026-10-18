@@ -1,4 +1,4 @@
-import { DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, resolveDecisionConfig } from '../agent/decision-config.js';
+import { DECISION_MODE_KEY, DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, resolveDecisionConfig, resolveDecisionMode } from '../agent/decision-config.js';
 import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
 import { D1_MODEL_ID } from '../providers/d1-config.js';
 import { initD1Settings } from './d1-settings.js';
@@ -230,8 +230,51 @@ let decisionVisionSupported = false;
 const decisionKeyDrafts = new Map();
 let previousDecisionProvider = 'openrouter';
 
+// Auto, On or Off. Firefox has no in-browser model, so Auto uses only
+// Compass's managed model while Compass is the chat provider. Only On shows
+// the provider fields and the per-decision switches.
+const decisionModeInputs = [...document.querySelectorAll('input[name="decision-mode"]')];
+function selectedDecisionMode() {
+  return decisionModeInputs.find(input => input.checked)?.value || 'auto';
+}
+function setDecisionMode(mode) {
+  for (const input of decisionModeInputs) input.checked = input.value === mode;
+}
+function activeProviderIsCompass() {
+  const config = providersData?.[activeProviderId];
+  return !!activeProviderId && (providerDefinitionId(activeProviderId) === 'webbrain_cloud' || config?.providerName === 'webbrain-cloud');
+}
+function syncDecisionStatus() {
+  const mode = selectedDecisionMode();
+  for (const description of document.querySelectorAll('[data-decision-mode-desc]')) description.hidden = description.dataset.decisionModeDesc !== mode;
+  const configured = document.getElementById('decision-configured');
+  if (configured) configured.hidden = mode !== 'on';
+  if (btnSaveSystemOne) btnSaveSystemOne.hidden = mode !== 'on';
+  // Test runs here, so only On has something it can check.
+  if (btnTestSystemOne) btnTestSystemOne.hidden = mode !== 'on';
+  const status = document.getElementById('decision-auto-status');
+  if (!status) return;
+  status.hidden = mode !== 'auto';
+  if (mode !== 'auto') return;
+  const compass = activeProviderIsCompass();
+  const key = compass ? 'st.decision.status.compass' : 'st.decision.status.none_firefox';
+  status.dataset.i18n = key;
+  status.dataset.state = compass ? 'active' : 'inactive';
+  status.textContent = t(key);
+}
+for (const input of decisionModeInputs) {
+  input.addEventListener('change', async () => {
+    if (!input.checked) return;
+    const mode = input.value;
+    syncDecisionStatus();
+    // The mode applies at once; On's provider fields still use Save.
+    await browser.storage.local.set({ [DECISION_MODE_KEY]: mode, systemOneEnabled: mode === 'on' });
+    if (mode !== 'on') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    showSystemOneResult('ok', t('st.providers.saved'));
+  });
+}
+
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
-const systemOneEnabledToggle = document.getElementById('toggle-system-one');
 const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
 const systemOneCompletionToggle = document.getElementById('toggle-system-one-completion');
 const systemOneWatchThresholdRange = document.getElementById('range-system-one-watch-threshold');
@@ -703,27 +746,31 @@ async function init() {
   if (allowLocalNetworkToggle) allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true;
   if (scheduledTasksToggle) scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false;
   if (scheduledConfirmToggle) scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false;
-  const decisionConfig = resolveDecisionConfig(stored);
+  // The On fields show the configuration On uses: a profile in On as it is
+  // stored, any other with On's defaults.
+  const storedDecisionMode = resolveDecisionMode(stored);
+  setDecisionMode(storedDecisionMode);
+  const decisionConfig = resolveDecisionConfig(storedDecisionMode === 'on' ? stored : { ...stored, [DECISION_MODE_KEY]: 'on' });
   decisionProviderInput.value = previousDecisionProvider = decisionConfig.provider;
   decisionModelInput.value = decisionConfig.model;
   decisionEndpointInput.value = stored.decisionBaseUrl || 'http://127.0.0.1:8009';
   decisionVisionInput.value = stored.decisionVisionMode || 'auto';
   decisionVisionSupported = stored.decisionVisionSupported === true;
-  decisionDoneToggle.checked = decisionConfig.doneEnabled;
   decisionThresholdInput.value = String(decisionConfig.threshold * 100);
   await refreshD1Settings();
   decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
   decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
   decisionKeyDrafts.set('local', stored.decisionLocalApiKey || '');
   document.getElementById('decision-endpoint-field').hidden = decisionConfig.provider !== 'local';
-  if (systemOneEnabledToggle) systemOneEnabledToggle.checked = stored.systemOneEnabled === true;
-  if (systemOneWatchToggle) systemOneWatchToggle.checked = stored.systemOneWatchEnabled === true;
-  if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = stored.systemOneFastClassifications === true;
-  if (systemOneBrowserToggle) systemOneBrowserToggle.checked = stored.systemOneFastBrowser === true;
-  if (systemOneCompletionToggle) systemOneCompletionToggle.checked = stored.systemOneCompletionEnabled === true;
+  decisionDoneToggle.checked = decisionConfig.features.done;
+  if (systemOneWatchToggle) systemOneWatchToggle.checked = decisionConfig.features.watch;
+  if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = decisionConfig.features.classifications;
+  if (systemOneBrowserToggle) systemOneBrowserToggle.checked = decisionConfig.features.browser;
+  if (systemOneCompletionToggle) systemOneCompletionToggle.checked = decisionConfig.features.completion;
   if (systemOneApiKeyInput) systemOneApiKeyInput.value = decisionConfig.apiKey;
   if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
   if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
+  syncDecisionStatus();
   updateSystemOneThresholdLabels();
 
   // Load vision model config
@@ -1540,22 +1587,24 @@ function showSystemOneResult(className, text) {
 if (btnSaveSystemOne) {
   btnSaveSystemOne.addEventListener('click', async () => {
     const key = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
-    const enabled = systemOneEnabledToggle?.checked === true;
-    if (enabled && !['local', 'webgpu_d1'].includes(decisionProviderInput.value) && !isValidTypesafeApiKey(key)) {
+    const mode = selectedDecisionMode();
+    const on = mode === 'on';
+    if (on && !['local', 'webgpu_d1'].includes(decisionProviderInput.value) && !isValidTypesafeApiKey(key)) {
       showSystemOneResult('fail', t('st.system_one.need_key'));
       return;
     }
-    if (decisionProviderInput.value === 'webgpu_d1' && enabled) {
+    if (decisionProviderInput.value === 'webgpu_d1' && on) {
       const consentResult = await sendToBackground('d1_control', { command: 'consent', consent: document.getElementById('d1-consent').checked, consentVersion: 1 });
       if (!consentResult.success) { showSystemOneResult('fail', consentResult.error); return; }
     }
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = key;
     let selection;
-    try { selection = decisionSettingsDraft(); resolveDecisionConfig(selection); if (!(selection.systemOneDoneThreshold >= .5 && selection.systemOneDoneThreshold <= .99)) throw new Error('Completion threshold must be 50–99%.'); } catch (error) { showSystemOneResult('fail', error.message); return; }
+    try { selection = decisionSettingsDraft(); resolveDecisionConfig({ ...selection, [DECISION_MODE_KEY]: 'on' }); if (!(selection.systemOneDoneThreshold >= .5 && selection.systemOneDoneThreshold <= .99)) throw new Error('Completion threshold must be 50–99%.'); } catch (error) { showSystemOneResult('fail', error.message); return; }
     await browser.storage.local.set({
       ...selection,
       ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: key } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: key }),
-      systemOneEnabled: enabled && (['local', 'webgpu_d1'].includes(decisionProviderInput.value) || isValidTypesafeApiKey(key)),
+      // Kept for builds from before modes, which read only this switch.
+      systemOneEnabled: on && (['local', 'webgpu_d1'].includes(decisionProviderInput.value) || isValidTypesafeApiKey(key)),
       systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
       systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
       systemOneFastClassifications: systemOneClassificationsToggle?.checked === true,
@@ -1563,25 +1612,25 @@ if (btnSaveSystemOne) {
       systemOneWatchThreshold: normalizeSystemOneThreshold(Number(systemOneWatchThresholdRange?.value) / 100),
       systemOneCompletionThreshold: normalizeSystemOneThreshold(Number(systemOneCompletionThresholdRange?.value) / 100),
     });
-    if (!enabled || decisionProviderInput.value !== 'webgpu_d1') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    if (!on || decisionProviderInput.value !== 'webgpu_d1') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     showSystemOneResult('ok', t('st.providers.saved'));
   });
 }
 
+// Reset returns to Auto with On's defaults and deletes the saved keys.
 if (btnClearSystemOne) {
   btnClearSystemOne.addEventListener('click', async () => {
-    if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = false;
-    if (systemOneBrowserToggle) systemOneBrowserToggle.checked = false;
+    for (const toggle of [decisionDoneToggle, systemOneWatchToggle, systemOneCompletionToggle, systemOneClassificationsToggle, systemOneBrowserToggle]) {
+      if (toggle) toggle.checked = true;
+    }
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = '';
     decisionKeyDrafts.clear();
     decisionProviderInput.value = previousDecisionProvider = 'openrouter';
     decisionModelInput.value = DEFAULT_DECISION_MODEL;
-    decisionDoneToggle.checked = true;
+    decisionThresholdInput.value = '90';
     decisionVisionSupported = false;
     document.getElementById('decision-endpoint-field').hidden = true;
-    if (systemOneEnabledToggle) systemOneEnabledToggle.checked = false;
-    if (systemOneWatchToggle) systemOneWatchToggle.checked = false;
-    if (systemOneCompletionToggle) systemOneCompletionToggle.checked = false;
+    setDecisionMode('auto');
     await browser.storage.local.remove([
       ...DECISION_SETTINGS_KEYS,
       'typesafeApiKey',
@@ -1596,13 +1645,16 @@ if (btnClearSystemOne) {
     updateSystemOneThresholdLabels();
     await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     await refreshD1Settings();
-    showSystemOneResult('ok', t('st.captcha.cleared'));
+    // D1's provider switch unchecks Verify completion; Reset restores On's default.
+    decisionDoneToggle.checked = true;
+    syncDecisionStatus();
+    showSystemOneResult('ok', t('st.decision.reset_done'));
   });
 }
 
 function decisionSettingsDraft() {
   const card = decisionModels.find(m => m.id === decisionModelInput.value);
-  return { decisionProvider: decisionProviderInput.value, decisionModel: decisionModelInput.value.trim(),
+  return { [DECISION_MODE_KEY]: selectedDecisionMode(), decisionProvider: decisionProviderInput.value, decisionModel: decisionModelInput.value.trim(),
     decisionBaseUrl: decisionEndpointInput.value.trim(), decisionVisionMode: decisionVisionInput.value,
     decisionVisionSupported, ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
     systemOneDoneEnabled: decisionDoneToggle.checked, systemOneDoneThreshold: Number(decisionThresholdInput.value) / 100,
@@ -1636,7 +1688,7 @@ document.getElementById('btn-decision-models')?.addEventListener('click', async 
 
 btnTestSystemOne?.addEventListener('click', async () => {
   const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
-  if (!apiKey && !['local', 'webgpu_d1'].includes(decisionProviderInput.value)) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  if (selectedDecisionMode() === 'on' && !apiKey && !['local', 'webgpu_d1'].includes(decisionProviderInput.value)) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
   btnTestSystemOne.disabled = true;
   showSystemOneResult('', t('st.providers.testing'));
   try {
@@ -2779,6 +2831,7 @@ async function refreshWebbrainPaymentNotice() {
 
 function renderProviders() {
   providersContainer.innerHTML = '';
+  syncDecisionStatus();
 
   // Field definitions reference i18n keys (labelKey) so switching languages
   // re-renders with translated labels. Placeholders stay as raw values —
@@ -3877,6 +3930,7 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
 function refreshProviderCardStatus(id) {
   // Saving a provider marks it configured without rebuilding the list. Keep
   // the Active pill in sync even if the card disappeared during the request.
+  syncDecisionStatus();
   refreshActiveProviderFilterCount();
   const card = document.querySelector(`.provider-card[data-provider-id="${id}"]`);
   if (!card) return;

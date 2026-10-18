@@ -357,6 +357,89 @@
       color: var(--accent);
       flex-shrink: 0;
     }
+    /* Decision models: a plain explanation, then one Auto / On / Off choice.
+       Provider fields and per-decision switches appear only for On. */
+    .decision-intro {
+      margin: 0 0 14px;
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.55;
+    }
+    .decision-mode {
+      margin: 0 0 8px;
+      padding: 0;
+      border: 0;
+      min-width: 0;
+    }
+    .decision-mode-legend {
+      margin-bottom: 6px;
+      padding: 0;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .decision-mode-options {
+      display: inline-grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(72px, 1fr);
+      gap: 2px;
+      padding: 3px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--bg);
+    }
+    .decision-mode-option {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text2);
+      cursor: pointer;
+      user-select: none;
+    }
+    .decision-mode-option input {
+      position: absolute;
+      inset: 0;
+      margin: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .decision-mode-option:has(input:checked) {
+      background: var(--accent);
+      color: #fff;
+    }
+    .decision-mode-option:has(input:focus-visible) {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .decision-mode-desc {
+      margin: 0 0 12px;
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.5;
+    }
+    .decision-status {
+      margin: 0 0 14px;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text);
+    }
+    .decision-status[data-state="active"] {
+      border-color: rgba(76, 175, 80, 0.45);
+      background: rgba(76, 175, 80, 0.08);
+    }
+    .decision-configured { margin-top: 4px; }
+    .decision-note { margin: 0 0 12px; }
+    .decision-features { margin: 18px 0 14px; padding: 12px 0 14px; }
+    .decision-features-desc { margin: 0 0 10px; }
     .mm-field-label {
       display: flex;
       align-items: center;
@@ -2148,103 +2231,102 @@
       <span data-i18n="st.system_one.title"></span>
     </h3>
     <div class="provider-card" id="system-one-card" aria-labelledby="system-one-heading">
-            <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.system_one.desc_html"></div>
+      <p class="decision-intro" data-i18n="st.decision.intro"></p>
 
-            <div class="setting-row">
-              <div class="setting-info">
-                <div class="setting-label" data-i18n="st.system_one.enabled.label"></div>
-              </div>
-              <label class="toggle">
-                <input type="checkbox" id="toggle-system-one">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
+      <fieldset class="decision-mode" id="decision-mode" aria-describedby="decision-mode-desc">
+        <legend class="decision-mode-legend" data-i18n="st.decision.mode.label"></legend>
+        <div class="decision-mode-options">
+          <label class="decision-mode-option"><input type="radio" name="decision-mode" value="auto" checked><span data-i18n="st.decision.mode.auto"></span></label>
+          <label class="decision-mode-option"><input type="radio" name="decision-mode" value="on"><span data-i18n="st.decision.mode.on"></span></label>
+          <label class="decision-mode-option"><input type="radio" name="decision-mode" value="off"><span data-i18n="st.decision.mode.off"></span></label>
+        </div>
+      </fieldset>
+      <p class="decision-mode-desc" id="decision-mode-desc">
+        <span data-decision-mode-desc="auto" data-i18n="st.decision.mode.auto_desc_firefox"></span>
+        <span data-decision-mode-desc="on" data-i18n="st.decision.mode.on_desc" hidden></span>
+        <span data-decision-mode-desc="off" data-i18n="st.decision.mode.off_desc" hidden></span>
+      </p>
+      <div class="decision-status" id="decision-auto-status" role="status" aria-live="polite" hidden></div>
 
-            <div class="field"><label for="decision-provider" data-i18n="st.decision.provider"></label>
-              <select id="decision-provider"><option value="openrouter">OpenRouter</option><option value="typesafe">TypeSafe</option><option value="local" data-i18n="st.decision.local"></option><option value="webgpu_d1" data-i18n="st.d1.provider"></option></select>
-            </div>
-            <div id="d1-controls" hidden>
-              <p class="settings-description" data-i18n="st.d1.warning"></p>
-              <label><input type="checkbox" id="d1-consent"> <span data-i18n="st.d1.consent"></span></label>
-              <div class="btn-row" style="margin-top:10px;flex-wrap:wrap">
-                <button class="btn-secondary" data-d1-command="download" data-i18n="st.d1.download"></button>
-                <button class="btn-secondary" data-d1-command="load" data-i18n="st.d1.load"></button>
-                <button class="btn-secondary" data-d1-command="stop" data-i18n="st.d1.stop"></button>
-                <button class="btn-secondary" data-d1-command="reset" data-i18n="st.d1.unload"></button>
-                <button class="btn-secondary" data-d1-command="clear" data-i18n="st.d1.remove"></button>
-              </div>
-              <div class="test-result show" id="d1-status" role="status"></div>
-            </div>
-            <div class="field"><label for="decision-model" data-i18n="st.decision.model"></label>
-              <input id="decision-model" list="decision-models" autocomplete="off"><datalist id="decision-models"></datalist>
-              <button class="btn-secondary" id="btn-decision-models" data-i18n="st.decision.refresh"></button>
-            </div>
-            <div class="field" id="decision-endpoint-field"><label for="decision-endpoint" data-i18n="st.decision.endpoint"></label>
-              <input id="decision-endpoint" type="url" placeholder="http://127.0.0.1:8009">
-            </div>
-            <div class="field"><label for="decision-vision" data-i18n="st.decision.vision"></label>
-              <select id="decision-vision"><option value="auto" data-i18n="st.decision.auto"></option><option value="on" data-i18n="st.decision.on"></option><option value="off" data-i18n="st.decision.off"></option></select>
-            </div>
+      <div class="decision-configured" id="decision-configured" hidden>
+        <div class="field"><label for="decision-provider" data-i18n="st.decision.provider"></label>
+          <select id="decision-provider"><option value="openrouter">OpenRouter</option><option value="typesafe">TypeSafe</option><option value="local" data-i18n="st.decision.local"></option><option value="webgpu_d1" data-i18n="st.d1.provider"></option></select>
+        </div>
+        <div id="d1-controls" hidden>
+          <p class="setting-desc decision-note" data-i18n="st.d1.warning"></p>
+          <label><input type="checkbox" id="d1-consent"> <span data-i18n="st.d1.consent"></span></label>
+          <div class="btn-row" style="margin-top:10px;flex-wrap:wrap">
+            <button class="btn-secondary" data-d1-command="download" data-i18n="st.d1.download"></button>
+            <button class="btn-secondary" data-d1-command="load" data-i18n="st.d1.load"></button>
+            <button class="btn-secondary" data-d1-command="stop" data-i18n="st.d1.stop"></button>
+            <button class="btn-secondary" data-d1-command="reset" data-i18n="st.d1.unload"></button>
+            <button class="btn-secondary" data-d1-command="clear" data-i18n="st.d1.remove"></button>
+          </div>
+          <div class="test-result show" id="d1-status" role="status"></div>
+        </div>
+        <div class="field"><label for="decision-model" data-i18n="st.decision.model"></label>
+          <input id="decision-model" list="decision-models" autocomplete="off"><datalist id="decision-models"></datalist>
+          <button class="btn-secondary" id="btn-decision-models" data-i18n="st.decision.refresh"></button>
+        </div>
+        <div class="field" id="decision-endpoint-field"><label for="decision-endpoint" data-i18n="st.decision.endpoint"></label>
+          <input id="decision-endpoint" type="url" placeholder="http://127.0.0.1:8009">
+        </div>
+        <div class="field">
+          <label for="system-one-api-key" data-i18n="st.system_one.api_key.label"></label>
+          <input type="password" id="system-one-api-key" placeholder="API key" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field"><label for="decision-vision" data-i18n="st.decision.vision"></label>
+          <select id="decision-vision"><option value="auto" data-i18n="st.decision.auto"></option><option value="on" data-i18n="st.decision.on"></option><option value="off" data-i18n="st.decision.off"></option></select>
+        </div>
+        <p class="setting-desc decision-note" data-i18n="st.decision.compass"></p>
+
+        <details class="advanced-settings decision-features" id="decision-features">
+          <summary data-i18n="st.decision.features"></summary>
+          <div class="advanced-settings-body">
+            <p class="setting-desc decision-features-desc" data-i18n="st.decision.features_desc"></p>
             <div class="setting-row"><div class="setting-info"><div class="setting-label" data-i18n="st.decision.done"></div><div class="setting-desc" data-i18n="st.decision.done_desc"></div></div>
               <label class="toggle"><input type="checkbox" id="toggle-decision-done" checked><span class="toggle-slider"></span></label>
             </div>
             <div class="field"><label for="decision-done-threshold" data-i18n="st.decision.threshold"></label>
               <input id="decision-done-threshold" type="number" min="50" max="99" step="1" value="90">
             </div>
-            <p class="settings-description" data-i18n="st.decision.compass"></p>
-            <div class="field">
-              <label for="system-one-api-key" data-i18n="st.system_one.api_key.label"></label>
-              <input type="password" id="system-one-api-key" placeholder="API key" autocomplete="off" spellcheck="false">
-            </div>
-
             <div class="setting-row">
-              <div class="setting-info">
-                <div class="setting-label" data-i18n="st.system_one.watch.label"></div>
-              </div>
-              <label class="toggle">
-                <input type="checkbox" id="toggle-system-one-watch">
-                <span class="toggle-slider"></span>
-              </label>
+              <div class="setting-info"><div class="setting-label" data-i18n="st.system_one.watch.label"></div><div class="setting-desc" data-i18n="st.decision.watch_desc"></div></div>
+              <label class="toggle"><input type="checkbox" id="toggle-system-one-watch" checked><span class="toggle-slider"></span></label>
             </div>
-            <div class="setting-row">
-              <div class="setting-info">
-                <div class="setting-label" data-i18n="st.system_one.completion.label"></div>
-              </div>
-              <label class="toggle">
-                <input type="checkbox" id="toggle-system-one-completion">
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-info"><div class="setting-label" data-i18n="st.system_one.fast_classifications"></div></div>
-              <label class="toggle"><input type="checkbox" id="toggle-system-one-classifications"><span class="toggle-slider"></span></label>
-            </div>
-            <div class="setting-row">
-              <div class="setting-info"><div class="setting-label" data-i18n="st.system_one.fast_browser"></div></div>
-              <label class="toggle"><input type="checkbox" id="toggle-system-one-browser"><span class="toggle-slider"></span></label>
-            </div>
-            <details class="advanced-settings">
-              <summary data-i18n="st.display.advanced"></summary>
             <div class="field">
               <label for="range-system-one-watch-threshold"><span data-i18n="st.system_one.watch_threshold"></span> <span id="system-one-watch-threshold-value">70%</span></label>
               <input type="range" id="range-system-one-watch-threshold" min="50" max="95" step="5" value="70">
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><div class="setting-label" data-i18n="st.system_one.completion.label"></div><div class="setting-desc" data-i18n="st.decision.completion_desc"></div></div>
+              <label class="toggle"><input type="checkbox" id="toggle-system-one-completion" checked><span class="toggle-slider"></span></label>
             </div>
             <div class="field">
               <label for="range-system-one-completion-threshold"><span data-i18n="st.system_one.completion_threshold"></span> <span id="system-one-completion-threshold-value">70%</span></label>
               <input type="range" id="range-system-one-completion-threshold" min="50" max="95" step="5" value="70">
             </div>
-
-            </details>
-            <div class="btn-row">
-              <button class="btn-primary" id="btn-save-system-one" data-i18n="st.providers.save"></button>
-              <button class="btn-secondary" id="btn-test-system-one" data-i18n="st.providers.test"></button>
-              <button class="btn-secondary" id="btn-clear-system-one" data-i18n="st.system_one.clear"></button>
+            <div class="setting-row">
+              <div class="setting-info"><div class="setting-label" data-i18n="st.system_one.fast_classifications"></div><div class="setting-desc" data-i18n="st.decision.classifications_desc"></div></div>
+              <label class="toggle"><input type="checkbox" id="toggle-system-one-classifications" checked><span class="toggle-slider"></span></label>
             </div>
-            <div class="test-result" id="test-system-one"></div>
-
-            <div class="info-box" style="margin-top:16px;" data-i18n-html="st.system_one.security_html"></div>
+            <div class="setting-row">
+              <div class="setting-info"><div class="setting-label" data-i18n="st.system_one.fast_browser"></div><div class="setting-desc" data-i18n="st.decision.browser_desc"></div></div>
+              <label class="toggle"><input type="checkbox" id="toggle-system-one-browser" checked><span class="toggle-slider"></span></label>
+            </div>
           </div>
+        </details>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn-primary" id="btn-save-system-one" data-i18n="st.providers.save" hidden></button>
+        <button class="btn-secondary" id="btn-test-system-one" data-i18n="st.providers.test"></button>
+        <button class="btn-secondary" id="btn-clear-system-one" data-i18n="st.decision.reset"></button>
+      </div>
+      <div class="test-result" id="test-system-one"></div>
+
+      <div class="info-box" style="margin-top:16px;" data-i18n-html="st.system_one.security_html"></div>
+    </div>
 
     <h3 id="safesocial-heading" class="mm-section-heading" data-i18n="st.safesocial.heading"></h3>
     <div class="provider-card" id="safesocial-card" aria-labelledby="safesocial-heading">

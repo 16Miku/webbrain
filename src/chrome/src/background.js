@@ -1,11 +1,12 @@
 import { getChatHistoryRecord } from './ui/chat-history-store.js';
 import { resolveDecisionConfig, listDecisionModels } from './agent/decision-config.js';
+import { resolveCurrentDecisionConfig } from './agent/decision-availability.js';
 import { d1Request } from './providers/d1.js';
 import { evaluateD1LocalFixture } from './providers/d1-diagnostic.js';
 import { D1_CONSENT_KEY, D1_CONSENT_VERSION } from './providers/d1-config.js';
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && (changes.systemOneEnabled?.newValue === false || (changes.decisionProvider && changes.decisionProvider.newValue !== 'webgpu_d1') || (changes[D1_CONSENT_KEY] && changes[D1_CONSENT_KEY].newValue !== D1_CONSENT_VERSION) || changes.strictSecretMode?.newValue === true)) void d1Request('reset').catch(() => {});
+  if (area === 'local' && (changes.systemOneEnabled?.newValue === false || (changes.decisionMode && changes.decisionMode.newValue !== 'on') || (changes.decisionProvider && changes.decisionProvider.newValue !== 'webgpu_d1') || (changes[D1_CONSENT_KEY] && changes[D1_CONSENT_KEY].newValue !== D1_CONSENT_VERSION) || changes.strictSecretMode?.newValue === true)) void d1Request('reset').catch(() => {});
 });
 import { probeDecisionVision } from './agent/decision-vision-probe.js';
 import { installSafeSocialBackground } from './safesocial/background.js';
@@ -4893,7 +4894,8 @@ async function handleMessage(msg, sender) {
       await strictSecretModeReady;
       try {
         if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
-        const models = await listDecisionModels(resolveDecisionConfig(msg.settings || {}));
+        // Discovery lists the configured provider's models whatever the mode.
+        const models = await listDecisionModels(resolveDecisionConfig({ ...(msg.settings || {}), decisionMode: 'on' }));
         return { success: true, models };
       } catch (error) { return { success: false, error: error.message }; }
     }
@@ -4905,7 +4907,11 @@ async function handleMessage(msg, sender) {
           const result = await evaluateD1LocalFixture({ fixture: msg.localFixture, sender, api: chrome, strictSecretMode: agent.strictSecretMode, agent, client: createSystemOneJudge({ maxRetries: 0 }) });
           return { success: true, result };
         }
-        let config = msg.settings ? resolveDecisionConfig(msg.settings) : undefined;
+        // On tests the configured provider, enabled or not; Auto tests what it
+        // would use now, and there is nothing to test when it uses nothing.
+        const testsConfigured = !msg.settings || ['on', undefined].includes(msg.settings.decisionMode);
+        let config = msg.settings ? (testsConfigured ? resolveDecisionConfig({ ...msg.settings, decisionMode: 'on' }) : await resolveCurrentDecisionConfig(msg.settings)) : undefined;
+        if (config && !testsConfigured && !config.enabled) throw new Error('No decision model is in use.');
         if (config?.provider === 'openrouter' && (!msg.settings.decisionVisionMode || msg.settings.decisionVisionMode === 'auto')) {
           try { const card = (await listDecisionModels(config)).find(m => m.id === config.model); if (card) config = { ...config, supportsVision: card.supportsVision }; } catch {}
         }

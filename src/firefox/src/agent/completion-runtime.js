@@ -1,5 +1,6 @@
 import { semanticCommitDocumentMatches } from './semantic-commit-navigation.js';
-import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
+import { DECISION_SETTINGS_KEYS, decisionFeatureEnabled } from './decision-config.js';
+import { resolveCurrentDecisionConfig } from './decision-availability.js';
 import { createSystemOneJudge } from './systemone-judge.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText as boundedText } from './systemone-evidence.js';
 import { COMPLETION_INSTRUCTIONS, LATER_OUTCOME_FIELD, SUMMARY_KIND_FIELD, completionQuestions, decisionCompletionVerdict, llmCompletionVerdict, verifyCompletion, withCompletionTimeout, completionStopError } from './completion-verifier.js';
@@ -330,7 +331,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   }
   const stored = await chrome.storage.local.get(DECISION_SETTINGS_KEYS);
   const compass = provider.config?.providerName === 'webbrain-cloud' ? provider.config : null;
-  const config = resolveDecisionConfig(stored, compass);
+  const config = await resolveCurrentDecisionConfig(stored, compass);
   const context = agent.systemOneContext(tabId);
   const signal = agent._runAbortSignal(tabId);
   const guard = agent._planExecutionGuards.get(tabId);
@@ -342,7 +343,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
     && (!calculationEvidence || captureCalculationEvidence(agent, tabId, calculationEvidence))
     && scope === JSON.stringify([agent.completionInvariants.get(tabId)?.runToken, agent.completionInvariants.get(tabId)?.lastAction?.sequence, agent._progressTaskKeyHash(tabId), config.provider, config.model, config.url, provider.model, provider.supportsVision, JSON.stringify(config)]);
   const currentIdentity = async evidence => !!evidence.identity && currentRun()
-    && JSON.stringify(resolveDecisionConfig(await chrome.storage.local.get(DECISION_SETTINGS_KEYS), compass)) === JSON.stringify(config)
+    && JSON.stringify(await resolveCurrentDecisionConfig(await chrome.storage.local.get(DECISION_SETTINGS_KEYS), compass)) === JSON.stringify(config)
     && evidence.identity === await agent._completionDocumentStamp(tabId, true) && currentRun();
   const current = async evidence => {
     if (!await currentIdentity(evidence)) return false;
@@ -556,7 +557,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   // new judgment or promote an uncertain outcome during settlement.
   if (refreshOnly) return { outcome: 'uncertain', engine: 'freshness', reason: 'evidence_changed' };
   const online = globalThis.navigator?.onLine !== false;
-  const sidecar = config.enabled && config.doneEnabled && (config.local || online) ? {
+  const sidecar = decisionFeatureEnabled(config, 'done') && (config.local || online) ? {
     name: config.provider, supportsVision: config.supportsVision,
     requiresIndependentSuccessConfirmation: config.requiresIndependentSuccessConfirmation === true,
     evaluate: async evidence => {

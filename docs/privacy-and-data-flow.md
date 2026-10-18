@@ -107,14 +107,20 @@ requests.
 
 ### Decision models and completion verification
 
-Settings → Assistive Models → Decision models selects OpenRouter, TypeSafe or a
-local/custom System One endpoint. Completion verification, watch checks,
-scheduled completion checks, classifications and browser decisions share that
-selection and have separate switches. Existing TypeSafe credentials, opted-in
-features and scheduler thresholds are retained. New configurations default to
-OpenRouter Decider with completion verification enabled once outsourcing is
-configured. Compass completion uses its managed Cloud decision route by default;
-an explicitly enabled and consented D1 selection changes that decision route only.
+Settings → Assistive Models → Decision models has three modes. **Auto** (the
+default) sends nothing anywhere new: in Chrome it uses Ternary Bonsai 2 2B
+Vision on the device once it is downloaded, for completion and scheduled checks
+only, and while Compass is the conversation provider Compass's managed Cloud
+decision route answers completion checks and semantic decisions as before.
+With neither, no decision model is used. **Off** uses none, Compass's included.
+**On** selects OpenRouter, TypeSafe, a local/custom System One endpoint, D1 or
+the in-browser chat model; completion verification, watch checks, scheduled
+completion checks, classifications, browser decisions and semantic decisions
+share that selection, each with its own switch (on unless turned off).
+Existing TypeSafe credentials, opted-in features and scheduler thresholds are
+retained: a profile saved before modes with System One enabled reads as On with
+its previous switches. With Compass active, On still uses Compass's managed
+route unless D1 or the in-browser chat model is chosen.
 
 Each turn the user sends from the side panel also
 asks the configured decision model one `run_mode` question: the text of that
@@ -211,9 +217,10 @@ is accounted separately, with configured rates as fallback.
 
 ### Scheduled decision checks
 
-The watch and scheduled-completion switches remain separate opt-ins. The master
-switch preserves feature preferences when disabled; deleting keys resets those
-scheduler thresholds to 70%. Config import/export retains the original
+In On, the watch and scheduled-completion switches are on unless turned off; a
+profile from before modes keeps them as separate opt-ins. Auto checks both with
+the downloaded in-browser model only. Changing the mode preserves the switches;
+Reset returns to Auto, deletes keys and resets those scheduler thresholds to 70%. Config import/export retains the original
 `systemOne*` and `typesafeApiKey` keys together with new decision settings.
 
 The scheduler sends bounded textual task and allowlisted tool observations to the

@@ -3,7 +3,8 @@ import { historyMessagesForRecovery } from '../chat-history-recovery.js';
 import '../content/file-upload-policy.js';
 const { validateUploadFile, source: FILE_UPLOAD_POLICY_SOURCE } = globalThis.__wbFileUploadPolicy;
 import { captureCalculationCompletion, captureCalculationEvidence, completionReportingContext, refreshCalculationEvidence, verifyBrowserCompletion } from './completion-runtime.js';
-import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
+import { DECISION_SETTINGS_KEYS, decisionFeatureEnabled } from './decision-config.js';
+import { resolveCurrentDecisionConfig } from './decision-availability.js';
 import { completionStopError, withCompletionTimeout } from './completion-verifier.js';
 import { incompleteCompletionBlock } from './incomplete-completion.js';
 import { COMPLETION_DOCUMENT_STAMP_SCRIPT, COMPLETION_DOCUMENT_IDENTITY_SCRIPT } from './completion-document.js';
@@ -9018,18 +9019,20 @@ export class Agent extends LoopDetector {
     return image;
   }
 
-  async _jevSettings(tabId, provider = this._activeProvider(tabId)) {
+  // The decision settings when the decision model answers `feature`
+  // (decision-config.js DECISION_FEATURES), otherwise null.
+  async _jevSettings(tabId, provider = this._activeProvider(tabId), feature = 'semantic') {
     const stored = await chrome.storage.local.get([...JEV_FAST_KEYS, ...DECISION_SETTINGS_KEYS]);
     const compass = provider?.config?.providerName === 'webbrain-cloud' ? provider.config : null;
-    const decisionConfig = resolveDecisionConfig(stored, compass);
-    return decisionConfig.enabled && !this.strictSecretMode && (decisionConfig.local || globalThis.navigator?.onLine !== false) ? { ...stored, decisionConfig } : null;
+    const decisionConfig = await resolveCurrentDecisionConfig(stored, compass);
+    return decisionFeatureEnabled(decisionConfig, feature) && !this.strictSecretMode && (decisionConfig.local || globalThis.navigator?.onLine !== false) ? { ...stored, decisionConfig } : null;
   }
 
   async _jevClassify(tabId, instructions, criteria, state) {
     const context = this.systemOneContext(tabId);
     try {
-      const settings = await this._jevSettings(tabId);
-      if (settings?.systemOneEnabled !== true || !settings.systemOneFastClassifications || this._jevSessions?.get(tabId)?.hardStopped || this._checkAbort(tabId) || !context.isCurrent()) return null;
+      const settings = await this._jevSettings(tabId, this._activeProvider(tabId), 'classifications');
+      if (!decisionFeatureEnabled(settings?.decisionConfig, 'classifications') || this._jevSessions?.get(tabId)?.hardStopped || this._checkAbort(tabId) || !context.isCurrent()) return null;
       // Classification receives plain text only; multimodal requests stay with the active provider.
       if (!state || Object.values(state).some(value => value != null && typeof value !== 'string')) return null;
       const text = JSON.stringify(state);
@@ -9351,8 +9354,8 @@ export class Agent extends LoopDetector {
     if (!['act', 'dev'].includes(mode) || this._checkAbort(tabId)) return null;
     let session;
     try {
-      const settings = await this._jevSettings(tabId, provider);
-      if (settings?.systemOneEnabled !== true || !settings.systemOneFastBrowser || !context.isCurrent()) return null;
+      const settings = await this._jevSettings(tabId, provider, 'browser');
+      if (!decisionFeatureEnabled(settings?.decisionConfig, 'browser') || !context.isCurrent()) return null;
       let skipReason = '';
       if (recovery) skipReason = 'recovery_turn';
       else if (runOptions.cloudRun) skipReason = 'cloud_run';

@@ -13,7 +13,7 @@ import {
 import { AUTO_GROUP_TABS_KEY } from './tab-group-preference.js';
 import { normalizeSettings as normalizeSafeSocialSettings, SETTINGS_KEY as SAFE_SOCIAL_SETTINGS_KEY } from './safesocial/config.js';
 import { normalizeUiScale, UI_SCALE_STORAGE_KEY } from './ui/ui-scale.js';
-import { resolveDecisionConfig } from './agent/decision-config.js';
+import { DECISION_MODES, resolveDecisionConfig } from './agent/decision-config.js';
 
 export const CONFIG_SCHEMA = 'webbrain-config/1';
 export const MAX_CONFIG_IMPORT_CHARS = 10_000_000;
@@ -104,6 +104,9 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   nonecapApiKey: '',
   nonecapEnabled: false,
   nonecapWeight: 94,
+  // Unset: decision-config.js maps a profile from before modes (On when
+  // systemOneEnabled is true, else Auto), so old exports keep their meaning.
+  decisionMode: '',
   systemOneEnabled: false,
   systemOneWatchEnabled: false,
   systemOneCompletionEnabled: false,
@@ -207,7 +210,7 @@ const STRING_KEYS = new Set([
   'antiCaptchaApiKey',
   'nopechaApiKey',
   'nonecapApiKey',
-  'decisionProvider', 'decisionModel', 'decisionBaseUrl', 'decisionApiKey', 'decisionLocalApiKey', 'decisionVisionMode',
+  'decisionMode', 'decisionProvider', 'decisionModel', 'decisionBaseUrl', 'decisionApiKey', 'decisionLocalApiKey', 'decisionVisionMode',
   'typesafeApiKey',
 ]);
 const ARRAY_KEYS = new Set([
@@ -243,6 +246,7 @@ function sanitizeProviders(value, { strict = false } = {}) {
 
 function validSettingValue(key, value) {
   if (key === 'decisionProvider') return ['', 'openrouter', 'typesafe', 'local', 'webgpu_d1', 'webgpu_chat'].includes(value);
+  if (key === 'decisionMode') return ['', ...DECISION_MODES].includes(value);
   if (key === 'decisionVisionMode') return ['auto', 'on', 'off'].includes(value);
   if (key === 'leanMode') return ['auto', 'on', 'off'].includes(value);
   if (key === 'decisionBaseUrl') {
