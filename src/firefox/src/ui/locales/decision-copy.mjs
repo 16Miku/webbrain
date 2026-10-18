@@ -1,6 +1,12 @@
 export const decisionEnglish = {
   'st.d1.provider': 'Local decision model - Experimental',
-  'st.d1.warning': 'Experimental on-device decision model, about 1.9 GB download plus tokenizer. Requires hardware WebGPU and substantial GPU memory. Not a chat model or sole completion authority. CPU/WASM control operators may run. Browser support and model decisions are not universally validated.',
+  'st.decision.webgpu_chat': 'In-browser chat model (Ternary Bonsai 2 2B Vision) - Experimental',
+  'st.decision.webgpu_chat_note': 'Answers decisions with the in-browser WebGPU chat model and a small trained readout, with no extra download. Download Ternary Bonsai 2 2B Vision under Providers first. The first decision after a browser restart loads the model and may fall back to the active model. Not a sole completion authority.',
+  'st.decision.suggest_chat': 'Your chat model, Ternary Bonsai 2 2B Vision, can also make decisions on this device, with no extra download. For the most reliable completion checks, D1 is the safer choice: fewer false "done" calls and about 3× faster, as a separate 0.95 GB download.',
+  'st.decision.suggest_upgrade': 'D1 is the safer choice for completion checks: fewer false "done" calls and about 3× faster, as a separate 0.95 GB download.',
+  'st.decision.use_chat': 'Use my chat model', 'st.decision.use_d1': 'Use D1 (safer)', 'st.decision.suggest_dismiss': 'Not now',
+  'st.decision.suggest_selected': 'Selected. Click Save to apply.',
+  'st.d1.warning': 'Experimental on-device decision model, about 0.95 GB download plus tokenizer. Requires hardware WebGPU and substantial GPU memory. Not a chat model or sole completion authority. CPU/WASM control operators may run. Browser support and model decisions are not universally validated.',
   'st.d1.consent': 'I accept the experimental local model download from Hugging Face and its memory requirements.',
   'st.d1.need_consent': 'Accept the experimental model download consent first.',
   'st.d1.download': 'Download and load', 'st.d1.load': 'Load cached model', 'st.d1.stop': 'Stop download',
@@ -25,7 +31,13 @@ export const decisionEnglish = {
 export const decisionTranslations = {
   tr: {
     'st.d1.provider': 'Yerel karar modeli — Deneysel',
-    'st.d1.warning': 'Deneysel yerel karar modeli; tokenizer ile birlikte yaklaşık 1,9 GB indirme. Donanım WebGPU ve yüksek GPU belleği gerekir. Sohbet modeli veya tek başına tamamlanma yetkilisi değildir. CPU/WASM kontrol işlemleri çalışabilir. Her tarayıcı, GPU ve model kararı doğrulanmış değildir.',
+    'st.decision.webgpu_chat': 'Tarayıcı içi sohbet modeli (Ternary Bonsai 2 2B Vision) — Deneysel',
+    'st.decision.webgpu_chat_note': 'Kararları tarayıcı içi WebGPU sohbet modeli ve küçük bir eğitilmiş okuma katmanıyla verir; ek indirme gerekmez. Önce Sağlayıcılar altında Ternary Bonsai 2 2B Vision modelini indirin. Tarayıcı yeniden başladıktan sonraki ilk karar modeli yükler ve etkin modele geri düşebilir. Tek başına tamamlanma yetkilisi değildir.',
+    'st.decision.suggest_chat': 'Sohbet modeliniz Ternary Bonsai 2 2B Vision, ek indirme olmadan bu cihazda karar da verebilir. En güvenilir tamamlanma kontrolleri için D1 daha güvenli seçimdir: daha az yanlış "tamamlandı" kararı verir ve yaklaşık 3 kat hızlıdır; ayrıca 0,95 GB indirme gerekir.',
+    'st.decision.suggest_upgrade': 'Tamamlanma kontrolleri için D1 daha güvenli seçimdir: daha az yanlış "tamamlandı" kararı verir ve yaklaşık 3 kat hızlıdır; ayrıca 0,95 GB indirme gerekir.',
+    'st.decision.use_chat': 'Sohbet modelimi kullan', 'st.decision.use_d1': "D1'i kullan (daha güvenli)", 'st.decision.suggest_dismiss': 'Şimdi değil',
+    'st.decision.suggest_selected': "Seçildi. Uygulamak için Kaydet'e tıklayın.",
+    'st.d1.warning': 'Deneysel yerel karar modeli; tokenizer ile birlikte yaklaşık 0,95 GB indirme. Donanım WebGPU ve yüksek GPU belleği gerekir. Sohbet modeli veya tek başına tamamlanma yetkilisi değildir. CPU/WASM kontrol işlemleri çalışabilir. Her tarayıcı, GPU ve model kararı doğrulanmış değildir.',
     'st.d1.consent': 'Hugging Face üzerinden deneysel yerel model indirmesini ve bellek gereksinimlerini kabul ediyorum.',
     'st.d1.need_consent': 'Önce deneysel model indirme onayını kabul edin.',
     'st.d1.download': 'İndir ve yükle', 'st.d1.load': 'Önbellekten yükle', 'st.d1.stop': 'İndirmeyi durdur',
