@@ -44731,7 +44731,15 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     assert.match(sceneCss, /@media \(prefers-reduced-motion: reduce\)/, `${label}: feature scenes should respect reduced motion`);
     assert.match(sceneCss, /\.js-motion \[data-reveal\]/, `${label}: content should only be hidden for reveal once the motion script is running`);
     assert.match(html, /\/screenshot --full-page|data-i18n-html="install\.shot\.body_html"/, `${label}: the screenshot card should show its command`);
-    assert.match(html, /<button class="open-panel-button" type="button" data-open-panel-mirror disabled>/, `${label}: closing call-to-action should start disabled like the primary one`);
+    if (label === 'firefox') {
+      assert.match(html, /<button class="open-panel-button" type="button" data-open-panel-mirror disabled>/, `${label}: closing call-to-action should start disabled like the primary one`);
+    } else {
+      // Chrome's hero offers the optional local model; the closing call-to-action
+      // owns the only open button, so nothing mirrors it.
+      assert.doesNotMatch(html, /data-open-panel-mirror/, 'chrome: the closing call-to-action should be the primary open button, not a mirror');
+      assert.match(html, /<section class="install-cta"[\s\S]*?id="open-panel-button"[\s\S]*?id="open-panel-status"[\s\S]*?id="shortcut-hint"[\s\S]*?<\/section>/, 'chrome: the open button, its status line and the shortcut hint should live in the closing call-to-action');
+      assert.doesNotMatch(html.match(/<section class="install-hero"[\s\S]*?<\/section>/)[0], /id="open-panel-button"/, 'chrome: the hero should no longer open the side panel');
+    }
     assert.equal((html.match(/id="open-panel-button"/g) || []).length, 1, `${label}: only one primary panel-open button should exist`);
     // The hero looks complete in a laptop-sized window, so a permanent row of pills says what is
     // further down and jumps to it. The page has no header: people know which product they installed.
@@ -45052,7 +45060,7 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     const chromeLocale = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales', filename)).href)).default;
     const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales', filename)).href)).default;
     const installKeys = Object.keys(chromeLocale).filter((key) => key.startsWith('install.'));
-    assert.equal(installKeys.length, 64, `${filename}: install guide should translate every user-facing string`);
+    assert.equal(installKeys.length, 80, `${filename}: install guide should translate every user-facing string`);
     assert.ok(chromeLocale['install.showcase.ask.title'], `${filename}: Ask showcase headline should be translated`);
     assert.ok(chromeLocale['install.showcase.apocalypse.body'], `${filename}: Apocalypse showcase body should be translated`);
     for (const key of [
@@ -45064,9 +45072,14 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       'install.mock.files', 'install.mock.offline', 'install.mock.not_robot', 'install.mock.captcha_blocked',
       'install.mock.captcha_sent', 'install.mock.captcha_waiting', 'install.mock.captcha_note',
       'install.mock.show_image', 'install.mock.safesocial_note', 'install.mock.tab', 'install.mock.screen',
+      ...['intro', 'download', 'note', 'checking', 'downloading', 'pause', 'resume', 'paused', 'working', 'ready',
+        'ready_detail', 'retry', 'error', 'unsupported', 'busy', 'progress_label'].map((key) => `install.local_model.${key}`),
     ]) {
       assert.ok(chromeLocale[key], `${filename}: ${key} should be translated`);
     }
+    assert.ok(chromeLocale['install.local_model.downloading'].includes('{progress}'), `${filename}: download progress must keep its placeholder`);
+    assert.ok(chromeLocale['install.local_model.paused'].includes('{progress}'), `${filename}: paused progress must keep its placeholder`);
+    assert.ok(chromeLocale['install.local_model.error'].includes('{error}'), `${filename}: the download error must keep its placeholder`);
     assert.ok(chromeLocale['install.shot.body_html'].includes('<code>/screenshot --full-page</code>'), `${filename}: the screenshot command must survive translation verbatim`);
     assert.ok(chromeLocale['install.record.body_html'].includes('<code>/record</code>'), `${filename}: the record command must survive translation verbatim`);
     assert.ok(chromeLocale['install.pin.confirm'], `${filename}: pin coachmark should translate its confirmation action`);
@@ -45085,6 +45098,239 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
   assert.match(englishLocale['install.pin.body'], /browser toolbar/i, 'chrome: pin guidance should separately explain the toolbar icon that pinning adds');
   assert.match(englishLocale['install.open_failed_chromium'], /Alt\+Shift\+W[\s\S]*Extensions/i, 'chrome: failed open should offer shortcut and Extensions-menu recovery');
   assert.match(englishLocale['install.open_failed_firefox'], /Firefox Extensions/i, 'firefox: failed open should point to Firefox Extensions');
+});
+
+test('chrome install page offers the shipped in-browser model with progress instead of opening the panel first', async () => {
+  const chromeHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/install.html'), 'utf8');
+  const firefoxHtml = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/install.html'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/install.css'), 'utf8');
+  const webgpu = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/providers/webgpu.js')).href);
+  const install = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/install.js')).href);
+  const english = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
+
+  const hero = chromeHtml.match(/<section class="install-hero"[\s\S]*?<\/section>/)[0];
+  const modelId = hero.match(/<div id="local-model" class="local-model" data-model="([^"]+)"/)?.[1];
+  assert.equal(modelId, webgpu.WEBGPU_BONSAI2_VL_2B_MODEL_ID, 'the install page should download the Ternary Bonsai 2 2B Vision preset');
+  assert.ok(webgpu.isSelectableWebgpuPreset(modelId), 'the install page should offer a model the WebGPU pickers already offer');
+  assert.match(hero, /id="local-model-button"[^>]*\sdisabled(?:\s|>)/, 'the download button should start disabled until its state is known');
+  assert.match(hero, /id="local-model-progress"[^>]*role="progressbar"[^>]*hidden/, 'progress should be an accessible progress bar, hidden until a transfer runs');
+  assert.match(hero, /id="local-model-status"[^>]*aria-live="polite"/, 'download status should be announced');
+  assert.match(hero, /id="local-model-note" class="local-model-note" data-i18n="install\.local_model\.note"/, 'the optional note should sit under the button');
+  assert.match(hero, /id="install-intro"[^>]*data-i18n="install\.local_model\.intro"/, 'the hero intro should point to the open button at the bottom of the page');
+  assert.doesNotMatch(firefoxHtml, /id="local-model"|install\.local_model\./, 'firefox: no in-browser model runtime, so the page keeps its sidebar button');
+  assert.match(css, /\.local-model-note \{[\s\S]*?color: var\(--quiet\);[\s\S]*?font-size: 12px;/, 'the optional note should be small and gray');
+  assert.match(english['install.local_model.note'], /^Optional\b/, 'the note should say up front that the download is optional');
+  assert.match(english['install.local_model.note'], /1\.45 GB/, 'the note should state the download size of the preset');
+  const preset = webgpu.WEBGPU_MODEL_PRESETS.find((entry) => entry.id === modelId);
+  assert.equal(preset.size, '1.45 GB', 'the note quotes the preset size; update the copy if the preset changes');
+
+  const normalize = install.normalizeLocalModelSnapshot;
+  assert.deepEqual(normalize({ status: 'starting' }, modelId), { status: 'downloading', progress: 0, error: '' });
+  assert.deepEqual(normalize({ status: 'downloading', loaded: 25, total: 100 }, modelId), { status: 'downloading', progress: 25, error: '' });
+  assert.deepEqual(normalize({ status: 'not-downloaded', ready: true }, modelId), { status: 'ready', progress: 100, error: '' });
+  assert.deepEqual(normalize({ status: 'error', error: 'Failed to fetch' }, modelId), { status: 'error', progress: 0, error: 'Failed to fetch' });
+  assert.equal(normalize({ status: 'mystery' }, modelId).status, 'not-downloaded');
+  for (const otherStatus of ['downloading', 'paused', 'stopping']) {
+    assert.equal(
+      normalize({ status: 'not-downloaded', activeTransfer: { status: otherStatus, modelId: webgpu.WEBGPU_COMPASS_TINY_V2_MODEL_ID } }, modelId).status,
+      'busy',
+      `another model ${otherStatus} holds the worker's single download slot`,
+    );
+  }
+  assert.equal(normalize({ status: 'not-downloaded', activeTransfer: { status: 'ready', modelId: 'x/y' } }, modelId).status, 'not-downloaded');
+  assert.equal(normalize({ status: 'downloading', activeTransfer: { status: 'downloading', modelId } }, modelId).status, 'downloading');
+
+  const view = install.localModelView;
+  assert.equal(view({ status: 'not-downloaded' }).action, 'start');
+  assert.equal(view({ status: 'downloading', progress: 41.6 }).action, 'pause');
+  assert.equal(view({ status: 'downloading', progress: 41.6 }).progress, 42);
+  assert.equal(view({ status: 'paused', progress: 63 }).action, 'resume');
+  assert.equal(view({ status: 'error' }).action, 'start');
+  assert.equal(view({ status: 'error' }).isError, true);
+  for (const status of ['ready', 'checking', 'stopping', 'busy', 'unsupported']) {
+    assert.equal(view({ status }).action, null, `${status}: the button should not act`);
+  }
+  for (const status of ['not-downloaded', 'downloading', 'paused', 'ready', 'checking', 'stopping', 'busy', 'unsupported', 'error']) {
+    const { labelKey, statusKey } = view({ status });
+    assert.ok(english[labelKey], `${status}: label ${labelKey} should be translated`);
+    if (statusKey) assert.ok(english[statusKey], `${status}: status ${statusKey} should be translated`);
+  }
+
+  function fakeRuntime(responses) {
+    const sent = [];
+    const listeners = [];
+    return {
+      sent,
+      listeners,
+      onMessage: { addListener(fn) { listeners.push(fn); } },
+      async sendMessage(message) {
+        sent.push(message);
+        const reply = responses[message.action];
+        return typeof reply === 'function' ? reply(message) : reply;
+      },
+    };
+  }
+
+  // Never change the model of the active chat provider, or a model the user has.
+  for (const [name, providers, status, expected] of [
+    ['active WebGPU', { providers: { webgpu: { model: '' } }, active: 'webgpu' }, { status: 'not-downloaded' }, false],
+    ['configured model ready', { providers: { webgpu: { model: webgpu.WEBGPU_COMPASS_TINY_V2_MODEL_ID } }, active: 'webbrain_cloud' }, { status: 'ready', ready: true }, false],
+    ['configured model downloading', { providers: { webgpu: { model: webgpu.WEBGPU_COMPASS_TINY_V2_MODEL_ID } }, active: 'webbrain_cloud' }, { status: 'downloading' }, false],
+    ['already pointed', { providers: { webgpu: { model: modelId } }, active: 'webbrain_cloud' }, { status: 'not-downloaded' }, false],
+    ['default not downloaded', { providers: { webgpu: { model: webgpu.WEBGPU_COMPASS_TINY_V2_MODEL_ID } }, active: 'webbrain_cloud' }, { status: 'not-downloaded' }, true],
+  ]) {
+    const runtime = fakeRuntime({ get_providers: providers, get_webgpu_download_status: status, update_provider: { ok: true } });
+    assert.equal(await install.pointWebgpuProviderAtModel(modelId, { runtime }), expected, `${name}: repoint decision`);
+    const update = runtime.sent.find((message) => message.action === 'update_provider');
+    if (expected) {
+      assert.deepEqual(update, { target: 'background', action: 'update_provider', providerId: 'webgpu', config: { model: modelId }, markConfigured: false }, `${name}: only the WebGPU model changes`);
+    } else {
+      assert.equal(update, undefined, `${name}: the WebGPU provider should stay as it is`);
+    }
+    assert.ok(!runtime.sent.some((message) => message.action === 'set_active_provider'), `${name}: the active provider never changes`);
+  }
+
+  function fakeDocument() {
+    const element = (id, extra = {}) => {
+      const attributes = new Map();
+      const classes = new Set();
+      const listeners = new Map();
+      return {
+        id,
+        dataset: {},
+        hidden: false,
+        disabled: true,
+        textContent: '',
+        style: { props: {}, setProperty(name, value) { this.props[name] = value; } },
+        classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, contains: (name) => classes.has(name) },
+        setAttribute(name, value) { attributes.set(name, String(value)); },
+        removeAttribute(name) { attributes.delete(name); },
+        getAttribute(name) { return attributes.get(name) ?? null; },
+        addEventListener(type, fn) { listeners.set(type, fn); },
+        fire(type) { return listeners.get(type)?.(); },
+        ...extra,
+      };
+    };
+    const nodes = {
+      'local-model': element('local-model', { dataset: { model: modelId, state: 'checking' } }),
+      'local-model-button': element('local-model-button'),
+      'local-model-label': element('local-model-label'),
+      'local-model-progress': element('local-model-progress', { hidden: true }),
+      'local-model-status': element('local-model-status'),
+    };
+    return { nodes, getElementById: (id) => nodes[id] || null };
+  }
+  const translate = (key, params = {}) => `${key}${params.progress != null ? `|${params.progress}` : ''}${params.error ? `|${params.error}` : ''}`;
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(install.initializeLocalModelDownload({ documentLike: { getElementById: () => null }, runtime: fakeRuntime({}) }), null, 'firefox: no local-model block, nothing to wire');
+
+  {
+    const documentLike = fakeDocument();
+    let status = { status: 'not-downloaded', modelId };
+    const runtime = fakeRuntime({
+      get_webgpu_download_status: (message) => (message.model === modelId ? status : { status: 'not-downloaded' }),
+      test_provider: { ok: true },
+      get_providers: { providers: { webgpu: { model: webgpu.WEBGPU_COMPASS_TINY_V2_MODEL_ID } }, active: 'webbrain_cloud' },
+      update_provider: { ok: true },
+      start_webgpu_download: () => { status = { status: 'downloading', modelId, loaded: 400, total: 1000 }; return { ok: true }; },
+      pause_webgpu_download: () => { status = { status: 'paused', modelId, progress: 40 }; return { ok: true }; },
+    });
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    const { nodes } = documentLike;
+    assert.equal(nodes['local-model'].dataset.state, 'not-downloaded');
+    assert.equal(nodes['local-model-button'].disabled, false, 'the button should become usable once the state is known');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.download');
+    assert.equal(nodes['local-model-progress'].hidden, true);
+
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.deepEqual(
+      runtime.sent.map((message) => message.action),
+      ['get_webgpu_download_status', 'test_provider', 'get_providers', 'get_webgpu_download_status', 'update_provider', 'start_webgpu_download', 'get_webgpu_download_status'],
+      'start should probe WebGPU, point the idle WebGPU provider at the model, download it, then read progress',
+    );
+    assert.deepEqual(runtime.sent.find((message) => message.action === 'test_provider'), { target: 'background', action: 'test_provider', providerId: 'webgpu' });
+    assert.deepEqual(runtime.sent.find((message) => message.action === 'start_webgpu_download'), { target: 'background', action: 'start_webgpu_download', model: modelId });
+    assert.equal(nodes['local-model'].dataset.state, 'downloading');
+    assert.equal(nodes['local-model-progress'].hidden, false, 'progress should show while downloading');
+    assert.equal(nodes['local-model-progress'].getAttribute('aria-valuenow'), '40');
+    assert.equal(nodes['local-model-progress'].style.props['--local-model-progress'], '40%');
+    assert.equal(nodes['local-model-status'].textContent, 'install.local_model.downloading|40');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.pause');
+
+    // Pushed progress from the offscreen host updates without waiting for a poll.
+    runtime.listeners[0]({ type: 'webgpu-text-download-state', state: { status: 'downloading', modelId, progress: 55 } });
+    assert.equal(nodes['local-model-status'].textContent, 'install.local_model.downloading|55');
+    runtime.listeners[0]({ type: 'webgpu-text-download-state', state: { status: 'downloading', modelId: 'other/model', progress: 90 } });
+    assert.equal(nodes['local-model-status'].textContent, 'install.local_model.downloading|55', 'another model\'s progress is not ours');
+
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.equal(runtime.sent.filter((message) => message.action === 'pause_webgpu_download').length, 1, 'the running download can be paused');
+    assert.equal(nodes['local-model'].dataset.state, 'paused');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.resume');
+
+    const before = runtime.sent.length;
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.deepEqual(runtime.sent.slice(before).map((message) => message.action), ['start_webgpu_download', 'get_webgpu_download_status'], 'resume continues the transfer without probing again');
+
+    runtime.listeners[0]({ type: 'webgpu-text-download-state', state: { status: 'ready', ready: true, modelId } });
+    assert.equal(nodes['local-model'].dataset.state, 'ready');
+    assert.equal(nodes['local-model-button'].disabled, true, 'a downloaded model leaves nothing to click');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.ready');
+    assert.equal(nodes['local-model-progress'].hidden, true);
+    controller.dispose();
+  }
+
+  {
+    const documentLike = fakeDocument();
+    const runtime = fakeRuntime({
+      get_webgpu_download_status: { status: 'not-downloaded', modelId },
+      test_provider: { ok: false, error: 'Hardware WebGPU is unavailable.' },
+    });
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    await documentLike.nodes['local-model-button'].fire('click');
+    await settle();
+    assert.equal(documentLike.nodes['local-model'].dataset.state, 'unsupported', 'no hardware WebGPU: say so instead of downloading files that cannot run');
+    assert.ok(!runtime.sent.some((message) => ['start_webgpu_download', 'update_provider'].includes(message.action)), 'nothing is downloaded or reconfigured without hardware WebGPU');
+    assert.equal(documentLike.nodes['local-model-button'].disabled, true);
+    controller.dispose();
+  }
+
+  {
+    const documentLike = fakeDocument();
+    const runtime = fakeRuntime({
+      get_webgpu_download_status: { status: 'not-downloaded', modelId },
+      test_provider: { ok: true },
+      get_providers: { providers: { webgpu: { model: modelId } }, active: 'webbrain_cloud' },
+      start_webgpu_download: { error: 'webbrain-one/webbrain-compass-tiny-v2.1 is still downloading. Pause it before switching models.', status: 500 },
+    });
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    await documentLike.nodes['local-model-button'].fire('click');
+    await settle();
+    assert.equal(documentLike.nodes['local-model'].dataset.state, 'error');
+    assert.match(documentLike.nodes['local-model-status'].textContent, /^install\.local_model\.error\|.*still downloading/, 'a refused start should show the background error');
+    assert.equal(documentLike.nodes['local-model-status'].classList.contains('is-error'), true);
+    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.retry');
+    assert.equal(documentLike.nodes['local-model-button'].disabled, false, 'errors can be retried');
+    controller.dispose();
+  }
+
+  {
+    // Reopening the guide after a finished download shows the done state at once.
+    const documentLike = fakeDocument();
+    const runtime = fakeRuntime({ get_webgpu_download_status: { status: 'ready', ready: true, modelId } });
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    assert.equal(documentLike.nodes['local-model'].dataset.state, 'ready');
+    assert.match(documentLike.nodes['local-model-status'].textContent, /^install\.local_model\.ready_detail\b/);
+    controller.dispose();
+  }
 });
 
 test('chrome /record reports mic denial as a warning, not recording failure', () => {
