@@ -979,6 +979,73 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  // Your trace: a post on MastoTurk, then "now delete it". Mastodon shows the
+  // post on the home timeline, which WebBrain does not match to the form it
+  // was sent from, so the earlier result stays unmatched. Its deletion is not
+  // refused for that on every click: WebBrain asks on its own card, and that
+  // answer lets this one deletion through the correction check.
+  const timelineHome = 'https://mastoturk.org/home', timelineCompose = 'https://mastoturk.org/publish';
+  const timelinePost = 'https://mastoturk.org/@webbrain_qa_owned/117450000000000001';
+  const timelineSubmit = text => ({ isSubmit: true, validationSubmitEvidence: 'strong', url: timelineCompose, actionUrl: timelineCompose,
+    method: 'GET', frameDocumentIdentity: 'compose-doc', fields: [{ label: 'Aklında ne var?', type: 'textarea', value: text, changed: true }] });
+  // The post's own "Sil", which the Mastodon reader ties to the post; no
+  // page scan of the timeline comes with it.
+  const timelineDelete = { isSubmit: false, mutationKind: 'delete', frameDocumentIdentity: 'home-doc',
+    actionResource: { complete: true, nativeAdapter: 'mastodon', account: 'https://mastoturk.org/@webbrain_qa_owned',
+      scopeToken: 'owned-post-scope', url: timelinePost, textValues: ['WebBrain test gönderisi'] } };
+  async function timelinePostThen(correction) {
+    const h = await fixture('go to mastoturk.org and try to post something', { pageUrl: timelineHome });
+    h.agent._recordCompletionSubmitAttempt(h.tab, timelineSubmit('WebBrain test gönderisi'), 'click_ax', { ref_id: 'ref_4' },
+      timelineCompose, timelineHome, { success: true, dispatched: true, verified: true }, 'compose-doc', 'home-doc');
+    h.agent._completionSubmitStates.set(h.tab, { ...h.agent._completionSubmitStates.get(h.tab),
+      observedAfterSubmit: true, completionSignalObserved: true, currentUrl: timelineHome });
+    h.guard = await h.steer(correction);
+    h.read(timelineHome);
+    return h;
+  }
+
+  test(`${build}: after a correction, deleting the earlier post goes to WebBrain's card even when that post cannot be matched`, async () => {
+    const h = await timelinePostThen('now delete it');
+    try {
+      const block = await h.check(timelineDelete);
+      assert.notEqual(block?.actionGuard?.reason, 'prior_effect_unreconciled', JSON.stringify(block));
+      assert.equal(block?.mutationConfirmation?.kind, 'delete', JSON.stringify(block));
+      assert.equal(block.mutationConfirmation.url, timelinePost, 'The card shows the post the menu belongs to');
+      const cards = [];
+      const result = await h.agent._resolveMutationConfirmation(h.tab, block, (status, details) => {
+        if (status !== 'clarify') return;
+        cards.push(details);
+        h.agent._settleClarification(h.agent._pendingClarifications.get(h.tab).get(details.clarifyId), { answer: 'once', source: 'option' });
+      }, () => h.check(timelineDelete));
+      assert.equal(result, null, JSON.stringify(result));
+      assert.equal(cards.length, 1);
+      assert.equal(h.steeringBlock(timelineDelete), null, 'The answer lets this one deletion through the correction check');
+      // The earlier post is still unmatched: nothing else goes ahead on its account.
+      assert.notEqual(h.guard.steeringPriorSubmissionReconciliation?.verified, true);
+      const another = timelineSubmit('Another test post');
+      assert.equal((await h.check(another))?.actionGuard?.reason, 'prior_effect_unreconciled');
+      assert.equal(h.steeringBlock(another)?.actionGuard?.reason, 'prior_effect_unreconciled');
+    } finally { h.close(); }
+  });
+
+  test(`${build}: after a correction that names the earlier post, it is deleted without a card; a declined card holds it`, async () => {
+    const named = await timelinePostThen(`delete ${timelinePost}`);
+    try {
+      assert.equal(await named.check(timelineDelete), null, 'The latest request binds this post');
+      assert.equal(named.steeringBlock(timelineDelete), null);
+    } finally { named.close(); }
+    const declined = await timelinePostThen('now delete it');
+    try {
+      const block = await declined.check(timelineDelete);
+      const result = await declined.agent._resolveMutationConfirmation(declined.tab, block, (status, details) => {
+        if (status === 'clarify') declined.agent._settleClarification(declined.agent._pendingClarifications.get(declined.tab).get(details.clarifyId), { answer: 'deny', source: 'option' });
+      }, () => declined.check(timelineDelete));
+      assert.equal(result?.actionGuard?.reason, 'deletion_declined');
+      assert.equal((await declined.check(timelineDelete))?.actionGuard?.reason, 'deletion_declined');
+      assert.notEqual(declined.steeringBlock(timelineDelete), null, 'Without the user\'s answer the correction check still holds it');
+    } finally { declined.close(); }
+  });
+
   test(`${build}: after a correction an unidentified target says so; commits still need reconciliation`, async () => {
     const h = await fixture('Save the owned profile name as Original.');
     try {
