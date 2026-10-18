@@ -408,8 +408,8 @@ export function capInlineAnswer(text) {
 export function buildFollowUpSelectionText(selectionText, priorAction, priorAnswer, { contextWindow, question = '', language = '' } = {}) {
   const selection = String(selectionText || '');
   const label = INLINE_FOLLOW_UP_LABELS[String(priorAction || '').trim()];
-  const full = String(priorAnswer || '').trim();
-  if (!label || !full) return selection;
+  const full = String(priorAnswer || '');
+  if (!label || !full.trim()) return selection;
   // A longer answer than a card can produce is shortened, and says so.
   let answer = full.length > INLINE_FOLLOW_UP_ANSWER_MAX_CHARS
     ? `${full.slice(0, INLINE_FOLLOW_UP_ANSWER_MAX_CHARS)}\n[The answer continues beyond this point.]`
@@ -484,8 +484,8 @@ export function buildContinuationSelectionPrompt(selectionText, action, partialA
   const actionId = String(action || '').trim();
   const label = INLINE_FOLLOW_UP_LABELS[actionId];
   const selection = String(selectionText || '').trim();
-  const partial = String(partialAnswer || '').trim();
-  if (!label || !selection || !partial) return '';
+  const partial = String(partialAnswer || '');
+  if (!label || !selection || !partial.trim()) return '';
   const instruction = Object.prototype.hasOwnProperty.call(INLINE_CONTINUATION_INSTRUCTIONS, actionId)
     ? `${INLINE_CONTINUATION_INSTRUCTIONS[actionId]}${responseLanguageInstruction(language)}`
     : selectionActionInstruction(actionId, '', language);

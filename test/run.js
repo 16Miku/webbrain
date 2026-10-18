@@ -52340,6 +52340,8 @@ test('a long unfinished answer is trimmed to what the model window leaves, so Co
     const short = buildContinuation(selection, 'explain', 'A short unfinished answer.', 'en', { contextWindow: 8192 });
     assert.match(block(short), /\n A short unfinished answer\.\n<\/untrusted_page_content>$|\nA short unfinished answer\.\n<\/untrusted_page_content>$/, `${label}: an answer that fits is not changed`);
     assert.doesNotMatch(short, /…/, `${label}: and gets no ellipsis`);
+    const spaced = buildContinuation('Same.', 'proofread', '  answer\n', 'en', { contextWindow: 8192 });
+    assert.match(block(spaced), /\n  answer\n<\/untrusted_page_content>$/, `${label}: a continuation preserves edge whitespace`);
 
     // A selection that leaves no room at all is not made worse: the whole text goes and the run refuses it with a reason.
     const huge = 'long words '.repeat(1200);
@@ -52419,6 +52421,7 @@ test('a card follow-up sends the model as much of the earlier answer as its wind
     const short = buildFollowUp('A short selection.', 'explain', 'A short answer.', options(4096));
     assert.ok(short.endsWith('\nA short answer.'), `${label}: an answer that fits is not changed`);
     assert.doesNotMatch(short, /left out/, `${label}: and says nothing about leaving anything out`);
+    assert.match(buildFollowUp('Same.', 'proofread', '  answer\n', options(8192)), /\n  answer\n$/, `${label}: a follow-up preserves edge whitespace`);
     // The page-wide limit still applies underneath.
     const capped = buildFollowUp(selection, 'explain', 'a'.repeat(70_000));
     assert.match(capped, /\[The answer continues beyond this point\.\]$/, `${label}: an answer past the card limit keeps its own note`);
