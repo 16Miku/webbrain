@@ -103,6 +103,49 @@ export function bulletinHash(markup) {
 }
 
 /**
+ * Read the response body up to maxBytes, cancelling the stream early if it exceeds the limit.
+ * Prevents memory exhaustion from missing/understated Content-Length or compressed payloads.
+ */
+export async function readBoundedText(response, maxBytes = MAX_BULLETIN_BYTES) {
+  if (response?.body && typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let totalBytes = 0;
+    let text = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunkSize = value ? (value.byteLength ?? value.length ?? 0) : 0;
+        totalBytes += chunkSize;
+        if (totalBytes > maxBytes) {
+          try { await reader.cancel(); } catch {}
+          return null;
+        }
+        if (value) {
+          text += decoder.decode(value, { stream: true });
+        }
+      }
+      text += decoder.decode();
+      return text;
+    } finally {
+      try { reader.releaseLock(); } catch {}
+    }
+  }
+
+  if (typeof response?.text === 'function') {
+    const text = await response.text();
+    if (typeof text !== 'string') return null;
+    const encoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
+    const byteLength = encoder ? encoder.encode(text).byteLength : text.length;
+    if (byteLength > maxBytes) return null;
+    return text;
+  }
+
+  return null;
+}
+
+/**
  * One request for the bulletin. Resolves { ok: true, url, markup } (markup '' when the
  * file is empty), or { ok: false } when it could not be read or failed a check.
  */
@@ -127,8 +170,8 @@ export async function fetchBulletin(url, { fetchImpl = globalThis.fetch, timeout
     if (!allowed) return { ok: false };
     const declared = Number(response.headers?.get?.('content-length')) || 0;
     if (declared > MAX_BULLETIN_BYTES) return { ok: false };
-    const text = await response.text();
-    if (typeof text !== 'string' || text.length > MAX_BULLETIN_BYTES) return { ok: false };
+    const text = await readBoundedText(response, MAX_BULLETIN_BYTES);
+    if (typeof text !== 'string') return { ok: false };
     return { ok: true, url: responseUrl.href, markup: isRenderableMarkup(text) ? text : '' };
   } catch {
     return { ok: false };

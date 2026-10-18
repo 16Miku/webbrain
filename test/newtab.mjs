@@ -2905,9 +2905,58 @@ test('bulletin: one private request, accepted only from webbrain.one and within 
     bulletinResponse('<p>x</p>', { ok: false }),
     bulletinResponse('<p>x</p>', { length: 128_001 }),
     bulletinResponse('x'.repeat(128_001)),
+    bulletinResponse('€'.repeat(65_000)),
   ]) {
     assert.deepEqual(await bulletin.fetchBulletin(url, { fetchImpl: async () => response }), { ok: false });
   }
+
+  // Stream reader cancellation when stream exceeds byte limit
+  let streamCancelled = false;
+  const chunkedStreamResponse = {
+    ok: true,
+    url: 'https://webbrain.one/newtab-comm.html',
+    body: {
+      getReader() {
+        let chunkCount = 0;
+        return {
+          async read() {
+            chunkCount++;
+            if (chunkCount > 3) return { done: true, value: undefined };
+            return { done: false, value: new Uint8Array(50_000) };
+          },
+          async cancel() {
+            streamCancelled = true;
+          },
+          releaseLock() {},
+        };
+      },
+    },
+  };
+  assert.deepEqual(await bulletin.fetchBulletin(url, { fetchImpl: async () => chunkedStreamResponse }), { ok: false });
+  assert.equal(streamCancelled, true, 'stream reader must be cancelled when byte limit exceeded');
+
+  // Valid stream reader reading
+  const validStreamResponse = {
+    ok: true,
+    url: 'https://webbrain.one/newtab-comm.html',
+    body: {
+      getReader() {
+        let readOnce = false;
+        return {
+          async read() {
+            if (readOnce) return { done: true, value: undefined };
+            readOnce = true;
+            return { done: false, value: new TextEncoder().encode('<p>Valid Stream</p>') };
+          },
+          async cancel() {},
+          releaseLock() {},
+        };
+      },
+    },
+  };
+  assert.deepEqual(await bulletin.fetchBulletin(url, { fetchImpl: async () => validStreamResponse }),
+    { ok: true, url: 'https://webbrain.one/newtab-comm.html', markup: '<p>Valid Stream</p>' });
+
   assert.deepEqual(await bulletin.fetchBulletin(url, { fetchImpl: async () => { throw new TypeError('offline'); } }), { ok: false });
   assert.deepEqual(await bulletin.fetchBulletin(url, { fetchImpl: async () => bulletinResponse('  <!-- off -->') }),
     { ok: true, url: 'https://webbrain.one/newtab-comm.html', markup: '' });

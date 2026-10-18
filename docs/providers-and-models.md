@@ -485,8 +485,9 @@ Bonsai uses the packaged Qwen3.5 runtime and Q2 weight storage with FP16
 activations. Its text presets reject image attachments. The Vision variants
 retain Prism ML's original image tower and add its processor and image graph
 to the ternary language export. They accept screenshots directly as the main
-provider and also work for text-only turns. They do not enable or replace the
-separate 450M assistive vision fallback. Browser image processing is bounded to
+provider and also work for text-only turns. The 2B Vision preset is also an
+in-browser vision choice for a text-only active model, and Auto uses it once it
+is downloaded (see the Vision section below); the 4B preset is not. Browser image processing is bounded to
 approximately one megapixel per image. Build sources, tensor mapping checks,
 and the hardware browser verification command are documented in
 [`scripts/models/bonsai/README.md`](../scripts/models/bonsai/README.md).
@@ -848,26 +849,45 @@ const vision = await providerManager.getVisionProvider();
 // active-provider vision and the explicitly enabled, ready local fallback.
 ```
 
-On Chromium, **Settings -> Assistive Models -> Vision** also offers a one-click
-in-browser fallback. It runs `webbrain-one/webbrain-vl-2-450M-onnx` through WebGPU in a
-dedicated Worker with FP16 embeddings/vision encoder and a Q4 decoder. The
-model is not present in the general provider catalog and never receives agent
-tools or planning turns. Local vision is disabled by default and neither
-Apocalypse Mode nor a screenshot operation can enable it or start its download.
-The dedicated control probes WebGPU, records versioned consent, and then downloads
-approximately 810 MB of model data from Hugging Face into the browser cache. The download runs in Chrome's
-offscreen extension worker, so the user may switch tabs or close Settings while
-it continues, but must keep Chrome running. Screenshots stay on-device and
-only the generated description is passed to the active provider. The local
-selection is stored as a Chrome-only preference, separately from the synced
-OpenAI-compatible vision endpoint, so it can be disabled without losing that
-endpoint or its credentials. Disabling it releases the loaded model and GPU
-resources while retaining the browser-cached download. Firefox does not expose
-this option because its build has no MV3 offscreen document.
+On Chromium, **Settings -> Assistive Models -> Vision** also offers an
+in-browser vision model, chosen from **Auto** (default), **Ternary Bonsai 2 2B
+Vision**, **WebBrain VL 2 450M** or **Off**. The choice is stored in the
+Chrome-only `webgpuVisionChoice` key (`storedWebgpuVisionChoice()` and
+`resolveWebgpuVisionChoice()` in `providers/webgpu.js`), separately from the
+synced OpenAI-compatible vision endpoint, so changing it never touches that
+endpoint or its credentials. It is not exported, profile-synced or imported by
+Firefox, whose build has no MV3 offscreen document and no local option.
+
+- **Auto** uses Ternary Bonsai 2 2B Vision once its ready marker is in Cache
+  Storage (`isLocalAssistModelReady()` in `providers/webgpu-model-cache.js`, one
+  lookup that never starts the offscreen document) and is off until then.
+- **Ternary Bonsai 2 2B Vision** is the chat preset itself
+  (`webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision`, 1.45 GB), read through
+  `WebGPUBonsaiVisionProvider`: the WebGPU chat provider with tools removed. It
+  shares the chat download, cache and the worker's serialized model queue, so a
+  screenshot asked for during a chat generation waits its turn, and the 90-second
+  vision deadline cancels it with the chat cancellation key. Its download is the
+  ordinary text-model download, started only by a click.
+- **WebBrain VL 2 450M** runs `webbrain-one/webbrain-vl-2-450M-onnx` in a
+  dedicated Worker with FP16 embeddings/vision encoder and a Q4 decoder. Its
+  first download goes through the dedicated consent step: it probes WebGPU,
+  records versioned consent, and then downloads approximately 810 MB of model
+  data from Hugging Face. Choosing it again later re-enables it under the
+  consent already given; leaving it for another choice releases the loaded
+  model and GPU resources while retaining the browser-cached download. Profiles
+  that enabled it before the choice existed keep it.
+
+Neither local model is in the general provider catalog as a vision sidecar or
+ever receives agent tools or planning turns. No choice, Apocalypse Mode or
+screenshot operation starts a download. Downloads run in Chrome's offscreen
+extension worker, so the user may switch tabs or close Settings while they
+continue, but must keep Chrome running. Screenshots stay on-device and only the
+generated description is passed to the active provider. Only Settings and
+Apocalypse Mode may change the choice (`set_webgpu_vision_choice`).
 
 Screenshot routing is deterministic: an explicit dedicated vision endpoint,
-then a vision-capable active provider receiving raw pixels, then an explicitly
-enabled and already-ready local fallback. If none is ready, inspection returns a
+then a vision-capable active provider receiving raw pixels, then the in-browser
+model the choice resolves to, if it is already ready. If none is ready, inspection returns a
 recoverable availability result; automatic screenshots skip enrichment and let
 the task continue. Screenshot tools never wait for a model download. Dedicated
 and local description calls have a 90-second total deadline, worker startup has
