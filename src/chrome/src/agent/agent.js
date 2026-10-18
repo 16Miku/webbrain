@@ -7378,11 +7378,22 @@ export class Agent extends LoopDetector {
       // to the form it was sent from. Which item to delete is still decided
       // below, by the latest request or by the user on WebBrain's own card, and
       // nothing is recorded as reconciled, so a later post or commit is still
-      // held. An earlier attempt that may itself have deleted something still
-      // holds a deletion: this one could repeat it, and a run rebuilt from the
-      // conversation keeps no dispatch record that would catch the repeat.
+      // held. An earlier attempt that may itself have deleted this item still
+      // holds the deletion: this one could repeat it, and a run rebuilt from
+      // the conversation keeps no dispatch record that would catch the repeat.
+      // One that deleted another item, by its link or its row, does not; one
+      // whose item cannot be told apart from this one does.
       const unreconciled = prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource && !observedKind);
-      const earlierDeletion = archivedAttempts.some(receipt => receipt.mutationKind === 'delete');
+      const deletingLink = permalinked ? this._normalizeUrl(detected.actionResource.url) : '';
+      const deletingRow = record?.identity || '';
+      const mayRepeatThisDeletion = receipt => {
+        const link = receipt.actionResource?.complete && receipt.actionResource.url ? this._normalizeUrl(receipt.actionResource.url) : '';
+        const row = receipt.actionRecord?.identity || '';
+        if (link && deletingLink) return link === deletingLink;
+        if (row && deletingRow) return row === deletingRow;
+        return true;
+      };
+      const earlierDeletion = archivedAttempts.some(receipt => receipt.mutationKind === 'delete' && mayRepeatThisDeletion(receipt));
       if (unreconciled && !(deletion && !earlierDeletion)) {
         return blocked('prior_effect_unreconciled', publication && !crossPlatform
           ? 'The earlier post from before the latest correction has not been matched yet. Read it on this platform (its permalink or the account\'s recent posts), then retry; do not repeat an uncertain publication.'

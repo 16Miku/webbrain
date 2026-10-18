@@ -1061,13 +1061,23 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(h.decisions('deletion_request').length, 0, 'The repeat is not put to the deletion question');
       assert.notEqual(h.steeringBlock(timelineDelete), null);
     } finally { h.close(); }
-    // A deletion archived at an earlier correction holds it the same way.
-    const archived = await timelinePostThen('now delete it');
-    try {
-      archived.guard.steeringMutationReceipts = [...(archived.guard.steeringMutationReceipts || []),
-        { dispatched: true, actionSequence: 2, mutationKind: 'delete', actionResource: { complete: true, url: timelinePost } }];
-      assert.equal((await archived.check(timelineDelete))?.actionGuard?.reason, 'prior_effect_unreconciled');
-    } finally { archived.close(); }
+    // A deletion archived at an earlier correction holds it the same way when
+    // it deleted this post, or an item that cannot be told apart from it; a
+    // deletion of another post does not.
+    for (const [earlier, held] of [
+      [{ actionResource: { complete: true, url: timelinePost } }, true],
+      [{}, true],
+      [{ actionResource: { complete: true, url: 'https://mastoturk.org/@webbrain_qa_owned/117440000000000009' } }, false],
+    ]) {
+      const archived = await timelinePostThen('now delete it');
+      try {
+        archived.guard.steeringMutationReceipts = [...(archived.guard.steeringMutationReceipts || []),
+          { dispatched: true, actionSequence: 2, mutationKind: 'delete', ...earlier }];
+        const result = await archived.check(timelineDelete);
+        if (held) assert.equal(result?.actionGuard?.reason, 'prior_effect_unreconciled', JSON.stringify(earlier));
+        else assert.equal(result?.mutationConfirmation?.kind, 'delete', `Another post's deletion does not hold this one: ${JSON.stringify(result)}`);
+      } finally { archived.close(); }
+    }
   });
 
   test(`${build}: after a correction an unidentified target says so; commits still need reconciliation`, async () => {
