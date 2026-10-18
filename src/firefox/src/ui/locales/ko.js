@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 이 대화에서 <strong>API 변경이 허용</strong>되었습니다. 에이전트는 이제 UI보다 API가 더 안정적이라고 판단할 때 fetch_url과 execute_js를 통해 POST/PUT/PATCH/DELETE를 사용할 수 있습니다. 기본적으로는 UI 우선 방침을 유지합니다. 이 플래그는 대화를 초기화하면 해제됩니다.',
   'sp.permissions.disabled_html': '⚠️ <strong>권한 확인이 꺼져 있습니다.</strong> WebBrain은 클릭, 입력, 이동, JavaScript 실행, 업로드, 다운로드, 녹화, 예약 작업을 미리 묻지 않고 수행합니다. 설정 → 권한 → 중요 작업 전에 확인에서 다시 활성화하세요.',
+  'sp.permissions.button': '권한 확인: 켜짐',
+  'sp.permissions.button_off': '권한 확인: 꺼짐',
+  'sp.permissions.gate_desc': 'WebBrain은 사이트에서 처음으로 클릭, 입력, 다운로드 또는 코드 실행을 할 때 확인을 요청합니다.',
+  'sp.permissions.gate_off': '꺼짐: WebBrain이 모든 사이트에서 묻지 않고 작업합니다.',
+  'sp.permissions.manage': '사이트 권한 관리',
+  'sp.permissions.enabled': '권한 확인이 다시 켜졌습니다.',
 
   'tool.read_page': '페이지 읽는 중',
   'tool.gmail_count_results': 'Gmail 결과 계산 중',

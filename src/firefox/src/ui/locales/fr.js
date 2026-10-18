@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>Mutations d\'API activées</strong> pour cette conversation. L\'agent peut désormais utiliser POST/PUT/PATCH/DELETE via fetch_url et execute_js quand il juge l\'API plus fiable que l\'interface pour une étape. L\'interface reste privilégiée par défaut. Ce drapeau s\'efface quand vous réinitialisez la conversation.',
   'sp.permissions.disabled_html': '⚠️ <strong>Les demandes d\'autorisation sont DÉSACTIVÉES.</strong> WebBrain cliquera, saisira du texte, naviguera, exécutera du JavaScript, téléversera, téléchargera, enregistrera et planifiera des travaux futurs sans demander au préalable. Réactivez cette option depuis Paramètres → Autorisations → Demander avant les actions importantes.',
+  'sp.permissions.button': 'Demandes d\'autorisation : activées',
+  'sp.permissions.button_off': 'Demandes d\'autorisation : désactivées',
+  'sp.permissions.gate_desc': 'WebBrain demande la première fois qu\'il clique, saisit, télécharge ou exécute du code sur un site.',
+  'sp.permissions.gate_off': 'Désactivé : WebBrain agit sur tous les sites sans demander.',
+  'sp.permissions.manage': 'Gérer les autorisations des sites',
+  'sp.permissions.enabled': 'Les demandes d\'autorisation sont réactivées.',
 
   'tool.read_page': 'Lecture de la page',
   'tool.gmail_count_results': 'Comptage des résultats Gmail',

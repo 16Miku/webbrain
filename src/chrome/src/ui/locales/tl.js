@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>Naka-enable ang mga pagbabago sa API</strong> para sa pag-uusap na ito. Maaari nang gamitin ng ahente ang POST/PUT/PATCH/DELETE sa pamamagitan ng fetch_url at execute_js kapag sa tingin niyang mas maaasahan ang API kaysa UI para sa isang hakbang. UI-first pa rin ang default. Maaaclear ang flag na ito kapag ni-reset mo ang pag-uusap.',
   'sp.permissions.disabled_html': '⚠️ <strong>Naka-off ang mga prompt ng pahintulot.</strong> Mag-cli-click, magta-type, magna-navigate, magpapatakbo ng JavaScript, mag-aupload, mag-dadownload, magre-record, at mag-iskedyul ng mga gawaing hinaharap ang WebBrain nang hindi nagtatanong. I-enable muli mula sa Mga Setting → Mga Pahintulot → Magtanong bago ang mahahalagang aksyon.',
+  'sp.permissions.button': 'Mga prompt ng pahintulot: naka-on',
+  'sp.permissions.button_off': 'Mga prompt ng pahintulot: naka-off',
+  'sp.permissions.gate_desc': 'Nagtatanong ang WebBrain sa unang beses na ito ay mag-click, mag-type, mag-download o magpatakbo ng code sa isang site.',
+  'sp.permissions.gate_off': 'Naka-off: kumikilos ang WebBrain sa bawat site nang hindi nagtatanong.',
+  'sp.permissions.manage': 'Pamahalaan ang mga pahintulot ng site',
+  'sp.permissions.enabled': 'Naka-on muli ang mga prompt ng pahintulot.',
 
   'tool.read_page': 'Binabasa ang pahina',
   'tool.gmail_count_results': 'Binibilang ang mga resulta ng Gmail',

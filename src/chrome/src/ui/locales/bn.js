@@ -493,6 +493,12 @@ export default {
 
   'sp.api.enabled_html': "🔓 <strong>API মিউটেশন সক্রিয় করা হয়েছে</strong> এই কথোপকথনের জন্য। এজেন্ট এখন fetch_url এবং execute_js এর মাধ্যমে POST/PUT/PATCH/DELETE ব্যবহার করতে পারে যখন এটি API-কে একটি ধাপের জন্য UI এর চেয়ে বেশি নির্ভরযোগ্য বলে বিচার করে। UI-প্রথম ডিফল্ট থাকে। আপনি কথোপকথন রিসেট করলে এই পতাকাটি পরিষ্কার হয়ে যায়।",
   'sp.permissions.disabled_html': "⚠️ <strong>অনুমতি প্রম্পট বন্ধ আছে.</strong> WebBrain প্রথমে জিজ্ঞাসা না করেই ক্লিক করবে, টাইপ করবে, নেভিগেট করবে, JavaScript চালাবে, আপলোড করবে, ডাউনলোড করবে, রেকর্ড করবে এবং ভবিষ্যৎ কাজের সময়সূচী করবে। সেটিংস → অনুমতি → আনুষঙ্গিক কর্মের আগে জিজ্ঞাসা করুন থেকে এটি পুনরায় সক্ষম করুন৷",
+  'sp.permissions.button': 'অনুমতি প্রম্পট: চালু',
+  'sp.permissions.button_off': 'অনুমতি প্রম্পট: বন্ধ',
+  'sp.permissions.gate_desc': 'কোনো সাইটে প্রথমবার ক্লিক, টাইপ, ডাউনলোড বা কোড চালানোর আগে WebBrain জিজ্ঞাসা করে।',
+  'sp.permissions.gate_off': 'বন্ধ: WebBrain জিজ্ঞাসা না করেই প্রতিটি সাইটে কাজ করে।',
+  'sp.permissions.manage': 'সাইটের অনুমতি পরিচালনা করুন',
+  'sp.permissions.enabled': 'অনুমতি প্রম্পট আবার চালু হয়েছে।',
   "sp.help.shortcuts_html": "<strong>কীবোর্ড শর্টকাট</strong><br><code>Ctrl/Cmd+/</code> - ইনপুট ফোকাস করুন<br><code>Ctrl/Cmd+Shift+A</code> — আস্ক মোডে স্যুইচ করুন<br><code>Ctrl/Cmd+Shift+X</code> — অ্যাক্ট মোডে স্যুইচ করুন<br><code>Ctrl/Cmd+Shift+D</code> — ডেভ মোডে স্যুইচ করুন<br><code>Escape</code> - সক্রিয় রান বন্ধ করুন<br><code>Escape</code> দুবার - একটি সক্রিয় রেকর্ডিং বন্ধ করুন",
   "sp.slash.record_transcribe": "থামার পরে একটি হুইস্পার প্রতিলিপি রেকর্ড করুন এবং সংরক্ষণ করুন",
   "sp.slash.unknown_command": "অজানা স্ল্যাশ কমান্ড {command}। উপলব্ধ কমান্ড দেখতে /help ব্যবহার করুন।",

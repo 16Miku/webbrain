@@ -763,6 +763,172 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 #header #ui-scale-popover .ui-scale-reset { min-width: auto; padding-inline: 9px; }
 .ui-scale-popover output { min-width: 40px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
 
+/* Permission prompts: the same switch as Settings → Permissions → Ask before
+   consequential actions. It opens below the header tools like the scale menu.
+   When prompts are off the trigger keeps a warning color and dot, so the state
+   stays visible while the popover is closed. The popover anchors to the tools
+   cluster (not its trigger) so it always fits a narrow or zoomed panel. */
+.header-tools { position: relative; }
+
+#header .header-tools #btn-permission-gate { position: relative; }
+
+#header .header-tools #btn-permission-gate[aria-expanded="true"] {
+  color: var(--text-primary);
+  background: var(--accent-dim);
+}
+
+#header .header-tools #btn-permission-gate.is-gate-off {
+  color: var(--warning);
+}
+
+#header .header-tools #btn-permission-gate.is-gate-off::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  inset-inline-end: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 1.5px var(--bg-secondary);
+}
+
+#btn-permission-gate:focus-visible {
+  outline: 2px solid var(--accent, #6c63ff);
+  outline-offset: 1px;
+}
+
+.permission-gate-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 7px);
+  inset-inline-start: 0;
+  display: grid;
+  gap: 8px;
+  width: min(272px, calc(100vw / var(--ui-scale-zoom, 1) - 28px));
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.permission-gate-popover.hidden { display: none; }
+
+.permission-gate-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.permission-gate-copy {
+  display: grid;
+  gap: 3px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.permission-gate-title {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.permission-gate-desc {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* The checkbox stays in the accessibility tree and keyboard order; the track
+   next to it draws the switch. */
+.permission-gate-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.permission-gate-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 18px;
+  margin-top: 1px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--tint-medium);
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.permission-gate-switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  inset-inline-start: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.2s, background 0.2s;
+}
+
+.permission-gate-input:checked + .permission-gate-switch {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.permission-gate-input:checked + .permission-gate-switch::before {
+  transform: translateX(14px);
+  background: #fff;
+}
+
+html[dir="rtl"] .permission-gate-input:checked + .permission-gate-switch::before {
+  transform: translateX(-14px);
+}
+
+.permission-gate-input:focus-visible + .permission-gate-switch {
+  outline: 2px solid var(--accent, #6c63ff);
+  outline-offset: 2px;
+}
+
+.permission-gate-off-note {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.permission-gate-off-note.hidden { display: none; }
+
+/* Two ids: the generic `#header .header-tools button:not(...)` rule below
+   would otherwise turn this text link into an icon button. */
+#header #permission-gate-popover .permission-gate-settings {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+#header #permission-gate-popover .permission-gate-settings:hover {
+  color: var(--accent-hover);
+  background: none;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;

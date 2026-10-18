@@ -662,6 +662,7 @@ uiScaleWriteQueue = loadUiScale(browser.storage.local)
   .catch(() => {});
 uiScaleBtn?.addEventListener('click', () => {
   const willOpen = uiScalePopover?.classList.contains('hidden');
+  if (willOpen) closePermissionGatePopover();
   uiScalePopover?.classList.toggle('hidden', !willOpen);
   uiScaleBtn.setAttribute('aria-expanded', String(willOpen));
 });
@@ -1938,6 +1939,7 @@ browser.storage.local.get([PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY]).then
   actWarningPreferenceLoaded = true;
   updateActWarning();
   updateInputPlaceholder();
+  renderPermissionGateControl();
 }).catch(() => {});
 browser.storage.onChanged.addListener((changes) => {
   if (changes[PERMISSION_EDUCATION_KEY]) {
@@ -1950,6 +1952,7 @@ browser.storage.onChanged.addListener((changes) => {
     askBeforeConsequential = changes[PERMISSION_GATE_KEY].newValue !== false;
     updateActWarning();
     updateInputPlaceholder();
+    renderPermissionGateControl();
   }
   if (changes[ACT_WARNING_DISMISSED_KEY]) {
     actWarningDismissed = changes[ACT_WARNING_DISMISSED_KEY].newValue === true;
@@ -1957,6 +1960,92 @@ browser.storage.onChanged.addListener((changes) => {
     updateActWarning();
   }
 });
+
+
+// Header switch for the same storage-backed gate as Settings → Permissions and
+// /dangerously-skip-permissions. Turning prompts off posts the command's
+// persistent notice. A permission card already waiting is left for the user to
+// answer: a display switch must never approve a pending action on its own.
+const permissionGateMenu = document.getElementById('permission-gate-menu');
+const permissionGateBtn = document.getElementById('btn-permission-gate');
+const permissionGatePopover = document.getElementById('permission-gate-popover');
+const permissionGateToggle = document.getElementById('toggle-permission-gate-header');
+const permissionGateOffNote = document.getElementById('permission-gate-off-note');
+const permissionGateSettingsBtn = document.getElementById('btn-permission-gate-settings');
+let permissionGateWriteQueue = Promise.resolve();
+
+function renderPermissionGateControl() {
+  const off = askBeforeConsequential === false;
+  if (permissionGateToggle) permissionGateToggle.checked = !off;
+  permissionGateOffNote?.classList.toggle('hidden', !off);
+  if (!permissionGateBtn) return;
+  permissionGateBtn.classList.toggle('is-gate-off', off);
+  // The generic i18n pass re-reads these keys after a locale change.
+  const key = off ? 'sp.permissions.button_off' : 'sp.permissions.button';
+  permissionGateBtn.dataset.i18nTitle = key;
+  permissionGateBtn.dataset.i18nAriaLabel = key;
+  permissionGateBtn.title = t(key);
+  permissionGateBtn.setAttribute('aria-label', t(key));
+}
+
+function setPermissionGateFromHeader(askBefore) {
+  const write = permissionGateWriteQueue.then(async () => {
+    const changed = askBeforeConsequential !== askBefore;
+    await browser.storage.local.set({ [PERMISSION_GATE_KEY]: askBefore });
+    askBeforeConsequential = askBefore;
+    updateActWarning();
+    updateInputPlaceholder();
+    renderPermissionGateControl();
+    if (!changed) return;
+    if (askBefore) showComposerToast(t('sp.permissions.enabled'));
+    else addPersistentSlashMessage(systemHtml(t('sp.permissions.disabled_html')));
+  });
+  // A failed write leaves the switch showing the stored state.
+  permissionGateWriteQueue = write.catch(() => renderPermissionGateControl());
+  return write;
+}
+
+function closePermissionGatePopover() {
+  if (!permissionGatePopover || permissionGatePopover.classList.contains('hidden')) return false;
+  permissionGatePopover.classList.add('hidden');
+  permissionGateBtn?.setAttribute('aria-expanded', 'false');
+  return true;
+}
+
+async function openPermissionsSettingsPage() {
+  const url = browser.runtime.getURL('src/ui/settings.html#permissions');
+  try {
+    await browser.tabs.create({ url });
+  } catch {
+    browser.runtime.openOptionsPage();
+  }
+}
+
+permissionGateBtn?.addEventListener('click', () => {
+  const willOpen = permissionGatePopover?.classList.contains('hidden');
+  if (willOpen) closeUiScalePopover();
+  permissionGatePopover?.classList.toggle('hidden', !willOpen);
+  permissionGateBtn.setAttribute('aria-expanded', String(willOpen));
+  if (willOpen) permissionGateToggle?.focus({ preventScroll: true });
+});
+permissionGateToggle?.addEventListener('change', () => {
+  setPermissionGateFromHeader(permissionGateToggle.checked).catch(() => {});
+});
+permissionGateSettingsBtn?.addEventListener('click', () => {
+  closePermissionGatePopover();
+  void openPermissionsSettingsPage();
+});
+permissionGatePopover?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  closePermissionGatePopover();
+  permissionGateBtn?.focus();
+});
+document.addEventListener('click', (event) => {
+  if (permissionGateMenu?.contains(event.target)) return;
+  closePermissionGatePopover();
+});
+renderPermissionGateControl();
 
 // An automatically routed run that is acting in the visible tab.
 function autoActionRunVisible() {
@@ -14192,6 +14281,11 @@ async function handleGlobalKeydown(e) {
     if (closeUiScalePopover()) {
       e.preventDefault();
       uiScaleBtn?.focus();
+      return;
+    }
+    if (closePermissionGatePopover()) {
+      e.preventDefault();
+      permissionGateBtn?.focus();
       return;
     }
     const slashMenuOpen = !!slashCommandMenuEl && !slashCommandMenuEl.classList.contains('hidden');

@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>เปิดการแก้ไขผ่าน API</strong> สำหรับการสนทนานี้แล้ว เอเจนต์สามารถใช้ POST/PUT/PATCH/DELETE ผ่าน fetch_url และ execute_js เมื่อพิจารณาว่า API น่าเชื่อถือกว่า UI สำหรับขั้นตอนหนึ่ง โดย UI ยังคงเป็นค่าเริ่มต้น แฟล็กนี้จะถูกล้างเมื่อคุณรีเซ็ตการสนทนา',
   'sp.permissions.disabled_html': '⚠️ <strong>การถามสิทธิ์ถูกปิดอยู่</strong> WebBrain จะคลิก พิมพ์ นำทาง รัน JavaScript อัปโหลด ดาวน์โหลด บันทึก และจัดงานในอนาคตโดยไม่ถามก่อน เปิดใช้งานอีกครั้งได้จาก การตั้งค่า → สิทธิ์ → ถามก่อนการดำเนินการสำคัญ',
+  'sp.permissions.button': 'การถามสิทธิ์: เปิด',
+  'sp.permissions.button_off': 'การถามสิทธิ์: ปิด',
+  'sp.permissions.gate_desc': 'WebBrain จะถามก่อนครั้งแรกที่คลิก พิมพ์ ดาวน์โหลด หรือเรียกใช้โค้ดบนเว็บไซต์',
+  'sp.permissions.gate_off': 'ปิด: WebBrain จะดำเนินการในทุกเว็บไซต์โดยไม่ถาม',
+  'sp.permissions.manage': 'จัดการสิทธิ์ของเว็บไซต์',
+  'sp.permissions.enabled': 'เปิดการถามสิทธิ์อีกครั้งแล้ว',
 
   'tool.read_page': 'กำลังอ่านหน้า',
   'tool.gmail_count_results': 'กำลังนับผลลัพธ์ Gmail',

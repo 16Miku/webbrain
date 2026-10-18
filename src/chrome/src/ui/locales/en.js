@@ -498,6 +498,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>API mutations enabled</strong> for this conversation. The agent may now use POST/PUT/PATCH/DELETE via fetch_url and execute_js when it judges API to be more reliable than UI for a step. UI-first remains the default. This flag clears when you reset the conversation.',
   'sp.permissions.disabled_html': '⚠️ <strong>Permission prompts are OFF.</strong> WebBrain will click, type, navigate, run JavaScript, upload, download, record, and schedule future work without asking first. Re-enable this from Settings → Permissions → Ask before consequential actions.',
+  'sp.permissions.button': 'Permission prompts: on',
+  'sp.permissions.button_off': 'Permission prompts: off',
+  'sp.permissions.gate_desc': 'WebBrain asks the first time it clicks, types, downloads or runs code on a site.',
+  'sp.permissions.gate_off': 'Off: WebBrain acts on every site without asking.',
+  'sp.permissions.manage': 'Manage site permissions',
+  'sp.permissions.enabled': 'Permission prompts are on again.',
   "sp.help.shortcuts_html": "<strong>Keyboard Shortcuts</strong><br><code>Ctrl/Cmd+/</code> — Focus the input<br><code>Ctrl/Cmd+Shift+A</code> — Switch to Ask mode<br><code>Ctrl/Cmd+Shift+X</code> — Switch to Act mode<br><code>Ctrl/Cmd+Shift+D</code> — Switch to Dev mode<br><code>Escape</code> — Stop the active run<br><code>Escape</code> twice — Stop an active recording",
   "sp.slash.record_transcribe": "Record and save a Whisper transcript after stop",
   "sp.slash.unknown_command": "Unknown slash command {command}. Use /help to see available commands.",
