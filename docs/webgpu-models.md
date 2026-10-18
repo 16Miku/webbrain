@@ -190,6 +190,15 @@ Use the tools in `scripts/models/bonsai/`:
     - Misses lean towards no screenshot, which is the old behaviour; most are
       colour-of-a-button questions in unseen languages. A wrong "yes" only
       costs a screenshot, about 0.5 s.
+    - Follow-ups: the screenshot is gone from history, so "And the button?"
+      after a screenshot answer needs another look. The stored question is
+      marked (`webbrainTinyAskScreenshot`, never the image), and the next turn
+      uses a lower bar, 0.35 instead of 0.5. The readout still sees only the
+      new message: with the earlier question added it said yes to 11–13 of 30
+      text follow-ups such as "Thanks!". On 60 follow-ups in 14 languages the
+      lower bar caught 28/30 visual ones (22/30 at 0.5) with 1/30 false "yes".
+      On 52 others in 16 languages, chosen afterwards, it caught 21/26 (18/26)
+      with 0/26 (`check-tiny-ask-screenshot-gate.mjs --follow-ups`).
     - A page with almost no text gets a note to answer from the image. A
       screenshot alone never suppresses offline references. With an attached
       image both images can be sent, when the readout says the page is needed

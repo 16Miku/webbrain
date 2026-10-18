@@ -41710,6 +41710,34 @@ test('tiny Ask shows a vision-capable in-browser model the visible page when its
     assert.deepEqual(imagesOf(requests[0]), []);
   }
   {
+    // The turn after one answered from a screenshot: the stored question is
+    // marked (never the image), and a short follow-up clears a lower bar. The
+    // readout still sees only the new message. A text-only turn resets it.
+    const { TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD, TINY_ASK_SCREENSHOT_GATE_THRESHOLD } = TinyAskCh;
+    assert.ok(TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD < 0.4 && TINY_ASK_SCREENSHOT_GATE_THRESHOLD > 0.4);
+    const values = [0.9, 0.4, 0.4, 0.1, 0.4];
+    const { agent, tabId, requests, decisions, captures, run } = setup({ gate: () => values[decisions.length - 1] });
+    await run('What colour is the banner?');
+    assert.equal(captures.length, 1);
+    const stored = () => agent.conversations.get(tabId).filter(message => message.role === 'user');
+    assert.equal(stored()[0].webbrainTinyAskScreenshot, true, 'the stored question remembers the screenshot');
+    await run('And the button?');
+    assert.doesNotMatch(decisions[1].state, /banner/, 'the readout sees only the new message');
+    assert.equal(captures.length, 2, 'a follow-up at 0.4 looks again');
+    assert.equal(agent.pendingTinyAskGateTraces.get(tabId)?.threshold, TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD, 'the trace shows the bar used');
+    assert.deepEqual(imagesOf(requests[1]), ['data:image/jpeg;base64,c2NyZWVu'], 'only this turn\'s screenshot reaches the model');
+    assert.doesNotMatch(JSON.stringify(requests[1]), /webbrainTinyAskScreenshot/, 'the marker never reaches the model');
+    await run('Ya logo?');
+    assert.equal(captures.length, 3, 'a chain of visual follow-ups keeps looking');
+    await run('How much is the blue plan?');
+    assert.equal(captures.length, 3);
+    assert.equal(stored()[3].webbrainTinyAskScreenshot, undefined);
+    await run('And the yellow one?');
+    assert.equal(captures.length, 3, 'after a text-only turn the usual bar applies');
+    assert.equal(agent.pendingTinyAskGateTraces.get(tabId)?.threshold, TINY_ASK_SCREENSHOT_GATE_THRESHOLD);
+    assert.doesNotMatch(JSON.stringify(agent.conversations.get(tabId)), /data:image|c2NyZWVu/, 'no screenshot is persisted');
+  }
+  {
     const { requests, captures, run } = setup({ gate: () => new Error('worker busy') });
     assert.equal(await run('What color is the Buy button?'), 'Answer.', 'a failed readout still answers');
     assert.equal(captures.length, 0, 'text-only, as before');

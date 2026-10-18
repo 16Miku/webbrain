@@ -208,7 +208,7 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 import {
   TINY_ASK_ACT_BLOCKED_MESSAGE, TINY_ASK_COMPACT_LINKED_MAX_CHARS, TINY_ASK_COMPACT_PAGE_MAX_CHARS,
   TINY_ASK_COMPACT_SELECTION_MAX_CHARS, TINY_ASK_READ_MAX_CHARS, TINY_ASK_READ_WINDOW_CHARS, TINY_ASK_SYSTEM_PROMPT,
-  TINY_ASK_SCREENSHOT_GATE_THRESHOLD, TINY_ASK_SCREENSHOT_GATE_TIMEOUT_MS, tinyAskLinkedUrl, tinyAskScreenshotGate, tinyAskScreenshotGateProbability, tinyAskScreenshotNote, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
+  TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD, TINY_ASK_SCREENSHOT_GATE_THRESHOLD, TINY_ASK_SCREENSHOT_GATE_TIMEOUT_MS, tinyAskLinkedUrl, tinyAskScreenshotGate, tinyAskScreenshotGateProbability, tinyAskScreenshotNote, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
 } from './tiny-ask.js';
 import { webgpuModelDisplayName } from '../providers/webgpu.js';
 
@@ -11999,7 +11999,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // A tiny Ask turn carries a one-line trusted clock and the page (or PDF)
   // text and selection, read by WebBrain before the single model call. Those
   // blocks are ephemeral: the persisted turn keeps only the user's question.
-  async _enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata = {}, onUpdate = null, { imageAttachment = false } = {}) {
+  async _enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata = {}, onUpdate = null, { imageAttachment = false, followsScreenshot = false } = {}) {
     const { tabUrl: url, tabTitle: title } = await this._getTabUrlTitle(tabId);
     let page = null;
     let selection = '';
@@ -12040,7 +12040,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (linked.unavailable) onUpdate?.('thinking', { step: 0, note: 'Could not read the linked page.' });
     }
     const screenshot = await this._tinyAskScreenshot(tabId, {
-      question: questionText, page, pageReadable, imageAttachment, linkedPage: !!linkedUrl, onUpdate,
+      question: questionText, page, pageReadable, imageAttachment, linkedPage: !!linkedUrl, followsScreenshot, onUpdate,
     });
     let modelLabel = '';
     try {
@@ -12079,6 +12079,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       role: 'user',
       content: [block, ...screenshotBlocks, ...question],
       ...userAuthoredMetadata,
+      // Kept on the stored question (never the image): the next turn's gate
+      // reads it as a follow-up. Model-facing copies drop it.
+      ...(screenshot ? { webbrainTinyAskScreenshot: true } : {}),
     };
     // A screenshot alone does not ground the turn: offline references are
     // still looked up when the question asks for them.
@@ -12127,7 +12130,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // tiny Ask stays on the user's device. Same capture as the agent's
   // automatic screenshots (redaction, size budget, per-turn screenshot limit).
   // Any failure leaves the turn text-only, as before.
-  async _tinyAskScreenshot(tabId, { question = '', page = null, pageReadable = false, imageAttachment = false, linkedPage = false, onUpdate = null } = {}) {
+  async _tinyAskScreenshot(tabId, { question = '', page = null, pageReadable = false, imageAttachment = false, linkedPage = false, followsScreenshot = false, onUpdate = null } = {}) {
     // Redaction covers form fields, not text drawn in images or canvases.
     // Browser-internal pages cannot be captured; a page whose text read
     // failed still can, and is offered to the gate as having no text.
@@ -12153,14 +12156,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch (error) {
       if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
     }
+    const threshold = followsScreenshot ? TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD : TINY_ASK_SCREENSHOT_GATE_THRESHOLD;
     const gateNote = {
       probability: Number.isFinite(probability) ? Math.round(probability * 1000) / 1000 : null,
+      threshold,
       ms: Date.now() - started,
     };
     const runId = this.currentRunId.get(tabId);
     if (runId) trace.recordNote(runId, null, 'tiny_ask_screenshot_gate', gateNote);
     else this.pendingTinyAskGateTraces.set(tabId, gateNote);
-    if (!(probability >= TINY_ASK_SCREENSHOT_GATE_THRESHOLD)) return null;
+    if (!(probability >= threshold)) return null;
     onUpdate?.('thinking', { step: 0, note: 'Looking at the page…' });
     try {
       const shot = await this._captureBudgetedAutoScreenshot(tabId);
@@ -12181,7 +12186,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const userAuthoredMetadata = runOptions?.scheduledResume === true
       ? {} : { webbrainUserAuthoredText: this._messageText(userMessage) };
     if (this._isTinyAskRun(runOptions)) {
-      return this._enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata, onUpdate, { imageAttachment });
+      // The previous turn is the last stored user message (this one is
+      // stored after enrichment).
+      const previous = [...messages].reverse().find(message => message?.role === 'user');
+      return this._enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata, onUpdate, {
+        imageAttachment, followsScreenshot: previous?.webbrainTinyAskScreenshot === true,
+      });
     }
     // Standalone is intentionally plain chat regardless of provider.
     // Do not add runtime state, recording/API guidance, tab metadata, adapter
@@ -12813,6 +12823,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const {
           webbrainStandaloneChat: _standalone,
           webbrainTinyAsk: _tinyAsk,
+          webbrainTinyAskScreenshot: _tinyAskScreenshot,
           tool_calls: _toolCalls,
           tool_call_id: _toolCallId,
           responseItems: _responseItems,
