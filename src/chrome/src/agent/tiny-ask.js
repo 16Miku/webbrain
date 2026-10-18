@@ -53,39 +53,47 @@ export const TINY_ASK_READ_MAX_CHARS = 60000;
 // scanned PDF). Other questions stay text-only: a screenshot adds about a
 // second of prefill on a desktop GPU and up to ~1k image tokens of context.
 export const TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS = 200;
+// A screenshot needs two things: the question points at the current page, and
+// what it asks is visual (or the page has almost no text to answer from).
+// "What does melanoma look like?" is visual but general; "Summarize this
+// page" points at the page but is answered from its text.
+
+// Visual: appearance words, colours and visual media, in English and Turkish.
+const HUES = 'red|green|blue|yellow|orange|purple|violet|pink|black|white|gr[ae]y|brown|beige|gold(?:en)?|silver';
 const VISUAL_WORDS = [
-  // English
   'images?', 'pictures?', 'photo(?:graph)?s?', 'pics?', 'screenshots?', 'screen', 'charts?', 'graphs?',
   'diagrams?', 'maps?', 'logos?', 'icons?', 'colou?r(?:s|ed|ful)?', 'look(?:s|ing)? like', '(?:do|can) you see',
-  'visible', 'thumbnails?', 'banners?', 'layout', 'fonts?', 'illustrations?', 'drawings?', 'videos?',
-  // Turkish (stems take any suffix: resmi, fotoğrafta, grafikte, rengi)
+  'visible', 'thumbnails?', 'banners?', 'layout', 'fonts?', 'illustrations?', 'drawings?', 'videos?', 'appearance',
+  `(?:${HUES})(?:dish)?`,
   'resim\\p{L}*', 'resm\\p{L}*', 'görsel\\p{L}*', 'görüntü\\p{L}*', 'foto\\p{L}*', 'ekran\\p{L}*',
   'grafi\\p{L}*', 'grafiğ\\p{L}*', 'şema\\p{L}*', 'diyagram\\p{L}*', 'harita\\p{L}*', 'logo\\p{L}*',
   'ikon\\p{L}*', 'simge\\p{L}*', 'renk\\p{L}*', 'reng\\p{L}*', 'görünüyor\\p{L}*', 'görünüm\\p{L}*',
   'görüyor\\p{L}*', 'çizim\\p{L}*', 'video\\p{L}*',
+  '(?:kırmızı|yeşil|mavi|sarı|turuncu|mor|pembe|siyah|beyaz|gri|kahverengi|lacivert)\\p{L}*',
 ];
 const VISUAL_QUESTION = new RegExp(`(?<!\\p{L})(?:${VISUAL_WORDS.join('|')})(?!\\p{L})`, 'iu');
-// A question about the current page itself. Only these get a screenshot:
-// "What does melanoma look like?" or "Who was Ada Lovelace?" is a general
-// question even on an image page, and keeps its offline references.
-const PAGE_WORDS = [
-  // English
-  'this', 'here', 'page', 'site', 'tab', 'screen', 'summari[sz]e', 'describe', 'explain', 'tl;?dr',
-  "what(?:'s| is) (?:on|shown|happening)",
-  // Turkish
-  'bu', 'bunu', 'bunda', 'burada', 'buradaki', 'sayfa\\p{L}*', 'site\\p{L}*', 'sekme\\p{L}*', 'özetle\\p{L}*',
-  'açıkla\\p{L}*', 'anlat\\p{L}*', 'ne var', 'ne yazıyor', 'ne gösteriyor',
-];
-const PAGE_QUESTION = new RegExp(`(?<!\\p{L})(?:${PAGE_WORDS.join('|')})(?!\\p{L})`, 'iu');
-// A specific visual thing, which can only be on the page: "the photo", "the
-// Buy button", "can you see …"; in Turkish a visual stem with a suffix
-// ("fotoğraftaki", "grafikte", "logonun rengi"), since there are no articles.
-const PAGE_THINGS = 'images?|pictures?|photo(?:graph)?s?|pics?|screenshots?|charts?|graphs?|diagrams?|maps?|logos?|icons?|videos?|thumbnails?|banners?|buttons?|headers?|menus?|backgrounds?|illustrations?|drawings?|fonts?|text';
-const PAGE_VISUAL_REFERENCE = new RegExp([
-  `(?<!\\p{L})(?:the|this|that|these|those)\\s+(?:\\p{L}+\\s+){0,2}(?:${PAGE_THINGS})(?!\\p{L})`,
+
+// Pointing at the page: deictic words, the page itself, or a specific thing
+// on it ("the photo", "that Buy button"). Verbs such as "explain" do not
+// count on their own: "Explain what melanoma looks like" is general.
+const PAGE_THINGS = 'images?|pictures?|photo(?:graph)?s?|pics?|screenshots?|charts?|graphs?|diagrams?|maps?|logos?|icons?|videos?|thumbnails?|banners?|buttons?|links?|headers?|menus?|backgrounds?|illustrations?|drawings?|fonts?|text|headings?|titles?';
+const PAGE_REFERENCE = new RegExp([
+  '(?<!\\p{L})(?:this|here)(?!\\p{L})',
+  '(?<!\\p{L})on (?:the )?screen(?!\\p{L})',
+  '(?<!\\p{L})(?:the|current|open) (?:page|site|website|tab|screen|article|document)(?!\\p{L})',
+  `(?<!\\p{L})(?:the|that|these|those)\\s+(?:\\p{L}+\\s+){0,2}(?:${PAGE_THINGS})(?!\\p{L})`,
   '(?<!\\p{L})(?:do|can) you see(?!\\p{L})',
-  '(?<!\\p{L})(?:resim|resm|görsel|görüntü|foto|grafi|grafiğ|şema|diyagram|harita|logo|ikon|simge|renk|reng|çizim|video|ekran)\\p{L}+',
+  "(?<!\\p{L})what(?:'s| is) (?:on|shown|happening)(?!\\p{L})",
+  // Turkish has no articles: demonstratives, the page itself, or a word for
+  // a thing on it ("fotoğraftaki", "logonun", "buton").
+  '(?<!\\p{L})(?:bu|şu|bunu|bunda|burada|buradaki|bunlar\\p{L}*)(?!\\p{L})',
+  '(?<!\\p{L})(?:sayfa|sekme|ekran)\\p{L}*',
+  '(?<!\\p{L})(?:resim|resm|görsel|görüntü|foto|grafi|grafiğ|şema|diyagram|harita|logo|ikon|simge|çizim|video|buton|düğme|başlık)\\p{L}*',
+  '(?<!\\p{L})ne (?:yazıyor|gösteriyor)(?!\\p{L})',
 ].join('|'), 'iu');
+// A bare request with nothing else to act on ("Summarize", "Describe it",
+// "Özetle", "Bunu açıkla") can only mean the current page.
+const BARE_PAGE_REQUEST = /^\s*(?:please\s+)?(?:summari[sz]e|describe|explain|tl;?dr)(?:\s+(?:it|(?:the|this) page))?(?:\s+please)?\s*[.?!]*\s*$|^\s*(?:bunu\s+|bu sayfayı\s+)?(?:özetle|açıkla|anlat)\p{L}*\s*[.?!]*\s*$/iu;
 
 // Precedes the screenshot in the user message; the system prompt says the
 // same, so text inside the image is never taken as an instruction.
@@ -99,16 +107,16 @@ export function tinyAskScreenshotNote(page = null) {
     ? TINY_ASK_TEXTLESS_SCREENSHOT_NOTE : TINY_ASK_SCREENSHOT_NOTE;
 }
 
-// Whether a tiny Ask turn should also show the model the visible page: a
-// visual question about the page, or any question about a page that was read
-// but has almost no text (the answer is likely only in the pixels). Never
+// Whether a tiny Ask turn should also show the model the visible page. Never
 // with an attached image or a linked page, which is then what the question is
 // about: a screenshot of the current tab would be the wrong source.
 export function tinyAskWantsScreenshot({ question = '', page = null, imageAttachment = false, linkedPage = false } = {}) {
   if (imageAttachment || linkedPage) return false;
   const text = String(question || '');
-  if (!PAGE_QUESTION.test(text) && !PAGE_VISUAL_REFERENCE.test(text)) return false;
+  if (!PAGE_REFERENCE.test(text) && !BARE_PAGE_REQUEST.test(text)) return false;
   if (VISUAL_QUESTION.test(text)) return true;
+  // A page that was read but has almost no text: the answer is likely only
+  // in the pixels.
   return !!page?.kind && String(page.text || '').trim().length < TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS;
 }
 

@@ -174,13 +174,16 @@ Use the tools in `scripts/models/bonsai/`:
     are added only when there is no page text.
   - When the model reads images (Ternary Bonsai 2 2B Vision), a visual
     question about the page also gets a screenshot of the visible page
-    (`tinyAskWantsScreenshot`). Examples: "what color is the button?", "what
-    does the chart show?", "can you see …", "fotoğraftaki kupa ne renk?".
+    (`tinyAskWantsScreenshot`). It needs both: the question points at the page
+    (this, here, the page, "the photo", "that Buy button", "can you see",
+    Turkish bu/burada/sayfa or a word for a thing on it), and asks something
+    visual (appearance, colours, images, charts). Examples: "is the Buy
+    button red?", "what does the chart show?", "fotoğraftaki kupa ne renk?".
     - A question about a page with almost no text ("what is on this page?")
       gets one as well, with a note to answer from the image.
     - General questions take none, even on an image page: "what does
-      melanoma look like?", "who was Ada Lovelace?". A screenshot alone never
-      suppresses offline references.
+      melanoma look like?", "explain what melanoma looks like", "who was Ada
+      Lovelace?". A screenshot alone never suppresses offline references.
     - Neither does a turn with an attached image or a linked page: that is
       the subject, and the current tab would be the wrong source.
     - The capture is the same as automatic screenshots: redaction, size

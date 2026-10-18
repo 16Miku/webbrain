@@ -41612,11 +41612,13 @@ test('tiny Ask shows a vision-capable in-browser model the visible page for visu
   const page = { kind: 'page', text: 'Plenty of readable page text. '.repeat(20) };
   for (const question of ['What is in this image?', 'What color is the button?', 'What does the chart show?',
     'What color is the mug in the photo?', 'Can you see a cat?', 'Bu resimde ne var?', 'Grafikte ne görünüyor?',
-    'Logonun rengi ne?', 'Ekranda ne yazıyor?', 'Fotoğraftaki kupa ne renk?']) {
+    'Logonun rengi ne?', 'Ekranda ne yazıyor?', 'Fotoğraftaki kupa ne renk?', 'Is the Buy button red?', 'Is this button blue?',
+    'Buton kırmızı mı?']) {
     assert.equal(tinyAskWantsScreenshot({ question, page }), true, question);
   }
   for (const question of ['How much is the blue plan?', 'Summarize this page', 'figure out the price', 'see the reviews',
-    'Görevi özetle', 'Fiyat ne kadar?', 'What does melanoma look like?', 'What color is a flamingo?', 'Melanom nasıl görünür?']) {
+    'Görevi özetle', 'Fiyat ne kadar?', 'What does melanoma look like?', 'What color is a flamingo?', 'Melanom nasıl görünür?',
+    'Explain what melanoma looks like', 'Melanomun rengi ne?', 'Is the sky blue?', 'I heard that melanoma looks dark']) {
     assert.equal(tinyAskWantsScreenshot({ question, page }), false, `not a visual question about the page: ${question}`);
   }
   assert.equal(tinyAskWantsScreenshot({ question: 'What is in this image?', page, imageAttachment: true }), false,
@@ -41624,10 +41626,11 @@ test('tiny Ask shows a vision-capable in-browser model the visible page for visu
   assert.equal(tinyAskWantsScreenshot({ question: 'What color is the logo at https://example.com?', page, linkedPage: true }), false,
     'a linked page is the subject, not the current tab');
   const textless = { kind: 'page', text: '  ' };
-  for (const question of ['Summarize', 'What is on this page?', 'Describe it', 'Bu sayfada ne var?', 'Burada ne yazıyor?']) {
+  for (const question of ['Summarize', 'What is on this page?', 'Describe it', 'Bu sayfada ne var?', 'Burada ne yazıyor?', 'Özetle', 'Bunu açıkla']) {
     assert.equal(tinyAskWantsScreenshot({ question, page: textless }), true, `a page question on a textless page: ${question}`);
   }
-  for (const question of ['Who was Ada Lovelace?', 'How do I treat a burn?', 'Ada Lovelace kimdir?', 'What does melanoma look like?']) {
+  for (const question of ['Who was Ada Lovelace?', 'How do I treat a burn?', 'Ada Lovelace kimdir?', 'What does melanoma look like?',
+    'Explain what melanoma looks like']) {
     assert.equal(tinyAskWantsScreenshot({ question, page: textless }), false, `a general question keeps its references: ${question}`);
   }
   assert.equal(tinyAskWantsScreenshot({ question: 'Summarize', page: { kind: 'pdf', text: '', unavailable: 'no text' } }), true, 'a scanned PDF');
