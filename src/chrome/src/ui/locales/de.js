@@ -687,6 +687,8 @@ export default {
   ...getApocalypseModeCopy('de'),
   ...getEmergencyBoxCopy('de'),
   'st.display.help_improve.label': 'Bei der Verbesserung von WebBrain helfen',
+  'st.display.newtab.label': 'WebBrain als Neuer-Tab-Seite verwenden',
+  'st.display.newtab.desc': 'Neue Tabs öffnen eine WebBrain-Seite mit einem Feld zum Fragen, Handeln oder Suchen. Schalte das aus, um die normale Neuer-Tab-Seite deines Browsers zu behalten; du kannst es jederzeit unter Einstellungen → Allgemein ändern.',
   'st.display.help_improve.desc_html': 'Ermöglichen Sie, dass geeignete WebBrain Compass-Text- und Tool-Interaktionen gespeichert und für Auswertung, Verbesserung, Feinabstimmung und Training verwendet werden. Standardmäßig aktiviert. Wenn Sie dies deaktivieren, wird die aktuelle Unterhaltung dauerhaft ausgeschlossen; eine erneute Aktivierung gilt ab der nächsten neuen Unterhaltung. Screenshots und Bilddaten werden nicht in der WebBrain-Verbesserungsdatenbank gespeichert. <u>Anfragen an lokale Modelle und eigene APIs werden von WebBrain nur bei Anbietern erfasst, bei denen Sie „Suchanfragen für Forschung teilen“ aktivieren.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Datenschutzrichtlinie →</a>',
   'st.display.clarify_timeout.label': 'Zeitlimit für Klärungsfragen',
   'st.display.clarify_timeout.desc': 'Wie lange auf eine Antwort auf eine Klärungsfrag gewartet wird, bevor die erste Option automatisch ausgewählt wird.',

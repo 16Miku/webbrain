@@ -155,6 +155,7 @@ if (globalThis.browser?.storage?.onChanged) {
   const providerList = document.getElementById('ob-provider-list');
   const helpImproveChoice = document.getElementById('ob-help-improve');
   const helpImproveCheckbox = document.getElementById('ob-help-improve-checkbox');
+  const newTabCheckbox = document.getElementById('ob-newtab-checkbox');
   const localModels = document.getElementById('ob-local-models');
   const localModelList = document.getElementById('ob-local-model-list');
   const totalSteps = steps.length;
@@ -182,7 +183,11 @@ if (globalThis.browser?.storage?.onChanged) {
     dismissed = true;
     scanGeneration += 1;
     browser.storage.onChanged.removeListener(onProviderChange);
-    await browser.storage.local.set({ onboardingComplete: true }).catch(() => {});
+    // The new tab is opt-in: it is on only if the box was left ticked on the way out.
+    await browser.storage.local.set({
+      onboardingComplete: true,
+      ...(newTabCheckbox ? { newTabEnabled: newTabCheckbox.checked } : {}),
+    }).catch(() => {});
     overlay.classList.add('hidden');
   }
 

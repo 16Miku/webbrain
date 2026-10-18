@@ -688,6 +688,8 @@ export default {
   'st.providers.webgpu_download.stopping': 'Đang dừng và xóa tệp…',
   'st.providers.webgpu_download.stop': 'Dừng và xóa',
   'st.display.help_improve.label': "Giúp cải thiện WebBrain",
+  'st.display.newtab.label': 'Dùng WebBrain làm trang tab mới',
+  'st.display.newtab.desc': 'Tab mới sẽ mở trang WebBrain với một ô để Hỏi, Thực hiện hoặc Tìm kiếm. Tắt tùy chọn này để giữ trang tab mới thông thường của trình duyệt; bạn có thể đổi bất cứ lúc nào trong Cài đặt → Chung.',
   'st.display.help_improve.desc_html': "Cho phép giữ lại và sử dụng các tương tác văn bản và công cụ đủ điều kiện trên WebBrain Compass để đánh giá, cải tiến, tinh chỉnh và đào tạo. Bật theo mặc định. Tắt tính năng này vĩnh viễn sẽ chọn không tham gia cuộc trò chuyện hiện tại; việc bật lại sẽ áp dụng cho cuộc trò chuyện mới tiếp theo. Ảnh chụp màn hình và byte hình ảnh không được giữ lại trong cơ sở dữ liệu cải tiến WebBrain. <u>WebBrain chỉ thu thập yêu cầu mô hình cục bộ và API riêng của bạn từ những nhà cung cấp mà bạn bật “Chia sẻ truy vấn để nghiên cứu”.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Chính sách bảo mật →</a>",
   'st.display.clarify_timeout.label': "Làm rõ thời gian chờ",
   'st.display.clarify_timeout.desc': "Mất bao lâu để chờ phản hồi cho lời nhắc làm rõ trước khi tự động chọn tùy chọn đầu tiên (hoặc hết thời gian chờ nếu không có tùy chọn nào). 0 = Tức thì (luôn tự động chọn). Các giá trị trên 1200 chờ vô thời hạn (Tắt). Mặc định là 60 giây. Không áp dụng cho sự cho phép hoặc xác nhận gửi biểu mẫu.",

@@ -665,6 +665,8 @@ export default {
   'st.providers.webgpu_download.stopping': 'Stoppen en bestanden verwijderen…',
   'st.providers.webgpu_download.stop': 'Stoppen en verwijderen',
   'st.display.help_improve.label': 'Help WebBrain verbeteren',
+  'st.display.newtab.label': 'WebBrain gebruiken als mijn nieuwe-tabpagina',
+  'st.display.newtab.desc': 'Nieuwe tabbladen openen een WebBrain-pagina met een vak om te vragen, te handelen of te zoeken. Zet dit uit om de gewone nieuwe-tabpagina van je browser te houden; je kunt het altijd wijzigen via Instellingen → Algemeen.',
   'st.display.help_improve.desc_html': 'Sta toe dat geschikte WebBrain Compass-tekst- en toolinteracties worden bewaard en gebruikt voor evaluatie, verbetering, fine-tuning en training. Standaard ingeschakeld. Als u dit uitschakelt, wordt het huidige gesprek permanent uitgesloten; opnieuw inschakelen geldt vanaf het volgende nieuwe gesprek. Screenshots en afbeeldingsbytes worden niet bewaard in de WebBrain-verbeteringsdatabase. <u>Verzoeken aan lokale modellen en je eigen API worden door WebBrain alleen verzameld bij providers waar je “Query’s delen voor onderzoek” inschakelt.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacybeleid →</a>',
   'st.display.clarify_timeout.label': 'Verduidelijkingstime-out',
   'st.display.clarify_timeout.desc': 'Hoelang wachten op een antwoord op een verduidelijkingsprompt...',

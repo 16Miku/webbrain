@@ -695,6 +695,8 @@ export default {
   ...apocalypseModeCopy,
   ...emergencyCopy,
   'st.display.help_improve.label': 'Help Improve WebBrain',
+  'st.display.newtab.label': 'Use WebBrain as my new tab page',
+  'st.display.newtab.desc': 'New tabs open a WebBrain page with a box to Ask, Act or Search. Turn this off to keep your browser\'s normal new tab page; you can change it any time in Settings → General.',
   'st.display.help_improve.desc_html': 'Allow eligible WebBrain Compass text and tool interactions to be retained and used for evaluation, improvement, fine-tuning, and training. On by default. Turning this off permanently opts out the current conversation; turning it back on applies to the next new conversation. Screenshots and image bytes are not retained in the WebBrain improvement database. <u>Local-model and bring-your-own API requests are only collected by WebBrain from providers where you turn on “Share queries for research”.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacy policy →</a>',
   'st.display.clarify_timeout.label': 'Clarify timeout',
   'st.display.clarify_timeout.desc': 'How long to wait for a reply to a clarify prompt before auto-selecting the first option (or timing out if there are no options). 0 = Instant (always auto-select). Values above 1200s wait indefinitely (Off). Default 60s. Does not apply to permission or form-submit confirmations.',

@@ -1068,6 +1068,8 @@ export default {
   "sp.export_traces.partial": "שרשרת הכלים יוצאה, אך חלק מאירועי התורות לא נקראו.",
   "sp.export_traces.truncated": "שרשרת הכלים יוצאה. תורות ישנות עשויות לחסר אם לשיחה יש הרבה מעקבים.",
   "st.display.help_improve.label": "עזרה בשיפור WebBrain",
+  "st.display.newtab.label": "להשתמש ב-WebBrain כדף הכרטיסייה החדשה",
+  "st.display.newtab.desc": "כרטיסיות חדשות יפתחו דף WebBrain עם תיבה לשאילת שאלות, לביצוע פעולות או לחיפוש. כבו את האפשרות כדי להשאיר את דף הכרטיסייה החדשה הרגיל של הדפדפן; אפשר לשנות זאת בכל עת בהגדרות ← כללי.",
   "st.display.help_improve.desc_html": "אפשרו לשמור אינטראקציות נבחרות עם WebBrain Compass ולהשתמש בהן להערכה, שיפור, כוונון עדין ואימון. מופעל כברירת מחדל. כבו כדי למנוע שימוש באינטראקציות Compass עתידיות למטרות אלה. <u>WebBrain אוסף בקשות למודלים מקומיים ול-API שלכם רק מספקים שבהם הפעלתם את «שיתוף שאילתות למחקר».</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">מדיניות פרטיות →</a>",
   "st.providers.webbrain_data_use.body": "שימוש יומי חינמי ב-WebBrain Compass כלול. כאשר ״עזרה בשיפור WebBrain״ מופעלת כברירת מחדל, ייתכן ששיחות Compass נבחרות יישמרו וישמשו להערכה, שיפור, כוונון עדין ואימון. כבו את האפשרות ב״כללי ← מִתקַדֵם״ כדי להחריג אינטראקציות Compass עתידיות משימושים אלה. <u>WebBrain אוסף בקשות למודלים מקומיים ול-API שלכם רק כאשר אתם מפעילים את האפשרות «שיתוף שאילתות למחקר» של ספק זה.</u> {privacyLink}. לשימוש נוסף, הירשמו דרך {subscribeLink}. נהלו את החיוב דרך {accountLink}.",
   'st.providers.share_research.label': "שיתוף שאילתות למחקר",
