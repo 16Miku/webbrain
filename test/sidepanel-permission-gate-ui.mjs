@@ -5,7 +5,7 @@ import { chromium, firefox } from 'playwright';
 
 const read = async (build, file) => (await fs.readFile(new URL(`../src/${build}/${file}`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
-// Runs the production header switch (its whole block in sidepanel.js) against
+// Runs the production composer switch (its whole block in sidepanel.js) against
 // the real panel markup, styles and English strings. Only storage, tabs and the
 // chat helpers it calls are fixtures, so the test sees every write and notice.
 for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', firefox, 'browser']]) {
@@ -84,7 +84,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
             off: btn.classList.contains('is-gate-off'),
             dot: getComputedStyle(btn, '::after').content,
             open: !popover.classList.contains('hidden'),
-            checked: document.getElementById('toggle-permission-gate-header').checked,
+            checked: document.getElementById('toggle-permission-gate-panel').checked,
             noteShown: !document.getElementById('permission-gate-off-note').classList.contains('hidden'),
             focus: document.activeElement?.id || '',
             log: structuredClone(window.__log),
@@ -110,7 +110,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         s = await state();
         assert.equal(s.open, true);
         assert.equal(s.expanded, 'true');
-        assert.equal(s.focus, 'toggle-permission-gate-header', 'focus moves to the switch');
+        assert.equal(s.focus, 'toggle-permission-gate-panel', 'focus moves to the switch');
         assert.equal(s.log.scaleClosed, 1, 'opening it closes the scale menu');
         assert.match(await page.textContent('#permission-gate-popover'), /Ask before consequential actions[\s\S]*WebBrain asks the first time/);
 
@@ -162,7 +162,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.click('#btn-permission-gate');
         await page.evaluate(() => window.__failNextWrite());
         await page.click('.permission-gate-row');
-        await page.waitForFunction(() => document.getElementById('toggle-permission-gate-header').checked === true);
+        await page.waitForFunction(() => document.getElementById('toggle-permission-gate-panel').checked === true);
         const s = await state();
         assert.deepEqual(s.log.writes, []);
         assert.deepEqual(s.log.notices, []);
@@ -175,9 +175,10 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.click('#btn-permission-gate');
         const box = await page.locator('#permission-gate-popover').boundingBox();
         assert.ok(box.x >= 0 && box.x + box.width <= 360, `popover stays inside a 360px panel (${box.x}+${box.width})`);
+        const toolbar = await page.locator('.composer-toolbar').boundingBox();
+        assert.ok(box.y >= 0 && box.y + box.height <= toolbar.y, `popover opens upward above the composer toolbar (${box.y}+${box.height} vs ${toolbar.y})`);
+        assert.ok(toolbar.height <= 36, 'the composer toolbar stays on one row');
         const header = await page.locator('#header').boundingBox();
-        const tools = await page.locator('.header-tools').boundingBox();
-        assert.ok(tools.height <= 32, 'header tools stay on one row');
         assert.ok(header.height <= 56, 'the header does not wrap');
         await page.click('#btn-permission-gate-settings');
         await page.waitForFunction(() => window.__log.opened.length === 1);

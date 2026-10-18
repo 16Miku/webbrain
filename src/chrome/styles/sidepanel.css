@@ -891,33 +891,56 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 .ui-scale-popover output { min-width: 40px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
 
 /* Permission prompts: the same switch as Settings → Permissions → Ask before
-   consequential actions. It opens below the header tools like the scale menu.
-   When prompts are off the trigger keeps a warning color and dot, so the state
-   stays visible while the popover is closed. The popover anchors to the tools
-   cluster (not its trigger) so it always fits a narrow or zoomed panel. */
-.header-tools { position: relative; }
+   consequential actions, as an icon in the composer toolbar next to the
+   microphone. Its popover opens upward like the model picker's menu. When
+   prompts are off the trigger keeps a warning color and dot, so the state stays
+   visible while the popover is closed. The popover anchors to the toolbar (not
+   its trigger) so it always fits a narrow or zoomed panel. */
+.composer-toolbar { position: relative; }
 
-#header .header-tools #btn-permission-gate { position: relative; }
+#btn-permission-gate {
+  position: relative;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s, transform 0.1s;
+  flex-shrink: 0;
+}
 
-#header .header-tools #btn-permission-gate[aria-expanded="true"] {
+#btn-permission-gate:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+#btn-permission-gate:active { transform: scale(0.95); }
+
+#btn-permission-gate[aria-expanded="true"] {
   color: var(--text-primary);
   background: var(--accent-dim);
 }
 
-#header .header-tools #btn-permission-gate.is-gate-off {
+#btn-permission-gate.is-gate-off {
   color: var(--warning);
 }
 
-#header .header-tools #btn-permission-gate.is-gate-off::after {
+#btn-permission-gate.is-gate-off::after {
   content: '';
   position: absolute;
-  top: 2px;
-  inset-inline-end: 1px;
+  top: 3px;
+  inset-inline-end: 3px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--warning);
-  box-shadow: 0 0 0 1.5px var(--bg-secondary);
+  box-shadow: 0 0 0 1.5px var(--bg-input);
 }
 
 #btn-permission-gate:focus-visible {
@@ -927,9 +950,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 
 .permission-gate-popover {
   position: absolute;
-  z-index: 30;
-  top: calc(100% + 7px);
-  inset-inline-start: 0;
+  z-index: 40;
+  bottom: calc(100% + 10px);
+  inset-inline-end: 0;
   display: grid;
   gap: 8px;
   width: min(272px, calc(100vw / var(--ui-scale-zoom, 1) - 28px));
@@ -1036,9 +1059,7 @@ html[dir="rtl"] .permission-gate-input:checked + .permission-gate-switch::before
 
 .permission-gate-off-note.hidden { display: none; }
 
-/* Two ids: the generic `#header .header-tools button:not(...)` rule below
-   would otherwise turn this text link into an icon button. */
-#header #permission-gate-popover .permission-gate-settings {
+.permission-gate-settings {
   justify-self: start;
   padding: 0;
   border: 0;
@@ -1051,7 +1072,7 @@ html[dir="rtl"] .permission-gate-input:checked + .permission-gate-switch::before
   cursor: pointer;
 }
 
-#header #permission-gate-popover .permission-gate-settings:hover {
+.permission-gate-settings:hover {
   color: var(--accent-hover);
   background: none;
 }
