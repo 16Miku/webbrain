@@ -204,6 +204,66 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(f.guard.socialPublication.dispatch, null);
   });
 
+  test(`${browser}: deleting the post afterwards stays outside the publication contract and its audit`, () => {
+    const compile = api.publicationContractMessages({ request: 'post a test tweet' }, {})[0].content;
+    for (const rule of [
+      'This contract covers publication only. An action that publishes nothing and comes after the publication, such as deleting the post afterwards, is checked separately when it happens: compile the publication it accompanies, mention that action in reason, and never return clarify or none because of it.',
+      'A condition on whether to publish at all still belongs to this contract, including an action the user wants done before publishing ("delete my last post, then post this") and one that depends on such an action ("post it only if you can delete it right after").',
+      'Never drop an unsupported constraint on a publication: use clarify.',
+      'ready requires complete supported publication intent, actions and requirements.',
+      'clarify means missing/unsupported/ambiguous publication intent, actions=[], requirements=null.',
+    ]) assert(compile.includes(rule), rule);
+    const audit = api.publicationAuditMessages({ request: 'post a test tweet' }, {}, {}, {}, 'key')[0].content;
+    for (const rule of [
+      'Check that the contract neither omits requested publications nor adds unauthorized ones; an action that publishes nothing and comes after the publication, such as deleting the post afterwards, is checked separately when it happens and is neither an omission nor a reason to deny.',
+      'A condition on whether to publish at all still belongs to the publication, including an action the user wants done before publishing ("delete my last post, then post this") and one that depends on such an action ("post it only if you can delete it right after").',
+      'If any instruction, field or constraint of the publication is unresolved, missing, or contradictory, deny.',
+    ]) assert(audit.includes(rule), rule);
+  });
+
+  test(`${browser}: a correction to delete the post after posting reaches the contract and the audit, and the post goes out`, async () => {
+    // The trace: "post a test tweet" on X, then "after you post it delete
+    // right away" arrived while the Post click was being checked, so that
+    // click was not sent. Every later compile returned clarify because the
+    // deletion could not be encoded, and nothing was posted. The prompt now
+    // keeps the deletion outside the contract; the stubbed compiler returns
+    // what that prompt asks for, and the post goes out with the correction
+    // in both checks.
+    const request = 'post a test tweet', correction = 'after you post it delete right away';
+    const ready = rawContract([{ id: 'p1', platform: 'twitter', account: null,
+      posts: [{ body: { kind: 'compose', source: ref(request) }, media: count(), context: { kind: 'post', target: null } }] }]);
+    ready.reason = 'A test tweet on X; deleting it after posting is checked separately.';
+    const f = setup(request, ready);
+    const { agent, tabId } = f;
+    f.detected.publicationSnapshot = snapshot('Just testing my X post. Hello!');
+    agent._runningTabs.add(tabId);
+    agent._beginSteeringRun(tabId, () => {}, { detachedRequestId: 'steered-publication' });
+    const detect = agent._detectLikelySubmitAction;
+    agent._detectLikelySubmitAction = async (...args) => {
+      agent._detectLikelySubmitAction = detect;
+      assert.equal(agent.steerMessage(tabId, correction, { requestId: 'steered-publication', messageId: 'revision' }).accepted, true);
+      return detect(...args);
+    };
+    const cancelled = await agent._workflowPreSubmitDispatchBlock(tabId, 'click_ax', {}, f.detected, f.provider);
+    assert.equal(cancelled.noDispatch, true);
+    assert.equal(agent._applyPendingSteering(tabId, agent.conversations.get(tabId), () => {}), true);
+    agent._finishSteeringRun(tabId);
+    agent._runningTabs.delete(tabId);
+    // The next click compiles with the correction as the user's own words,
+    // and the audit sees it beside the contract's note about the deletion.
+    const before = f.calls.length;
+    assert.equal(await agent._workflowPreSubmitDispatchBlock(tabId, 'click_ax', {}, f.detected, f.provider), null);
+    const calls = f.calls.slice(before);
+    assert.deepEqual(calls.map(call => call.meta.generationName), ['social_publication_contract', 'social_publication_authorization']);
+    for (const call of calls) {
+      const input = JSON.parse(call.messages[1].content);
+      assert.equal(input.sources.request, request);
+      assert.equal(input.sources.steering_message0, correction);
+    }
+    assert.equal(JSON.parse(calls[1].messages[1].content).contract.reason, ready.reason);
+    assert.equal(agent._socialPublicationAction(f.guard).posts[0].body.kind, 'compose');
+  });
+
   test(`${browser}: steering invalidates in-flight publication compilation and authorization`, async () => {
     for (const phase of ['contract', 'authorization']) {
       const f = setup();
