@@ -78,8 +78,10 @@
       .bulletin { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: 8px 12px; padding: 12px 44px 12px 14px; }
       .tag { justify-self: start; }
       .copy { grid-column: 1 / -1; grid-row: 2; }
-      .copy h1, .copy p { white-space: normal; }
-      .copy p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+      .copy h1, .copy p { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+      .copy h1 { font-size: 14px; -webkit-line-clamp: 2; }
+      /* The frame is 128 px tall here: two title lines and one detail line fit. */
+      .copy p { -webkit-line-clamp: 1; }
       a { grid-column: 2; grid-row: 1; padding: 6px 10px; }
     }
   </style>
