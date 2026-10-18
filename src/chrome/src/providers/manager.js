@@ -2026,6 +2026,7 @@ export class ProviderManager {
       configured: !WEBBRAIN_CLOUD_PROVIDER_IDS.has(id) && (markConfigured || current.configured === true),
     };
     if (Object.hasOwn(updates, 'contextWindow')) {
+      merged.manualContextWindow = true;
       if (!Number.isFinite(Number(current.contextWindow))
         || Number(updates.contextWindow) !== Number(current.contextWindow)
         || Number(updates.contextWindow) !== Number(current.autoContextWindow)) {
@@ -2682,21 +2683,25 @@ export class ProviderManager {
 
   /**
    * Stored windows that detection may replace besides the 16k local default.
-   * For the Local OpenAI-compatible Proxy: its own 64k default and the last
-   * window WebBrain filled in itself (`autoContextWindow`), so a name-based
-   * 128k for one model does not stick when an unknown model is picked next.
-   * Any other value is a user override.
+   * For the Local OpenAI-compatible Proxy: its own 64k default (unless the
+   * user manually saved a context window) and the last window WebBrain filled
+   * in itself (`autoContextWindow`), so a name-based 128k for one model does
+   * not stick when an unknown model is picked next. Any other value is a user override.
    */
   _replaceableContextWindows(id, config) {
     if (this._providerDefinitionId(id, config) !== 'local_openai_proxy') return [];
     const auto = Number(config?.autoContextWindow);
     const matchesCurrent = Number(config?.contextWindow) === auto;
-    return [LOCAL_OPENAI_PROXY_CONTEXT_WINDOW, ...(Number.isFinite(auto) && auto > 0 && matchesCurrent ? [auto] : [])];
+    const isUntouchedDefault = config?.manualContextWindow !== true && !Number.isFinite(auto);
+    return [
+      ...(isUntouchedDefault ? [LOCAL_OPENAI_PROXY_CONTEXT_WINDOW] : []),
+      ...(Number.isFinite(auto) && auto > 0 && matchesCurrent ? [auto] : []),
+    ];
   }
 
   _detectedContextWindowFields(id, config, contextWindow) {
     return this._providerDefinitionId(id, config) === 'local_openai_proxy'
-      ? { autoContextWindow: contextWindow }
+      ? { autoContextWindow: contextWindow, manualContextWindow: false }
       : {};
   }
 

@@ -73020,6 +73020,21 @@ test('Local OpenAI-compatible Proxy context window: model card, live props, mode
         assert.equal(config().contextWindow, 128000);
       }
 
+      // 5c. A manually entered 64k context window is preserved as a user override
+      // and not enlarged by name-based detection.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: 'claude-sonnet-4-5',
+        });
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 65536 });
+        assert.equal(config().contextWindow, 65536);
+        assert.equal(config().manualContextWindow, true, `${label}: manual 64k recorded as manualContextWindow`);
+        assert.equal(config().autoContextWindow, undefined);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.contextWindow, undefined, `${label}: manual 64k override is preserved against name inference`);
+        assert.equal(config().contextWindow, 65536);
+      }
+
       // 6. A manual override is never enlarged by a name or the fallback...
       {
         const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
