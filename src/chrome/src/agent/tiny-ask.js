@@ -62,6 +62,16 @@ export const TINY_ASK_SCREENSHOT_GATE_QUESTION = 'To answer this message well, d
   + 'screenshot of the current page, because the answer depends on how something on it looks (an image, photo, '
   + 'chart, colour, logo, button or layout) or on what a page with almost no text shows?';
 
+// A long message keeps its opening and its end, where the actual request
+// usually is ("…compare this with the logo on the current page").
+export const TINY_ASK_SCREENSHOT_GATE_HEAD_CHARS = 600;
+export const TINY_ASK_SCREENSHOT_GATE_TAIL_CHARS = 1400;
+function gateExcerpt(text) {
+  const value = String(text || '');
+  if (value.length <= TINY_ASK_SCREENSHOT_GATE_HEAD_CHARS + TINY_ASK_SCREENSHOT_GATE_TAIL_CHARS) return value;
+  return `${value.slice(0, TINY_ASK_SCREENSHOT_GATE_HEAD_CHARS)} […] ${value.slice(-TINY_ASK_SCREENSHOT_GATE_TAIL_CHARS)}`;
+}
+
 export function tinyAskScreenshotGate({ question = '', pageChars = 0, imageAttachment = false, linkedPage = false } = {}) {
   const chars = Math.max(0, Number(pageChars) || 0);
   const facts = [
@@ -70,7 +80,7 @@ export function tinyAskScreenshotGate({ question = '', pageChars = 0, imageAttac
     `The message links another page: ${linkedPage ? 'yes' : 'no'}.`,
   ];
   return {
-    state: `The user's message to the browser assistant:\n${String(question || '').slice(0, 2000)}\n\n${facts.join('\n')}`,
+    state: `The user's message to the browser assistant:\n${gateExcerpt(question)}\n\n${facts.join('\n')}`,
     questions: { needs_screenshot: { type: 'noul', instructions: TINY_ASK_SCREENSHOT_GATE_QUESTION } },
   };
 }

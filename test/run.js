@@ -41621,6 +41621,10 @@ test('tiny Ask shows a vision-capable in-browser model the visible page when its
   assert.equal(tinyAskScreenshotGateProbability({ needs_screenshot: { type: 'noul', noul: 0.8 } }), 0.8);
   assert.equal(tinyAskScreenshotGateProbability({}), null);
   assert.match(tinyAskScreenshotGate({ question: 'x', pageChars: 12 }).state, /Current page text: almost none\./);
+  const long = tinyAskScreenshotGate({ question: `${'Background notes. '.repeat(300)}Compare this with the logo on the current page.` }).state;
+  assert.match(long, /Compare this with the logo on the current page\./, 'a long message keeps its end, where the request is');
+  assert.match(long, /^The user's message to the browser assistant:\nBackground notes\./, 'and its opening');
+  assert.ok(long.length < 2300, 'bounded');
   assert.match(TINY_ASK_SYSTEM_PROMPT, /a screenshot of its visible part/);
   assert.match(TINY_ASK_SYSTEM_PROMPT, /one-time codes that appear in page text or a screenshot/, 'the no-secrets rule covers screenshots');
   assert.match(TINY_ASK_SCREENSHOT_NOTE, /never repeat passwords, keys, tokens or one-time codes/);
