@@ -1,5 +1,19 @@
 /** Run-scoped, app-owned bot memory. Never persist the callback credential. */
 import { isCredentialField } from './credential-fields.js';
+
+// WebBrain's own new tab page (chrome_url_overrides.newtab) is the browser's new tab
+// once the override is on, so it counts as a blank document here. Content scripts
+// do not run on it either.
+function isOwnNewTabPage(url) {
+  try {
+    const api = globalThis.browser?.runtime?.getURL ? globalThis.browser : globalThis.chrome;
+    const own = new URL(api.runtime.getURL('newtab/index.html'));
+    const candidate = new URL(url);
+    return candidate.protocol === own.protocol && candidate.host === own.host && candidate.pathname === own.pathname;
+  } catch {
+    return false;
+  }
+}
 export const BOT_MEMORY_SCOPE_HEADER = '[Managed bot memory scope - profile memory and unscoped side conversations are unavailable.]';
 const READ_TOOLS = new Set([
   'calculate',
@@ -422,7 +436,8 @@ export class BotMemorySession {
     const current = typeof tab?.url === 'string' ? tab.url : '';
     if (tab?.url && tab?.pendingUrl && tab.pendingUrl !== tab.url) return false;
     return ['about:blank', 'about:newtab', 'about:home', 'chrome://newtab/',
-      'chrome://new-tab-page/', 'edge://newtab/', 'chrome-search://local-ntp/local-ntp.html'].includes(current);
+      'chrome://new-tab-page/', 'edge://newtab/', 'chrome-search://local-ntp/local-ntp.html'].includes(current)
+      || isOwnNewTabPage(current);
   }
   async prepare(tabId, name, args, { signal = null, consequentialSubmit = false, detectedSubmit = false } = {}) {
     if (this.pending.size && (name === 'done_json' || (name === 'done' && !['partial', 'failed'].includes(args?.outcome)))) {

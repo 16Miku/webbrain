@@ -1650,6 +1650,64 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   }).catch(() => {});
 });
 
+// Hand-off records from the new tab are removed by the panel that claims them.
+// Handed-off tasks (and handed-back ones) from a previous browser session belong to tabs that
+// no longer exist. Cleared once, at browser start, before any new tab can have submitted one;
+// a sweep at other times could delete a task stored a moment after it looked, and storage has
+// no compare-and-delete. Within a session the panel removes what it claims, stale records are
+// ignored by their age, and closing a tab removes its records.
+chrome.runtime.onStartup?.addListener?.(async () => {
+  try {
+    // Only records written before this moment: a task submitted since the browser started is
+    // never a candidate (the one case left, a stale key rewritten between the read and the
+    // removal below, needs a submission in that few-millisecond gap).
+    const startedAt = Date.now();
+    const all = await chrome.storage.local.get(null);
+    const olderThanStart = (record) => Number(record?.createdAt) < startedAt - 10_000;
+    const keys = Object.keys(all).filter((key) => {
+      if (!key.startsWith('wbNewtabHandoff:')) return false;
+      const entries = Array.isArray(all[key]) ? all[key] : [all[key]];
+      return entries.every(olderThanStart);
+    });
+    if (keys.length) await chrome.storage.local.remove(keys);
+  } catch {
+    // best effort
+  }
+});
+
+// A tab that closes before its panel claimed the task takes the task with it.
+chrome.tabs.onRemoved.addListener((closedTabId) => {
+  chrome.storage.local
+    .remove([`wbNewtabHandoff:${closedTabId}`, `wbNewtabHandoff:retry:${closedTabId}`])
+    .catch(() => {});
+});
+
+// The new tab page opens the panel from its own submit handler (it must, to
+// keep the user gesture) and reports it here, mirroring the install page above.
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg?.type !== 'WB_NEWTAB_PANEL_OPENED') return;
+
+  const newtabUrl = chrome.runtime.getURL('newtab/index.html');
+  const senderUrl = String(sender?.url || sender?.tab?.url || '').split(/[?#]/)[0];
+  const tabId = Number(msg.tabId);
+  if (
+    sender?.id !== chrome.runtime.id
+    || senderUrl !== newtabUrl
+    || !Number.isInteger(tabId)
+    || tabId < 0
+    || (sender?.tab?.id != null && sender.tab.id !== tabId)
+  ) {
+    return;
+  }
+
+  chrome.tabs.get(tabId).then((tab) => {
+    if (String(tab?.url || '').split(/[?#]/)[0] !== newtabUrl) return;
+    panelTabs.add(tab.id);
+    savePanelTabs();
+    ensureWebBrainGroup(tab).catch(() => {});
+  }).catch(() => {});
+});
+
 // Tracks the pending 250 ms retry timer per tab so it can be cancelled if the
 // tab navigates before the timer fires.
 const pendingContextMenuNotifications = new Map();
@@ -4771,6 +4829,23 @@ async function handleMessage(msg, sender) {
 
     case 'test_image_gen_provider': {
       return await testImageGenProvider();
+    }
+
+    // Diagnostic decision readout on the in-browser chat model, for the
+    // hardware eval (scripts/check-webgpu-decisions.mjs). Settings page only.
+    case 'webgpu_decide_fixture': {
+      const api = globalThis.browser || globalThis.chrome;
+      const settingsUrl = api.runtime.getURL('src/ui/settings.html');
+      if (sender.id !== api.runtime.id || String(sender.url || '').split('#')[0] !== settingsUrl) return { success: false, error: 'Decision fixtures are available only from extension Settings.' };
+      try {
+        await strictSecretModeReady;
+        if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
+        const fixture = msg.fixture;
+        if (!fixture || typeof fixture !== 'object' || Array.isArray(fixture)) throw new Error('Invalid decision fixture.');
+        const provider = providerManager.getProvider('webgpu');
+        if (typeof provider?.decide !== 'function') throw new Error('The WebGPU provider is unavailable.');
+        return { success: true, result: await provider.decide({ state: fixture.state, images: fixture.images || [], questions: fixture.questions, temperature: fixture.temperature, promptVariant: fixture.promptVariant, returnHidden: fixture.returnHidden === true }) };
+      } catch (error) { return { success: false, error: error.message }; }
     }
 
     case 'd1_control': {

@@ -454,20 +454,20 @@ function throwIfChatCancelled(requestKey) {
   throw error;
 }
 
-async function sendTextWorkerMessage(modelId, type, payload = {}, { exclusive = false, runtime } = {}) {
+async function sendTextWorkerMessage(modelId, type, payload = {}, { exclusive = false, runtime, onDispatch } = {}) {
   const requestKey = typeof payload.requestKey === 'string' ? payload.requestKey : '';
   if (isBitgpuTextModel(modelId, runtime) || isBitgpuTextModel(payload.modelId, payload.runtime)) {
     if (exclusive) await disposeOtherTextRuntime('bitgpu');
     throwIfChatCancelled(requestKey);
     await ensureBonsaiWorker();
     throwIfChatCancelled(requestKey);
-    return sendBonsaiWorkerMessage(type, payload);
+    return sendBonsaiWorkerMessage(type, payload, { onDispatch });
   }
   if (exclusive) await disposeOtherTextRuntime('onnx');
   throwIfChatCancelled(requestKey);
   await ensureVisionWorker();
   throwIfChatCancelled(requestKey);
-  return sendVisionWorkerMessage(type, payload);
+  return sendVisionWorkerMessage(type, payload, { onDispatch });
 }
 
 function defaultVisionWorkerTimeout(type) {
@@ -477,11 +477,11 @@ function defaultVisionWorkerTimeout(type) {
   // initialization. Keep its caller attached until the worker acknowledges
   // completion (or fails), so provider fallback cannot miss a late deletion.
   if (type === 'stop-text-download') return 0;
-  if (type === 'preload' || type === 'text-chat' || type === 'multimodal-text-chat' || type === 'download-text' || type === 'start-download-text') return 0;
+  if (type === 'preload' || type === 'text-chat' || type === 'multimodal-text-chat' || type === 'multimodal-decide' || type === 'download-text' || type === 'start-download-text') return 0;
   return WORKER_INITIALIZATION_TIMEOUT_MS;
 }
 
-function sendVisionWorkerMessage(type, payload = {}, { timeoutMs = defaultVisionWorkerTimeout(type) } = {}) {
+function sendVisionWorkerMessage(type, payload = {}, { timeoutMs = defaultVisionWorkerTimeout(type), onDispatch } = {}) {
   const id = nextVisionRequestId++;
   const worker = visionWorker;
   if (!worker) return Promise.reject(new Error('Vision worker is unavailable.'));
@@ -504,6 +504,7 @@ function sendVisionWorkerMessage(type, payload = {}, { timeoutMs = defaultVision
     pendingVisionRequests.set(id, { resolve, reject, timeoutId, type, worker });
     try {
       worker.postMessage({ id, type, payload });
+      onDispatch?.(id, worker);
     } catch (error) {
       if (timeoutId) clearTimeout(timeoutId);
       pendingVisionRequests.delete(id);
@@ -557,9 +558,36 @@ async function ensureVisionWorker() {
   }
 }
 
+// In-browser decisions by the provider's decisionId. A judge timeout or Stop
+// sends webgpu-decide-cancel, which cancels the worker operation instead of
+// leaving it on the serialized model queue ahead of the next request.
+const activeWebgpuDecisions = new Map();
+// Cancels that arrived before their decision; dropped after a minute.
+const cancelledWebgpuDecisions = new Set();
+
+function cancelWebgpuDecisionWork(decision) {
+  if (!decision.worker || decision.worker !== visionWorker) return;
+  try {
+    decision.worker.postMessage({ id: nextVisionRequestId++, type: 'cancel', payload: { requestId: decision.requestId } });
+  } catch {}
+}
+
+function cancelWebgpuDecision(decisionId) {
+  const decision = activeWebgpuDecisions.get(decisionId);
+  if (decision) {
+    decision.cancelled = true;
+    cancelWebgpuDecisionWork(decision);
+    return;
+  }
+  cancelledWebgpuDecisions.add(decisionId);
+  setTimeout(() => cancelledWebgpuDecisions.delete(decisionId), 60_000);
+}
+
 const WEBGPU_MESSAGE_TYPES = new Set([
   'webgpu-chat',
   'webgpu-chat-cancel',
+  'webgpu-decide',
+  'webgpu-decide-cancel',
   'webgpu-download-start',
   'webgpu-download-pause',
   'webgpu-download-stop',
@@ -588,6 +616,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     ? message.requestKey
     : '';
   if (cancelKey && routingChatKeys.has(cancelKey)) cancelledChatKeys.add(cancelKey);
+  if (message.type === 'webgpu-decide-cancel') {
+    if (typeof message.decisionId === 'string' && message.decisionId) cancelWebgpuDecision(message.decisionId);
+    sendResponse({ ok: true });
+    return false;
+  }
   (async () => {
     try {
       // Bonsai is GGUF/bitgpu. Never boot Transformers.js for those messages —
@@ -759,6 +792,40 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (bonsaiWorker) cancels.push(sendBonsaiWorkerMessage('cancel-text', { requestKey }).catch(() => null));
         await Promise.all(cancels);
         sendResponse({ ok: true });
+        return;
+      }
+      if (message.type === 'webgpu-decide') {
+        const decisionId = typeof message.decisionId === 'string' ? message.decisionId : '';
+        if (decisionId && cancelledWebgpuDecisions.delete(decisionId)) {
+          sendResponse({ ok: false, error: 'The in-browser decision was cancelled.', code: 'webgpu_decision_cancelled' });
+          return;
+        }
+        const decision = { requestId: null, worker: null, cancelled: false };
+        if (decisionId) activeWebgpuDecisions.set(decisionId, decision);
+        try {
+          sendResponse(await sendTextWorkerMessage(message.model, 'multimodal-decide', {
+            modelId: message.model,
+            device: message.device,
+            dtype: message.dtype,
+            state: message.state,
+            images: message.images || [],
+            questions: message.questions,
+            temperature: message.temperature,
+            promptVariant: message.promptVariant,
+            returnHidden: message.returnHidden === true,
+            prefillSliceTokens: message.prefillSliceTokens,
+          }, {
+            exclusive: true,
+            runtime: message.runtime,
+            onDispatch: (requestId, worker) => {
+              decision.requestId = requestId;
+              decision.worker = worker;
+              if (decision.cancelled) cancelWebgpuDecisionWork(decision);
+            },
+          }));
+        } finally {
+          if (decisionId) activeWebgpuDecisions.delete(decisionId);
+        }
         return;
       }
       if (message.type === 'webgpu-chat') {

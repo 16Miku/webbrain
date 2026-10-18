@@ -1,0 +1,1 @@
+upstream: https://github.com/mue/mue @ 678e1d71161303d89a9b7ed94ce39281b9bb0505 (v7.6.0, BSD-3-Clause)

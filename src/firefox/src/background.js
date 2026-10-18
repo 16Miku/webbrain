@@ -1401,6 +1401,62 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   }).catch(() => {});
 });
 
+// Hand-off records from the new tab are removed by the panel that claims them.
+// Handed-off tasks (and handed-back ones) from a previous browser session belong to tabs that
+// no longer exist. Cleared once, at browser start, before any new tab can have submitted one;
+// a sweep at other times could delete a task stored a moment after it looked, and storage has
+// no compare-and-delete. Within a session the panel removes what it claims, stale records are
+// ignored by their age, and closing a tab removes its records.
+browser.runtime.onStartup?.addListener?.(async () => {
+  try {
+    // Only records written before this moment: a task submitted since the browser started is
+    // never a candidate (the one case left, a stale key rewritten between the read and the
+    // removal below, needs a submission in that few-millisecond gap).
+    const startedAt = Date.now();
+    const all = await browser.storage.local.get(null);
+    const olderThanStart = (record) => Number(record?.createdAt) < startedAt - 10_000;
+    const keys = Object.keys(all).filter((key) => {
+      if (!key.startsWith('wbNewtabHandoff:')) return false;
+      const entries = Array.isArray(all[key]) ? all[key] : [all[key]];
+      return entries.every(olderThanStart);
+    });
+    if (keys.length) await browser.storage.local.remove(keys);
+  } catch {
+    // best effort
+  }
+});
+
+// A tab that closes before its panel claimed the task takes the task with it.
+browser.tabs.onRemoved.addListener((closedTabId) => {
+  browser.storage.local
+    .remove([`wbNewtabHandoff:${closedTabId}`, `wbNewtabHandoff:retry:${closedTabId}`])
+    .catch(() => {});
+});
+
+// The new tab page opens the panel from its own submit handler (it must, to
+// keep the user gesture) and reports it here, mirroring the install page above.
+browser.runtime.onMessage.addListener((msg, sender) => {
+  if (msg?.type !== 'WB_NEWTAB_PANEL_OPENED') return;
+
+  const newtabUrl = browser.runtime.getURL('newtab/index.html');
+  const senderUrl = String(sender?.url || sender?.tab?.url || '').split(/[?#]/)[0];
+  const tabId = Number(msg.tabId);
+  if (
+    sender?.id !== browser.runtime.id
+    || senderUrl !== newtabUrl
+    || !Number.isInteger(tabId)
+    || tabId < 0
+    || (sender?.tab?.id != null && sender.tab.id !== tabId)
+  ) {
+    return;
+  }
+
+  browser.tabs.get(tabId).then((tab) => {
+    if (String(tab?.url || '').split(/[?#]/)[0] !== newtabUrl) return;
+    ensureWebBrainGroup(tab).catch(() => {});
+  }).catch(() => {});
+});
+
 // Tracks the pending 250 ms retry timer per tab so it can be cancelled if the
 // tab navigates before the timer fires.
 const pendingContextMenuNotifications = new Map();

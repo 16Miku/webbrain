@@ -26,6 +26,7 @@ import {
 } from './ui-scale.js';
 import { buildRecommendedActions, shouldShowRecommendedActions } from './recommended-actions.js';
 import { createContextMenuPromptHandler } from './context-menu-prompts.js';
+import { createNewtabHandoff } from './newtab-handoff.js';
 import {
   formatSelectionPromptForDisplay,
   normalizeSelectionAction,
@@ -1464,6 +1465,22 @@ const {
     if (tabId == null || sameTabId(currentTabId, tabId)) renderQueuedComposerMessages();
   },
 });
+// A task typed into the WebBrain new tab arrives through extension storage:
+// Ask and Act both run immediately (Act still goes through Plan before Act when it is on).
+const newtabHandoff = createNewtabHandoff({
+  storage: browser.storage.local,
+  onChanged: browser.storage.onChanged,
+  getCurrentTabId: () => currentTabId,
+  getIsProcessing: () => isProcessing,
+  getIsBlocked: () => isConversationClearInProgress(),
+  getIsDocumentVisible: () => document.visibilityState !== 'hidden',
+  setMode,
+  ensureActMode,
+  getInputEl: () => inputEl,
+  autoResizeInput,
+  sendMessage,
+});
+newtabHandoff.watch();
 // Completion notification + success celebration. Default on; togglable via Settings.
 let notifySoundEnabled = true;
 let completionConfettiEnabled = true;
@@ -2895,7 +2912,7 @@ function removeQueuedComposerMessage(tabId, queueId) {
   return item;
 }
 
-function enqueueQueuedComposerMessage(tabId, text) {
+function enqueueQueuedComposerMessage(tabId, text, mode = null) {
   const numericTabId = Number(tabId);
   const queuedText = String(text || '').trim();
   if (!Number.isFinite(numericTabId) || !queuedText) return false;
@@ -2903,6 +2920,9 @@ function enqueueQueuedComposerMessage(tabId, text) {
   queue.push({
     id: `queued-${Date.now()}-${++queuedComposerMessageSeq}`,
     text: queuedText,
+    // A mode the sender pinned (the new tab's Ask / Act) has to survive the wait: automatic
+    // mode selection would otherwise classify the message again when the queue drains.
+    ...(['ask', 'act', 'dev'].includes(mode) ? { mode } : {}),
   });
   setQueuedComposerMessages(numericTabId, queue);
   if (sameTabId(currentTabId, numericTabId)) {
@@ -3144,6 +3164,7 @@ function drainQueuedComposerMessageForCurrentTab() {
   inputEl.queuedComposerSubmission = submission;
   Promise.resolve().then(() => sendMessage({
     __queuedComposerMessage: submission,
+    ...(item.mode ? { __mode: item.mode } : {}),
   })).catch((e) => {
     addMessage('error', t('sp.error_prefix', { msg: e?.message || String(e) }));
   });
@@ -5031,6 +5052,7 @@ async function init() {
   refreshRecommendedActions();
   await consumePendingContextMenuPrompt();
   drainQueuedContextMenuPrompts();
+  await newtabHandoff.start();
 
   // Listen for setting changes (from options page)
   if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
@@ -5232,6 +5254,7 @@ async function switchToTab(newTabId) {
   consumePendingContextMenuPrompt()
     .then(() => drainQueuedPromptsAfterRunSettles(newTabId))
     .catch(() => {});
+  newtabHandoff.consume().catch(() => {});
   if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
 }
 
@@ -5296,6 +5319,7 @@ function requestVisibleSidePanelStateRefresh() {
   refreshPromise.then((refreshed) => {
     if (!refreshed || refreshPromise !== visibleStateRefreshPromise) return;
     consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+    newtabHandoff.consume().catch(() => {});
   }).catch(() => {});
   return refreshPromise;
 }
@@ -9432,7 +9456,7 @@ async function sendMessage(extraChatParams = {}) {
         || (extraChatParams?.__deliveryMode !== 'queue' && composerDeliveryMode === 'steer')) {
       return steerComposerMessage(tabId, text, { fromComposer: true });
     }
-    return enqueueQueuedComposerMessage(tabId, text);
+    return enqueueQueuedComposerMessage(tabId, text, modeOverride);
   }
   let runCaptureDirective = null;
   if (!retryOptions) {
@@ -14184,14 +14208,16 @@ function normalizeAgentMode(mode) {
   return mode === 'act' || mode === 'dev' ? mode : 'ask';
 }
 
-async function ensureActMode() {
+// `switchMode: false` only answers whether Act may run; the caller switches the mode itself (the
+// new-tab handoff does so after re-checking the composer, which can change while this awaits).
+async function ensureActMode({ switchMode = true } = {}) {
   if (isSelectionGroundedForTab(currentTabId)) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return false;
   }
   if (agentMode === 'act') return true;
   if (autoModeSelection) return true;
-  setMode('act');
+  if (switchMode) setMode('act');
   return true;
 }
 

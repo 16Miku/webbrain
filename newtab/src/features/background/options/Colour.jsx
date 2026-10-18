@@ -1,0 +1,70 @@
+import variables from 'config/variables';
+import { onActivateKey } from 'utils/keyboard';
+import { useState } from 'react';
+import ColorPicker from 'react-best-gradient-color-picker';
+import { toast } from 'react-toastify';
+import { Row, Content, Action } from 'components/Layout/Settings/Item';
+import { MdRefresh } from 'react-icons/md';
+import EventBus from 'utils/eventbus';
+
+import '../scss/_colourpicker.scss';
+
+const DEFAULT_COLOUR = 'rgb(0, 0, 0)';
+
+const ColourOptions = () => {
+  const [colour, setColour] = useState(
+    localStorage.getItem('customBackgroundColour') || DEFAULT_COLOUR,
+  );
+
+  const changeColour = (output) => {
+    setColour(output);
+    localStorage.setItem('customBackgroundColour', output);
+    EventBus.emit('refresh', 'background');
+  };
+
+  const resetColour = () => {
+    // Same value for the picker and for storage, so the picker shows what is applied.
+    setColour(DEFAULT_COLOUR);
+    localStorage.setItem('customBackgroundColour', DEFAULT_COLOUR);
+    toast(variables.getMessage('toasts.reset'));
+    EventBus.emit('refresh', 'background');
+  };
+
+
+  return (
+    <Row final={true}>
+      <Content
+        title={variables.getMessage(
+          'modals.main.settings.sections.background.source.custom_colour',
+        )}
+      />
+      <Action>
+        <ColorPicker
+          value={colour}
+          onChange={changeColour}
+          hideEyeDrop={true}
+          hideColorGuide={true}
+          hidePresets={true}
+          hideAdvancedSliders={false}
+          hideColorTypeBtns={false}
+          hideInputType={false}
+          height={147}
+        />
+        <div className="colourReset">
+          <span
+ className="link"
+ onClick={() => resetColour()}
+ onKeyDown={onActivateKey(() => resetColour())}
+ role="button"
+ tabIndex={0}
+ >
+            <MdRefresh />
+            {variables.getMessage('modals.main.settings.buttons.reset')}
+          </span>
+        </div>
+      </Action>
+    </Row>
+  );
+};
+
+export { ColourOptions as default, ColourOptions };

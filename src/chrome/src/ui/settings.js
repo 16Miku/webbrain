@@ -1,4 +1,4 @@
-import { DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, resolveDecisionConfig } from '../agent/decision-config.js';
+import { DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, WEBGPU_CHAT_DECISION_MODEL, resolveDecisionConfig } from '../agent/decision-config.js';
 import { D1_MODEL_ID } from '../providers/d1-config.js';
 import { initD1Settings } from './d1-settings.js';
 /**
@@ -239,6 +239,61 @@ const refreshD1Settings = initD1Settings(sendToBackground);
 let decisionVisionSupported = false;
 const decisionKeyDrafts = new Map();
 let previousDecisionProvider = 'openrouter';
+// Decision providers that run locally and need no API key.
+const LOCAL_DECISION_PROVIDERS = ['local', 'webgpu_d1', 'webgpu_chat'];
+// In-browser decision providers with a fixed model and no API key.
+const FIXED_WEBGPU_DECISION_PROVIDERS = ['webgpu_d1', 'webgpu_chat'];
+// The in-browser chat model's decision mode has a fixed model and a note.
+// Runs after d1-settings.js on load and on every provider change, so it
+// owns the locked state for both fixed providers.
+function syncWebgpuDecisionProvider() {
+  const selected = decisionProviderInput?.value === 'webgpu_chat';
+  const fixed = FIXED_WEBGPU_DECISION_PROVIDERS.includes(decisionProviderInput?.value);
+  const note = document.getElementById('webgpu-decision-note');
+  if (note) note.hidden = !selected;
+  if (selected) decisionModelInput.value = WEBGPU_CHAT_DECISION_MODEL;
+  // Lock both controls for D1 and the chat model; restore them otherwise.
+  if (decisionModelInput) decisionModelInput.readOnly = fixed;
+  if (systemOneApiKeyInput) systemOneApiKeyInput.disabled = fixed;
+  syncDecisionSuggestion();
+}
+
+// When the active chat model is Ternary Bonsai 2 2B Vision, suggest it as the
+// decision model too (already downloaded), with D1 as the safer, faster
+// completion checker. With the chat model selected, only the D1 upgrade shows.
+const DECISION_SUGGESTION_DISMISSED_KEY = 'webgpuDecisionSuggestionDismissed';
+let decisionSuggestionDismissed = false;
+function activeChatModelIsDecisionCapable() {
+  if (providerDefinitionId(activeProviderId) !== 'webgpu') return false;
+  try { return normalizeWebgpuModelId(providersData[activeProviderId]?.model) === WEBGPU_CHAT_DECISION_MODEL; } catch { return false; }
+}
+function syncDecisionSuggestion() {
+  const box = document.getElementById('decision-suggestion');
+  if (!box || !decisionProviderInput) return;
+  const provider = decisionProviderInput.value;
+  const mode = decisionSuggestionDismissed ? ''
+    : provider === 'webgpu_chat' ? 'upgrade'
+      : provider !== 'webgpu_d1' && activeChatModelIsDecisionCapable() ? 'suggest' : '';
+  box.hidden = !mode;
+  document.getElementById('decision-suggest-chat').hidden = mode !== 'suggest';
+  document.getElementById('decision-suggest-upgrade').hidden = mode !== 'upgrade';
+  document.getElementById('btn-decision-use-chat').hidden = mode !== 'suggest';
+}
+function chooseSuggestedDecisionProvider(provider) {
+  decisionProviderInput.value = provider;
+  decisionProviderInput.dispatchEvent(new Event('change'));
+  if (systemOneEnabledToggle) systemOneEnabledToggle.checked = true;
+  showSystemOneResult('', t('st.decision.suggest_selected'));
+  btnSaveSystemOne?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  btnSaveSystemOne?.focus({ preventScroll: true });
+}
+document.getElementById('btn-decision-use-chat')?.addEventListener('click', () => chooseSuggestedDecisionProvider('webgpu_chat'));
+document.getElementById('btn-decision-use-d1')?.addEventListener('click', () => chooseSuggestedDecisionProvider('webgpu_d1'));
+document.getElementById('btn-decision-suggest-dismiss')?.addEventListener('click', () => {
+  decisionSuggestionDismissed = true;
+  chrome.storage.local.set({ [DECISION_SUGGESTION_DISMISSED_KEY]: true }).catch(() => {});
+  syncDecisionSuggestion();
+});
 
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
 const systemOneEnabledToggle = document.getElementById('toggle-system-one');
@@ -630,7 +685,7 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', DECISION_SUGGESTION_DISMISSED_KEY, 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -741,6 +796,8 @@ async function init() {
   decisionDoneToggle.checked = decisionConfig.doneEnabled;
   decisionThresholdInput.value = String(decisionConfig.threshold * 100);
   await refreshD1Settings();
+  decisionSuggestionDismissed = stored[DECISION_SUGGESTION_DISMISSED_KEY] === true;
+  syncWebgpuDecisionProvider();
   decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
   decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
   decisionKeyDrafts.set('local', stored.decisionLocalApiKey || '');
@@ -1576,7 +1633,7 @@ if (btnSaveSystemOne) {
   btnSaveSystemOne.addEventListener('click', async () => {
     const key = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
     const enabled = systemOneEnabledToggle?.checked === true;
-    if (enabled && !['local', 'webgpu_d1'].includes(decisionProviderInput.value) && !isValidTypesafeApiKey(key)) {
+    if (enabled && !LOCAL_DECISION_PROVIDERS.includes(decisionProviderInput.value) && !isValidTypesafeApiKey(key)) {
       showSystemOneResult('fail', t('st.system_one.need_key'));
       return;
     }
@@ -1589,8 +1646,8 @@ if (btnSaveSystemOne) {
     try { selection = decisionSettingsDraft(); resolveDecisionConfig(selection); if (!(selection.systemOneDoneThreshold >= .5 && selection.systemOneDoneThreshold <= .99)) throw new Error('Completion threshold must be 50–99%.'); } catch (error) { showSystemOneResult('fail', error.message); return; }
     await chrome.storage.local.set({
       ...selection,
-      ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: key } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: key }),
-      systemOneEnabled: enabled && (['local', 'webgpu_d1'].includes(decisionProviderInput.value) || isValidTypesafeApiKey(key)),
+      ...(['webgpu_d1', 'webgpu_chat'].includes(decisionProviderInput.value) ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: key } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: key }),
+      systemOneEnabled: enabled && (LOCAL_DECISION_PROVIDERS.includes(decisionProviderInput.value) || isValidTypesafeApiKey(key)),
       systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
       systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
       systemOneFastClassifications: systemOneClassificationsToggle?.checked === true,
@@ -1631,6 +1688,7 @@ if (btnClearSystemOne) {
     updateSystemOneThresholdLabels();
     await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     await refreshD1Settings();
+    syncWebgpuDecisionProvider();
     showSystemOneResult('ok', t('st.captcha.cleared'));
   });
 }
@@ -1639,19 +1697,20 @@ function decisionSettingsDraft() {
   const card = decisionModels.find(m => m.id === decisionModelInput.value);
   return { decisionProvider: decisionProviderInput.value, decisionModel: decisionModelInput.value.trim(),
     decisionBaseUrl: decisionEndpointInput.value.trim(), decisionVisionMode: decisionVisionInput.value,
-    decisionVisionSupported, ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
+    decisionVisionSupported, ...(['webgpu_d1', 'webgpu_chat'].includes(decisionProviderInput.value) ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
     systemOneDoneEnabled: decisionDoneToggle.checked, systemOneDoneThreshold: Number(decisionThresholdInput.value) / 100,
-    decisionInputRate: card?.inputRate ?? (decisionProviderInput.value === 'typesafe' ? .042 : ['local', 'webgpu_d1'].includes(decisionProviderInput.value) ? 0 : .02), decisionOutputRate: card?.outputRate ?? 0 };
+    decisionInputRate: card?.inputRate ?? (decisionProviderInput.value === 'typesafe' ? .042 : LOCAL_DECISION_PROVIDERS.includes(decisionProviderInput.value) ? 0 : .02), decisionOutputRate: card?.outputRate ?? 0 };
 }
 
 decisionProviderInput?.addEventListener('change', () => {
   decisionKeyDrafts.set(previousDecisionProvider, systemOneApiKeyInput.value);
   previousDecisionProvider = decisionProviderInput.value;
   systemOneApiKeyInput.value = decisionKeyDrafts.get(previousDecisionProvider) || '';
-  decisionModelInput.value = previousDecisionProvider === 'webgpu_d1' ? D1_MODEL_ID : previousDecisionProvider === 'typesafe' ? 'jev-1.13.0' : previousDecisionProvider === 'local' ? 'kev-latest' : DEFAULT_DECISION_MODEL;
+  decisionModelInput.value = previousDecisionProvider === 'webgpu_d1' ? D1_MODEL_ID : previousDecisionProvider === 'webgpu_chat' ? WEBGPU_CHAT_DECISION_MODEL : previousDecisionProvider === 'typesafe' ? 'jev-1.13.0' : previousDecisionProvider === 'local' ? 'kev-latest' : DEFAULT_DECISION_MODEL;
   decisionModels = []; decisionVisionSupported = false;
   document.getElementById('decision-models').replaceChildren();
   document.getElementById('decision-endpoint-field').hidden = previousDecisionProvider !== 'local';
+  syncWebgpuDecisionProvider();
 });
 decisionModelInput?.addEventListener('input', () => {
   decisionVisionSupported = decisionModels.find(m => m.id === decisionModelInput.value)?.supportsVision === true;
@@ -1671,7 +1730,7 @@ document.getElementById('btn-decision-models')?.addEventListener('click', async 
 
 btnTestSystemOne?.addEventListener('click', async () => {
   const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
-  if (!apiKey && !['local', 'webgpu_d1'].includes(decisionProviderInput.value)) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  if (!apiKey && !LOCAL_DECISION_PROVIDERS.includes(decisionProviderInput.value)) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
   btnTestSystemOne.disabled = true;
   showSystemOneResult('', t('st.providers.testing'));
   try {
@@ -3158,6 +3217,7 @@ async function refreshWebbrainPaymentNotice() {
 
 function renderProviders() {
   providersContainer.innerHTML = '';
+  syncDecisionSuggestion();
 
   // Field definitions reference i18n keys (labelKey) so switching languages
   // re-renders with translated labels. Placeholders stay as raw values —
@@ -4355,6 +4415,7 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
 function refreshProviderCardStatus(id) {
   // Saving a provider marks it configured without rebuilding the list. Keep
   // the Active pill in sync even if the card disappeared during the request.
+  syncDecisionSuggestion();
   refreshActiveProviderFilterCount();
   const card = document.querySelector(`.provider-card[data-provider-id="${id}"]`);
   if (!card) return;
