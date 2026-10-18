@@ -2350,6 +2350,8 @@ self.addEventListener('message', async event => {
           cancelledTextGenerations.delete(requestKey);
         }
       }
+      return;
+    }
     if (type === 'multimodal-decide') {
       // Cancellable through `cancel` like vision generations, while queued or running.
       queuedVisionGenerations.add(id);
@@ -2367,8 +2369,6 @@ self.addEventListener('message', async event => {
         queuedVisionGenerations.delete(id);
         cancelledVisionGenerations.delete(id);
       }
-      return;
-    }
       return;
     }
     throw new Error(`Unknown WebGPU worker message: ${type || 'missing type'}`);
