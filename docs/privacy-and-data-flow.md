@@ -54,7 +54,9 @@ The user chooses their provider in Settings. Options include:
   LocalAI, GPT4All, and Unsloth Studio — inference requests stay on the user's
   machine when Studio is configured with its loopback URL
 - **WebGPU (In-browser), Chromium only**: the selected text model runs in an extension
-  Worker with no API key, base URL, localhost server, or model endpoint
+  Worker with no API key, base URL, localhost server, or model endpoint. In Ask,
+  a model that reads images also gets a screenshot of the visible page for
+  visual questions; it stays in the browser and is not saved with the chat
 - **Local OpenAI-compatible Proxy**: WebBrain connects only to the configured
   local gateway, but the gateway may forward the request context to an upstream
   account. Its configuration and privacy policy determine where data goes.

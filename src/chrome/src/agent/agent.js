@@ -208,7 +208,7 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 import {
   TINY_ASK_ACT_BLOCKED_MESSAGE, TINY_ASK_COMPACT_LINKED_MAX_CHARS, TINY_ASK_COMPACT_PAGE_MAX_CHARS,
   TINY_ASK_COMPACT_SELECTION_MAX_CHARS, TINY_ASK_READ_MAX_CHARS, TINY_ASK_READ_WINDOW_CHARS, TINY_ASK_SYSTEM_PROMPT,
-  tinyAskLinkedUrl, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
+  tinyAskLinkedUrl, tinyAskScreenshotNote, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine, tinyAskWantsScreenshot,
 } from './tiny-ask.js';
 import { webgpuModelDisplayName } from '../providers/webgpu.js';
 
@@ -12007,6 +12007,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : { url: linkedUrl, text, incomplete: fetched.hasMore === true };
       if (linked.unavailable) onUpdate?.('thinking', { step: 0, note: 'Could not read the linked page.' });
     }
+    const screenshot = tinyAskWantsScreenshot({ question: questionText, page })
+      ? await this._tinyAskScreenshot(tabId, onUpdate) : null;
     let modelLabel = '';
     try {
       const provider = this._activeProvider(tabId);
@@ -12034,15 +12036,49 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const question = Array.isArray(userMessage)
       ? userMessage
       : [{ type: 'text', text: typeof userMessage === 'string' ? userMessage : this._messageText(userMessage) }];
+    // The screenshot is ephemeral like the page text: the persisted turn
+    // keeps only the question, and each turn looks at the page afresh.
+    const screenshotBlocks = screenshot ? [
+      { type: 'text', text: tinyAskScreenshotNote(page), webbrainEphemeralPageContext: true },
+      { type: 'image_url', image_url: this._withImageDetail({ url: screenshot.dataUrl }), webbrainEphemeralPageContext: true },
+    ] : [];
     const enriched = {
       role: 'user',
-      content: [block, ...question],
+      content: [block, ...screenshotBlocks, ...question],
       ...userAuthoredMetadata,
     };
-    if (String(page?.text || '').trim() || String(selection || '').trim() || String(linked?.text || '').trim()) {
+    if (screenshot || String(page?.text || '').trim() || String(selection || '').trim() || String(linked?.text || '').trim()) {
       this._tinyAskPageGrounded.add(enriched);
     }
     return enriched;
+  }
+
+  // The visible page for a tiny Ask turn, only when the in-browser model reads
+  // images itself. Never a separate describing model: tiny Ask stays on the
+  // user's device. Same capture as the agent's automatic screenshots
+  // (redaction, size budget, per-turn screenshot limit).
+  async _tinyAskScreenshot(tabId, onUpdate = null) {
+    let provider = null;
+    let route = null;
+    try {
+      provider = this._activeProvider(tabId);
+      if (!this._isInBrowserProvider(provider)) return null;
+      route = await this._resolveVisionRoute(tabId, provider);
+    } catch {
+      return null;
+    }
+    if (route?.route !== 'active_raw' || route.rawImage !== true || route.provider !== provider) return null;
+    onUpdate?.('thinking', { step: 0, note: 'Looking at the page…' });
+    try {
+      const shot = await this._captureBudgetedAutoScreenshot(tabId);
+      if (shot?.dataUrl) {
+        this._recordVisionRouteTrace(tabId, route, shot, 'tiny_ask');
+        return shot;
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+    }
+    return null;
   }
 
   async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null, runOptions = {}, onUpdate = null) {

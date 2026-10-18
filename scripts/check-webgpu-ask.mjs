@@ -52,8 +52,21 @@ const article = (() => {
   for (let index = 35; index <= 40; index += 1) body.push(`<p>${paragraph(index, 'Visitor')}</p>`);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>The Lumen Bridge</title></head><body><main>${body.join('\n')}</main></body></html>`;
 })();
+// Image fixtures: the answers are only in the pixels (no alt text, no caption
+// naming the colour), so a correct answer means the model saw the screenshot.
+const svg = markup => `data:image/svg+xml;utf8,${encodeURIComponent(markup)}`;
+const mug = svg('<svg xmlns="http://www.w3.org/2000/svg" width="480" height="360" viewBox="0 0 480 360"><rect width="480" height="360" fill="#ffffff"/><rect x="140" y="80" width="160" height="200" rx="18" fill="#1e9e3a"/><path d="M300 130 h40 a40 40 0 0 1 0 100 h-40" fill="none" stroke="#1e9e3a" stroke-width="22"/></svg>');
+const poster = svg('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480"><rect width="640" height="480" fill="#0b1f4d"/><circle cx="320" cy="240" r="150" fill="#ff8c1a"/></svg>');
 const pages = {
   '/article.html': article,
+  '/image.html': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>New mug</title></head><body><main>
+<h1>Our new mug</h1>
+<p>It holds 350 ml, keeps drinks warm for an hour and is dishwasher safe. See the photo below.</p>
+<img src="${mug}" alt="" width="480" height="360">
+</main></body></html>`,
+  '/poster.html': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Poster</title></head><body style="margin:0">
+<img src="${poster}" alt="" width="640" height="480">
+</body></html>`,
   '/pricing.html': `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Plans and pricing</title></head><body><main>
 <h1>Plans and pricing</h1>
 <section><h2>Basic</h2><p>$9 per month. One user, 10 projects, email support.</p><button>Buy Basic</button></section>
@@ -90,7 +103,7 @@ const tasks = [
   { name: 'hello', page: '/article.html', text: 'hello', expect: /\S/ },
   { name: 'summary', page: '/article.html', text: 'Summarize this page in two sentences.', expect: /bridge/i },
   { name: 'late-fact', page: '/article.html', text: 'When did the repairs that started in 2019 end?', expect: /2021/ },
-  { name: 'price', page: '/pricing.html', text: 'How much is the Pro plan per month?', expect: /29/ },
+  { name: 'price', page: '/pricing.html', text: 'How much is the Pro plan per month?', expect: /29/, screenshot: false },
   { name: 'follow-up', followUp: true, text: 'And the Team plan?', expect: /79/ },
   { name: 'arithmetic', page: '/pricing.html', text: 'What do the Basic and Pro plans cost together per month?', expect: /\b38\b/ },
   { name: 'selection', page: '/article.html', select: 'restoration', text: 'Explain the selected text in one sentence.', expect: /2019|2021|restor/i },
@@ -100,6 +113,11 @@ const tasks = [
   { name: 'act-request', page: '/pricing.html', text: 'Click the Buy Pro button.', expect: /\S/, reject: /\b(?:I(?:'ve| have)? clicked|clicked the)\b/i },
   { name: 'linked-url', page: '/article.html', text: `Summarize ${base}/linked.html in one sentence.`, expect: /May|lettuce|Orbital/i },
   { name: 'browser-page', page: 'chrome://version/', text: 'hello', expect: /\S/ },
+  // A vision model also sees the visible page for visual questions and for
+  // pages with almost no text; text questions (price above) stay text-only.
+  { name: 'image-color', page: '/image.html', text: 'What color is the mug in the photo?', expect: /green/i, screenshot: true },
+  { name: 'image-turkish', page: '/image.html', text: 'Fotoğraftaki kupa ne renk?', expect: /yeşil|green/i, screenshot: true },
+  { name: 'image-only-page', page: '/poster.html', text: 'What is on this page?', expect: /orange|circle|sun/i, screenshot: true },
 ].filter(task => !taskFilter || taskFilter.has(task.name));
 
 await fs.mkdir(path.dirname(output), { recursive: true });
@@ -204,7 +222,10 @@ try {
       promptVariants = [...String(exported?.markdown || '').matchAll(/\bprompt ([a-z_]+)/g)].map(match => match[1]);
     } catch { /* Tracing is diagnostic only. */ }
     const notes = updates.filter(update => update.type === 'thinking' && update.data?.note).map(update => update.data.note);
-    const entry = { name: task.name, seconds, steps, passed, promptVariants, notes, answer, ...(error ? { error } : {}) };
+    // Tiny Ask announces a screenshot with this note (agent._tinyAskScreenshot).
+    const screenshot = notes.includes('Looking at the page…');
+    const passedAll = passed && (task.screenshot === undefined || task.screenshot === screenshot);
+    const entry = { name: task.name, seconds, steps, passed: passedAll, screenshot, promptVariants, notes, answer, ...(error ? { error } : {}) };
     result.tasks.push(entry);
     console.log(JSON.stringify({ ...entry, answer: answer.slice(0, 160) }));
   }
