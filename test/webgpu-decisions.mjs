@@ -368,10 +368,15 @@ test('Settings asks one Auto / On / Off question and shows provider fields and s
     'st.decision.status.local', 'st.decision.status.compass', 'st.decision.status.none', 'st.decision.status.none_firefox',
     'st.decision.features', 'st.decision.features_desc', 'st.decision.reset', 'st.decision.reset_done'];
   assert.equal(Object.keys(decisionTranslations).length, 22, 'every interface locale');
-  for (const key of keys) {
-    assert.ok(decisionEnglish[key], key);
-    for (const [code, dict] of Object.entries(decisionTranslations)) assert.ok(dict[key], `${code} ${key}`);
+  for (const key of keys) assert.ok(decisionEnglish[key], key);
+  // Every string on the card is translated, with its placeholders kept.
+  for (const [key, english] of Object.entries(decisionEnglish)) {
+    for (const [code, dict] of Object.entries(decisionTranslations)) {
+      assert.ok(dict[key], `${code} ${key}`);
+      for (const placeholder of english.match(/\{\w+\}/g) || []) assert.ok(dict[key].includes(placeholder), `${code} ${key} ${placeholder}`);
+    }
   }
+  assert.doesNotMatch(decisionEnglish['st.system_one.security_html'], /outsourcing/, 'the security note speaks of decision models');
   for (const key of ['st.decision.suggest_chat', 'st.decision.use_chat', 'st.system_one.enabled.label']) assert.equal(decisionEnglish[key], undefined, key);
   const firefoxCopy = await readFile(new URL('../src/firefox/src/ui/locales/decision-copy.mjs', import.meta.url), 'utf8');
   assert.equal(firefoxCopy, await readFile(new URL('../src/chrome/src/ui/locales/decision-copy.mjs', import.meta.url), 'utf8'));

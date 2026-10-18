@@ -30,7 +30,7 @@ async function captureDocScreenshots(page, directory) {
     const card = document.querySelector('#system-one-card').getBoundingClientRect();
     return { x: card.x + scrollX, y: heading.y + scrollY, width: card.width, height: card.bottom - heading.y };
   });
-  await page.screenshot({ animations: 'disabled', caret: 'hide', path: resolve(directory, 'settings-jev.jpg'), type: 'jpeg', quality: 85, fullPage: true, clip });
+  await page.screenshot({ animations: 'disabled', caret: 'hide', path: resolve(directory, 'settings-decision-models.jpg'), type: 'jpeg', quality: 85, fullPage: true, clip });
   await page.locator('[data-tab="display"]').click();
   await page.locator('#input-general-search').fill('Strict secret');
   await page.evaluate(() => { document.activeElement?.blur(); scrollTo(0, 0); });
