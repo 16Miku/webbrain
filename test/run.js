@@ -41611,18 +41611,21 @@ test('tiny Ask shows a vision-capable in-browser model the visible page for visu
   const { tinyAskWantsScreenshot, TINY_ASK_SCREENSHOT_NOTE, TINY_ASK_SYSTEM_PROMPT } = TinyAskCh;
   const page = { kind: 'page', text: 'Plenty of readable page text. '.repeat(20) };
   for (const question of ['What is in this image?', 'What color is the button?', 'What does the chart show?',
-    'Can you see a cat?', 'Bu resimde ne var?', 'Grafikte ne görünüyor?', 'Logonun rengi ne?', 'Ekranda ne yazıyor?']) {
+    'What color is the mug in the photo?', 'Can you see a cat?', 'Bu resimde ne var?', 'Grafikte ne görünüyor?',
+    'Logonun rengi ne?', 'Ekranda ne yazıyor?', 'Fotoğraftaki kupa ne renk?']) {
     assert.equal(tinyAskWantsScreenshot({ question, page }), true, question);
   }
   for (const question of ['How much is the blue plan?', 'Summarize this page', 'figure out the price', 'see the reviews',
-    'Görevi özetle', 'Fiyat ne kadar?']) {
-    assert.equal(tinyAskWantsScreenshot({ question, page }), false, question);
+    'Görevi özetle', 'Fiyat ne kadar?', 'What does melanoma look like?', 'What color is a flamingo?', 'Melanom nasıl görünür?']) {
+    assert.equal(tinyAskWantsScreenshot({ question, page }), false, `not a visual question about the page: ${question}`);
   }
+  assert.equal(tinyAskWantsScreenshot({ question: 'What is in this image?', page, imageAttachment: true }), false,
+    'an attached image is the subject, not the page');
   const textless = { kind: 'page', text: '  ' };
   for (const question of ['Summarize', 'What is on this page?', 'Describe it', 'Bu sayfada ne var?', 'Burada ne yazıyor?']) {
     assert.equal(tinyAskWantsScreenshot({ question, page: textless }), true, `a page question on a textless page: ${question}`);
   }
-  for (const question of ['Who was Ada Lovelace?', 'How do I treat a burn?', 'Ada Lovelace kimdir?']) {
+  for (const question of ['Who was Ada Lovelace?', 'How do I treat a burn?', 'Ada Lovelace kimdir?', 'What does melanoma look like?']) {
     assert.equal(tinyAskWantsScreenshot({ question, page: textless }), false, `a general question keeps its references: ${question}`);
   }
   assert.equal(tinyAskWantsScreenshot({ question: 'Summarize', page: { kind: 'pdf', text: '', unavailable: 'no text' } }), true, 'a scanned PDF');
@@ -41667,7 +41670,7 @@ test('tiny Ask shows a vision-capable in-browser model the visible page for visu
       captures.push(id);
       return { dataUrl: 'data:image/jpeg;base64,c2NyZWVu', width: 800, height: 600, captureId: 'cap_1' };
     };
-    const run = text => agent.processMessage(tabId, text, () => { }, 'ask', [], {});
+    const run = (text, attachments = []) => agent.processMessage(tabId, text, () => { }, 'ask', attachments, {});
     return { agent, tabId, requests, captures, run };
   };
 
@@ -41704,6 +41707,13 @@ test('tiny Ask shows a vision-capable in-browser model the visible page for visu
     await run('Who was Ada Lovelace?');
     assert.equal(captures.length, 0, 'a general question on a textless page takes no screenshot');
     assert.equal(requests[0].at(-1).content.filter(block => block.type === 'image_url').length, 0);
+  }
+  {
+    const { requests, captures, run } = setup();
+    await run('What is in this image?', [{ kind: 'image', name: 'cat.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,Y2F0' }]);
+    assert.equal(captures.length, 0, 'an attached image is not joined by a page screenshot');
+    const images = requests[0].at(-1).content.filter(block => block.type === 'image_url');
+    assert.deepEqual(images.map(block => block.image_url.url), ['data:image/png;base64,Y2F0'], 'only the attached image reaches the model');
   }
   {
     const { agent, captures, run } = setup();

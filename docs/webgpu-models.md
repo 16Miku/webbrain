@@ -173,12 +173,15 @@ Use the tools in `scripts/models/bonsai/`:
     turn reads the page again. Offline Wikipedia and Emergency Box references
     are added only when there is no page text.
   - When the model reads images (Ternary Bonsai 2 2B Vision), a visual
-    question also gets a screenshot of the visible page. Visual means an
-    image, photo, chart, colour, logo, "can you see" and similar, in English
-    and Turkish (`tinyAskWantsScreenshot`). A question about a page with
-    almost no text ("what is on this page?") gets one as well, with a note to
-    answer from the image. A general question asked there ("who was Ada
-    Lovelace?") does not, and keeps its offline references.
+    question about the page also gets a screenshot of the visible page
+    (`tinyAskWantsScreenshot`). Examples: "what color is the button?", "what
+    does the chart show?", "can you see …", "fotoğraftaki kupa ne renk?".
+    - A question about a page with almost no text ("what is on this page?")
+      gets one as well, with a note to answer from the image.
+    - General questions take none, even on an image page: "what does
+      melanoma look like?", "who was Ada Lovelace?". A screenshot alone never
+      suppresses offline references.
+    - Neither does a turn with an attached image: that image is the subject.
     - The capture is the same as automatic screenshots: redaction, size
       budget and the per-turn limit. It is ephemeral like page text, and it
       never goes to a separate vision model.

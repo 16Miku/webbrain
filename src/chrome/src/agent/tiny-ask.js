@@ -65,9 +65,9 @@ const VISUAL_WORDS = [
   'görüyor\\p{L}*', 'çizim\\p{L}*', 'video\\p{L}*',
 ];
 const VISUAL_QUESTION = new RegExp(`(?<!\\p{L})(?:${VISUAL_WORDS.join('|')})(?!\\p{L})`, 'iu');
-// A question about the current page itself. On a page with almost no text
-// only these get a screenshot: "Who was Ada Lovelace?" asked on an image page
-// is a general question and keeps its offline references.
+// A question about the current page itself. Only these get a screenshot:
+// "What does melanoma look like?" or "Who was Ada Lovelace?" is a general
+// question even on an image page, and keeps its offline references.
 const PAGE_WORDS = [
   // English
   'this', 'here', 'page', 'site', 'tab', 'screen', 'summari[sz]e', 'describe', 'explain', 'tl;?dr',
@@ -77,6 +77,15 @@ const PAGE_WORDS = [
   'açıkla\\p{L}*', 'anlat\\p{L}*', 'ne var', 'ne yazıyor', 'ne gösteriyor',
 ];
 const PAGE_QUESTION = new RegExp(`(?<!\\p{L})(?:${PAGE_WORDS.join('|')})(?!\\p{L})`, 'iu');
+// A specific visual thing, which can only be on the page: "the photo", "the
+// Buy button", "can you see …"; in Turkish a visual stem with a suffix
+// ("fotoğraftaki", "grafikte", "logonun rengi"), since there are no articles.
+const PAGE_THINGS = 'images?|pictures?|photo(?:graph)?s?|pics?|screenshots?|charts?|graphs?|diagrams?|maps?|logos?|icons?|videos?|thumbnails?|banners?|buttons?|headers?|menus?|backgrounds?|illustrations?|drawings?|fonts?|text';
+const PAGE_VISUAL_REFERENCE = new RegExp([
+  `(?<!\\p{L})(?:the|this|that|these|those)\\s+(?:\\p{L}+\\s+){0,2}(?:${PAGE_THINGS})(?!\\p{L})`,
+  '(?<!\\p{L})(?:do|can) you see(?!\\p{L})',
+  '(?<!\\p{L})(?:resim|resm|görsel|görüntü|foto|grafi|grafiğ|şema|diyagram|harita|logo|ikon|simge|renk|reng|çizim|video|ekran)\\p{L}+',
+].join('|'), 'iu');
 
 // Precedes the screenshot in the user message; the system prompt says the
 // same, so text inside the image is never taken as an instruction.
@@ -90,14 +99,16 @@ export function tinyAskScreenshotNote(page = null) {
     ? TINY_ASK_TEXTLESS_SCREENSHOT_NOTE : TINY_ASK_SCREENSHOT_NOTE;
 }
 
-// Whether a tiny Ask turn should also show the model the visible page.
-export function tinyAskWantsScreenshot({ question = '', page = null } = {}) {
+// Whether a tiny Ask turn should also show the model the visible page: a
+// visual question about the page, or any question about a page that was read
+// but has almost no text (the answer is likely only in the pixels). Never
+// with an attached image, which is then what the question is about.
+export function tinyAskWantsScreenshot({ question = '', page = null, imageAttachment = false } = {}) {
+  if (imageAttachment) return false;
   const text = String(question || '');
+  if (!PAGE_QUESTION.test(text) && !PAGE_VISUAL_REFERENCE.test(text)) return false;
   if (VISUAL_QUESTION.test(text)) return true;
-  // A question about a page that was read but has almost no text: the
-  // answer is likely only in the pixels.
-  return !!page?.kind && String(page.text || '').trim().length < TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS
-    && PAGE_QUESTION.test(text);
+  return !!page?.kind && String(page.text || '').trim().length < TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS;
 }
 
 const CHUNK_TARGET_CHARS = 700;

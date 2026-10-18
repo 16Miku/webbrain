@@ -11970,7 +11970,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // A tiny Ask turn carries a one-line trusted clock and the page (or PDF)
   // text and selection, read by WebBrain before the single model call. Those
   // blocks are ephemeral: the persisted turn keeps only the user's question.
-  async _enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata = {}, onUpdate = null) {
+  async _enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata = {}, onUpdate = null, { imageAttachment = false } = {}) {
     const { tabUrl: url, tabTitle: title } = await this._getTabUrlTitle(tabId);
     let page = null;
     let selection = '';
@@ -12007,7 +12007,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : { url: linkedUrl, text, incomplete: fetched.hasMore === true };
       if (linked.unavailable) onUpdate?.('thinking', { step: 0, note: 'Could not read the linked page.' });
     }
-    const screenshot = tinyAskWantsScreenshot({ question: questionText, page })
+    const screenshot = tinyAskWantsScreenshot({ question: questionText, page, imageAttachment })
       ? await this._tinyAskScreenshot(tabId, onUpdate) : null;
     let modelLabel = '';
     try {
@@ -12047,7 +12047,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       content: [block, ...screenshotBlocks, ...question],
       ...userAuthoredMetadata,
     };
-    if (screenshot || String(page?.text || '').trim() || String(selection || '').trim() || String(linked?.text || '').trim()) {
+    // A screenshot alone does not ground the turn: offline references are
+    // still looked up when the question asks for them.
+    if (String(page?.text || '').trim() || String(selection || '').trim() || String(linked?.text || '').trim()) {
       this._tinyAskPageGrounded.add(enriched);
     }
     return enriched;
@@ -12083,14 +12085,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return null;
   }
 
-  async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null, runOptions = {}, onUpdate = null) {
+  async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null, runOptions = {}, onUpdate = null, { imageAttachment = false } = {}) {
     const hasPriorUserTurn = messages.some(m => m.role === 'user');
     const selectionScoped = isSelectionSourceGrounding(runOptions?.sourceGrounding);
     const standaloneChat = runOptions?.standaloneChat === true;
     const userAuthoredMetadata = runOptions?.scheduledResume === true
       ? {} : { webbrainUserAuthoredText: this._messageText(userMessage) };
     if (this._isTinyAskRun(runOptions)) {
-      return this._enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata, onUpdate);
+      return this._enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata, onUpdate, { imageAttachment });
     }
     // Standalone is intentionally plain chat regardless of provider.
     // Do not add runtime state, recording/API guidance, tab metadata, adapter
@@ -54131,6 +54133,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     userTurnKind.catch(() => {});
     const enriched = await this._enrichUserMessageWithCurrentPage(
       tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions, onUpdate,
+      { imageAttachment: !selectionOnly && Array.isArray(attachments) && attachments.some(attachment => attachment?.kind === 'image') },
     );
     if (autoModeRoute) {
       ({ mode, runOptions } = await this._settleAutoModeRun(tabId, autoModeRoute, enriched, onUpdate, runOptions));
