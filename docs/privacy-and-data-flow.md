@@ -471,7 +471,7 @@ they are stored in the browser and never leave it. The exceptions are things you
 choose: if you give a quick link or app link a custom icon URL, enter custom CSS that
 references remote resources (`url(...)`, `@import`), or import settings that point a
 background at a URL, the page loads them from the addresses you gave, each time it is
-shown. Links without a custom icon use a local letter tile; nothing is looked up.
+shown. Links without a custom icon use a local letter tile; nothing is looked up. Whether the page is shown is a single local flag (`newTabEnabled`), off until the user ticks the onboarding checkbox or turns it on in Settings; it is never sent anywhere.
 
 Its settings, quick links and uploaded backgrounds stay in the browser under a separate
 `wbnt:` prefix. Text typed into its box is held briefly in extension storage (one
