@@ -41694,6 +41694,14 @@ test('tiny Ask shows a vision-capable in-browser model the visible page when its
     assert.match(JSON.stringify(user.content), /Blue plan: \$5 per month/, 'the page text still goes along');
     assert.equal(user.content.at(-1).text, '¿De qué color es el botón de compra?', 'the question comes last');
     assert.doesNotMatch(JSON.stringify(agent.conversations.get(tabId)), /data:image|c2NyZWVu/, 'the screenshot is not persisted');
+    // The gate runs during enrichment, before the trace run starts: its note
+    // is queued (this harness never starts a trace), then flushed below.
+    assert.equal(agent.pendingTinyAskGateTraces.get(tabId)?.probability, 0.9, 'the gate note is kept for the trace');
+    const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+    const start = agentSource.slice(agentSource.indexOf('async _startTraceRun('), agentSource.indexOf('async _endTraceRun('));
+    assert.match(start, /const pendingGate = this\.pendingTinyAskGateTraces\.get\(tabId\);\n\s*this\.pendingTinyAskGateTraces\.delete\(tabId\);\n\s*if \(pendingGate\) trace\.recordNote\(runId, null, 'tiny_ask_screenshot_gate', pendingGate\);/,
+      '_startTraceRun records the queued gate note');
+    assert.equal((start.match(/this\.pendingTinyAskGateTraces\.delete\(tabId\)/g) || []).length, 3, 'and drops it when no trace starts');
   }
   {
     const { requests, captures, run } = setup({ gate: () => 0.1 });

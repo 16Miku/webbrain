@@ -1094,6 +1094,9 @@ export class Agent extends LoopDetector {
     this._screenshotCaptureCounter = 0;
     this.pendingVisionRouteTraces = new Map();
     this.pendingVisionStatusTraces = new Map();
+    // tiny Ask screenshot-gate notes: the gate runs during enrichment, before
+    // the trace run starts (flushed in _startTraceRun).
+    this.pendingTinyAskGateTraces = new Map();
     this.pendingVisionSubCallTraces = new Map();
     this.visionStatusNotices = new Map(); // tabId -> Set of route/status notices surfaced this run
     this.carouselTraversalStates = new Map();
@@ -12118,13 +12121,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch (error) {
       if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
     }
+    const gateNote = {
+      probability: Number.isFinite(probability) ? Math.round(probability * 1000) / 1000 : null,
+      ms: Date.now() - started,
+    };
     const runId = this.currentRunId.get(tabId);
-    if (runId) {
-      trace.recordNote(runId, null, 'tiny_ask_screenshot_gate', {
-        probability: Number.isFinite(probability) ? Math.round(probability * 1000) / 1000 : null,
-        ms: Date.now() - started,
-      });
-    }
+    if (runId) trace.recordNote(runId, null, 'tiny_ask_screenshot_gate', gateNote);
+    else this.pendingTinyAskGateTraces.set(tabId, gateNote);
     if (!(probability >= TINY_ASK_SCREENSHOT_GATE_THRESHOLD)) return null;
     onUpdate?.('thinking', { step: 0, note: 'Looking at the page…' });
     try {
@@ -25396,6 +25399,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.pendingVisionRouteTraces.delete(tabId);
       this.pendingVisionStatusTraces.delete(tabId);
       this.pendingVisionSubCallTraces.delete(tabId);
+      this.pendingTinyAskGateTraces.delete(tabId);
       return null;
     }
     if (runId) {
@@ -25422,6 +25426,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const pendingVisionSubCalls = this.pendingVisionSubCallTraces.get(tabId) || [];
       this.pendingVisionSubCallTraces.delete(tabId);
       for (const payload of pendingVisionSubCalls) trace.recordVisionSubCall(runId, payload);
+      const pendingGate = this.pendingTinyAskGateTraces.get(tabId);
+      this.pendingTinyAskGateTraces.delete(tabId);
+      if (pendingGate) trace.recordNote(runId, null, 'tiny_ask_screenshot_gate', pendingGate);
       if (typeof runOptions?.onTraceStarted === 'function') {
         try { runOptions.onTraceStarted(runId); } catch {}
       }
@@ -25430,6 +25437,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this.pendingVisionRouteTraces.delete(tabId);
       this.pendingVisionStatusTraces.delete(tabId);
       this.pendingVisionSubCallTraces.delete(tabId);
+      this.pendingTinyAskGateTraces.delete(tabId);
     }
     return runId;
   }
