@@ -124,6 +124,225 @@ export function reportInstalledPanelOpened({
   })).then(() => true);
 }
 
+// ── Optional local model ─────────────────────────────────────────────────
+// The install page offers the in-browser model WebBrain already ships for
+// WebGPU. It drives the same background routes as Settings and Apocalypse Mode
+// (get/start/pause_webgpu_download), so the download shows up there too.
+
+const LOCAL_MODEL_POLL_MS = 1500;
+const LOCAL_MODEL_STATUSES = new Set(['checking', 'not-downloaded', 'downloading', 'paused', 'stopping', 'ready', 'error']);
+// The WebGPU worker downloads one model at a time, and a paused transfer still
+// holds that slot until it finishes or is stopped.
+const LOCAL_MODEL_TRANSFER_STATUSES = new Set(['checking', 'starting', 'queued', 'downloading', 'paused', 'stopping']);
+const LOCAL_MODEL_POLLING_STATUSES = new Set(['checking', 'downloading', 'stopping', 'busy']);
+
+export function normalizeLocalModelSnapshot(snapshot = {}, modelId = '') {
+  const raw = String(snapshot?.status || '');
+  let status = ['starting', 'queued', 'loading'].includes(raw)
+    ? 'downloading'
+    : LOCAL_MODEL_STATUSES.has(raw) ? raw : 'not-downloaded';
+  const ready = snapshot?.ready === true || status === 'ready';
+  const loaded = Math.max(0, Number(snapshot?.loaded) || 0);
+  const total = Math.max(0, Number(snapshot?.total) || 0);
+  const progress = ready
+    ? 100
+    : Math.max(0, Math.min(100, Number(snapshot?.progress) || (total > 0 ? loaded / total * 100 : 0)));
+  const other = snapshot?.activeTransfer;
+  const otherModel = String(other?.modelId || other?.model || '').trim();
+  if (ready) status = 'ready';
+  else if (['not-downloaded', 'error'].includes(status) && otherModel && otherModel !== String(modelId || '').trim()
+    && LOCAL_MODEL_TRANSFER_STATUSES.has(String(other?.status || ''))) {
+    status = 'busy';
+  }
+  return {
+    status,
+    progress: Math.round(progress),
+    error: status === 'error' ? String(snapshot?.error || '') : '',
+  };
+}
+
+/** What the button and status line show for one normalized state. */
+export function localModelView(state = {}) {
+  const progress = Math.round(Number(state.progress) || 0);
+  switch (state.status) {
+    case 'ready':
+      return { labelKey: 'install.local_model.ready', action: null, statusKey: 'install.local_model.ready_detail', progress: null };
+    case 'downloading':
+      return { labelKey: 'install.local_model.pause', action: 'pause', statusKey: 'install.local_model.downloading', progress };
+    case 'paused':
+      return { labelKey: 'install.local_model.resume', action: 'resume', statusKey: 'install.local_model.paused', progress };
+    case 'stopping':
+      return { labelKey: 'install.local_model.download', action: null, statusKey: 'install.local_model.working', progress: null };
+    case 'busy':
+      return { labelKey: 'install.local_model.download', action: null, statusKey: 'install.local_model.busy', progress: null };
+    case 'unsupported':
+      return { labelKey: 'install.local_model.download', action: null, statusKey: 'install.local_model.unsupported', progress: null };
+    case 'error':
+      return { labelKey: 'install.local_model.retry', action: 'start', statusKey: 'install.local_model.error', progress: null, isError: true };
+    case 'checking':
+      return { labelKey: 'install.local_model.download', action: null, statusKey: 'install.local_model.checking', progress: null };
+    default:
+      return { labelKey: 'install.local_model.download', action: 'start', statusKey: '', progress: null };
+  }
+}
+
+function backgroundCommand(runtime, action, payload = {}) {
+  return Promise.resolve(runtime.sendMessage({ target: 'background', action, ...payload })).then((response) => {
+    // A thrown handler error arrives as { error, status: 500 }. A download
+    // snapshot in its error state also carries `error`, but with a string
+    // status, and a probe reports { ok: false, error }: both are answers.
+    if (response?.error && typeof response.status !== 'string' && response.ok !== false) {
+      throw new Error(response.error);
+    }
+    return response;
+  });
+}
+
+/**
+ * Point the WebGPU provider at the downloaded model so Settings and Apocalypse
+ * Mode show it as ready. Never touches the active chat provider, and never
+ * replaces a configured model that is already downloaded or downloading.
+ */
+export async function pointWebgpuProviderAtModel(modelId, { runtime = globalThis.chrome?.runtime } = {}) {
+  const { providers = {}, active } = await backgroundCommand(runtime, 'get_providers') || {};
+  const config = providers.webgpu;
+  if (!config || active === 'webgpu') return false;
+  const configured = String(config.model || '').trim();
+  if (configured === modelId) return false;
+  const current = normalizeLocalModelSnapshot(
+    await backgroundCommand(runtime, 'get_webgpu_download_status', configured ? { model: configured } : {}),
+    configured,
+  );
+  if (!['not-downloaded', 'error'].includes(current.status)) return false;
+  await backgroundCommand(runtime, 'update_provider', {
+    providerId: 'webgpu',
+    config: { model: modelId },
+    markConfigured: false,
+  });
+  return true;
+}
+
+export function initializeLocalModelDownload({
+  documentLike = globalThis.document,
+  runtime = globalThis.chrome?.runtime,
+  translate = t,
+  pollMs = LOCAL_MODEL_POLL_MS,
+} = {}) {
+  const root = documentLike?.getElementById?.('local-model');
+  const modelId = String(root?.dataset?.model || '').trim();
+  if (!root || !modelId || !runtime?.sendMessage) return null;
+  const button = documentLike.getElementById('local-model-button');
+  const label = documentLike.getElementById('local-model-label');
+  const bar = documentLike.getElementById('local-model-progress');
+  const statusLine = documentLike.getElementById('local-model-status');
+  let state = { status: 'checking', progress: 0, error: '' };
+  let inFlight = false;
+  let pollTimer = null;
+  let disposed = false;
+
+  const render = () => {
+    const view = localModelView(state);
+    root.dataset.state = state.status;
+    if (label) label.textContent = translate(view.labelKey);
+    if (button) {
+      button.disabled = inFlight || !view.action;
+      if (inFlight || ['checking', 'downloading', 'stopping'].includes(state.status)) button.setAttribute('aria-busy', 'true');
+      else button.removeAttribute('aria-busy');
+    }
+    if (bar) {
+      bar.hidden = view.progress == null;
+      bar.setAttribute('aria-valuenow', String(view.progress ?? 0));
+      bar.style?.setProperty?.('--local-model-progress', `${view.progress ?? 0}%`);
+    }
+    if (statusLine) {
+      statusLine.textContent = view.statusKey ? translate(view.statusKey, { progress: view.progress ?? 0, error: state.error || '' }) : '';
+      statusLine.classList?.toggle?.('is-error', view.isError === true);
+    }
+  };
+
+  const schedulePoll = () => {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+    if (disposed || !LOCAL_MODEL_POLLING_STATUSES.has(state.status)) return;
+    pollTimer = setTimeout(() => { void refresh(); }, pollMs);
+  };
+
+  const setState = (next) => {
+    state = { progress: 0, error: '', ...next };
+    render();
+    schedulePoll();
+  };
+
+  async function refresh({ quiet = false } = {}) {
+    try {
+      const snapshot = await backgroundCommand(runtime, 'get_webgpu_download_status', { model: modelId });
+      if (!inFlight) setState(normalizeLocalModelSnapshot(snapshot, modelId));
+    } catch (error) {
+      // On first paint a missing status is just "not downloaded yet"; the click
+      // probes the browser and reports a real problem.
+      if (!inFlight) setState(quiet ? { status: 'not-downloaded' } : { status: 'error', error: error?.message || String(error) });
+    }
+  }
+
+  button?.addEventListener('click', async () => {
+    const view = localModelView(state);
+    if (!view.action || inFlight) return;
+    inFlight = true;
+    try {
+      if (view.action === 'pause') {
+        render();
+        await backgroundCommand(runtime, 'pause_webgpu_download');
+      } else {
+        if (view.action === 'start') {
+          state = { status: 'checking', progress: 0, error: '' };
+          render();
+          // A browser without hardware WebGPU could download the files but never
+          // run them, so check the adapter first (no weights are fetched).
+          const probe = await backgroundCommand(runtime, 'test_provider', { providerId: 'webgpu' });
+          if (probe?.ok === false) {
+            inFlight = false;
+            setState({ status: 'unsupported', error: String(probe.error || '') });
+            return;
+          }
+          try {
+            await pointWebgpuProviderAtModel(modelId, { runtime });
+          } catch {
+            // Only cosmetic for Settings; the download itself does not need it.
+          }
+        } else {
+          render();
+        }
+        await backgroundCommand(runtime, 'start_webgpu_download', { model: modelId });
+      }
+    } catch (error) {
+      inFlight = false;
+      setState({ status: 'error', error: error?.message || String(error) });
+      return;
+    }
+    inFlight = false;
+    await refresh();
+  });
+
+  // The offscreen host broadcasts transfer progress; polling is the fallback.
+  runtime.onMessage?.addListener?.((message) => {
+    if (message?.type !== 'webgpu-text-download-state' || inFlight) return false;
+    if (String(message.state?.modelId || '').trim() !== modelId) return false;
+    setState(normalizeLocalModelSnapshot(message.state, modelId));
+    return false;
+  });
+
+  render();
+  void refresh({ quiet: true });
+  return {
+    getState: () => ({ ...state }),
+    refresh,
+    dispose() {
+      disposed = true;
+      clearTimeout(pollTimer);
+    },
+  };
+}
+
 async function getInstallTab(build) {
   const tabs = build === 'firefox'
     ? globalThis.browser?.tabs
@@ -154,6 +373,12 @@ async function hydrateGuide() {
   applyDOMTranslations(document);
   initializeFeatureShowcase();
   initializeMotion();
+  try {
+    // Chrome only: the Firefox page has no local-model block.
+    initializeLocalModelDownload();
+  } catch (error) {
+    console.warn('[WebBrain] Local model download unavailable:', error);
+  }
 
   const build = document.documentElement.dataset.build;
   const [browserKey, installTab] = await Promise.all([
@@ -167,9 +392,11 @@ async function hydrateGuide() {
   const openButton = document.getElementById('open-panel-button');
   const openLabel = document.getElementById('open-panel-label');
   const status = document.getElementById('open-panel-status');
-  // The closing call-to-action repeats the button for visitors who scrolled
-  // the whole page. It forwards to the primary button (so one click handler,
-  // one in-flight open) and mirrors its status line.
+  // Chrome keeps the only open button in the closing call-to-action: the hero
+  // offers the optional local model instead. Firefox has no local model, so
+  // its hero keeps the open button and the closing call-to-action mirrors it,
+  // forwarding to the primary button (one click handler, one in-flight open)
+  // and repeating its status line.
   const mirrorButtons = Array.from(document.querySelectorAll('[data-open-panel-mirror]'));
   const statusLines = [status, ...document.querySelectorAll('[data-open-panel-status-mirror]')];
   const showStatus = (text, isError = false) => {
