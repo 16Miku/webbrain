@@ -220,6 +220,48 @@ export const WEBGPU_PREFILL_SLICE_TOKENS_KEY = 'webgpuPrefillSliceTokens';
 export const WEBGPU_VISION_AUTO_SELECTED_KEY = 'webgpuVisionAutoSelected';
 export const WEBGPU_VISION_CONSENT_VERSION_KEY = 'webgpuVisionConsentVersion';
 export const WEBGPU_VISION_CONSENT_VERSION = 2;
+// Which in-browser model reads screenshots (Chrome-local, never synced or
+// exported: Firefox has no WebGPU runtime). Auto follows Ternary Bonsai 2 2B
+// Vision: on once it is downloaded, off until then. Neither choice starts a
+// download; that always takes a click in Settings or Apocalypse Mode.
+export const WEBGPU_VISION_CHOICE_KEY = 'webgpuVisionChoice';
+export const WEBGPU_VISION_CHOICE_AUTO = 'auto';
+export const WEBGPU_VISION_CHOICE_BONSAI = 'bonsai';
+export const WEBGPU_VISION_CHOICE_WEBBRAIN_VL = 'webbrain-vl';
+export const WEBGPU_VISION_CHOICE_OFF = 'off';
+export const WEBGPU_VISION_CHOICES = Object.freeze([
+  WEBGPU_VISION_CHOICE_AUTO,
+  WEBGPU_VISION_CHOICE_BONSAI,
+  WEBGPU_VISION_CHOICE_WEBBRAIN_VL,
+  WEBGPU_VISION_CHOICE_OFF,
+]);
+// Bonsai reads screenshots through the chat runtime, so it shares the chat
+// preset's download, cache and worker queue rather than having its own.
+export const WEBGPU_VISION_BONSAI_MODEL_ID = WEBGPU_BONSAI2_VL_2B_MODEL_ID;
+
+/**
+ * The stored choice. Builds before the choice had one local model, so an
+ * explicit, consented enable of it stays that model rather than becoming Auto.
+ */
+export function storedWebgpuVisionChoice(stored = {}) {
+  const choice = stored?.[WEBGPU_VISION_CHOICE_KEY];
+  if (WEBGPU_VISION_CHOICES.includes(choice)) return choice;
+  return stored?.[WEBGPU_VISION_ENABLED_KEY] === true
+    && stored?.[WEBGPU_VISION_CONSENT_VERSION_KEY] === WEBGPU_VISION_CONSENT_VERSION
+    ? WEBGPU_VISION_CHOICE_WEBBRAIN_VL
+    : WEBGPU_VISION_CHOICE_AUTO;
+}
+
+/** The model a choice uses right now: 'bonsai', 'webbrain-vl', or null (off). */
+export function resolveWebgpuVisionChoice(choice, { bonsaiReady = false } = {}) {
+  if (choice === WEBGPU_VISION_CHOICE_BONSAI || choice === WEBGPU_VISION_CHOICE_WEBBRAIN_VL) return choice;
+  if (choice === WEBGPU_VISION_CHOICE_AUTO && bonsaiReady === true) return WEBGPU_VISION_CHOICE_BONSAI;
+  return null;
+}
+
+export function webgpuVisionChoiceModelId(model) {
+  return model === WEBGPU_VISION_CHOICE_BONSAI ? WEBGPU_VISION_BONSAI_MODEL_ID : WEBGPU_VISION_MODEL_ID;
+}
 export const WEBGPU_VISION_DOWNLOAD_STATE_KEY = 'webgpuVisionDownloadState';
 export const WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE = 'webgpu-vision-download-state';
 export const WEBGPU_VISION_READY_MARKER_VERSION = 2;
@@ -793,4 +835,36 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
     }
   }
 
+}
+
+/**
+ * Ternary Bonsai 2 2B Vision as the screenshot reader for a text-only active
+ * model. It is the chat preset itself, so it shares that download and the
+ * worker's serialized model queue: a screenshot asked for during a chat
+ * generation waits its turn there, and the agent's 90 s vision deadline aborts
+ * it through the same chat cancellation key. Tools are never offered; the
+ * agent only wants a description back.
+ */
+export class WebGPUBonsaiVisionProvider extends WebGPUProvider {
+  constructor(config = {}) {
+    super({ ...config, model: WEBGPU_VISION_BONSAI_MODEL_ID });
+    this.config.providerName = 'webgpu-vision';
+    this.config.label = 'In-browser vision (Ternary Bonsai 2 2B Vision)';
+  }
+
+  get name() {
+    return 'webgpu-vision-bonsai';
+  }
+
+  get supportsTools() {
+    return false;
+  }
+
+  get supportsVision() {
+    return true;
+  }
+
+  async chat(messages, options = {}) {
+    return super.chat(messages, { ...options, tools: [] });
+  }
 }
