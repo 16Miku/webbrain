@@ -41724,6 +41724,29 @@ test('tiny Ask shows a vision-capable in-browser model the visible page when its
       'a textless page tells the model to answer from the image');
   }
   {
+    // A stalled worker: the readout never answers. The turn goes ahead
+    // text-only after the gate's deadline, and the readout is cancelled.
+    let gateSignal = null;
+    const { agent, requests, captures, run } = setup();
+    agent.tinyAskGateTimeoutMs = 30;
+    agent._providerForRunOptions(1730, {}).decide = request => { gateSignal = request.signal; return new Promise(() => {}); };
+    const started = Date.now();
+    assert.equal(await run('What colour is the banner?'), 'Answer.', 'a stalled readout does not hold the turn');
+    assert.ok(Date.now() - started < 2000);
+    assert.equal(gateSignal?.aborted, true, 'the readout is cancelled at the deadline');
+    assert.equal(captures.length, 0);
+    assert.deepEqual(imagesOf(requests[0]), []);
+  }
+  {
+    // A gate note left by a turn that ended before its trace started must not
+    // reach the next turn's trace.
+    const { agent, tabId, decisions, run } = setup({ supportsVision: false });
+    agent.pendingTinyAskGateTraces.set(tabId, { probability: 0.42, ms: 7 });
+    await run('How much is the blue plan?');
+    assert.equal(decisions.length, 0);
+    assert.equal(agent.pendingTinyAskGateTraces.has(tabId), false, 'each turn starts without a stale gate note');
+  }
+  {
     const { requests, decisions, captures, run } = setup({ readFails: true });
     await run('What colour is the banner?');
     assert.equal(decisions.length, 1, 'a failed text read on a normal page still reaches the gate');

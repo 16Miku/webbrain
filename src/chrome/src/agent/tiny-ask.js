@@ -58,6 +58,9 @@ export const TINY_ASK_READ_MAX_CHARS = 60000;
 // steer the decision.
 export const TINY_ASK_SCREENSHOT_MAX_PAGE_CHARS = 200;
 export const TINY_ASK_SCREENSHOT_GATE_THRESHOLD = 0.5;
+// The readout takes ~0.2 s, plus a model load on the first turn after a
+// browser restart; past this the turn goes ahead text-only.
+export const TINY_ASK_SCREENSHOT_GATE_TIMEOUT_MS = 10_000;
 export const TINY_ASK_SCREENSHOT_GATE_QUESTION = 'To answer this message well, does the assistant need to look at a '
   + 'screenshot of the current page, because the answer depends on how something on it looks (an image, photo, '
   + 'chart, colour, logo, button or layout) or on what a page with almost no text shows?';

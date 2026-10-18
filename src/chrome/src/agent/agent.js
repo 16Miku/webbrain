@@ -208,7 +208,7 @@ import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 import {
   TINY_ASK_ACT_BLOCKED_MESSAGE, TINY_ASK_COMPACT_LINKED_MAX_CHARS, TINY_ASK_COMPACT_PAGE_MAX_CHARS,
   TINY_ASK_COMPACT_SELECTION_MAX_CHARS, TINY_ASK_READ_MAX_CHARS, TINY_ASK_READ_WINDOW_CHARS, TINY_ASK_SYSTEM_PROMPT,
-  TINY_ASK_SCREENSHOT_GATE_THRESHOLD, tinyAskLinkedUrl, tinyAskScreenshotGate, tinyAskScreenshotGateProbability, tinyAskScreenshotNote, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
+  TINY_ASK_SCREENSHOT_GATE_THRESHOLD, TINY_ASK_SCREENSHOT_GATE_TIMEOUT_MS, tinyAskLinkedUrl, tinyAskScreenshotGate, tinyAskScreenshotGateProbability, tinyAskScreenshotNote, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
 } from './tiny-ask.js';
 import { webgpuModelDisplayName } from '../providers/webgpu.js';
 
@@ -12088,6 +12088,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return enriched;
   }
 
+  // The gate's readout, bounded: a stalled offscreen worker must not hold the
+  // turn at enrichment. A timeout or the run's own abort cancels the worker
+  // operation (WebGPUProvider.decide sends webgpu-decide-cancel) and settles
+  // at once; only a run abort propagates.
+  async _tinyAskGateDecision(tabId, provider, gate) {
+    const controller = new AbortController();
+    const parent = this._runAbortSignal(tabId);
+    let timer = null;
+    let onAbort = null;
+    const settled = new Promise((_, reject) => {
+      onAbort = () => {
+        const reason = parent?.reason;
+        controller.abort(reason);
+        reject(reason instanceof Error ? reason : Object.assign(new Error('The run was stopped.'), { name: 'AbortError' }));
+      };
+      if (parent?.aborted) onAbort();
+      else parent?.addEventListener?.('abort', onAbort, { once: true });
+      timer = setTimeout(() => {
+        const error = new Error('The screenshot gate timed out.');
+        controller.abort(error);
+        reject(error);
+      }, Number(this.tinyAskGateTimeoutMs) > 0 ? Number(this.tinyAskGateTimeoutMs) : TINY_ASK_SCREENSHOT_GATE_TIMEOUT_MS);
+    });
+    settled.catch(() => {});
+    try {
+      return await Promise.race([provider.decide({ ...gate, promptVariant: 'gate', signal: controller.signal }), settled]);
+    } finally {
+      clearTimeout(timer);
+      parent?.removeEventListener?.('abort', onAbort);
+    }
+  }
+
   // The visible page for a tiny Ask turn, when the in-browser model reads
   // images itself and its own readout says the question needs it (see
   // tinyAskScreenshotGate: language-independent, and blind to page content).
@@ -12116,7 +12148,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const gate = tinyAskScreenshotGate({
         question, pageChars: String(page.text || '').trim().length, imageAttachment, linkedPage,
       });
-      const result = await provider.decide({ ...gate, promptVariant: 'gate', signal: this._runAbortSignal(tabId) });
+      const result = await this._tinyAskGateDecision(tabId, provider, gate);
       probability = tinyAskScreenshotGateProbability(result?.answers);
     } catch (error) {
       if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
@@ -35829,6 +35861,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.pendingVisionRouteTraces.delete(tabId);
     this.pendingVisionStatusTraces.delete(tabId);
     this.pendingVisionSubCallTraces.delete(tabId);
+    this.pendingTinyAskGateTraces.delete(tabId);
     this.carouselTraversalStates.delete(tabId);
     this._chromeProtectedGalleryStates.delete(tabId);
     void this._clearBackgroundFocusEmulation(tabId);
@@ -54129,6 +54162,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.pendingVisionRouteTraces.delete(tabId);
     this.pendingVisionStatusTraces.delete(tabId);
     this.pendingVisionSubCallTraces.delete(tabId);
+    this.pendingTinyAskGateTraces.delete(tabId);
     this.visionStatusNotices.delete(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
     this.autoScreenshotBursts.delete(tabId);
@@ -55906,6 +55940,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.pendingVisionRouteTraces.delete(tabId);
     this.pendingVisionStatusTraces.delete(tabId);
     this.pendingVisionSubCallTraces.delete(tabId);
+    this.pendingTinyAskGateTraces.delete(tabId);
     this.visionStatusNotices.delete(tabId);
     // Reset the per-turn auto-screenshot budget (issue #311) for a fresh turn.
     this.autoScreenshotBursts.delete(tabId);
