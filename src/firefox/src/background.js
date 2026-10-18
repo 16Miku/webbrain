@@ -1586,7 +1586,8 @@ async function answerInlineSelection(msg) {
           ...(notice ? { notice } : {}),
         };
     }
-    return { ok: false, error: String(error?.message || error).slice(0, 300) };
+    const notice = inlineCostNotice(error);
+    return { ok: false, error: String(error?.message || error).slice(0, 300), ...(notice ? { notice } : {}) };
   } finally {
     clearTimeout(timer);
     if (jobId && inlineSelectionJobs.get(jobId) === controller) inlineSelectionJobs.delete(jobId);
