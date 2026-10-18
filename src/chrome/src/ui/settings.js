@@ -255,7 +255,45 @@ function syncWebgpuDecisionProvider() {
   // Lock both controls for D1 and the chat model; restore them otherwise.
   if (decisionModelInput) decisionModelInput.readOnly = fixed;
   if (systemOneApiKeyInput) systemOneApiKeyInput.disabled = fixed;
+  syncDecisionSuggestion();
 }
+
+// When the active chat model is Ternary Bonsai 2 2B Vision, suggest it as the
+// decision model too (already downloaded), with D1 as the safer, faster
+// completion checker. With the chat model selected, only the D1 upgrade shows.
+const DECISION_SUGGESTION_DISMISSED_KEY = 'webgpuDecisionSuggestionDismissed';
+let decisionSuggestionDismissed = false;
+function activeChatModelIsDecisionCapable() {
+  if (providerDefinitionId(activeProviderId) !== 'webgpu') return false;
+  try { return normalizeWebgpuModelId(providersData[activeProviderId]?.model) === WEBGPU_CHAT_DECISION_MODEL; } catch { return false; }
+}
+function syncDecisionSuggestion() {
+  const box = document.getElementById('decision-suggestion');
+  if (!box || !decisionProviderInput) return;
+  const provider = decisionProviderInput.value;
+  const mode = decisionSuggestionDismissed ? ''
+    : provider === 'webgpu_chat' ? 'upgrade'
+      : provider !== 'webgpu_d1' && activeChatModelIsDecisionCapable() ? 'suggest' : '';
+  box.hidden = !mode;
+  document.getElementById('decision-suggest-chat').hidden = mode !== 'suggest';
+  document.getElementById('decision-suggest-upgrade').hidden = mode !== 'upgrade';
+  document.getElementById('btn-decision-use-chat').hidden = mode !== 'suggest';
+}
+function chooseSuggestedDecisionProvider(provider) {
+  decisionProviderInput.value = provider;
+  decisionProviderInput.dispatchEvent(new Event('change'));
+  if (systemOneEnabledToggle) systemOneEnabledToggle.checked = true;
+  showSystemOneResult('', t('st.decision.suggest_selected'));
+  btnSaveSystemOne?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  btnSaveSystemOne?.focus({ preventScroll: true });
+}
+document.getElementById('btn-decision-use-chat')?.addEventListener('click', () => chooseSuggestedDecisionProvider('webgpu_chat'));
+document.getElementById('btn-decision-use-d1')?.addEventListener('click', () => chooseSuggestedDecisionProvider('webgpu_d1'));
+document.getElementById('btn-decision-suggest-dismiss')?.addEventListener('click', () => {
+  decisionSuggestionDismissed = true;
+  chrome.storage.local.set({ [DECISION_SUGGESTION_DISMISSED_KEY]: true }).catch(() => {});
+  syncDecisionSuggestion();
+});
 
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
 const systemOneEnabledToggle = document.getElementById('toggle-system-one');
@@ -647,7 +685,7 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', DECISION_SUGGESTION_DISMISSED_KEY, 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -758,6 +796,7 @@ async function init() {
   decisionDoneToggle.checked = decisionConfig.doneEnabled;
   decisionThresholdInput.value = String(decisionConfig.threshold * 100);
   await refreshD1Settings();
+  decisionSuggestionDismissed = stored[DECISION_SUGGESTION_DISMISSED_KEY] === true;
   syncWebgpuDecisionProvider();
   decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
   decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
@@ -3178,6 +3217,7 @@ async function refreshWebbrainPaymentNotice() {
 
 function renderProviders() {
   providersContainer.innerHTML = '';
+  syncDecisionSuggestion();
 
   // Field definitions reference i18n keys (labelKey) so switching languages
   // re-renders with translated labels. Placeholders stay as raw values —
@@ -4375,6 +4415,7 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
 function refreshProviderCardStatus(id) {
   // Saving a provider marks it configured without rebuilding the list. Keep
   // the Active pill in sync even if the card disappeared during the request.
+  syncDecisionSuggestion();
   refreshActiveProviderFilterCount();
   const card = document.querySelector(`.provider-card[data-provider-id="${id}"]`);
   if (!card) return;

@@ -328,17 +328,43 @@ test('in-browser decisions get their own timeout unless a caller sets a shorter 
 
 test('Settings locks the model and key fields for both fixed in-browser providers and restores them otherwise', async () => {
   const settings = await readFile(new URL('../src/chrome/src/ui/settings.js', import.meta.url), 'utf8');
-  const sync = settings.slice(settings.indexOf('function syncWebgpuDecisionProvider'), settings.indexOf('const systemOneApiKeyInput'));
+  const start = settings.indexOf('function syncWebgpuDecisionProvider');
+  const sync = settings.slice(start, settings.indexOf('\n}\n', start));
   assert.match(settings, /const FIXED_WEBGPU_DECISION_PROVIDERS = \['webgpu_d1', 'webgpu_chat'\];/);
   assert.match(sync, /const fixed = FIXED_WEBGPU_DECISION_PROVIDERS\.includes\(decisionProviderInput\?\.value\);/);
   assert.match(sync, /decisionModelInput\.readOnly = fixed;/);
   assert.match(sync, /systemOneApiKeyInput\.disabled = fixed;/);
   assert.doesNotMatch(sync, /= true;/, 'nothing is locked only one way');
   // d1-settings.js also sets these fields for D1 only; the sync must run after it.
-  const awaited = [...settings.matchAll(/await refreshD1Settings\(\);\n\s*(\S+)/g)].map(match => match[1]);
+  const awaited = [...settings.matchAll(/await refreshD1Settings\(\);\n(?:\s*decisionSuggestionDismissed = [^\n]*\n)?\s*(\S+)/g)].map(match => match[1]);
   assert.deepEqual(awaited, ['syncWebgpuDecisionProvider();', 'syncWebgpuDecisionProvider();'], 'load and Clear re-sync after D1');
   const change = settings.slice(settings.indexOf("decisionProviderInput?.addEventListener('change'"));
   assert.match(change.slice(0, change.indexOf('});')), /syncWebgpuDecisionProvider\(\);/);
   assert.ok(settings.indexOf('initD1Settings(sendToBackground)') < settings.indexOf("decisionProviderInput?.addEventListener('change'"),
     "D1's change listener is registered first, so this one runs last");
+});
+
+test('Settings suggests the chat model for decisions when Bonsai chats, with D1 as the safer upgrade', async () => {
+  const html = await readFile(new URL('../src/chrome/src/ui/settings.html', import.meta.url), 'utf8');
+  for (const id of ['decision-suggestion', 'decision-suggest-chat', 'decision-suggest-upgrade', 'btn-decision-use-chat', 'btn-decision-use-d1', 'btn-decision-suggest-dismiss']) {
+    assert.match(html, new RegExp(`id="${id}"`), id);
+  }
+  assert.match(html, /id="decision-suggestion" hidden/, 'hidden until Settings decides');
+  const settings = await readFile(new URL('../src/chrome/src/ui/settings.js', import.meta.url), 'utf8');
+  const sync = settings.slice(settings.indexOf('function activeChatModelIsDecisionCapable'), settings.indexOf('function chooseSuggestedDecisionProvider'));
+  assert.match(sync, /providerDefinitionId\(activeProviderId\) !== 'webgpu'/, 'only when WebGPU is the active chat provider');
+  assert.match(sync, /=== WEBGPU_CHAT_DECISION_MODEL/, 'only for the model with a trained decision probe');
+  assert.match(sync, /provider === 'webgpu_chat' \? 'upgrade'/, 'with the chat model chosen, only the D1 upgrade shows');
+  assert.match(sync, /provider !== 'webgpu_d1' && activeChatModelIsDecisionCapable\(\) \? 'suggest'/, 'nothing once D1 is chosen');
+  assert.match(sync, /decisionSuggestionDismissed \? ''/, '"Not now" hides it');
+  const choose = settings.slice(settings.indexOf('function chooseSuggestedDecisionProvider'), settings.indexOf("document.getElementById('btn-decision-suggest-dismiss')"));
+  assert.match(choose, /dispatchEvent\(new Event\('change'\)\)/, 'uses the normal provider switch, so D1 consent and field locks apply');
+  assert.doesNotMatch(choose, /chrome\.storage\.local\.set/, 'nothing is saved until the user clicks Save');
+  assert.match(settings, /function renderProviders\(\) \{\n\s*providersContainer\.innerHTML = '';\n\s*syncDecisionSuggestion\(\);/, 'follows chat-provider changes');
+  const { decisionEnglish, decisionTranslations } = await import('../src/chrome/src/ui/locales/decision-copy.mjs');
+  for (const key of ['st.decision.suggest_chat', 'st.decision.suggest_upgrade', 'st.decision.use_chat', 'st.decision.use_d1', 'st.decision.suggest_dismiss', 'st.decision.suggest_selected']) {
+    assert.ok(decisionEnglish[key] && decisionTranslations.tr[key], key);
+  }
+  const firefoxHtml = await readFile(new URL('../src/firefox/src/ui/settings.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(firefoxHtml, /decision-suggestion/, 'Chrome only');
 });
