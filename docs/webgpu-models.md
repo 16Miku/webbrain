@@ -193,12 +193,17 @@ Use the tools in `scripts/models/bonsai/`:
     - Follow-ups: the screenshot is gone from history, so "And the button?"
       after a screenshot answer needs another look. The stored question is
       marked (`webbrainTinyAskScreenshot`, never the image), and the next turn
-      uses a lower bar, 0.35 instead of 0.5. The readout still sees only the
+      uses a lower bar, 0.4 instead of 0.5. The readout still sees only the
       new message: with the earlier question added it said yes to 11–13 of 30
-      text follow-ups such as "Thanks!". On 60 follow-ups in 14 languages the
-      lower bar caught 28/30 visual ones (22/30 at 0.5) with 1/30 false "yes".
-      On 52 others in 16 languages, chosen afterwards, it caught 21/26 (18/26)
-      with 0/26 (`check-tiny-ask-screenshot-gate.mjs --follow-ups`).
+      text follow-ups such as "Thanks!".
+      - The bar was chosen on 60 follow-ups in 14 languages: 27/30 visual ones
+        (22/30 at 0.5), 0/30 false "yes".
+      - It was also chosen on 42 that point back with a pronoun: 10/17 visual
+        ("Does it have a handle?"; 8/17 at 0.5) and 3/25 false "yes" (2/25).
+        Some text ones look anyway: "How much does it hold?" scores 0.73 alone.
+      - Checked on 52 others in 16 languages, written afterwards: 21/26
+        (18/26), 0/26 false "yes".
+      - `check-tiny-ask-screenshot-gate.mjs --follow-ups` runs all three.
     - A page with almost no text gets a note to answer from the image. A
       screenshot alone never suppresses offline references. With an attached
       image both images can be sent, when the readout says the page is needed

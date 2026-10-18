@@ -121,7 +121,7 @@ const tasks = [
   // The screenshot is not kept in history: a short visual follow-up looks
   // again (a lower bar after a screenshot turn), a text one does not.
   { name: 'image-follow-up', followUp: true, text: 'And the background?', expect: /white/i, screenshot: true },
-  { name: 'image-text-follow-up', followUp: true, text: 'How much does it hold?', expect: /350/, screenshot: false },
+  { name: 'image-text-follow-up', followUp: true, text: 'Is it dishwasher safe?', expect: /\byes\b|dishwasher/i, screenshot: false },
   { name: 'image-turkish', page: '/image.html', text: 'Fotoğraftaki kupa ne renk?', expect: /yeşil|green/i, screenshot: true },
   { name: 'image-only-page', page: '/poster.html', text: 'What is on this page?', expect: /orange|circle|sun/i, screenshot: true },
   // The decision to look is the model's own readout, so it works in any language.

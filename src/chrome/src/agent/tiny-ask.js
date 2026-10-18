@@ -62,9 +62,10 @@ export const TINY_ASK_SCREENSHOT_GATE_THRESHOLD = 0.5;
 // from history, and a short follow-up ("And the button?", "Ya logo?") is a
 // visual question more often than a fresh one. The readout still sees only the
 // new message (with the earlier one prepended, it says yes to "Thanks!" too);
-// a lower bar is the prior shift. Chosen on 60 follow-ups in 14 languages and
-// checked on 52 others in 16 (docs/webgpu-models.md).
-export const TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD = 0.35;
+// a lower bar is the prior shift. Chosen on 60 follow-ups in 14 languages
+// and 42 pronoun follow-ups ("Is it shiny?", "Is it dishwasher safe?"),
+// checked on 52 others in 16 languages (docs/webgpu-models.md).
+export const TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD = 0.4;
 // The readout takes ~0.2 s, plus a model load on the first turn after a
 // browser restart; past this the turn goes ahead text-only.
 export const TINY_ASK_SCREENSHOT_GATE_TIMEOUT_MS = 10_000;

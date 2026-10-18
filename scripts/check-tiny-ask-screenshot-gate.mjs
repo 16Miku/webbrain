@@ -105,8 +105,9 @@ const CASES = [
 
 // Follow-ups: [language, earlier question answered from a screenshot,
 // [follow-ups that need another look], [follow-ups that do not]]. The
-// threshold was chosen on the first set and checked on the second, which
-// adds languages (sv, id, vi, hi) and phrasings the first never uses.
+// threshold was chosen on the first set and the pronoun set below, and
+// checked on the second, which adds languages (sv, id, vi, hi) and phrasings
+// the first never uses.
 const FOLLOW_UPS_CHOSEN_ON = [
   ['en', 'What colour is the banner?', ['And the button?', 'What about the logo?', 'Is it darker than the header?', 'Which one is bigger?'],
     ['How much is the Team plan?', 'Who wrote this article?', 'Thanks!', 'Who was Alan Turing?']],
@@ -149,6 +150,22 @@ const FOLLOW_UPS_CHECKED_ON = [
   ['hi', 'बटन किस रंग का है?', ['और लोगो?'], ['टीम प्लान की कीमत क्या है?']],
   ['ko', '사진에 뭐가 있어요?', ['오른쪽은요?'], ['작성자가 누구예요?']],
 ];
+// Follow-ups that point back with a pronoun, to the mug on the image task's
+// page. Added after "How much does it hold?" took a screenshot in
+// check-webgpu-ask.mjs (it scores 0.73 alone, above the usual bar too); used
+// to pick 0.4 over 0.35, which said yes to two more of the text ones.
+const FOLLOW_UPS_PRONOUNS = [
+  ['en', 'What colour is the mug in the photo?',
+    ['Is it shiny?', 'Does it have a handle?', 'What shape is it?', 'Is it bigger than the heading?', 'Is there anything printed on it?', 'Which way does the handle point?'],
+    ['How much does it hold?', 'Is it dishwasher safe?', 'How long does it keep drinks warm?', 'How much does it cost?', 'Where can I buy it?', 'Is it in stock?', 'Who makes it?', 'When was it released?']],
+  ['tr', 'Fotoğraftaki kupa ne renk?', ['Kulpu var mı?', 'Parlak mı?', 'Şekli nasıl?'], ['Ne kadar alıyor?', 'Bulaşık makinesinde yıkanır mı?', 'Fiyatı ne?', 'Stokta var mı?']],
+  ['de', 'Welche Farbe hat die Tasse auf dem Foto?', ['Hat sie einen Henkel?', 'Welche Form hat sie?'], ['Wie viel passt hinein?', 'Ist sie spülmaschinenfest?', 'Was kostet sie?']],
+  ['es', '¿De qué color es la taza de la foto?', ['¿Tiene asa?', '¿Qué forma tiene?'], ['¿Cuánto cabe?', '¿Se puede lavar en el lavavajillas?', '¿Cuánto cuesta?']],
+  ['fr', 'De quelle couleur est la tasse sur la photo ?', ['A-t-elle une anse ?'], ['Combien contient-elle ?', 'Va-t-elle au lave-vaisselle ?']],
+  ['ja', '写真のマグカップは何色ですか？', ['取っ手はありますか？'], ['容量はどれくらい？', '食洗機で洗えますか？']],
+  ['ko', '사진 속 머그컵은 무슨 색이에요?', ['손잡이가 있어요?'], ['용량이 얼마예요?', '가격이 얼마예요?']],
+  ['nl', 'Welke kleur heeft de mok op de foto?', ['Heeft hij een oor?'], ['Hoeveel past erin?']],
+];
 const followUpRows = (pairs, set) => pairs.flatMap(([language, earlier, visual, text]) => [
   ...visual.map(question => [true, language, question, { ...TEXT_PAGE, set, earlier }]),
   ...text.map(question => [false, language, question, { ...TEXT_PAGE, set, earlier }]),
@@ -158,7 +175,8 @@ const returnHidden = args.includes('--return-hidden');
 const rows = option('--dataset', '')
   ? JSON.parse(await fs.readFile(option('--dataset'), 'utf8')).map(row => [Boolean(row.label), row.language, row.question,
     { pageChars: row.pageChars, imageAttachment: row.imageAttachment === true, linkedPage: row.linkedPage === true }])
-  : followUps ? [...followUpRows(FOLLOW_UPS_CHOSEN_ON, 'chosen on'), ...followUpRows(FOLLOW_UPS_CHECKED_ON, 'checked on')]
+  : followUps ? [...followUpRows(FOLLOW_UPS_CHOSEN_ON, 'chosen on'), ...followUpRows(FOLLOW_UPS_PRONOUNS, 'pronouns'),
+    ...followUpRows(FOLLOW_UPS_CHECKED_ON, 'checked on')]
     : CASES;
 const result = { model, extension, threshold, dataset: option('--dataset', ''), startedAt: new Date().toISOString(), cases: [] };
 let context;
@@ -212,7 +230,7 @@ try {
     misses: all.filter(entry => !entry.correct).map(entry => ({ expected: entry.expected, p: entry.probability, question: entry.question })),
   };
   if (followUps) {
-    result.summary.bySet = Object.fromEntries(['chosen on', 'checked on'].map(set => {
+    result.summary.bySet = Object.fromEntries(['chosen on', 'pronouns', 'checked on'].map(set => {
       const rows = all.filter(entry => entry.set === set);
       return [set, { yesRecall: share(rows.filter(entry => entry.expected), entry => entry.predicted),
         falseYes: share(rows.filter(entry => !entry.expected), entry => entry.predicted) }];
