@@ -229,6 +229,50 @@ The primary threat: a malicious page crafts content that, when read by the agent
 
 ---
 
+## Unanswered Questions
+
+When the agent asks a `clarify` question and nobody answers before the clarify
+timeout (Settings → General, default 60 s), the setting **When a question times
+out** decides the answer:
+
+- **Finish the task** (default) keeps the run moving. The option the model named
+  as `finish_option` applies as the user's answer; without one, the model
+  continues with the choice that best completes the task and reports it in its
+  summary. Runs no longer stall because the user stepped away.
+- **Play it safe** selects `options[0]` as a safe default. It authorizes nothing
+  consequential unless the model marked that option `safe_first`; otherwise
+  consequential actions and a success completion stay blocked until the user
+  answers directly.
+
+The model classifies every question with `consequence`. A question whose
+answer would approve a deletion, a payment, credentials, the recipient of a
+message, or a publication the user did not ask for (any `consequence` other
+than `none`, or a recipient `purpose`) always times out to its safe first
+option, whatever the setting, and that answer authorizes nothing, even when
+the model marked it `safe_first`: consequential actions and a success
+completion stay blocked until the user answers directly. So does a question
+the model did not classify: only `consequence: "none"` lets a timeout finish
+the task. Instant (a timeout
+of 0) answers by the same rules. A timed-out answer is never recorded as the
+user's own words in the task authority or the publication contract. WebBrain's
+own confirmation cards (site permissions, form submits, recipients, deletions)
+are separate prompts: they never time out.
+
+The logic lives in `src/*/src/agent/clarify-timeout.js`.
+
+## Guards
+
+WebBrain's own checks on model actions are registered in
+`src/*/src/agent/guard-policy.js`. Only five classes may refuse an action
+outright: the wrong recipient, deleting data, money, credentials, and
+publishing or sending something the user did not ask for. Verification,
+readback, evidence and completion checks leave a note for the model instead,
+and a completion accepted over them tells the user what was not verified.
+Permission gates, host and frame boundaries, CAPTCHA and access walls, and
+loop budgets are not guards and keep their behavior. Settings → General →
+**Strict checks** makes every verification check block again.
+`docs/guards.md` lists what still refuses and the rule for adding a guard.
+
 ## `/allow-api` Flag
 
 Set per-conversation via the `/allow-api` slash command in the side panel, or

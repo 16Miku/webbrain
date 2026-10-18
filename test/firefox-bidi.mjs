@@ -516,6 +516,61 @@ test('literal newline insertion never dispatches an Enter key', async () => {
   assert.deepEqual(dispatched.flatMap(p=>p.actions[0].actions.map(a=>a.value)), ['a','a','b','b']);
 });
 
+test('the settled typing readback names the reader that compared the value', async () => {
+  const session = new BidiSession(); const runId = id(); const scripts = [];
+  session.runs.set(runId, {context:'tab'});
+  session.locate = async () => ({context:'tab',node:{sharedId:'editor'}});
+  const marker = 'const settledReading = readRichTextFieldReading(el, semanticKind)';
+  let settled = { verified: false, compared: true, reader: 'semantic' };
+  session.call = async (_match, fn) => {
+    scripts.push(fn);
+    if (!fn.includes(marker)) return {result:{value:true}};
+    return {result:{type:'object', value:Object.entries(settled).map(([key, value]) => [key, {type:typeof value, value}])}};
+  };
+  session.send = async () => ({});
+  const mismatch = await session.perform(runId, 'field', {text:'ab', submit:true});
+  assert.equal(mismatch.success, false);
+  assert.equal(mismatch.verified, false);
+  assert.equal(mismatch.submitted, false);
+  assert.deepEqual(mismatch.readback, {compared:true, reader:'semantic'});
+  // The extension reads an editor model's mismatch as known.
+  const client = new FirefoxBidiClient({tabs:{sendMessage:async () => ({bidiPrepared:true, url:'https://example.com/',
+    fieldMeta:{tag:'div', contentEditable:true}})}});
+  client.runs.set(1, {runId, bound:true});
+  client.bindRun = async () => {};
+  client.perform = async () => mismatch;
+  const known = await client.sendContent(1, {action:'set_field', params:{text:'ab'}});
+  assert.deepEqual(known.unverified, {reason:'readback_mismatch', reader:'semantic'});
+  assert.equal(known.readbackExact, true);
+  settled = { verified: false, compared: false, reason: 'element_replaced' };
+  assert.deepEqual((await session.perform(runId, 'field', {text:'ab'})).readback, {compared:false, reason:'element_replaced'});
+  settled = { verified: true, compared: true, reader: 'exact' };
+  assert.equal((await session.perform(runId, 'field', {text:'ab'})).verified, true);
+
+  // The readback itself, against a minimal DOM.
+  const declaration = scripts.find(fn => fn.includes(marker));
+  const settle = (...args) => ({ ...vm.runInNewContext(`(${declaration})`)(...args) });
+  const style = {display:'block', visibility:'visible', opacity:'1', contentVisibility:'visible'};
+  const doc = {defaultView:{getComputedStyle:() => style}};
+  const element = ({classes = [], ...props}) => ({nodeType:1, isConnected:true, shadowRoot:null, hidden:false, ownerDocument:doc,
+    getAttribute:() => null, classList:{contains:name => classes.includes(name)}, children:[], childNodes:[], getRootNode:() => doc, ...props});
+  const input = element({tagName:'INPUT', isContentEditable:false, value:'ab'});
+  assert.deepEqual(settle(input, 'ab', '', null), {verified:true, compared:true, reader:'exact'});
+  input.value = 'a';
+  assert.deepEqual(settle(input, 'ab', '', null), {verified:false, compared:true, reader:'exact'});
+  const paragraph = element({tagName:'P', isContentEditable:true, childNodes:[{nodeType:3, nodeValue:'Original'}]});
+  const proseMirror = element({tagName:'DIV', isContentEditable:true, classes:['ProseMirror'], childNodes:[paragraph], innerText:'Original'});
+  assert.deepEqual(settle(proseMirror, 'Original', 'prosemirror', null), {verified:true, compared:true, reader:'semantic'});
+  assert.deepEqual(settle(proseMirror, 'First\n\nLast', 'prosemirror', null), {verified:false, compared:true, reader:'semantic'});
+  const editor = element({tagName:'DIV', isContentEditable:true, innerText:'Original'});
+  assert.deepEqual(settle(editor, 'First', '', null), {verified:false, compared:true, reader:'rendered'});
+  const other = element({tagName:'DIV', isContentEditable:false});
+  assert.deepEqual(settle(other, 'ab', '', null), {verified:false, compared:true, reader:'unknown'});
+  assert.deepEqual(settle(input, 'a', '', {editor:proseMirror, document:doc, root:doc}), {verified:false, compared:false, reason:'element_replaced'});
+  proseMirror.classList = {contains:() => false};
+  assert.deepEqual(settle(proseMirror, 'Original', 'prosemirror', null), {verified:false, compared:false, reason:'readback_unavailable'});
+});
+
 test('validation failures preserve no-dispatch status across the native client', async () => {
   const session = new BidiSession(); const runId = id();
   session.runs.set(runId, {context:'tab'});

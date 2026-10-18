@@ -1,4 +1,5 @@
 import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
+import { normalizeUnverifiedStepConfirmation } from './unverified-step.js';
 import { createSystemOneEvidence, systemOneEvidenceState } from './systemone-evidence.js';
 import {
   buildCompletionQuestions,
@@ -112,6 +113,12 @@ function normalizePendingClarify(data, now = Date.now()) {
   if (Number.isFinite(deadlineTs) && deadlineTs > 0) {
     pending.deadlineTs = Math.floor(deadlineTs);
   }
+  // The answer the user's timeout setting picks, so a restored card counts
+  // down to (and backs up) the same answer the agent will apply.
+  if (typeof obj.timeoutAnswer === 'string' && obj.timeoutAnswer) {
+    pending.timeoutAnswer = obj.timeoutAnswer.slice(0, 200);
+  }
+  if (obj.timeoutContinues === true) pending.timeoutContinues = true;
   const permission = asObject(obj.permission);
   if (permission.capability || permission.host) {
     pending.permission = {
@@ -172,6 +179,13 @@ function normalizePendingClarify(data, now = Date.now()) {
       url: String(mutationConfirmation.url || '').slice(0, 600),
       dialog: String(mutationConfirmation.dialog || '').slice(0, 300),
     };
+  }
+  // WebBrain's "go ahead?" card about a step one of its checks could not
+  // verify: its question, reason and the page text it shows, so a reopened
+  // panel restores the card (with timeoutAnswer above for its countdown).
+  const unverifiedStep = asObject(obj.unverifiedStepConfirmation);
+  if (unverifiedStep.guardId || unverifiedStep.action) {
+    pending.unverifiedStepConfirmation = normalizeUnverifiedStepConfirmation(unverifiedStep);
   }
   return pending;
 }
@@ -1702,6 +1716,9 @@ export class ScheduledJobManager {
     const isWatch = job.source === 'watch';
     const skip = reason => ({ decision: 'skip', reason });
     if (outcome !== 'success') return skip('not_success');
+    // Lean mode skips quality checks, this opt-in judge included
+    // (sched-systemone-downgrade).
+    if (runMeta.leanMode === true) return skip('lean_mode');
     if (!isWatch && runMeta.completionVerdict?.outcome === 'succeeded') return { decision: 'keep', reason: 'done_verified', model: runMeta.completionVerdict.model };
     const config = resolveDecisionConfig(settings);
     if (!this.systemOneJudge || !config.enabled || settings.systemOneEnabled !== true
@@ -2241,6 +2258,7 @@ export class ScheduledJobManager {
     let completionVerdict = null;
     let runStatus = null;
     let endedForUserInput = false;
+    let ranLean = false;
     let watchAlert = null;
     let sawFailureLikeUpdate = false;
     let judgeContext = null;
@@ -2387,7 +2405,10 @@ export class ScheduledJobManager {
           // A planner question ends the run without a run_status update or a
           // done outcome; the agent's own report is the only sign that the
           // task is waiting for information only the user can give.
-          onRunFinished: (_status, details) => { endedForUserInput = details?.needsUserInput === true; },
+          onRunFinished: (_status, details) => {
+            endedForUserInput = details?.needsUserInput === true;
+            ranLean = details?.leanMode === true;
+          },
           beforeConsequentialTool: async ({ name } = {}) => {
             if (execution.cancelled) return false;
             const binding = this.agent._scheduledCompletionBinding?.(tabId) || null;
@@ -2450,6 +2471,7 @@ export class ScheduledJobManager {
           signal: execution.controller.signal,
           sidecarAllowed: runStatus !== 'cost_limit',
           needsUserInput: endedForUserInput,
+          leanMode: ranLean,
         });
       }
     } catch (e) {

@@ -25,6 +25,7 @@ import {
   webgpuModelDisplayName,
 } from './providers/webgpu.js';
 import { Agent } from './agent/agent.js';
+import { normalizeLeanModeSetting } from './agent/lean-mode.js';
 import {
   CUSTOM_SKILLS_STORAGE_KEY,
   DEFAULT_SKILL_SOURCES,
@@ -303,6 +304,7 @@ const scheduler = new ScheduledJobManager({
   systemOneJudge: createSystemOneJudge(),
   loadProviders: async () => {
     await customSkillsReady;
+    await clarifyTimeoutReady;
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await imageGenConfigReady;
@@ -589,7 +591,15 @@ function normalizeClarifyTimeoutSec(value) {
 }
 
 async function loadClarifyTimeout() {
-  const stored = await chrome.storage.local.get(['clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2']);
+  let stored;
+  try {
+    stored = await chrome.storage.local.get(['clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'clarifyTimeoutPolicy']);
+  } catch (error) {
+    // The user's choice could not be read: until a later load succeeds, a
+    // timeout takes the safe answer rather than the finish default.
+    agent.clarifyTimeoutPolicy = 'safe';
+    throw error;
+  }
   // One-shot: old 0 meant Off; new 0 means Instant and Off is >1200.
   if (!stored.clarifyTimeoutSemanticsV2) {
     const updates = { clarifyTimeoutSemanticsV2: true };
@@ -602,8 +612,12 @@ async function loadClarifyTimeout() {
   agent.clarifyTimeoutSec = normalizeClarifyTimeoutSec(
     stored.clarifyTimeoutSec != null ? stored.clarifyTimeoutSec : 60,
   );
+  agent.clarifyTimeoutPolicy = stored.clarifyTimeoutPolicy === 'safe' ? 'safe' : 'finish';
 }
-loadClarifyTimeout();
+// A question's timeout answer is decided when it is asked, so a run must
+// not start before the user's timeout setting is loaded (or found unreadable,
+// which leaves the safe answer).
+const clarifyTimeoutReady = loadClarifyTimeout().catch(() => {});
 
 async function loadAutoScreenshot() {
   const stored = await chrome.storage.local.get('autoScreenshot');
@@ -645,8 +659,10 @@ async function loadImageBudget() {
 const imageBudgetReady = loadImageBudget().catch(() => {});
 
 async function loadStrictSecretMode() {
-  const stored = await chrome.storage.local.get('strictSecretMode').catch(() => ({}));
+  const stored = await chrome.storage.local.get(['strictSecretMode', 'strictGuards', 'leanMode']).catch(() => ({}));
   agent.strictSecretMode = stored?.strictSecretMode === true;
+  agent.strictGuards = stored?.strictGuards === true;
+  agent.leanMode = normalizeLeanModeSetting(stored?.leanMode);
 }
 const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
 
@@ -1299,6 +1315,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (changes.clarifyTimeoutSec) {
     agent.clarifyTimeoutSec = normalizeClarifyTimeoutSec(changes.clarifyTimeoutSec.newValue);
   }
+  if (changes.clarifyTimeoutPolicy) {
+    agent.clarifyTimeoutPolicy = changes.clarifyTimeoutPolicy.newValue === 'safe' ? 'safe' : 'finish';
+  }
   if (changes.autoScreenshot) {
     agent.autoScreenshot = changes.autoScreenshot.newValue;
   }
@@ -1344,6 +1363,13 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && changes.browserBatchEnabled) {
     browserBatchSettingsRevision++;
     agent.setBrowserBatchEnabled(changes.browserBatchEnabled.newValue !== false);
+  }
+  if (changes.strictGuards) {
+    agent.strictGuards = changes.strictGuards.newValue === true;
+  }
+  // A running task keeps the mode it started with; the next run uses this.
+  if (changes.leanMode) {
+    agent.leanMode = normalizeLeanModeSetting(changes.leanMode.newValue);
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = changes.strictSecretMode.newValue === true;
@@ -3457,7 +3483,7 @@ async function handleMessage(msg, sender) {
     // Agent toggles and prompt add-ons hydrate once at SW boot — await those
     // promises so the first chat can't race ahead of hydration, without a
     // storage round-trip on every message.
-    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady]);
+    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady, clarifyTimeoutReady]);
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await webMcpEnabledReady;
