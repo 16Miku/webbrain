@@ -194,8 +194,10 @@ Use the tools in `scripts/models/bonsai/`:
       screenshot alone never suppresses offline references. With an attached
       image both images can be sent, when the readout says the page is needed
       too.
-    - If the readout fails, or the model cannot run it (only Bonsai 2 2B
-      Vision can), the turn stays text-only.
+    - If the readout fails, the turn stays text-only. That includes a model
+      that cannot run it (only Bonsai 2 2B Vision can) and a cached decoder
+      graph from before `decision_hidden`. There is no fallback to the
+      untrained readout.
     - The capture is the same as automatic screenshots: redaction, size
       budget and the per-turn limit. It is ephemeral like page text, and it
       never goes to a separate vision model.

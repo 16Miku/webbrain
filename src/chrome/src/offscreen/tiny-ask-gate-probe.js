@@ -4,8 +4,10 @@
 // margin and the decoder's last-position state (decision_hidden), and
 //   p(needs a screenshot) = sigmoid(margin * margin_weight + bias + hidden . weights)
 // with standardization folded into the weights and bias. Trained by
-// scripts/models/bonsai/train_gate_probe.py; empty weights fall back to the
-// untrained readout, sigmoid(margin).
+// scripts/models/bonsai/train_gate_probe.py. There is no fallback to the
+// untrained readout, which is known to be poor: without weights, another
+// model, or a hidden state of the wrong size (a cached decoder graph that
+// predates decision_hidden) the probability is null and tiny Ask stays text-only.
 // Validation (generated templates, 11 languages): 112/117. Test (hand-written, including 7 languages absent from training): 64/72, unseen languages 23/28.
 export const TINY_ASK_GATE_PROBE = Object.freeze({
   model: 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision',
@@ -32,10 +34,10 @@ function probeWeights() {
 
 const sigmoid = value => 1 / (1 + Math.exp(-value));
 
-/** p(the question needs a screenshot of the current page). */
+/** p(the question needs a screenshot of the current page), or null when the probe cannot run. */
 export function tinyAskGateProbability(modelId, margin, hidden) {
   const w = modelId === TINY_ASK_GATE_PROBE.model ? probeWeights() : null;
-  if (!w || !hidden || hidden.length !== w.length) return sigmoid(margin);
+  if (!w || !hidden || hidden.length !== w.length || !Number.isFinite(margin)) return null;
   let dot = 0;
   for (let i = 0; i < w.length; i++) dot += w[i] * hidden[i];
   return sigmoid(margin * TINY_ASK_GATE_PROBE.margin + TINY_ASK_GATE_PROBE.bias + dot);

@@ -370,3 +370,17 @@ test('Settings suggests the chat model for decisions when Bonsai chats, with D1 
   const firefoxHtml = await readFile(new URL('../src/firefox/src/ui/settings.html', import.meta.url), 'utf8');
   assert.doesNotMatch(firefoxHtml, /decision-suggestion/, 'Chrome only');
 });
+
+test('the screenshot gate probe never falls back to the untrained readout', async () => {
+  const { TINY_ASK_GATE_PROBE, tinyAskGateProbability } = await import('../src/chrome/src/offscreen/tiny-ask-gate-probe.js');
+  assert.ok(TINY_ASK_GATE_PROBE.weightsBase64.length > 1000, 'trained weights ship with the extension');
+  const hidden = new Float32Array(TINY_ASK_GATE_PROBE.hiddenSize).fill(0.01);
+  const p = tinyAskGateProbability(TINY_ASK_GATE_PROBE.model, 1.5, hidden);
+  assert.ok(p > 0 && p < 1);
+  assert.equal(tinyAskGateProbability(TINY_ASK_GATE_PROBE.model, 1.5, null), null, 'a decoder graph without decision_hidden');
+  assert.equal(tinyAskGateProbability(TINY_ASK_GATE_PROBE.model, 1.5, new Float32Array(16)), null, 'a hidden state of the wrong size');
+  assert.equal(tinyAskGateProbability('webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision', 1.5, hidden), null, 'another model');
+  const worker = await readFile(new URL('../src/chrome/src/offscreen/inference-worker.js', import.meta.url), 'utf8');
+  assert.match(worker, /probability === null && !\(returnHidden && output\.hidden\)\) \{\n\s*throw new Error\('The screenshot gate needs the updated/,
+    'without the probe the worker fails, so tiny Ask stays text-only');
+});

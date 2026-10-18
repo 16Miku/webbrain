@@ -2016,9 +2016,14 @@ async function runMultimodalDecision(payload, { isCancelled = () => false } = {}
         stopIfCancelled();
         const output = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids, { withHidden: true });
         const margin = output.logits[yesId] - output.logits[noId];
+        const probability = tinyAskGateProbability(modelId, margin, output.hidden);
+        // Collecting training data needs only the margin and hidden state.
+        if (probability === null && !(returnHidden && output.hidden)) {
+          throw new Error('The screenshot gate needs the updated Ternary Bonsai 2 2B Vision decoder. Download the model again in Settings > Providers > WebGPU.');
+        }
         answers[id] = {
           type: 'noul',
-          noul: tinyAskGateProbability(modelId, margin, output.hidden),
+          noul: probability,
           ...(returnHidden ? { margins: [margin], hidden: [output.hidden ? encodeFloat16Base64(output.hidden) : null] } : {}),
         };
         questionMs.push(Math.round(performance.now() - questionStarted));
