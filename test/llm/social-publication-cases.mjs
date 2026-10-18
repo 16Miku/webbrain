@@ -75,6 +75,19 @@ add('media-choice', 'media', 'Post exactly Hello on X with either exactly one vi
 const composeRequest = 'Write and publish a friendly greeting on X in English, without links, hashtags or attachments.';
 add('compose', 'compose', composeRequest, contract([action('twitter', [{ body: { kind: 'compose', source: ref(composeRequest) }, media: count(), context: { kind: 'post', target: null } }])]), { draftBodies: ['Hello everyone! Have a wonderful day.'] });
 add('adopt-draft', 'reference-adoption', 'Publish exactly the draft below on X, without attachments.', contract([action('twitter', [{ body: { kind: 'exact', source: ref('Hello from our team.', 'draft0') }, media: count(), context: { kind: 'post', target: null } }])]), { sources: { ...sources('Publish exactly the draft below on X, without attachments.'), draft0: 'Hello from our team.' } });
+// An action that publishes nothing, such as deleting the post afterwards, is
+// outside the contract: the publication it accompanies compiles as usual. A
+// condition on whether to publish still needs clarify.
+const testPost = 'post a test tweet on X';
+add('delete-after', 'separate-action', testPost, contract([action('twitter', [{ body: { kind: 'compose', source: ref(testPost) }, media: count(), context: { kind: 'post', target: null } }])]),
+  { sources: { ...sources(testPost), steering_message0: 'after you post it delete right away' }, draftBodies: ['Just testing my X post. Hello!'] });
+add('delete-after-exact', 'separate-action', 'Post exactly "Hello" on X without attachments, then delete it right away.', contract([action('twitter', [post('Hello')])]));
+add('delete-after-tr', 'separate-action', 'X üzerinde ek olmadan aynen "Merhaba dünya" yayınla, sonra hemen sil.', contract([action('twitter', [post('Merhaba dünya')])]));
+add('delete-other-first', 'separate-action', 'Delete my latest post on X, then post exactly "Hello" there without attachments.', contract([action('twitter', [post('Hello')])]));
+add('delete-only', 'no-publication', 'Delete my latest post on X. Do not publish anything.', empty('none'));
+add('delete-instead', 'no-publication', 'Post a short test tweet on X.', empty('none'),
+  { sources: { ...sources('Post a short test tweet on X.'), steering_message0: "Actually, don't post it; just delete the draft." } });
+add('delete-condition', 'clarification', 'If the stock price rises tomorrow, post exactly "Hello" on X without attachments, and delete it an hour later.', empty('clarify'));
 
 // These well-formed but incorrect proposals isolate the independent audit.
 // They do not pretend the compiler actually generated the forged contract.
@@ -95,6 +108,7 @@ for (const [id, request] of [
   ['deny-missing-action', 'Post exactly Hello on both X and Bluesky.'],
   ['deny-missing-context', `Reply exactly Hello to ${parent} on X.`],
   ['deny-schedule', 'Schedule Hello on X for tomorrow; do not publish it now.'],
+  ['deny-delete-only', 'Delete my latest post on X; do not publish anything.'],
 ]) challenge(id, request);
 challenge('deny-wrong-body', 'Post exactly Goodbye on X without attachments.');
 challenge('deny-wrong-choice', 'Post exactly Hello on either X or Bluesky, but not both. No attachments.', null, 'both');
