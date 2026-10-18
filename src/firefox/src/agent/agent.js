@@ -17,7 +17,7 @@ import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer,
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
-import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
+import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_ACT_LEAN, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
 import { validateToolArguments } from './tool-arguments.js';
@@ -158,6 +158,7 @@ import { repairAssistantDisplayText, repairClarifyText, sanitizeText as sanitize
 import { clarifyQuestionIsHard, clarifyTimedAnswer, clarifyTimeoutChoice, normalizeClarifyConsequence, normalizeClarifyTimeoutPolicy } from './clarify-timeout.js';
 import { guardAdvisory, guardEntry, guardOutcome, withGuardAdvisories } from './guard-policy.js';
 import { UNVERIFIED_STEP_CONTENT_LIMIT, UNVERIFIED_STEP_PROMPT_KIND, clipUnverifiedStepContent, normalizeUnverifiedStepConfirmation } from './unverified-step.js';
+import { leanSkipsGuard, normalizeLeanModeSetting, resolveLeanMode } from './lean-mode.js';
 import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
 import { stepLimitUserMessage, terminalGuardUserMessage } from './terminal-messages.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
@@ -707,6 +708,14 @@ export class Agent extends LoopDetector {
     // guards advise instead of refusing. See guard-policy.js.
     this.strictGuards = false;
     this._guardRunStates = new Map();
+    // Settings → General → "Lean mode": 'auto' (default) | 'on' | 'off'. A run
+    // resolves it once at its start (_beginLeanRun) and keeps the answer in
+    // _leanRuns, so its tools, prompt and guards agree. See lean-mode.js.
+    this.leanMode = 'auto';
+    this._leanRuns = new Map();
+    // Advisory lists a run's calls carry, by owning tab, so a guard that is
+    // handed only the list still knows which run it belongs to.
+    this._guardAdvisoryTabs = new WeakMap();
     this.maxContextMessages = 50; // minimum soft cap; larger provider windows scale this up
     this._debugLog = []; // ring buffer for deep verbose (LLM requests/responses)
     this._debugLogMax = 200; // max entries before oldest are dropped
@@ -1113,7 +1122,167 @@ export class Agent extends LoopDetector {
     return next;
   }
 
+  // The one hard check a lean run keeps at its end
+  // (native-chat-receipt-not-durable), for a done and for a plain final
+  // alike: both are the model's own success claim. A chat message sent in
+  // this run must be confirmed in the conversation and its receipt saved
+  // before the run ends as a success, or a resumed run could send it again.
+  // Returns null when the run may end as a success, otherwise the refusal. A
+  // receipt that cannot be saved refuses every time, as in a full run. A send
+  // the conversation cannot confirm (its read failed, the conversation
+  // changed, a new message arrived) refuses once per send, as a full run's
+  // submission-evidence check does. A site's own message job has its own
+  // receipt (_leanWorkflowMessageReceiptBlock).
+  async _leanChatReceiptBlock(tabId) {
+    const workflowSend = this._leanWorkflowMessageSend(tabId);
+    if (workflowSend) return this._leanWorkflowMessageReceiptBlock(tabId, workflowSend);
+    if (!this.completionInvariants.get(tabId)?.lastAction?.chatDeliveryBinding
+        && !this.chatSessions.get(tabId)?.completionReceipt) return null;
+    let pageUrl = '';
+    try { pageUrl = await this._currentUrl(tabId); } catch {}
+    const nativeChatEvidence = await this._freshNativeChatTerminalEvidence(tabId, pageUrl || '');
+    if (nativeChatEvidence) {
+      const guard = this._planExecutionGuards.get(tabId);
+      if (guard) guard.nativeChatDeliveryEvidence = nativeChatEvidence;
+      const savedNativeReceipt = await this._persistNow(tabId);
+      if (savedNativeReceipt === true || savedNativeReceipt?.ok === true) return null;
+      return { receiptNotDurable: true,
+        error: 'The verified chat delivery receipt could not be saved. Retry completion after storage is available; do not send the message again.' };
+    }
+    if (!this._leanChatDeliveryUnconfirmedRefuses(tabId)) return null;
+    return { chatDeliveryUnconfirmed: true,
+      error: 'WebBrain could not confirm in the conversation that your message was delivered: its latest read failed, the conversation changed, or a new message arrived. Do not send the message again. Read the conversation now, then call done again; if the delivery still cannot be confirmed, finish with outcome "partial" and say so.' };
+  }
+
+  // done in a lean run. The completion is the model's own call: WebBrain
+  // takes no verification screenshot, runs no completion or incomplete-task
+  // judge and checks no page warnings or other workflow evidence. Only the
+  // message receipt checks stay (_leanChatReceiptBlock); partial and failed
+  // always end.
+  async _leanDoneResult(tabId, args = {}) {
+    const outcome = normalizeDoneOutcome(args?.outcome);
+    if (outcome === 'success') {
+      const receiptBlock = await this._leanChatReceiptBlock(tabId);
+      if (receiptBlock) return { success: false, blockedDone: true, ...receiptBlock };
+    }
+    return { done: true, summary: args.summary, outcome };
+  }
+
+  // native-chat-receipt-not-durable in a lean run when the conversation could
+  // not confirm a send: true the first time for this send in this run. Only a
+  // send the plan contract requires is checked; outside one there is no
+  // receipt to confirm (_nativeChatTerminalEvidence).
+  _leanChatDeliveryUnconfirmedRefuses(tabId) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled || guard.siteWorkflow?.job || guard.requiresSubmission !== true
+        || guard.requiresStateChange !== true) return false;
+    const lastAction = this.completionInvariants.get(tabId)?.lastAction;
+    const receipt = this.chatSessions.get(tabId)?.completionReceipt;
+    const key = lastAction?.chatDeliveryBinding
+      ? `send:${lastAction.sequence ?? ''}:${lastAction.chatDeliveryBinding.threadKey || ''}`
+      : `receipt:${receipt?.threadKey || ''}:${receipt?.messageId || ''}`;
+    const state = this._guardRunState(tabId);
+    const refused = (state.leanUnconfirmedChatSends ||= new Set());
+    if (refused.has(key)) return false;
+    refused.add(key);
+    return true;
+  }
+
+  // An adapter's own message job (send-message on X, LinkedIn or Douyin,
+  // send-email in Gmail) whose send this task dispatched: its submit receipt,
+  // bound to the job. Null for any other run.
+  _leanWorkflowMessageSend(tabId) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled || !guard.siteWorkflow?.job
+        || this._workflowVerificationKind(guard.siteWorkflow) !== 'message_sent') return null;
+    const submit = this._currentCompletionSubmitState(tabId);
+    const binding = submit?.workflowBinding;
+    if (submit?.dispatched !== true || !binding
+        || binding.bindingKey !== this._adapterWorkflowBindingKey(guard.siteWorkflow)) return null;
+    return { guard, submit, binding };
+  }
+
+  // The receipt check of a lean run for that send. Such a job has no native
+  // conversation receipt: its receipt is the job's terminal evidence, which
+  // a full done records and a continued run checks before it would send
+  // again. So the same verification runs here: the conversation is read
+  // back against the dispatched body and recipients, and the page's live
+  // messages are read in any language for the sent status. The evidence is
+  // recorded and saved before the run ends as a success. As for a chat
+  // send, evidence that cannot be saved refuses every time, and a send that
+  // cannot be confirmed refuses once per send.
+  async _leanWorkflowMessageReceiptBlock(tabId, { guard, submit, binding }) {
+    const save = async () => {
+      const saved = await this._persistNow(tabId);
+      if (saved === true || saved?.ok === true) return null;
+      return { receiptNotDurable: true,
+        error: 'The verified message delivery receipt could not be saved. Retry completion after storage is available; do not send the message again.' };
+    };
+    if (this._workflowTerminalEvidenceMatchesState(guard, guard.workflowTerminalEvidence)) return save();
+    let pageUrl = '';
+    try { pageUrl = await this._currentUrl(tabId); } catch {}
+    const adapterName = guard.siteWorkflow.adapterName;
+    let probe = null;
+    try {
+      probe = await this._messageRecipientGuardProbe(tabId, {
+        tool: 'observe_active_conversation',
+        args: {},
+        adapterName,
+        expectedMessageBody: binding.messageBody || '',
+        expectedRecipients: binding.recipientTargets || [],
+        // Google Chat routes in Gmail have no recipient set of their own.
+        supportsRecipientSets: adapterName === 'gmail' && !isGmailChatRoute(pageUrl),
+      });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
+    }
+    const pageState = { liveRegionMessages: await this._liveRegionMessages(tabId) };
+    const submissionEvidence = { submit };
+    await this._readWorkflowTerminalTexts(tabId, pageState, submissionEvidence, probe);
+    const current = this._planExecutionGuards.get(tabId) === guard
+      && !this._checkAbort(tabId) && !this._hasUnvalidatedSteering(tabId);
+    const evidence = current && probe
+      ? this._workflowTerminalEvidenceFromDone(tabId, pageState, pageUrl, submissionEvidence, probe) : null;
+    if (evidence) {
+      guard.workflowTerminalEvidence = evidence;
+      guard.verifiedSubmissionEvidence = true;
+      return save();
+    }
+    const key = `workflow:${binding.bindingKey}:${submit.runToken || ''}:${submit.actionSequence ?? ''}`;
+    const refused = (this._guardRunState(tabId).leanUnconfirmedChatSends ||= new Set());
+    if (refused.has(key)) return null;
+    refused.add(key);
+    return { chatDeliveryUnconfirmed: true,
+      error: 'WebBrain could not confirm on the page that your message was delivered: the conversation does not show it sent to the intended recipient with its exact text. Do not send the message again. Read the conversation now, then call done again; if the delivery still cannot be confirmed, finish with outcome "partial" and say so.' };
+  }
+
+  // The page's visible live messages (status, alert and aria-live regions),
+  // collected as the done probe collects them and returned as they are: a
+  // model reads what they say before anything relies on one.
+  async _liveRegionMessages(tabId) {
+    try {
+      const results = await browser.tabs.executeScript(tabId, { code: `(() => {
+        const visible = el => {
+          try {
+            const r = el.getBoundingClientRect();
+            if (r.width < 1 || r.height < 1) return false;
+            const s = window.getComputedStyle(el);
+            return !(s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0);
+          } catch (e) { return false; }
+        };
+        return Array.from(document.querySelectorAll('[role=status],[role=alert],[aria-live]'))
+          .filter(visible).map(e => (e.innerText || '').trim().slice(0, 120)).filter(Boolean).slice(0, 6);
+      })()` });
+      const value = results && results[0];
+      return Array.isArray(value) ? value.filter(text => typeof text === 'string' && text) : [];
+    } catch {
+      return [];
+    }
+  }
+
   _readCompletenessNeedsScopeClassification(tabId) {
+    // Lean mode enforces no read coverage, so it needs no scope reading.
+    if (this._leanRunActive(tabId)) return false;
     const state = this.readCompletenessStates.get(tabId);
     return state?.communicationThread === true && state.required !== true;
   }
@@ -2564,7 +2733,7 @@ export class Agent extends LoopDetector {
   // missing metadata, conflicting editor proofs, an unproven commit message
   // or an editor that cannot be read now keep the refusal; so do Strict checks.
   _githubCommitEvidenceAsk(tabId, pageUrl, binding) {
-    if (this._guardOutcome('github-commit-evidence-binding', { decided: false }) !== 'ask') return null;
+    if (this._guardOutcome('github-commit-evidence-binding', { decided: false, tabId }) !== 'ask') return null;
     if (!binding || binding.metadataRequirementsIncomplete === true || binding.githubFileCommit) return null;
     const workflow = this._planExecutionGuards.get(tabId)?.siteWorkflow;
     const requirements = Array.isArray(binding.metadataRequirements) ? binding.metadataRequirements : [];
@@ -2802,7 +2971,7 @@ export class Agent extends LoopDetector {
     // bind to it. Without Strict checks the action is sent now under that
     // contract, and the note tells the model what the rebuilt prompt requires.
     if (this._guardAdvisesFor(advisories, 'github-conditional-commit-rearm',
-      'WebBrain switched this resumed task to its conditional file-edit-and-commit contract before this action. Success now needs a verified file edit, a commit, and a readback of the exact committed file; verify the editor change before committing.')) {
+      'WebBrain switched this resumed task to its conditional file-edit-and-commit contract before this action. Success now needs a verified file edit, a commit, and a readback of the exact committed file; verify the editor change before committing.', { tabId })) {
       return null;
     }
     return {
@@ -2827,6 +2996,9 @@ export class Agent extends LoopDetector {
     const guard = this._planExecutionGuards.get(tabId);
     if (guard?.siteWorkflow?.adapterName !== 'github'
         || guard.siteWorkflow?.job?.id !== 'edit-file-and-commit') return null;
+    // Lean mode: github-commit-split-write-required and
+    // github-commit-evidence-binding are quality guards, so neither gate runs.
+    if (this._guardSkipped('github-commit-evidence-binding', tabId)) return null;
     // This gate decides before the click by what a text click's caption
     // means, so an unread caption is read now, once, in any language. The
     // recheck before dispatch uses that reading as it stands.
@@ -2883,7 +3055,7 @@ export class Agent extends LoopDetector {
     // An inconclusive detection is the cannot-decide case: it asks the user
     // (below). A missing binding keeps refusing (github-commit-evidence-binding).
     if (name !== 'click' && name !== 'click_ax' && name !== 'iframe_click') {
-      if (looksLikeSubmit && this._guardAdvises('github-commit-split-write-required')) {
+      if (looksLikeSubmit && this._guardAdvises('github-commit-split-write-required', { tabId })) {
         const pageUrl = await this._currentUrl(tabId);
         await this._refreshGithubTextReplacementProofs(tabId, pageUrl);
         const binding = this._workflowSubmitBindingForAttempt(tabId, pageUrl, {}, detectedSubmit);
@@ -2893,7 +3065,7 @@ export class Agent extends LoopDetector {
             && this._guardAdvisesFor(advisories, 'github-commit-split-write-required',
               name === 'execute_js'
                 ? 'This script may change the editor while it commits, so the earlier verified file proof does not cover it. It ran anyway; the committed file is checked against that proof after the commit.'
-                : 'This action can change field values while it submits the commit, so the earlier verified file proof does not cover it. It ran anyway; the committed file is checked against that proof after the commit.')) {
+                : 'This action can change field values while it submits the commit, so the earlier verified file proof does not cover it. It ran anyway; the committed file is checked against that proof after the commit.', { tabId })) {
           return null;
         }
       }
@@ -2919,7 +3091,7 @@ export class Agent extends LoopDetector {
       // this action could rewrite it while it commits: no card makes that
       // proof cover it, so while the request names one it keeps refusing.
       if (inconclusiveSubmitCapable
-          && this._guardOutcome('github-commit-split-write-required', { decided: false }) === 'ask') {
+          && this._guardOutcome('github-commit-split-write-required', { decided: false, tabId }) === 'ask') {
         const pageUrl = await this._currentUrl(tabId);
         await this._refreshGithubTextReplacementProofs(tabId, pageUrl);
         const binding = this._workflowSubmitBindingForAttempt(tabId, pageUrl, {}, detectedSubmit);
@@ -5040,7 +5212,7 @@ export class Agent extends LoopDetector {
 
   // True once guard `id` advises and has used its one refusal in this run.
   _guardHasAdvised(tabId, id, { decided = true } = {}) {
-    return this._guardAdvises(id, { decided }) && this._guardRunState(tabId).advised.has(id);
+    return this._guardOutcome(id, { decided, tabId }) === 'advise' && this._guardRunState(tabId).advised.has(id);
   }
 
   // A completion accepted over a check that KNOWS the task is not done
@@ -5084,9 +5256,12 @@ export class Agent extends LoopDetector {
 
   // A plain final the receipt check refused twice (or at the step limit)
   // ends the run as partial: the model's text and why it is not a success.
-  _chatReceiptPartialFinal(content) {
+  // A lean run's refusal can also be a send the conversation never confirmed.
+  _chatReceiptPartialFinal(content, receiptBlock = null) {
     const base = repairAssistantDisplayText(String(content || '')).trimEnd();
-    const why = 'WebBrain could not save the record that the message was delivered, so this run did not end as a success. Check the conversation before sending it again.';
+    const why = receiptBlock?.chatDeliveryUnconfirmed
+      ? 'WebBrain could not confirm in the conversation that the message was delivered, so this run did not end as a success. Check the conversation before sending it again.'
+      : 'WebBrain could not save the record that the message was delivered, so this run did not end as a success. Check the conversation before sending it again.';
     return base ? `${base}\n\n${why}` : why;
   }
 
@@ -5234,8 +5409,8 @@ export class Agent extends LoopDetector {
   // Strict checks: the third plain final under a completion block ends the
   // run as partial. By default each block refuses once and the next plain
   // final is accepted, so the run never needs this stop.
-  _plainFinalTwoStrikeEnds() {
-    return !this._guardAdvises('plain-final-two-strike-partial');
+  _plainFinalTwoStrikeEnds(tabId = null) {
+    return !this._guardAdvises('plain-final-two-strike-partial', { tabId });
   }
 
   // completion-verifier-not-done: the completion judge's sure pending or
@@ -5274,8 +5449,8 @@ export class Agent extends LoopDetector {
     return this._guardRefusesOnce(tabId, 'completion-page-warning', { decided: known, caveat });
   }
 
-  _completionPageWarningSuffix(blocks) {
-    return this._guardAdvises('completion-page-warning')
+  _completionPageWarningSuffix(blocks, tabId = null) {
+    return this._guardAdvises('completion-page-warning', { tabId })
       ? ' (If the task is complete and this form or dialog is unrelated to it, say so in the done summary.)'
       : ` (block attempt ${blocks}/2 — if you genuinely believe the task is complete and the visible form/dialog is unrelated, re-call done with summary explicitly acknowledging this, e.g. "already-existing product, no submit needed".)`;
   }
@@ -5347,7 +5522,7 @@ export class Agent extends LoopDetector {
   _planGuardAdvisory(tabId, state, flags) {
     if (state.taskDrifted || flags.staleCancellation || flags.structuredPlan) return null;
     const findings = this._planGuardFindings(state, flags);
-    if (!findings.length || findings.some(finding => !this._guardAdvises(finding.id, finding))) return null;
+    if (!findings.length || findings.some(finding => !this._guardAdvises(finding.id, { decided: finding.decided, tabId }))) return null;
     let refuses = false;
     for (const finding of findings) {
       if (this._guardRefusesOnce(tabId, finding.id, finding)) refuses = true;
@@ -5369,8 +5544,8 @@ export class Agent extends LoopDetector {
     // By default a refused completion only leaves its note: the model keeps
     // every tool and may still report success. Strict checks restore the
     // forced read-only turn, the done-only turn and the failure-only done.
-    if (this._guardAdvises('completion-recovery-forced-turns', { decided: false })
-        && this._guardAdvises('completion-failure-only-done', { decided: false })) return null;
+    if (this._guardAdvises('completion-recovery-forced-turns', { tabId, decided: false })
+        && this._guardAdvises('completion-failure-only-done', { tabId, decided: false })) return null;
     const state = this.completionInvariants.get(tabId);
     const available = Array.isArray(tools) ? tools : [];
     const failureOnlyTerminalTool = () => {
@@ -5600,6 +5775,8 @@ export class Agent extends LoopDetector {
 
   _releaseRunEntry(tabId) {
     this._settleUnverifiedStepScope(tabId);
+    this._cancelSocialPublicationBackground(tabId);
+    this._predispatchTimings?.delete(tabId);
     const feedbackRun = this._pageFeedbackRuns?.get(tabId);
     if (feedbackRun?.monitoringRetry && !feedbackRun.monitoringRetry.started) {
       this._restoreFailureRecoveryStart(tabId, feedbackRun.monitoringRetry.requestId, feedbackRun.onUpdate, feedbackRun.monitoringRetry);
@@ -5916,8 +6093,7 @@ export class Agent extends LoopDetector {
       });
       if (!gate.responseOnly) await this._ensureProgressSessionForCurrentTask(tabId, {
         provider: this._activeProvider(tabId), costState,
-        progressLedgerPolicy: gate.progressLedgerPolicy, progressAction: gate.progressAction,
-        expectedItems: gate.expectedItems,
+        ...this._progressLedgerGateOptions(tabId, gate),
       });
       // The system prompt is rebuilt by the new guard. Clear the old approved
       // plan even when only intent classification is enabled for this revision.
@@ -5975,7 +6151,7 @@ export class Agent extends LoopDetector {
     // earlier submission. The user decides on WebBrain's card instead of a
     // refusal, and one answer covers this one action. Strict checks refuse.
     const stepKey = unresolvedTarget
-      && this._guardOutcome('steer-prior-submission-target-unresolved', { decided: false }) === 'ask'
+      && this._guardOutcome('steer-prior-submission-target-unresolved', { decided: false, tabId }) === 'ask'
       ? this._sha256TextSync(JSON.stringify(['steer-prior-submission-target-unresolved', guard.taskKey || '',
         Number(guard.steeringPriorSubmission?.actionSequence || 0), name, this._formValidationActionKey(name, args) || name,
         detectedSubmit?.frameDocumentIdentity || this._lastAxScopes.get(tabId)?.documentToken || '']))
@@ -7821,6 +7997,9 @@ export class Agent extends LoopDetector {
       prompt_tier: this._resolvePromptTier(provider),
       screenshot_redaction: this.screenshotRedaction === true,
       strict_secret_mode: this.strictSecretMode === true,
+      lean_mode_setting: normalizeLeanModeSetting(this.leanMode),
+      // Whether this tab's run resolved to lean mode (traces show which ran).
+      ...(tabId != null && this._leanRuns?.has(tabId) ? { lean_mode: this._leanRunActive(tabId) } : {}),
       plan_before_act_mode: this._normalizePlanBeforeActMode(this.planBeforeActMode),
       auto_screenshot: this.autoScreenshot,
       use_site_adapters: this.useSiteAdapters === true,
@@ -8226,21 +8405,126 @@ export class Agent extends LoopDetector {
     return `Cloud cost allowance reached: ${scopeText} is ${this._formatUsd(spentUsd)} against the ${this._formatUsd(limitUsd)} limit. Stopping before further cloud/router model calls. Increase or reset the allowance in Settings.`;
   }
 
-  _checkCostAllowanceState(state, costState) {
+  // `pending`: which requests in flight to count at their most (see
+  // _holdCostAllowance): 'background' counts background checks, so a request
+  // that starts beside one cannot spend past the limit with it; 'all' also
+  // counts the run's own requests, for a background check that may start
+  // beside them; 'none' counts only what was spent.
+  _checkCostAllowanceState(state, costState, { pending = 'background' } = {}) {
+    const onlyBackground = pending !== 'all';
     const sessionSpent = this._normalizeCostSpent(costState?.spentUsd);
-    if (sessionSpent + COST_EPSILON >= state.sessionLimitUsd) {
+    const sessionPending = pending !== 'none' && costState ? this._pendingCostUsd(costState, onlyBackground) : 0;
+    if (sessionSpent + sessionPending + COST_EPSILON >= state.sessionLimitUsd) {
       return this._costAllowanceMessage('session', sessionSpent, state.sessionLimitUsd);
     }
-    if (state.totalSpentUsd + COST_EPSILON >= state.totalLimitUsd) {
+    const totalPending = pending !== 'none' ? this._pendingCostUsd(null, onlyBackground) : 0;
+    if (state.totalSpentUsd + totalPending + COST_EPSILON >= state.totalLimitUsd) {
       return this._costAllowanceMessage('total', state.totalSpentUsd, state.totalLimitUsd);
     }
     return null;
   }
 
-  async _checkCostAllowance(provider, costState) {
+  // Before a request. A background check (`hold.background`) counts every
+  // request in flight at its most and does not start when that could pass
+  // the limit. Any other request counts background checks in flight; when
+  // only they would put it over the limit, it waits for them to settle and
+  // counts what they actually cost, like a request made after them.
+  async _checkCostAllowance(provider, costState, { signal = null, hold = null } = {}) {
     if (!this._isCostMeteredProvider(provider)) return null;
-    const state = await this._getCostAllowanceState();
-    return this._checkCostAllowanceState(state, costState);
+    for (;;) {
+      const state = await this._getCostAllowanceState();
+      if (hold?.background) return this._checkCostAllowanceState(state, costState, { pending: 'all' });
+      const message = this._checkCostAllowanceState(state, costState);
+      if (!message || !this._pendingCostUsd(null, true)
+          || this._checkCostAllowanceState(state, costState, { pending: 'none' })) return message;
+      await this._backgroundCostSettled(signal);
+    }
+  }
+
+  // A bound on a request's prompt tokens that holds for any tokenizer: no
+  // token covers less than one byte of UTF-8 text (a byte-level fallback
+  // spends one token per byte, as CJK or emoji text can). Every field a
+  // message carries counts, not only its content: providers forward its tool
+  // calls, tool_call_id, name, reasoning and replay state too, and the
+  // message's JSON spells each of them at least once. An image counts a
+  // generous allowance instead of its data, and each message some framing.
+  // _estimateContextChars stays the average estimate that context management
+  // uses; admission against the cost allowance uses this bound
+  // (_holdCostAllowance).
+  _promptTokenUpperBound(messages, extra = '') {
+    const list = Array.isArray(messages) ? messages : [];
+    try {
+      const encoder = new TextEncoder();
+      const bytes = value => (typeof value === 'string' ? encoder.encode(value).length : 0);
+      const IMG_DATA_URL = /data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=\\]+/g;
+      const imageTokens = 2 * Math.ceil(Agent.IMAGE_CHAR_COST / 4);
+      let tokens = bytes(extra);
+      for (const msg of list) {
+        let images = 0;
+        const serialized = JSON.stringify(msg ?? null, (_key, value) => {
+          if (value && typeof value === 'object' && (value.type === 'image_url' || value.type === 'image')) {
+            images++;
+            return null;
+          }
+          if (typeof value === 'string' && value.includes('data:image/')) {
+            const found = value.match(IMG_DATA_URL);
+            if (found) {
+              images += found.length;
+              return value.replace(IMG_DATA_URL, '');
+            }
+          }
+          return value;
+        });
+        tokens += 16 + bytes(serialized || '') + images * imageTokens;
+      }
+      return Math.max(1, tokens);
+    } catch {
+      // A UTF-16 code unit takes at most three bytes of UTF-8.
+      return Math.max(1, 3 * (this._estimateContextChars(list) + String(extra).length) + 16 * list.length);
+    }
+  }
+
+  // Holds what a request in flight can cost at most (its prompt, tools and
+  // whole completion budget, priced like recorded usage) until it settles.
+  _holdCostAllowance(provider, messages, options, costState, { background = false } = {}) {
+    if (!this._isCostMeteredProvider(provider)) return null;
+    let tools = '';
+    try { tools = JSON.stringify(options?.tools || []); } catch {}
+    const promptTokens = this._promptTokenUpperBound(messages, tools);
+    const completionTokens = Number.isFinite(options?.maxTokens) && options.maxTokens > 0 ? options.maxTokens : 4096;
+    const usd = this._estimateUsageCostUsd(provider, { prompt_tokens: promptTokens, completion_tokens: completionTokens });
+    if (!(usd > 0)) return null;
+    let settle = null;
+    const hold = { usd, costState, background, settled: new Promise(resolve => { settle = resolve; }) };
+    hold.release = () => {
+      if (this._costHolds?.delete(hold)) settle();
+    };
+    (this._costHolds ||= new Set()).add(hold);
+    return hold;
+  }
+
+  _pendingCostUsd(costState = null, onlyBackground = false) {
+    let usd = 0;
+    for (const hold of this._costHolds || []) {
+      if ((!costState || hold.costState === costState) && (!onlyBackground || hold.background)) usd += hold.usd;
+    }
+    return usd;
+  }
+
+  async _backgroundCostSettled(signal = null) {
+    const pending = [...(this._costHolds || [])].filter(hold => hold.background).map(hold => hold.settled);
+    if (!pending.length) return;
+    let onAbort = null;
+    const aborted = signal ? new Promise(resolve => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener('abort', onAbort = () => resolve(), { once: true });
+    }) : null;
+    try {
+      await (aborted ? Promise.race([Promise.all(pending), aborted]) : Promise.all(pending));
+    } finally {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+    }
+    this._throwIfAborted(signal);
   }
 
   async _recordCostUsage(provider, usage, costState) {
@@ -8253,7 +8537,7 @@ export class Agent extends LoopDetector {
       if (costState) costState.spentUsd = this._normalizeCostSpent(costState.spentUsd) + costUsd;
       this.meteredProviderCostSpentUsd = nextTotal;
       try { await browser.storage.local.set({ [CLOUD_COST_SPENT_KEY]: nextTotal }); } catch {}
-      return this._checkCostAllowanceState({ ...state, totalSpentUsd: nextTotal }, costState);
+      return this._checkCostAllowanceState({ ...state, totalSpentUsd: nextTotal }, costState, { pending: 'none' });
     });
   }
 
@@ -8501,7 +8785,11 @@ export class Agent extends LoopDetector {
    * choice is null where no sure answer was available. Each item's answer is
    * remembered on its own, so a later batch asks only about new items.
    */
-  async _semanticDecisions(tabId, kind, { request = '', items = [] } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, mainTimeoutMs = 15000 } = {}) {
+  // `background`: a background check's binding (_socialPublicationBackgroundCall),
+  // its signal, the allowance and trace of the run that started it, and
+  // whether that run still owns the tab. Its requests are background ones
+  // (_checkCostAllowance), and none starts once that run ended or moved on.
+  async _semanticDecisions(tabId, kind, { request = '', items = [] } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, mainTimeoutMs = 15000, background = null } = {}) {
     const spec = semanticQuestion(kind);
     const trusted = String(request ?? '').slice(0, 6000);
     const data = (Array.isArray(items) ? items : []).map(item => boundedSemanticData(item));
@@ -8517,14 +8805,17 @@ export class Agent extends LoopDetector {
       while (this._semanticDecisionCache.size > 512) this._semanticDecisionCache.delete(this._semanticDecisionCache.keys().next().value);
     };
     const pending = () => results.map((result, index) => (result ? -1 : index)).filter(index => index >= 0);
-    const runSignal = signal || this._runAbortSignal(tabId);
-    const context = this.systemOneContext(tabId);
+    const runSignal = background ? background.signal : (signal || this._runAbortSignal(tabId));
+    const stopped = () => (background ? background.signal.aborted || !background.current() : this._checkAbort(tabId));
+    const runContext = this.systemOneContext(tabId);
+    const context = background ? { ...runContext, background: true, runId: background.runId,
+      costState: background.costState || this._newCostRunState(), isCurrent: () => runContext.isCurrent() && !stopped() } : runContext;
     let open = pending();
     if (open.length) {
       try {
         const settings = await this._jevSettings(tabId, provider);
         for (const chunk of settings ? semanticBatchChunks(open.map(index => data[index]), SEMANTIC_BATCH_LIMITS.decision) : []) {
-          if (this._checkAbort(tabId)) break;
+          if (stopped()) break;
           const indexes = chunk.map(position => open[position]);
           const verdict = await this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 4000, maxRetries: 0 }), {
             config: settings.decisionConfig, apiKey: settings.typesafeApiKey, signal: runSignal,
@@ -8532,6 +8823,9 @@ export class Agent extends LoopDetector {
               request: trusted, items: indexes.map(index => data[index]) })), 12000)) },
             questions: semanticSystemOneBatchQuestions(kind, indexes.length),
           }, context);
+          // A background read whose run ended or moved on while the request
+          // was in flight keeps nothing from it.
+          if (background && stopped()) break;
           let sure = 0;
           indexes.forEach((index, position) => {
             const answer = verdict.answers?.[`item_${position}`];
@@ -8542,13 +8836,14 @@ export class Agent extends LoopDetector {
             reason: sure === indexes.length ? kind : `${kind}_low_confidence`, model: verdict.model }, context);
         }
       } catch (error) {
-        if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+        if (this._isCostAllowanceError(error) || stopped()) throw error;
         this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `${kind}_${systemOneFailureReason(error)}` }, context);
       }
     }
     open = pending();
-    if (open.length && mainModel && provider?.chat && !this._checkAbort(tabId)) {
+    if (open.length && mainModel && provider?.chat && !stopped()) {
       for (const chunk of semanticBatchChunks(open.map(index => data[index]), SEMANTIC_BATCH_LIMITS.main)) {
+        if (background && stopped()) break;
         const indexes = chunk.map(position => open[position]);
         try {
           const messages = semanticBatchDecisionMessages(kind, trusted, indexes.map(index => data[index]),
@@ -8557,8 +8852,10 @@ export class Agent extends LoopDetector {
             await Promise.resolve();
             this._throwIfAborted(completionSignal);
             return this._chatWithCostAllowance(provider, messages, { temperature: 0, maxTokens: 120 + 60 * indexes.length, signal: completionSignal },
-              this.currentCostState.get(tabId) || null, { tabId, generationName: `semantic_${kind}` });
+              background ? background.costState : (this.currentCostState.get(tabId) || null),
+              { tabId, generationName: `semantic_${kind}`, ...(background ? { background: true } : {}) });
           }, runSignal, mainTimeoutMs);
+          if (background && stopped()) break;
           const accepted = acceptSemanticBatchAnswers(kind,
             this._socialPublicationResponseObject(response, { maxTokens: 120 + 60 * indexes.length }), trusted,
             indexes.map(index => data[index]));
@@ -8566,7 +8863,7 @@ export class Agent extends LoopDetector {
             if (accepted[position]) remember(index, { ...accepted[position], source: 'main_model' });
           });
         } catch (error) {
-          if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+          if (this._isCostAllowanceError(error) || stopped()) throw error;
         }
       }
     }
@@ -8586,7 +8883,7 @@ export class Agent extends LoopDetector {
   // so the readings handed to a check in the page (the most recent of each
   // question) include it however long ago it was read.
   async _readPageTexts(tabId, kind, texts, context = {}, { maxChars = 300, mainTimeoutMs, mainModel = true,
-    retryUnansweredAfterMs = 0 } = {}) {
+    retryUnansweredAfterMs = 0, background = null } = {}) {
     this._pageTextReadings ??= new Map();
     this._unansweredPageTexts ??= new Map();
     const now = Date.now();
@@ -8607,13 +8904,17 @@ export class Agent extends LoopDetector {
     if (!pending.length) return;
     const askMain = mainModel && !this._workflowReplayTabs?.has(tabId);
     const readings = await this._semanticDecisions(tabId, kind, { items: pending.map(text => ({ ...context, text })) },
-      { ...(mainTimeoutMs ? { mainTimeoutMs } : {}), mainModel: askMain });
+      { ...(mainTimeoutMs ? { mainTimeoutMs } : {}), mainModel: askMain, ...(background ? { background } : {}) });
+    // A background read whose run ended or moved on meanwhile stores nothing.
+    if (background && (background.signal.aborted || !background.current())) return;
     // A text counts as unanswered only once the active model had its turn
     // too: a read by the decision model alone, a stopped run or a provider
-    // that cannot answer leaves it for the next read.
+    // that cannot answer leaves it for the next read. So does a background
+    // read whose run ended or moved on.
     let mainHadTurn = false;
     try {
-      mainHadTurn = askMain && typeof this._activeProvider(tabId)?.chat === 'function' && !this._checkAbort(tabId);
+      mainHadTurn = askMain && typeof this._activeProvider(tabId)?.chat === 'function'
+        && (background ? !background.signal.aborted && background.current() : !this._checkAbort(tabId));
     } catch {}
     const answeredAt = Date.now();
     pending.forEach((text, index) => {
@@ -8790,25 +9091,39 @@ export class Agent extends LoopDetector {
 
   async evaluateSystemOne(tabId, client, args, context = this.systemOneContext(tabId)) {
     const costState = context.costState || this.currentCostState.get(tabId) || this._newCostRunState();
+    const costProvider = args.config || SYSTEM_ONE_COST_PROVIDER;
     const activeConfig = this._activeProvider(tabId)?.config;
     const compass = args.config?.provider === 'compass' && activeConfig?.providerName === 'webbrain-cloud' ? activeConfig : null;
-    return client.evaluate({ ...args,
-      ...(compass ? {
-        headers: { 'X-WebBrain-Device-Id': compass.deviceGuid || '', 'X-WebBrain-Client': 'extension',
-          'X-WebBrain-Help-Improve': compass.helpImproveWebBrain === false ? '0' : '1', ...args.headers },
-        metadata: { session_id: this.conversationIds.get(tabId), ...args.metadata },
-      } : {}),
-      beforeRequest: async () => {
-        if (this.strictSecretMode || (!args.config?.local && globalThis.navigator?.onLine === false) || context.isCurrent?.() === false) throw new Error('Jev unavailable.');
-        const message = await this._checkCostAllowance(args.config || SYSTEM_ONE_COST_PROVIDER, costState);
-        if (message) throw this._costAllowanceError(message);
-      },
-      onUsage: async metadata => {
-        const stopped = await this._recordCostUsage(args.config || SYSTEM_ONE_COST_PROVIDER, metadata.usage, costState);
-        this.recordSystemOneVerdict(tabId, { decision: 'usage', ...metadata }, context);
-        if (stopped) throw this._costAllowanceError(stopped);
-      },
-    });
+    // Held at its most until it settles, like any other metered request
+    // (_checkCostAllowance): its state and questions as the prompt and a short
+    // answer per question. A background check's request (`context.background`)
+    // is held as a background one.
+    let hold = null;
+    try {
+      return await client.evaluate({ ...args,
+        ...(compass ? {
+          headers: { 'X-WebBrain-Device-Id': compass.deviceGuid || '', 'X-WebBrain-Client': 'extension',
+            'X-WebBrain-Help-Improve': compass.helpImproveWebBrain === false ? '0' : '1', ...args.headers },
+          metadata: { session_id: this.conversationIds.get(tabId), ...args.metadata },
+        } : {}),
+        beforeRequest: async () => {
+          if (this.strictSecretMode || (!args.config?.local && globalThis.navigator?.onLine === false) || context.isCurrent?.() === false) throw new Error('Jev unavailable.');
+          hold ??= this._holdCostAllowance(costProvider,
+            [{ role: 'user', content: JSON.stringify({ state: args.state ?? null, questions: args.questions ?? null }) }],
+            { maxTokens: 256 + 128 * Object.keys(args.questions || {}).length }, costState,
+            { background: context.background === true });
+          const message = await this._checkCostAllowance(costProvider, costState, { signal: args.signal || null, hold });
+          if (message) throw this._costAllowanceError(message);
+        },
+        onUsage: async metadata => {
+          const stopped = await this._recordCostUsage(costProvider, metadata.usage, costState);
+          this.recordSystemOneVerdict(tabId, { decision: 'usage', ...metadata }, context);
+          if (stopped) throw this._costAllowanceError(stopped);
+        },
+      });
+    } finally {
+      hold?.release();
+    }
   }
 
   // Where a completion check spent its time, for traces: preparing the
@@ -8818,8 +9133,77 @@ export class Agent extends LoopDetector {
     if (runId) try { trace.recordNote(runId, 0, 'done_timing', timing); } catch {}
   }
 
+  // Where one tool call spent its time before dispatch, for traces: one
+  // predispatch_timing note per consequential call, milliseconds per stage of
+  // the pipeline, never page or model content. `lap(stage)` charges the time
+  // since the previous lap to that stage. Checks nested in a stage add their
+  // own sub-steps with _predispatchStage while the call's record is open.
+  _predispatchTimer(tabId) {
+    const stages = {};
+    const startedAt = Date.now();
+    let last = startedAt;
+    let emitted = false;
+    (this._predispatchTimings ||= new Map()).set(tabId, stages);
+    const add = (stage, ms) => {
+      if (Number.isFinite(ms) && ms >= 0) stages[stage] = (stages[stage] || 0) + ms;
+    };
+    // The tab's open record goes once the call has its note or none is due.
+    const discard = () => {
+      if (this._predispatchTimings?.get(tabId) === stages) this._predispatchTimings.delete(tabId);
+    };
+    return {
+      lap: stage => { const now = Date.now(); add(stage, now - last); last = now; },
+      add,
+      // The whole pipeline up to this point, e.g. until dispatch begins.
+      since: stage => add(stage, Date.now() - startedAt),
+      emit: (step, extra = {}) => {
+        if (emitted) return;
+        emitted = true;
+        discard();
+        this._recordPredispatchTiming(tabId, step, { ...stages, totalMs: Date.now() - startedAt, ...extra });
+      },
+      discard,
+      get emitted() { return emitted; },
+    };
+  }
+
+  _recordPredispatchTiming(tabId, step, timing) {
+    const runId = this.currentRunId.get(tabId);
+    if (!runId) return;
+    try {
+      const pending = trace.recordNote(runId, Number.isInteger(step) ? step : null, 'predispatch_timing', timing);
+      if (pending?.catch) pending.catch(() => {});
+    } catch {}
+  }
+
+  // A consequential call that stopped before its dispatch without a note (a
+  // failed preparation, a correction, Stop or any other early stop) gets one
+  // when the next call starts or its batch ends: its stages so far, the rest
+  // of its time as `stoppedMs`.
+  _flushPredispatchTiming(callState) {
+    const pending = callState?.predispatchTiming;
+    if (!pending) return;
+    callState.predispatchTiming = null;
+    const predispatch = pending.timer;
+    if (predispatch.emitted) return;
+    let consequential = false;
+    try { consequential = !!pending.consequential(); } catch {}
+    // A read or other call that changes nothing gets no note; its open
+    // record for the tab goes with it.
+    if (!consequential) { predispatch.discard(); return; }
+    predispatch.lap('stoppedMs');
+    predispatch.emit(pending.step, { tool: pending.tool,
+      outcome: callState.dispatchState?.started === true ? 'dispatched' : 'not_dispatched' });
+  }
+
+  _predispatchStage(tabId, stage, ms) {
+    const stages = this._predispatchTimings?.get(tabId);
+    if (stages && Number.isFinite(ms) && ms >= 0) stages[stage] = (stages[stage] || 0) + ms;
+  }
+
   recordSystemOneVerdict(tabId, metadata, context = {}) {
-    const runId = context.runId || this.currentRunId.get(tabId);
+    // A background check is traced only to the run that started it.
+    const runId = context.background === true ? context.runId : (context.runId || this.currentRunId.get(tabId));
     if (runId) try { trace.recordNote(runId, 0, 'system_one', metadata); } catch {}
   }
 
@@ -8827,9 +9211,12 @@ export class Agent extends LoopDetector {
     messages = foldBrowserBatchMessages(messages, { repairPending: true });
     const linked = this._linkAbortSignals(options?.signal, this._runAbortSignal(requestContext?.tabId));
     options = { ...options, signal: linked.signal };
+    // Held at its most until it settles: see _checkCostAllowance.
+    const hold = this._holdCostAllowance(provider, messages, options, costState,
+      { background: requestContext?.background === true });
     try {
     this._throwIfAborted(options.signal);
-    const before = await this._checkCostAllowance(provider, costState);
+    const before = await this._checkCostAllowance(provider, costState, { signal: options.signal, hold });
     if (before) throw this._costAllowanceError(before);
     this._throwIfAborted(options?.signal);
     const result = await provider.chat(messages, requestContext
@@ -8843,6 +9230,7 @@ export class Agent extends LoopDetector {
     if (after) result.costAllowanceMessage = after;
     return result;
     } finally {
+      hold?.release();
       linked.dispose();
     }
   }
@@ -8943,9 +9331,11 @@ export class Agent extends LoopDetector {
     messages = foldBrowserBatchMessages(messages, { repairPending: true });
     const linked = this._linkAbortSignals(options?.signal, this._runAbortSignal(requestContext?.tabId));
     options = { ...options, signal: linked.signal };
+    // Held at its most until it settles: see _checkCostAllowance.
+    const hold = this._holdCostAllowance(provider, messages, options, costState);
     try {
     this._throwIfAborted(options.signal);
-    const before = await this._checkCostAllowance(provider, costState);
+    const before = await this._checkCostAllowance(provider, costState, { signal: options.signal, hold });
     if (before) throw this._costAllowanceError(before);
 
     const streamOptions = requestContext
@@ -9068,6 +9458,7 @@ export class Agent extends LoopDetector {
     if (after) result.costAllowanceMessage = after;
     return result;
     } finally {
+      hold?.release();
       linked.dispose();
     }
   }
@@ -9585,7 +9976,7 @@ export class Agent extends LoopDetector {
     // checks. Otherwise it runs unbound with a note; the obligation stays
     // until a verified editor-body edit releases it.
     const advises = (note, decided) => this._guardAdvisesFor(executionContext?.guardAdvisories,
-      'rich-text-toolbar-recovery-obligation', note, { decided });
+      'rich-text-toolbar-recovery-obligation', note, { tabId, decided });
     const toolbarNote = 'This target belongs to the rich-text formatting toolbar that received the earlier text entry, not the editor body. It was used anyway; the requested content still has to be entered in the editor body and verified there.';
     const uncheckedNote = 'An earlier text entry went into a rich-text formatting toolbar, and WebBrain could not check that this target is not that toolbar. It was sent anyway; enter the requested content in the editor body and verify it there.';
     const probe = await this._probeRichTextToolbarRetryTarget(tabId, toolName, args);
@@ -9824,7 +10215,7 @@ export class Agent extends LoopDetector {
     // off skips the toolbar check and lets the tool resolve its target itself
     // (an iframe goes to the handler's own single-target census).
     const unresolvedAdvises = note => this._guardAdvisesFor(advisories, 'rich-text-toolbar-target-unresolved',
-      note, { decided: false });
+      note, { tabId, decided: false });
     const unresolvedNote = 'WebBrain could not resolve this typing target for its rich-text toolbar check, so it could not confirm the text goes into the editor body rather than a formatting control. It was sent anyway; read the field back to verify.';
     // A target the observed certificate cannot bind (such as a selector that
     // names several elements) gets that answer before any probe of it.
@@ -9898,6 +10289,8 @@ export class Agent extends LoopDetector {
     if (toolName !== 'iframe_type' && (probe.documentToken || probe.refScopeUrl)) {
       this._rememberAxScope(tabId, probe.documentToken || '', probe.refScopeUrl || '');
     }
+    // Lean mode: no toolbar classification, screenshot or vision audit.
+    if (this._leanRunActive(tabId)) return { block: null, shot: null, probe };
     const candidate = probe.fieldMeta?.toolbarCandidate;
     if (!candidate || Number(candidate.score) < 4 || !probe.rect) {
       return { block: null, shot: null, probe };
@@ -10022,7 +10415,7 @@ export class Agent extends LoopDetector {
       // still recorded, so later toolbar calls and completion know the
       // requested content may not be in the editor body.
       if (this._guardAdvisesFor(advisories, 'rich-text-toolbar-wrong-target',
-        'WebBrain\'s check reads this target as a rich-text formatting toolbar control (font, size, style, color or link), not the editor body. The text was typed there anyway; enter the requested content in the editor body and verify it there.')) {
+        'WebBrain\'s check reads this target as a rich-text formatting toolbar control (font, size, style, color or link), not the editor body. The text was typed there anyway; enter the requested content in the editor body and verify it there.', { tabId })) {
         this._recordRichTextToolbarWrongTarget(tabId, toolName, args, candidate, decision, audit, probe, { advised: true });
         return { block: null, shot, audit, decision, traceCapture, probe, wrongTargetAdvised: true };
       }
@@ -11722,7 +12115,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _captchaToolsAvailable(tabId, mode = this._effectiveRunMode(tabId, 'act'), tier = this._resolvePromptTier()) {
-    return this._isActionMode(mode) && ['mid', 'full'].includes(tier);
+    // Lean mode offers no CAPTCHA tools: a challenge goes to the user, as on
+    // the Compact tier.
+    return this._isActionMode(mode) && ['mid', 'full'].includes(tier) && !this._leanRunActive(tabId);
   }
 
   _captchaGateForTools(tabId, gate) {
@@ -12893,15 +13288,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // still interrupt; so does a write an exact reader read back as a
   // different value, since the rest of the batch would build on a value
   // WebBrain knows is wrong, and every unverified result under Strict checks.
-  _advisoryTextWriteContinuesBatch(toolName, toolResult) {
+  _advisoryTextWriteContinuesBatch(toolName, toolResult, tabId = null) {
     return ['set_field', 'type_ax', 'type_text'].includes(toolName)
       && toolResult?.success === true && toolResult.unverifiedWrite === true && !toolResult.error
       && !textWriteRefuted(toolResult)
-      && this._guardAdvises('browser-batch-fresh-turn-interrupt', { decided: true });
+      && this._guardAdvises('browser-batch-fresh-turn-interrupt', { decided: true, tabId });
   }
 
-  _browserActionFreshTurnReason(tier, toolName, toolResult, batch = null) {
-    const advisoryWrite = this._advisoryTextWriteContinuesBatch(toolName, toolResult);
+  _browserActionFreshTurnReason(tier, toolName, toolResult, batch = null, tabId = null) {
+    const advisoryWrite = this._advisoryTextWriteContinuesBatch(toolName, toolResult, tabId);
     if (batch) {
       // Reads and waits can also be prerequisites of the next batched action.
       if (toolResult?.success === false || toolResult?.error || toolResult?.noProgress
@@ -13194,6 +13589,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       throw error;
     } finally {
       this._settleUnverifiedStepScope(tabId);
+      this._flushPredispatchTiming(cancellationState.active);
       // Each child owns its nonce boundary and trusted notes. Never re-wrap.
       if (parentCalls.length) {
         const folded = foldBrowserBatchMessages(messages, { repairPending: true });
@@ -13333,7 +13729,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : policy.names.includes('calculate')
         ? `This calculate is not the task's literal calculation (${expression}), so its result is not the task's verified answer. It ran anyway; the answer needs calculate with that exact expression.`
         : 'The task\'s literal calculation was already verified; this repeated calculate ran anyway. The verified result stands: report it with done.';
-    return this._guardAdvisesFor(advisories, 'pure-calculation-tool-scope', note);
+    return this._guardAdvisesFor(advisories, 'pure-calculation-tool-scope', note, { tabId });
   }
 
   // A page action that runs on an arithmetic-only task (advised above) makes
@@ -13459,13 +13855,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (previous?._browserBatch) {
         const priorResult = messages.findLast(message => message.role === 'tool' && message.tool_call_id === previous.id);
         if (browserBatchResultStatus(priorResult, {
-          advisoryWritesContinue: this._guardAdvises('browser-batch-fresh-turn-interrupt', { decided: true }),
+          advisoryWritesContinue: this._guardAdvises('browser-batch-fresh-turn-interrupt', { tabId, decided: true }),
         }).failed && this._interruptToolBatchForFreshTurn(
           tabId, toolCalls, toolIndex, messages, onUpdate, step,
           { tier: promptTier, triggeringTool: previous.function.name, reason: 'action_failed', navNotices },
         )) { navNotices.length = 0; break; }
       }
-      const callState = { index: toolIndex, invoked: false, consequential: false, result: null, dispatchState: null, guardAdvisories: [] };
+      const callState = { index: toolIndex, invoked: false, consequential: false, result: null, dispatchState: null,
+        guardAdvisories: this._trackGuardAdvisories([], tabId) };
+      // The call before this one, if it stopped before dispatch without a timing note.
+      this._flushPredispatchTiming(cancellationState.active);
       cancellationState.active = callState;
       // The user's 'once' answers this call relies on are spent with it.
       this._beginUnverifiedStepScope(tabId);
@@ -13545,6 +13944,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
+      // Where this call's time goes before dispatch (_predispatchTimer), from
+      // its first preparation step on: a consequential call whose arguments
+      // or coordinates fail, or that a check stops, still records it.
+      const predispatch = this._predispatchTimer(tabId);
+      let fnArgs = {};
+      // Whether this call can change something: until the permission
+      // capabilities and the submit probe are known, its tool and the
+      // arguments known so far decide (reassigned below once they are).
+      let predispatchConsequential = () => (Agent.STATE_CHANGE_TOOLS.has(fnName)
+        || capabilitiesFor(fnName, fnArgs).length > 0);
+      // A consequential call that a check stops before dispatch still records
+      // where its time went, the wait on a card included. One that stops any
+      // other way gets its note when the next call starts or the batch ends
+      // (_flushPredispatchTiming).
+      const predispatchBlocked = stage => {
+        predispatch.lap(stage);
+        if (predispatchConsequential()) predispatch.emit(step, { tool: fnName, outcome: 'blocked' });
+      };
+      callState.predispatchTiming = { timer: predispatch, step, tool: fnName, consequential: () => predispatchConsequential() };
       const parsedArgs = this._parseToolCallArgs(tc);
       if (parsedArgs.error) {
         const result = this._invalidToolArgumentsResult(fnName, parsedArgs);
@@ -13563,7 +13981,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
-      let fnArgs = this._toolCallArgsWithReplayMethod(tabId, fnName, argRepair.args);
+      fnArgs = this._toolCallArgsWithReplayMethod(tabId, fnName, argRepair.args);
       const argRepairNotice = argRepair.note || '';
       let readWindowNotice = '';
       const readState = this.readCompletenessStates.get(tabId);
@@ -13594,11 +14012,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         continue;
       }
       fnArgs = coordinates.args;
+      predispatch.lap('argumentsMs');
       if (fnName !== 'done' && !Agent.NAV_TOOLS.has(fnName)) {
         try {
           await this._adoptLiveSocialPublishWorkflow(tabId, provider);
         } catch {}
       }
+      // Writing into a post composer starts compiling the publication
+      // contract in the background (see _socialPublicationContractPrefetch).
+      this._socialPublicationContractPrefetch(tabId, fnName, fnArgs, provider);
+      predispatch.lap('workflowAdoptMs');
 
       const recordPagePreparationTimeout = async (error, stage) => {
         const timeoutResult = this._contentActionPreparationTimeoutResult(fnName, error, stage);
@@ -13645,7 +14068,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (captchaPreflight) onUpdate('captcha_gate', captchaPreflight);
       const captchaGateBlock = this._captchaGateBlockResult(tabId, fnName, fnArgs);
+      predispatch.lap('captchaGateMs');
       if (captchaGateBlock) {
+        if (predispatchConsequential()) predispatch.emit(step, { tool: fnName, outcome: 'blocked' });
         // This path returns before normal tool observation. Retain the signup
         // checkpoint even when the first detected challenge needs manual help.
         const signupRecoveryNote = await this._observeHuggingFaceSignupRecovery(
@@ -13718,13 +14143,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // A feed/profile URL may save a different item than the one the model
       // means. Without Strict checks the download runs with that warning.
       if (mediaTargetGuard && !this._guardAdvisesFor(callState.guardAdvisories, 'media-download-target-binding',
-        'The download URL is a feed or profile page, not one media item\'s permalink, so the saved file may be a different item than the one you meant. Check the downloaded file (list_downloads) before reporting it.')) {
+        'The download URL is a feed or profile page, not one media item\'s permalink, so the saved file may be a different item than the one you meant. Check the downloaded file (list_downloads) before reporting it.', { tabId })) {
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
           content: JSON.stringify(mediaTargetGuard),
         });
         onUpdate('warning', { message: 'Find the visible media permalink before calling download_public_media from a feed.' });
+        predispatchBlocked('preparationMs');
         continue;
       }
 
@@ -13756,6 +14182,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // the side effect may have completed before its reply was lost.
       const missingResponseOutcomeUnknown = capabilities.length > 0 || Agent.STATE_CHANGE_TOOLS.has(fnName);
       const executionMutationEvidence = this._isExecutionMutationEvidence(fnName, fnArgs, capabilities);
+      predispatch.lap('preparationMs');
       const clarificationAuthorizationBlock = this._clarificationAuthorizationBlock(
         tabId,
         fnName,
@@ -13763,6 +14190,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         capabilities,
       );
       if (clarificationAuthorizationBlock) {
+        predispatchBlocked('clarificationMs');
         const blockedResult = clarificationAuthorizationBlock.result;
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
         onUpdate('tool_result', { name: fnName, result: blockedResult });
@@ -13810,6 +14238,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._ensureGateSetting();
       const skillEndpointRedirect = this._skillEndpointToolRedirect(fnName, fnArgs, tabId);
       if (skillEndpointRedirect) {
+        predispatchBlocked('clarificationMs');
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
@@ -13820,6 +14249,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const mediaDownloadRedirect = await this._downloadPublicMediaRedirectForSocial(tabId, fnName, fnArgs, allowedToolNames, messages);
       if (mediaDownloadRedirect) {
+        predispatchBlocked('clarificationMs');
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
@@ -13832,6 +14262,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         continue;
       }
       if (isNetworkMutation(fnName, fnArgs) && !apiMutationsAllowedForRun()) {
+        predispatchBlocked('clarificationMs');
         const askModeError = apiMutationsDeniedForRun
           ? `API mutations via ${fnName} are not allowed in Ask mode. Do not retry this mutating API call in this run; continue with read-only tools or return what you can observe.`
           : `API mutations via ${fnName} require the user to enable /allow-api for this conversation. Do not retry this mutating API call unless the user enables /allow-api; continue through the visible UI or ask the user to type /allow-api.`;
@@ -13852,6 +14283,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
         continue;
       }
+      predispatch.lap('clarificationMs');
       const formValidationCandidate = this._isFormValidationCandidate(fnName, fnArgs);
       let formValidationAllFrames = false;
       let detectedSubmitAction = null;
@@ -13865,13 +14297,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // The detector owns its supported-tool filtering. Every form
             // validation candidate, including set_field({submit:true}), needs
             // the same resolved-target evidence before workflow guards run.
-            const detected = await this._detectLikelySubmitAction(tabId, fnName, fnArgs);
+            const probeStarted = Date.now();
+            const detected = await this._detectLikelySubmitAction(tabId, fnName, fnArgs, {
+              onCaptionReading: ms => predispatch.add('submitCaptionReadingMs', ms),
+            });
+            predispatch.add('submitProbeMs', Date.now() - probeStarted);
             this._throwIfAborted(abortSignal);
             const currentValidationBlock = this._formValidationBlocks.get(tabId) || null;
             const obviousSubmit = this._formValidationActionLooksSubmit(fnName, fnArgs, null, detected);
-            if ((obviousSubmit || detected?.isSubmit === true) && detected && fnName !== 'iframe_click'
+            if (!this._leanRunActive(tabId) && (obviousSubmit || detected?.isSubmit === true) && detected && fnName !== 'iframe_click'
                 && /^ref_\d+$/.test(String(fnArgs?.ref_id || ''))) {
+              const baselineStarted = Date.now();
               const baseline = await this._readCompletionResult(tabId, fnArgs.ref_id);
+              predispatch.add('resultBaselineMs', Date.now() - baselineStarted);
               if (baseline?.identity && baseline.scopeRef && typeof baseline.text === 'string') {
                 detected.resultBaseline = { identity: baseline.identity, scopeRef: baseline.scopeRef,
                   textSha256: this._sha256TextSync(baseline.text) };
@@ -13882,10 +14320,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // yet, may still turn out to submit: keep the page's state from
             // before the click, so a rejection it shows is new.
             const caption = this._controlCaption(fnName, fnArgs, null);
-            const before = (currentValidationBlock || obviousSubmit || detected?.isSubmit === true
+            const validationStarted = Date.now();
+            const before = !this._leanRunActive(tabId) && (currentValidationBlock || obviousSubmit || detected?.isSubmit === true
                 || (caption && this._controlEffectReading(caption) === null))
               ? await this._captureFormValidationState(tabId, { allFrames })
               : [];
+            predispatch.add('validationSnapshotMs', Date.now() - validationStarted);
             this._throwIfAborted(abortSignal);
             return {
               allFrames,
@@ -13906,6 +14346,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           continue;
         }
       }
+      predispatch.lap('submitPreflightMs');
       if (fnName === 'chrome_web_store_publish') {
         detectedSubmitAction = {
           isSubmit: true,
@@ -13913,12 +14354,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           reason: 'submit the configured Chrome Web Store release for review',
         };
       }
-      const runWorkflowPreSubmitChecks = async () => await this._resourceMutationPreSubmitBlock(tabId, fnName, fnArgs, detectedSubmitAction, provider)
+      const timedCheck = async (stage, check) => {
+        const started = Date.now();
+        try {
+          return await check();
+        } finally {
+          predispatch.add(stage, Date.now() - started);
+        }
+      };
+      const runWorkflowPreSubmitChecks = async () => await timedCheck('resourceMutationMs',
+        () => this._resourceMutationPreSubmitBlock(tabId, fnName, fnArgs, detectedSubmitAction, provider))
         || this._steeringPriorSubmissionBlock(tabId, fnName, fnArgs, detectedSubmitAction)
-        || await this._conditionalGithubCommitTransition(tabId, fnName, fnArgs, detectedSubmitAction, callState.guardAdvisories)
-        || await this._workflowPreSubmitDispatchBlock(
-        tabId, fnName, fnArgs, detectedSubmitAction, provider, callState.guardAdvisories,
-      );
+        || await timedCheck('githubTransitionMs',
+          () => this._conditionalGithubCommitTransition(tabId, fnName, fnArgs, detectedSubmitAction, callState.guardAdvisories))
+        || await timedCheck('workflowDispatchMs', () => this._workflowPreSubmitDispatchBlock(
+          tabId, fnName, fnArgs, detectedSubmitAction, provider, callState.guardAdvisories,
+        ));
+      // From here the permission capabilities and the submit probe decide:
+      // missingResponseOutcomeUnknown (above) holds when the call needs a
+      // permission capability or is a state-changing tool, so navigation,
+      // typing, uploads and deletions stay consequential; the probe adds a
+      // submit or a publication control that needs neither.
+      predispatchConsequential = () => missingResponseOutcomeUnknown
+        || detectedSubmitAction?.isSubmit === true || detectedSubmitAction?.publicationControl === true;
       let workflowPreSubmitBlock = await runWorkflowPreSubmitChecks();
       if (workflowPreSubmitBlock?.mutationConfirmation
           && this.scheduledRunPolicies.get(tabId)?.requireConsequentialConfirmation !== false) {
@@ -13940,6 +14398,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { action: 'abort', value };
         }
       }
+      predispatch.lap('workflowPreSubmitMs');
       // A quality guard that cannot verify a commit, publish or submit asks
       // the user on WebBrain's card instead of refusing (guard-policy.js
       // 'ask'); 'once' lets this one step go ahead with a note for the model.
@@ -13964,8 +14423,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('warning', { message: 'Stopped by user.' });
           return { action: 'abort', value };
         }
+        predispatch.lap('unverifiedStepCardMs');
       }
       if (workflowPreSubmitBlock) {
+        if (predispatchConsequential()) predispatch.emit(step, { tool: fnName, outcome: 'blocked' });
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
         onUpdate('tool_result', { name: fnName, result: workflowPreSubmitBlock });
         messages.push({
@@ -14010,7 +14471,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // a note; a repeated rejection reports the page's messages itself.
           if (retryActionKey && retryActionKey === validationBlock.actionKey
               && !this._guardAdvisesFor(callState.guardAdvisories, 'form-validation-unchanged-repeat',
-                this._formValidationRepeatNote(validationBlock))) {
+                this._formValidationRepeatNote(validationBlock), { tabId })) {
             const blockedResult = this._formValidationRetryBlockResult(validationBlock);
             onUpdate('tool_call', { name: fnName, args: fnArgs });
             onUpdate('tool_result', { name: fnName, result: blockedResult });
@@ -14048,7 +14509,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let submitConfirmation = detectedSubmitAction || groupedSearchForm;
         if (!submitConfirmation) {
           try {
-            submitConfirmation = await detectSubmitWithDeadline();
+            submitConfirmation = await timedCheck('submitDetectionMs', detectSubmitWithDeadline);
           } catch (error) {
             if (error?.code !== 'content_action_timeout') throw error;
             const loopStop = await recordPagePreparationTimeout(error, 'submit-action detection');
@@ -14121,6 +14582,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               }),
             });
             onUpdate('warning', { message: canGroupSearch ? 'Low-risk search blocked until the user allows the grouped actions.' : 'Form submission blocked until the user confirms.' });
+            predispatchBlocked('submitConfirmationMs');
             if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
             continue;
           }
@@ -14184,6 +14646,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 }),
               });
               onUpdate('warning', { message: 'Low-risk search blocked until the user allows the grouped actions.' });
+              predispatchBlocked('submitConfirmationMs');
               if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
               continue;
             }
@@ -14209,7 +14672,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // checks the call proceeds with an empty baseline and a note.
           if (this._guardAdvisesFor(callState.guardAdvisories, 'preparation-timeout-generic',
             'The form-validation snapshot did not finish before this action, so WebBrain has no baseline to tell new validation errors from old ones. Read the form after it to confirm the page accepted it.',
-            { decided: false })) {
+            { tabId, decided: false })) {
             formValidationBefore = [];
           } else {
             const loopStop = await recordPagePreparationTimeout(error, 'form-validation snapshot');
@@ -14219,6 +14682,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
       }
+      predispatch.lap('submitConfirmationMs');
       if (capabilities.length && !this._skipPermissionGate && !scheduledBypassesGate) {
         await this.permissions.hydrate();
         const curUrl = await this._currentUrl(tabId);
@@ -14263,6 +14727,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   }),
                 });
                 onUpdate('warning', { message: 'Low-risk search blocked until the user allows the grouped actions.' });
+                predispatchBlocked('permissionMs');
                 if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
                 continue;
               }
@@ -14332,6 +14797,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               error: `Cannot run ${fnName}: the target frame/host couldn't be identified, so it can't be permission-checked. Pass a urlFilter naming the iframe's domain (read it first with iframe_read / get_accessibility_tree) and retry.`,
             }),
           });
+          predispatchBlocked('permissionMs');
           if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
           continue;
         }
@@ -14345,10 +14811,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               error: `The user denied permission to ${CAPABILITY_LABEL[blocked.capability]} ${blocked.host}. Do NOT retry this action on that site. Continue with what you can without it, or ask the user how to proceed.`,
             }),
           });
+          predispatchBlocked('permissionMs');
           if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
           continue;
         }
       }
+      predispatch.lap('permissionMs');
 
       if (fnName === 'done' || fnName === 'done_json') {
         // Each completion invariant gets its own note: one that already advised
@@ -14405,7 +14873,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // gives the model one note about the Ask-mode limitation and the final
         // answer carries it. Strict checks replace the answer and end the run.
         const readLimitation = this._readCompletenessLimitation(tabId);
-        if (readLimitation && !this._guardAdvises('read-coverage-ask-limitation', { decided: false })) {
+        if (readLimitation && !this._guardAdvises('read-coverage-ask-limitation', { tabId, decided: false })) {
           const limitationResult = {
             success: false,
             done: true,
@@ -14508,6 +14976,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Snapshot URL before nav-prone calls. Some tools are conditional:
       // Enter and set_field({submit:true}) can navigate, while other key
       // presses and ordinary field edits should avoid the URL-check delay.
+      predispatch.lap('completionChecksMs');
       const navigationProneCall = this._isNavigationProneToolCall(fnName, fnArgs);
       let beforeUrl = '';
       let afterUrl = '';
@@ -14570,7 +15039,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (this._hasPendingSteering(tabId)) return skipSteeredPermissionWait(toolIndex);
       }
+      predispatch.lap('recipientGuardMs');
       if (messageRecipientBlock) {
+        if (predispatchConsequential()) predispatch.emit(step, { tool: fnName, outcome: 'blocked' });
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
         onUpdate('tool_result', { name: fnName, result: messageRecipientBlock });
         messages.push({
@@ -14620,6 +15091,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { action: 'return', value, status: 'persistence_degraded' };
         }
       }
+      predispatch.lap('checkpointMs');
       this._throwIfAborted(this._runAbortSignal(tabId));
       const _toolStart = Date.now();
       let steeringBeforeDispatch = false;
@@ -14634,6 +15106,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const abortSignal = linked.signal;
           try {
           this._throwIfAborted(abortSignal);
+          predispatch.lap('pipelineWaitMs');
           const pipelineToolbarPreflight = await this._preflightRichTextToolbarTarget(
             tabId,
             fnName,
@@ -14641,6 +15114,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             provider,
             { onUpdate, guardAdvisories: callState.guardAdvisories },
           );
+          predispatch.lap('toolbarPreflightMs');
           this._throwIfAborted(abortSignal);
           // The draft was asked about (and answered) before this deadline
           // started. A question that comes up only now, because the draft
@@ -14655,13 +15129,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               // Its notes were already given by the first check.
               || this._withoutUnverifiedStepAsk(
                 await this._githubCommitPreSubmitBlock(tabId, fnName, fnArgs, detectedSubmitAction, [], { recheck: true }));
+          predispatch.lap('pipelinePublicationMs');
           this._throwIfAborted(abortSignal);
           // Permission, checkpoint and preflight waits can receive a correction.
           // Recheck after all preparation, before marking or invoking dispatch.
             if (this._hasPendingSteering(tabId) || await this._refreshPageFeedbackForCall(tabId, tc, onUpdate)) return { steered: true };
+          predispatch.lap('feedbackRecheckMs');
           const genericChatBlock = pipelineToolbarPreflight.block || socialDispatchBlock ? null
             : await this._prepareGenericChatDispatch(tabId, fnName, fnArgs, messageRecipientExecutionContext, abortSignal,
               callState.guardAdvisories);
+          predispatch.lap('genericChatMs');
           this._throwIfAborted(abortSignal);
           if (!pipelineToolbarPreflight.block && !socialDispatchBlock && !genericChatBlock) {
             // Save the task's record with this action's sites before it can be
@@ -14676,6 +15153,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               return { steered: true };
             }
           }
+            predispatch.lap('attemptCheckpointMs');
             let calculationDispatchBlock = this._pureCalculationToolBlock(tabId, fnName, fnArgs, calculationRequestScope);
             if (calculationDispatchBlock && this._pureCalculationScopeAdvises(tabId, fnName, fnArgs,
                 calculationRequestScope, callState.guardAdvisories)) {
@@ -14692,6 +15170,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               if (fnName === 'calculate') this._rememberPureCalculationAttempt(tabId, fnArgs, calculationRequestScope);
               callState.invoked = true;
             }
+            predispatch.lap('dispatchPreparationMs');
+            predispatch.since('preDispatchMs');
             const pipelineRawToolResult = pipelineToolbarPreflight.block || socialDispatchBlock || genericChatBlock || calculationDispatchBlock || await this.executeTool(
             tabId,
             fnName,
@@ -14713,6 +15193,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               _contentActionDispatchState: actionDispatchState,
             },
           );
+          predispatch.lap('executeToolMs');
           callState.result = this._normalizeToolResult(fnName, pipelineRawToolResult, missingResponseOutcomeUnknown);
           if (pipelineRawToolResult?.dispatched === false || pipelineRawToolResult?.noDispatch === true) {
             actionDispatchState.started = false;
@@ -14732,14 +15213,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // before the checks below rely on it: for a control the probe saw inside a
           // form, and for any click in a run that has to prove a submission. A
           // caption page structure already decides is not read.
-          if (formValidationCandidate && (detectedSubmitAction?.isSubmit === true || this._runNeedsSubmissionProof(tabId))
+          if (formValidationCandidate && !this._leanRunActive(tabId) && (detectedSubmitAction?.isSubmit === true || this._runNeedsSubmissionProof(tabId))
               && pipelineToolResult && typeof pipelineToolResult === 'object' && !pipelineToolResult.done
               && pipelineToolResult.dispatched !== false
               && !this._controlCaptionDecidedByStructure(fnName, fnArgs, pipelineToolResult, detectedSubmitAction)) {
             await this._readControlEffect(tabId, this._controlCaption(fnName, fnArgs, pipelineToolResult));
             this._throwIfAborted(abortSignal);
           }
-          const inspectFormValidationAfter = formValidationCandidate
+          const inspectFormValidationAfter = formValidationCandidate && !this._leanRunActive(tabId)
             && this._formValidationActionLooksSubmit(
               fnName,
               fnArgs,
@@ -14832,6 +15313,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         rawToolResult = pipelineResult.rawToolResult;
         toolResult = pipelineResult.toolResult;
       }
+      if (predispatchConsequential()) {
+        predispatch.emit(step, { tool: fnName, outcome: steeringBeforeDispatch || attemptRecordNotSaved
+          || rawToolResult?.noDispatch === true || rawToolResult?.dispatched === false ? 'not_dispatched' : 'dispatched' });
+      }
       if (attemptRecordNotSaved) {
         const value = 'Stopped before sending the page action because the record of what this task has posted could not be saved. Retry after extension storage is available.';
         this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
@@ -14870,9 +15355,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const completionStateBeforeTool = this.completionInvariants.get(tabId) || null;
       // An upload's evidence reads the lines that name its file first, and an
       // edit of an item's details reads the labels of the field it wrote.
-      await this._readWorkflowUploadLines(tabId, fnName, toolResult);
-      await this._readWorkflowAuthoredFieldLabels(tabId, fnName, fnArgs, toolResult);
-      await this._readWorkflowReviewThreadControls(tabId, fnName, toolResult);
+      if (!this._leanRunActive(tabId)) {
+        await this._readWorkflowUploadLines(tabId, fnName, toolResult);
+        await this._readWorkflowAuthoredFieldLabels(tabId, fnName, fnArgs, toolResult);
+        await this._readWorkflowReviewThreadControls(tabId, fnName, toolResult);
+      }
       const completionStateAfterTool = this._recordCompletionToolResult(
         tabId,
         fnName,
@@ -14884,6 +15371,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // That also noted the call in the dispatch record; see the catch in
       // _executeToolBatch for a call interrupted before this point.
       callState.dispatchNoted = true;
+      // A write into a post composer starts the publication check of its
+      // draft in the background; the click on Post then finds it done.
+      this._socialPublicationPrefetch(tabId, fnName, fnArgs, toolResult, provider);
       const readCompletenessBeforeTool = this.readCompletenessStates.get(tabId) || null;
       const readCompletenessAfterTool = this._recordReadCompleteness(tabId, fnName, fnArgs, toolResult);
       const requiredReadProgress = readCompletenessMadeProgress(
@@ -15092,7 +15582,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // Strict checks: a negative verdict or page warning reopens verification
         // debt for a forced read-only turn. By default the model only gets the
         // note, and the debt guard does not refuse the next done for it.
-        if (completionNeedsRead && !this._guardAdvises('done-verification-debt', { decided: false })) { const state = this.completionInvariants.get(tabId); if (state) this.completionInvariants.set(tabId, { ...state, verificationDebt: true }); }
+        if (completionNeedsRead && !this._guardAdvises('done-verification-debt', { tabId, decided: false })) { const state = this.completionInvariants.get(tabId); if (state) this.completionInvariants.set(tabId, { ...state, verificationDebt: true }); }
         messages.push({ role: 'tool', tool_call_id: tc.id, content: this._wrapUntrusted(fnName, this._limitToolResult(toolResult)) });
         if (attachedImage) {
           messages.push({ role: 'user', transientCompletionVerification: true, content: [
@@ -15134,7 +15624,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const actionRun = this._isActionMode(this._effectiveRunMode(tabId));
         const unjudgedFailure = actionRun && ['partial', 'failed'].includes(normalizeDoneOutcome(toolResult.outcome))
           && this._planExecutionGuards.get(tabId)?.enabled === true;
-        if (!scheduledResume && !completionReading && String(doneSummaryText).trim()
+        if (!scheduledResume && !completionReading && String(doneSummaryText).trim() && !this._leanRunActive(tabId)
             && (unjudgedFailure || (!actionRun && this._doneSummaryMayOmitAnswer(doneSummaryText)))) {
           // A short Ask answer is read by the decision model only: the check is
           // not worth a call to the chat model on every answer. A failed or
@@ -15592,7 +16082,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         hasRemaining: toolIndex < toolCalls.length - 1,
         submit: detectedSubmitAction?.isSubmit === true || this._formValidationActionLooksSubmit(fnName, fnArgs, toolResult, detectedSubmitAction),
       } : null;
-      const freshTurnReason = this._browserActionFreshTurnReason(promptTier, fnName, toolResult, batchContext);
+      const freshTurnReason = this._browserActionFreshTurnReason(promptTier, fnName, toolResult, batchContext, tabId);
       if (freshTurnReason && this._interruptToolBatchForFreshTurn(
         tabId,
         toolCalls,
@@ -18384,26 +18874,51 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * What guard `id` does now: 'block' | 'ask' | 'advise' (guard-policy.js).
+   * Lean mode skips guard `id` in the run on `tabId`: a quality guard that no
+   * hard check depends on (lean-mode.js), in an Act run that resolved to lean
+   * mode. Strict checks do not apply then. A guard that cannot name its run
+   * (no tab) is never skipped.
+   */
+  _guardSkipped(id, tabId = null) {
+    return this._leanRunActive(tabId) && leanSkipsGuard(id);
+  }
+
+  /**
+   * What guard `id` does now: 'block' | 'ask' | 'advise' (guard-policy.js),
+   * or 'skip' when lean mode skips it (no refusal, note or caveat).
    * decided=false when the guard fires because it cannot decide.
    */
-  _guardOutcome(id, { decided = true } = {}) {
+  _guardOutcome(id, { decided = true, tabId = null } = {}) {
+    if (this._guardSkipped(id, tabId)) return 'skip';
     return guardOutcome(id, { decided, strict: this._guardStrict() });
   }
 
-  /** True when the guard advises instead of refusing in the current mode. */
-  _guardAdvises(id, { decided = true } = {}) {
-    return this._guardOutcome(id, { decided }) === 'advise';
+  /**
+   * True when the guard does not refuse in the current mode: it advises, or
+   * lean mode skips it. Callers take their non-refusing path either way.
+   */
+  _guardAdvises(id, { decided = true, tabId = null } = {}) {
+    const outcome = this._guardOutcome(id, { decided, tabId });
+    return outcome === 'advise' || outcome === 'skip';
+  }
+
+  // Marks a call's advisory list as belonging to the run on `tabId`.
+  _trackGuardAdvisories(advisories, tabId) {
+    if (Array.isArray(advisories) && tabId != null) (this._guardAdvisoryTabs ??= new WeakMap()).set(advisories, tabId);
+    return advisories;
   }
 
   /**
    * An action guard that advises lets the action proceed and leaves its note
    * on this call's tool result. Returns true when the caller must not refuse.
    * `advisories` is the call's list (executionContext.guardAdvisories or the
-   * batch call state).
+   * batch call state). A guard lean mode skips proceeds without a note.
    */
-  _guardAdvisesFor(advisories, id, message, { decided = true } = {}) {
-    if (!this._guardAdvises(id, { decided })) return false;
+  _guardAdvisesFor(advisories, id, message, { decided = true, tabId = null } = {}) {
+    const runTab = tabId ?? (Array.isArray(advisories) ? this._guardAdvisoryTabs?.get(advisories) : null) ?? null;
+    const outcome = this._guardOutcome(id, { decided, tabId: runTab });
+    if (outcome === 'skip') return true;
+    if (outcome !== 'advise') return false;
     if (Array.isArray(advisories)) advisories.push(guardAdvisory(id, message));
     return true;
   }
@@ -18430,7 +18945,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // `downgrade` marks a decided case of a guard whose other decided cases
   // keep the model's outcome (OUTCOME_DOWNGRADING_GUARDS lists whole guards).
   _guardRefusesOnce(tabId, id, { decided = true, caveat = '', downgrade = false } = {}) {
-    if (this._guardOutcome(id, { decided }) !== 'advise') return true;
+    const outcome = this._guardOutcome(id, { decided, tabId });
+    // Lean mode: the completion is accepted with no note and no caveat.
+    if (outcome === 'skip') return false;
+    if (outcome !== 'advise') return true;
     const state = this._guardRunState(tabId);
     if (!state.advised.has(id)) {
       state.advised.add(id);
@@ -18452,6 +18970,51 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!state?.caveats?.size) return '';
     const items = [...new Set(state.caveats.values())].filter(Boolean).slice(0, 4);
     return items.length ? `WebBrain could not verify everything: ${items.join(' ')}` : '';
+  }
+
+  /**
+   * Settings → General → "Lean mode" for a run on `tabId` with `provider`
+   * (the tab's active provider by default): 'on' and 'off' decide; 'auto'
+   * turns it on only for a strong model on a cloud provider whose prompt tier
+   * is Full (lean-mode.js). Act mode only: Ask, Dev and standalone chat keep
+   * their behavior. Returns { active, setting, reason, family? }.
+   */
+  _resolveLeanRun(tabId, provider = null, mode = null) {
+    const runMode = mode || (tabId != null ? this._effectiveRunMode(tabId) : 'act');
+    if (tabId != null && (this._standaloneChatRunTabs?.has(tabId) || this._standaloneWebgpuRunTabs?.has?.(tabId))) {
+      return { active: false, setting: normalizeLeanModeSetting(this.leanMode), reason: 'standalone_chat' };
+    }
+    let active = provider;
+    if (!active) {
+      try { active = this._activeProvider(tabId); } catch { active = null; }
+    }
+    return resolveLeanMode(this.leanMode, { mode: runMode, provider: active });
+  }
+
+  _leanModeActive(tabId, provider = null, mode = null) {
+    return this._resolveLeanRun(tabId, provider, mode).active === true;
+  }
+
+  // Resolves lean mode for the run starting on `tabId` and keeps the answer
+  // for the whole run (see processMessage / processMessageStream).
+  _beginLeanRun(tabId, mode = null) {
+    let state;
+    try { state = this._resolveLeanRun(tabId, null, mode); } catch { state = { active: false, setting: normalizeLeanModeSetting(this.leanMode), reason: 'unresolved' }; }
+    (this._leanRuns ??= new Map()).set(tabId, state);
+    return state;
+  }
+
+  /** Whether the run on `tabId` resolved to lean mode. No tab: no. */
+  _leanRunActive(tabId = null) {
+    return tabId != null && this._leanRuns?.get(tabId)?.active === true;
+  }
+
+  // The prompt follows the run's own answer; between runs it follows the
+  // current setting and provider (the next run rebuilds it anyway).
+  _leanPromptActive(tabId, mode, provider = null) {
+    if (mode !== 'act') return false;
+    if (tabId != null && this._leanRuns?.has(tabId)) return this._leanRunActive(tabId);
+    return this._leanModeActive(tabId, provider, mode);
   }
 
   _normalizeClarifyTimeoutPolicy(value) {
@@ -20578,7 +21141,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _invalidateSocialPublicationContract(guard) {
+    // A contract compiled in the background before a correction is never
+    // installed after it, so its request is cancelled too, and so are a
+    // background audit against the contract the correction replaces and the
+    // caption readings the same prefetch started.
+    this._dropSocialPublicationContractPrefetch(guard);
+    for (const abort of this._socialPublicationCaptionReads?.get(guard) || []) {
+      if (!abort.controller.signal.aborted) abort.controller.abort();
+    }
     const social = guard.socialPublication;
+    this._dropSocialPublicationAuditPrefetch(social);
     if (!social) return;
     social.needsRecompile = true;
     // Never erase an attempted publication's outcomes to obtain a fresh set
@@ -20635,8 +21207,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return parsePublicationJson(response?.content);
   }
 
-  async _socialPublicationCheckerFailure(tabId, phase, attempt, error, validation = false) {
-    const runId = this.currentRunId.get(tabId);
+  // `runId` is the run the check belongs to: a background check passes the
+  // run that started it, never the tab's current one.
+  async _socialPublicationCheckerFailure(tabId, phase, attempt, error, validation = false, runId = this.currentRunId.get(tabId)) {
     if (!runId) return;
     if (!validation) {
       await this._tracePlannerAttemptFailure(runId, phase, attempt, error, 'publication_checker_failed');
@@ -20714,15 +21287,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       delete next.deniedAudit;
       delete next.deniedAuditKey;
     }
+    // A verdict prefetched for the run that ended is never reused by another.
+    delete next.prefetchedAudit;
     return next;
   }
 
-  async _ensureSocialPublicationContract(tabId, provider = this._activeProvider(tabId)) {
+  // One compile runs per publication state at a time: a caller arriving while
+  // one runs waits for it instead of reading its still empty contract or
+  // compiling a second time (`wait: false` returns null instead of waiting).
+  // A background compile (`background`, the prefetch) changes nothing in the
+  // run: it is kept beside the run's state and never throws. A later caller
+  // that would compile awaits it and installs it only when it compiled exactly
+  // the input that caller would compile from now: the same sources, context,
+  // task and prior state. Anything else compiles as before.
+  async _ensureSocialPublicationContract(tabId, provider = this._activeProvider(tabId), { background = false, wait = true, binding = null } = {}) {
     const guard = this._planExecutionGuards.get(tabId);
     if (!guard?.enabled) return null;
     // The app-owned guard is new for every user revision. A trusted Continue
     // carries its frozen contract, including exact raw source text.
     const previous = guard.socialPublication;
+    const compiles = this._socialPublicationCompiles ||= new WeakMap();
+    const running = previous ? compiles.get(previous) : null;
+    if (running) {
+      if (!wait) return null;
+      await running.catch(() => {});
+      if (this._planExecutionGuards.get(tabId) !== guard) return null;
+      return this._ensureSocialPublicationContract(tabId, provider, { background, wait, binding });
+    }
     if (previous && (!previous.needsRecompile || Object.keys(previous.outcomes || {}).length)) return previous;
     const sources = this._socialPublicationSources(tabId);
     // This URL was observed by the app when the user task started, before
@@ -20732,30 +21323,102 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requestPlatform: SOCIAL_PLATFORMS.includes(requestWorkflow?.adapterName) ? requestWorkflow.adapterName : null,
     };
     const key = this._sha256TextSync(JSON.stringify({ sources, context, taskKey: guard.taskKey }));
+    const prefetches = this._socialPublicationContractPrefetches ||= new WeakMap();
+    const prefetch = prefetches.get(guard);
+    if (prefetch && prefetch.previous === previous && prefetch.state.key === key) {
+      if (background) return prefetch.done;
+      if (!prefetch.settled) {
+        if (!wait) return null;
+        await prefetch.done;
+        if (this._planExecutionGuards.get(tabId) !== guard) return null;
+        // Checked again: the sources may have changed while it ran.
+        return this._ensureSocialPublicationContract(tabId, provider, { background, wait, binding });
+      }
+      // An audit of the compiled state stays only when that state is
+      // installed as the run's own.
+      const install = !!prefetch.compiled && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId);
+      this._dropSocialPublicationContractPrefetch(guard, prefetch, { keepAudit: install });
+      if (install) {
+        guard.socialPublication = prefetch.compiled;
+        return prefetch.compiled;
+      }
+    } else if (prefetch && !background) {
+      // A background compile of another input is never installed: cancel it.
+      this._dropSocialPublicationContractPrefetch(guard, prefetch);
+    }
     const state = { key, sources, context, contract: null, outcomes: {}, actionId: null, dispatch: null, error: '' };
+    if (background) {
+      if (!this._socialPublicationBackgroundProvider(provider) || JSON.stringify(sources).length > 120000) return null;
+      // A background compile of another input can never be installed:
+      // cancel its request (and an audit of what it compiled) first.
+      if (prefetch) this._dropSocialPublicationContractPrefetch(guard, prefetch);
+      const abort = this._socialPublicationBackgroundAbort(binding, tabId);
+      const call = this._socialPublicationBackgroundCall(tabId, guard, binding, abort);
+      const entry = { previous, state, settled: false, compiled: null, done: null, abort };
+      prefetches.set(guard, entry);
+      entry.done = this._socialPublicationBackgroundSettle(abort,
+        this._socialPublicationCompile(tabId, provider, guard, state, previous, true, call).catch(() => null), null)
+        .then(compiled => {
+          entry.settled = true;
+          entry.compiled = abort.signal.aborted ? null : (compiled || null);
+          if (!entry.compiled) this._dropSocialPublicationContractPrefetch(guard, entry);
+          return entry.compiled;
+        });
+      return entry.done;
+    }
     guard.socialPublication = state;
     if (!provider?.chat || JSON.stringify(sources).length > 120000) {
       state.error = 'Publication intent could not be read completely with the selected provider.';
       return state;
     }
+    const compile = this._socialPublicationCompile(tabId, provider, guard, state, previous, false);
+    compiles.set(state, compile);
+    let outcome;
+    try {
+      outcome = await compile;
+    } finally {
+      if (compiles.get(state) === compile) compiles.delete(state);
+    }
+    return outcome === 'recompile' ? this._ensureSocialPublicationContract(tabId, provider, { wait }) : outcome;
+  }
+
+  // The compile itself: the compiled state, null when the run or its task
+  // moved on, or 'recompile' when a correction arrived meanwhile. A background
+  // compile stops once the run's state or its own slot moved on, and leaves
+  // the click its own attempts when it cannot finish.
+  async _socialPublicationCompile(tabId, provider, guard, state, previous, background, call = null) {
+    const { sources, context } = state;
+    const replaced = () => (background
+      ? guard.socialPublication !== previous || this._socialPublicationContractPrefetches?.get(guard)?.state !== state
+      : guard.socialPublication !== state || state.needsRecompile);
     const messages = publicationContractMessages(sources, context);
     let portable = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       const requestMessages = attempt ? this._socialPublicationRepairMessages(messages) : messages;
       const options = this._socialPublicationChatOptions(provider, attempt > 0, portable);
-      const runId = this.currentRunId.get(tabId);
+      // A background compile is traced to the run that started it.
+      const runId = background ? call.runId : this.currentRunId.get(tabId);
       const startedAt = Date.now();
       let received = false;
       try {
+        // In the background, checked before the request is traced and again
+        // right before inference: the run that started the compile may have
+        // stopped or been replaced meanwhile. Its request is traced to that
+        // run and carries that run's signal and allowance, never a later
+        // run's.
+        if (background && (call.signal.aborted || !call.current() || replaced())) return null;
         await this._tracePlannerAttemptRequest(runId, 0, provider, requestMessages,
           'social_publication_contract', attempt + 1, this._effectiveRunMode(tabId), options);
-        const response = await this._chatWithCostAllowance(provider, requestMessages, options,
-          this.currentCostState.get(tabId) || null, { tabId, generationName: 'social_publication_contract' });
+        if (background && (call.signal.aborted || !call.current() || replaced())) return null;
+        const response = await this._chatWithCostAllowance(provider, requestMessages,
+          background ? { ...options, signal: call.signal } : options,
+          background ? call.costState : (this.currentCostState.get(tabId) || null),
+          { tabId, generationName: 'social_publication_contract', ...(background ? { background: true } : {}) });
         received = true;
         await this._tracePlannerAttemptResponse(runId, 0, provider, response,
           'social_publication_contract', attempt + 1, startedAt, options);
         if (this._planExecutionGuards.get(tabId) !== guard || this._checkAbort(tabId)) return null;
-        if (guard.socialPublication !== state || state.needsRecompile) return this._ensureSocialPublicationContract(tabId, provider);
+        if (replaced()) return background ? null : 'recompile';
         if (this._hasPendingSteering(tabId)) return null;
         state.contract = normalizePublicationContract(this._socialPublicationResponseObject(response, options), sources);
         // A clarification invalidates authorization, not the uploads already
@@ -20770,16 +21433,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         state.error = '';
         return state;
       } catch (error) {
-        if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
-        await this._socialPublicationCheckerFailure(tabId, 'social_publication_contract', attempt + 1, error, received);
-        if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== state
-            || state.needsRecompile || this._hasPendingSteering(tabId)) return null;
-        state.error = 'Failed while reading the publication request. The checker could not return a complete result; the draft was not published.';
-        state.errorKind = 'technical';
+        // Cancelled: its run stopped, or a newer compile replaced it.
+        if (background && call.signal.aborted) return null;
+        if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) {
+          if (background) return null;
+          throw error;
+        }
+        await this._socialPublicationCheckerFailure(tabId, 'social_publication_contract', attempt + 1, error, received, runId);
+        if (this._planExecutionGuards.get(tabId) !== guard || replaced() || this._hasPendingSteering(tabId)) return null;
+        if (!background) {
+          state.error = 'Failed while reading the publication request. The checker could not return a complete result; the draft was not published.';
+          state.errorKind = 'technical';
+        }
         if (this._socialPublicationOptionsRejected(error)) portable = true;
       }
     }
-    return state;
+    return background ? null : state;
+  }
+
+  // Whether `social` is the run's publication state, or the one a background
+  // compile holds for it while it could still be installed.
+  _socialPublicationStateCurrent(guard, social) {
+    if (!social) return false;
+    if (guard.socialPublication === social) return true;
+    const prefetch = this._socialPublicationContractPrefetches?.get(guard);
+    return prefetch?.compiled === social && prefetch.previous === guard.socialPublication;
   }
 
   _socialPublicationAction(guard) {
@@ -20856,7 +21534,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const liveUrl = await this._currentUrl(tabId);
     const live = resolveAdapterWorkflowJob(liveUrl, 'publish-post');
     if (!SOCIAL_PLATFORMS.includes(live?.adapterName)) return false;
-    const social = await this._ensureSocialPublicationContract(tabId, provider);
+    // Only the click waits for a contract still being compiled; an ordinary
+    // tool call binds on a later call instead of waiting here.
+    const social = await this._ensureSocialPublicationContract(tabId, provider, { wait: !!detected });
     if (!social || social.needsRecompile || social.contract?.status !== 'ready') return false;
     this._recordSocialPublishTargetSatisfied(guard);
     const eligible = publicationProgress(social.contract, social.outcomes).eligible;
@@ -20996,8 +21676,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (!['click', 'click_ax', 'iframe_click'].includes(name)) return blocked('Write and verify the draft first, then activate its publish control in a separate click.');
     if (detected.publicationControl !== true) return blocked('Publication composer ownership could not be observed. Read the current page and use its resolved publish control.');
+    const contractStarted = Date.now();
     await this._adoptLiveSocialPublishWorkflow(tabId, provider, detected);
     const social = await this._ensureSocialPublicationContract(tabId, provider);
+    this._predispatchStage(tabId, 'publicationContractMs', Date.now() - contractStarted);
     const action = this._socialPublicationAction(guard);
     if (social?.needsRecompile || !action || action.platform !== live.adapterName
         || !publicationProgress(social?.contract, social?.outcomes).eligible.includes(action.id)) {
@@ -21038,7 +21720,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // 'once'. Strict checks refuse.
       const draftIssues = new Set(['body_mismatch', 'body_unobserved', 'baseline_incomplete']);
       if (!issues.every(issue => draftIssues.has(issue.reason))
-          || this._guardOutcome('social-publication-draft-quality', { decided: false }) !== 'ask') return refusal;
+          || this._guardOutcome('social-publication-draft-quality', { decided: false, tabId }) !== 'ask') return refusal;
       if (!this._unverifiedStepApproval(tabId, 'social-publication-draft-quality', key)) {
         const bodies = (Array.isArray(snapshot?.posts) ? snapshot.posts : [])
           .map(post => (typeof post?.bodyText === 'string' ? post.bodyText : '')).filter(Boolean);
@@ -21077,57 +21759,39 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (social.deniedAuditKey === key && !bypassMatches) return auditBlocked();
     if (social.dispatch?.key !== key) {
       if (!bypassMatches) {
-        const auditProvider = provider || this._activeProvider(tabId);
-        const messages = publicationAuditMessages(social.sources, social.contract, action, snapshot, key, social.context);
-        let portable = false;
-        let authorized = false;
-        for (let attempt = 0; attempt < 2; attempt++) {
-          const requestMessages = attempt ? this._socialPublicationRepairMessages(messages) : messages;
-          const options = this._socialPublicationChatOptions(auditProvider, attempt > 0, portable, true);
-          const runId = this.currentRunId.get(tabId);
-          const startedAt = Date.now();
-          let received = false;
-          try {
-            await this._tracePlannerAttemptRequest(runId, 0, auditProvider, requestMessages,
-              'social_publication_authorization', attempt + 1, this._effectiveRunMode(tabId), options);
-            const response = await this._chatWithCostAllowance(auditProvider, requestMessages, options,
-              this.currentCostState.get(tabId) || null, { tabId, generationName: 'social_publication_authorization' });
-            received = true;
-            await this._tracePlannerAttemptResponse(runId, 0, auditProvider, response,
-              'social_publication_authorization', attempt + 1, startedAt, options);
-            if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social
-                || social.needsRecompile || this._checkAbort(tabId) || this._hasPendingSteering(tabId)
-                || guard.taskKey !== taskKey) {
-              return blocked('Publication context changed during authorization.');
-            }
-            const verdict = publicationAuditValidation(this._socialPublicationResponseObject(response, options), key, action.id);
-            if (!verdict.valid) throw new Error(verdict.failure);
-            if (!verdict.authorized) {
+        const auditStarted = Date.now();
+        // The click decides this draft's audit from here on: a background
+        // prefetch of the same draft that reaches its own check meanwhile
+        // defers to it instead of sending a second request
+        // (_socialPublicationPrefetchAudit).
+        const foreground = this._socialPublicationForegroundAudits ||= new WeakMap();
+        const auditing = { key };
+        foreground.set(social, auditing);
+        try {
+          // A background prefetch audited this exact key (or still is): its
+          // verdict decides once, exactly as this audit would have. Any other
+          // key, or no verdict, runs the audit now.
+          const prefetched = await this._socialPublicationPrefetchedVerdict(tabId, guard, social, key, taskKey);
+          if (prefetched?.changed) return blocked('Publication context changed during authorization.');
+          if (prefetched) {
+            this._predispatchStage(tabId, prefetched.awaited ? 'publicationAuditAwaitedMs' : 'publicationAuditReusedMs', Date.now() - auditStarted);
+            if (!prefetched.authorized) {
               social.deniedAuditKey = key;
-              social.deniedAudit = { status: 'denied', reason: verdict.reason };
+              social.deniedAudit = { status: 'denied', reason: prefetched.reason };
               return auditBlocked();
             }
-            authorized = true;
             delete social.deniedAudit;
             delete social.deniedAuditKey;
-            break;
-          } catch (error) {
-            if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
-            await this._socialPublicationCheckerFailure(tabId, 'social_publication_authorization', attempt + 1, error, received);
-            if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social
-                || social.needsRecompile || this._hasPendingSteering(tabId)
-                || guard.taskKey !== taskKey) {
-              return blocked('Publication context changed during authorization.');
-            }
-            social.deniedAuditKey = key;
-            social.deniedAudit = { status: received ? 'invalid_response' : 'unavailable',
-              reason: received ? 'The publication checker returned an invalid or mismatched authorization response.'
-                : 'The selected provider could not complete the publication check.',
-              validationFailure: String(error?.message || error).slice(0, 600) };
-            if (this._socialPublicationOptionsRejected(error)) portable = true;
+          } else {
+            const outcome = await this._socialPublicationAuditRun(tabId, provider || this._activeProvider(tabId),
+              guard, social, action, snapshot, key, taskKey, { record: true });
+            this._predispatchStage(tabId, 'publicationAuditMs', Date.now() - auditStarted);
+            if (outcome.status === 'changed') return blocked('Publication context changed during authorization.');
+            if (outcome.status !== 'authorized') return auditBlocked();
           }
+        } finally {
+          if (foreground.get(social) === auditing) foreground.delete(social);
         }
-        if (!authorized) return auditBlocked();
       }
       social.dispatch = { key, actionId: action.id, snapshot: JSON.parse(JSON.stringify(snapshot)), pageUrl,
         documentIdentity, frameId, ...(bypassMatches ? { auditBypassed: true } : {}),
@@ -21135,7 +21799,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     // The semantic check can take time. Re-read the same target afterward;
     // neither a changed draft/account nor a navigated document inherits it.
+    const rereadStarted = Date.now();
     const fresh = await this._detectLikelySubmitAction(tabId, name, args);
+    this._predispatchStage(tabId, 'publicationRereadMs', Date.now() - rereadStarted);
     if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social || social.needsRecompile
         || this._checkAbort(tabId) || this._hasPendingSteering(tabId) || guard.taskKey !== taskKey
         || fresh?.isSubmit !== true || fresh.publicationControl !== true || fresh.publicationResourceUrlsComplete !== true
@@ -21149,6 +21815,460 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     Object.assign(detected, fresh);
     return null;
+  }
+
+  // The publication audit of one concrete draft: the same request, schema,
+  // two attempts, format repair and validation for the click and for its
+  // background prefetch. `record` (the click) records each outcome on the
+  // publication state as it goes; the prefetch records nothing here.
+  // `isCurrent` tells whether `social` is still the run's publication state.
+  // `background` (the prefetch) binds the request to the run that started it:
+  // its signal, allowance and liveness check.
+  async _socialPublicationAuditRun(tabId, provider, guard, social, action, snapshot, key, taskKey,
+    { record = false, isCurrent = () => guard.socialPublication === social, background = null } = {}) {
+    const messages = publicationAuditMessages(social.sources, social.contract, action, snapshot, key, social.context);
+    let portable = false;
+    let failure = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const requestMessages = attempt ? this._socialPublicationRepairMessages(messages) : messages;
+      const options = this._socialPublicationChatOptions(provider, attempt > 0, portable, true);
+      // A background audit is traced to the run that started it.
+      const runId = background ? background.runId : this.currentRunId.get(tabId);
+      const startedAt = Date.now();
+      let received = false;
+      try {
+        // In the background, checked before the request is traced and again
+        // right before inference (see _socialPublicationCompile).
+        if (background && (background.signal.aborted || !background.current() || !isCurrent())) return { status: 'changed' };
+        await this._tracePlannerAttemptRequest(runId, 0, provider, requestMessages,
+          'social_publication_authorization', attempt + 1, this._effectiveRunMode(tabId), options);
+        if (background && (background.signal.aborted || !background.current() || !isCurrent())) return { status: 'changed' };
+        const response = await this._chatWithCostAllowance(provider, requestMessages,
+          background ? { ...options, signal: background.signal } : options,
+          background ? background.costState : (this.currentCostState.get(tabId) || null),
+          { tabId, generationName: 'social_publication_authorization', ...(background ? { background: true } : {}) });
+        received = true;
+        await this._tracePlannerAttemptResponse(runId, 0, provider, response,
+          'social_publication_authorization', attempt + 1, startedAt, options);
+        if (this._planExecutionGuards.get(tabId) !== guard || !isCurrent()
+            || social.needsRecompile || this._checkAbort(tabId) || this._hasPendingSteering(tabId)
+            || guard.taskKey !== taskKey) {
+          return { status: 'changed' };
+        }
+        const verdict = publicationAuditValidation(this._socialPublicationResponseObject(response, options), key, action.id);
+        if (!verdict.valid) throw new Error(verdict.failure);
+        if (!verdict.authorized) {
+          if (record) {
+            social.deniedAuditKey = key;
+            social.deniedAudit = { status: 'denied', reason: verdict.reason };
+          }
+          return { status: 'denied', reason: verdict.reason };
+        }
+        if (record) {
+          delete social.deniedAudit;
+          delete social.deniedAuditKey;
+        }
+        return { status: 'authorized', reason: verdict.reason };
+      } catch (error) {
+        // Cancelled: its run stopped, or an audit of a newer draft replaced it.
+        if (background?.signal.aborted) return { status: 'changed' };
+        if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+        await this._socialPublicationCheckerFailure(tabId, 'social_publication_authorization', attempt + 1, error, received, runId);
+        if (this._planExecutionGuards.get(tabId) !== guard || !isCurrent()
+            || social.needsRecompile || this._hasPendingSteering(tabId)
+            || guard.taskKey !== taskKey) {
+          return { status: 'changed' };
+        }
+        failure = { status: received ? 'invalid_response' : 'unavailable',
+          reason: received ? 'The publication checker returned an invalid or mismatched authorization response.'
+            : 'The selected provider could not complete the publication check.',
+          validationFailure: String(error?.message || error).slice(0, 600) };
+        if (record) {
+          social.deniedAuditKey = key;
+          social.deniedAudit = failure;
+        }
+        if (this._socialPublicationOptionsRejected(error)) portable = true;
+      }
+    }
+    return { status: 'failed', failure };
+  }
+
+  // The verdict a background prefetch reached for this exact key, awaiting
+  // one still running for it. The click decides here once: a stored verdict is
+  // used at most once, and a prefetch still running for another draft can no
+  // longer store anything. A run, task or correction that moved on meanwhile
+  // is reported as a change, as after the click's own audit.
+  async _socialPublicationPrefetchedVerdict(tabId, guard, social, key, taskKey) {
+    const audits = this._socialPublicationAuditPrefetches;
+    const running = audits?.get(social);
+    let awaited = false;
+    if (running?.key === key && social.prefetchedAudit?.key !== key) {
+      awaited = true;
+      await running.done;
+    }
+    // An audit of another draft (the user edited it or switched accounts
+    // since the last write) can no longer be used: cancel its request before
+    // this click runs its own audit.
+    if (running) this._dropSocialPublicationAuditPrefetch(social, running);
+    const stored = social.prefetchedAudit?.key === key ? social.prefetchedAudit : null;
+    delete social.prefetchedAudit;
+    if (!stored) return null;
+    if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social
+        || social.needsRecompile || this._checkAbort(tabId) || this._hasPendingSteering(tabId)
+        || guard.taskKey !== taskKey) return { changed: true };
+    return { authorized: stored.authorized === true, reason: String(stored.reason || ''), awaited };
+  }
+
+  // After a text write into an X or Bluesky post editor, or a file added to
+  // the composer last written, the click on Post will need the publication
+  // contract, an audit of this exact draft and readings of what the composer's
+  // controls do. They are prepared here in the background so the click does
+  // not wait for them. Nothing here authorizes anything or changes the run:
+  // the contract is installed only by a caller that would compile exactly the
+  // same input, the click recomputes the binding key from its own fresh probe
+  // and uses a verdict only for that exact key, and every later check still
+  // runs. The prefetch writes no transcript and emits no UI event (only trace
+  // notes), and its model calls go through the run's cost allowance.
+  _socialPublicationPrefetch(tabId, name, args = {}, result = null, provider = null) {
+    try {
+      const guard = this._planExecutionGuards.get(tabId);
+      if (!this._socialPublicationPrefetchAllowed(guard) || !this._socialPublicationBackgroundProvider(provider)
+          || this._checkAbort(tabId) || this._hasPendingSteering(tabId)
+          || !result || typeof result !== 'object' || result.success !== true
+          || result.noDispatch === true || result.outcomeUnknown === true) return null;
+      const hints = this._socialPublicationPrefetchHints ||= new WeakMap();
+      const hint = name === 'upload_file' ? hints.get(guard) || null : this._socialPublicationPrefetchHint(name, args);
+      if (!hint) return null;
+      hints.set(guard, hint);
+      return this._trackSocialPublicationBackgroundRun(tabId,
+        this._socialPublicationPrefetchRun(tabId, guard, provider, hint).catch(() => null));
+    } catch {
+      return null;
+    }
+  }
+
+  // The contract depends on the request, never on the draft, so its compile
+  // starts as soon as the agent begins a write into a post editor, while that
+  // write is still being prepared. The audit waits for the written draft.
+  _socialPublicationContractPrefetch(tabId, name, args = {}, provider = null) {
+    try {
+      const guard = this._planExecutionGuards.get(tabId);
+      const hint = this._socialPublicationPrefetchHint(name, args);
+      const social = guard?.socialPublication;
+      const pending = this._socialPublicationContractPrefetches?.get(guard);
+      if (!hint || !this._socialPublicationPrefetchAllowed(guard) || !this._socialPublicationBackgroundProvider(provider)
+          || this._checkAbort(tabId) || this._hasPendingSteering(tabId)
+          || (social && (this._socialPublicationCompiles?.get(social)
+            || !social.needsRecompile || Object.keys(social.outcomes || {}).length))
+          || (pending && pending.previous === social)) return null;
+      return this._trackSocialPublicationBackgroundRun(tabId,
+        this._socialPublicationPrefetchRun(tabId, guard, provider, hint, { contractOnly: true }).catch(() => null));
+    } catch {
+      return null;
+    }
+  }
+
+  // Background checks run only where a superseded one can be cancelled. An
+  // in-browser model (WebGPU) runs one request at a time and ignores the
+  // request's signal, so a stale background check would hold its queue ahead
+  // of the replacement check and of the agent's next turn. With it, the click
+  // checks on its own, as before.
+  _socialPublicationBackgroundProvider(provider) {
+    return typeof provider?.chat === 'function' && provider.name !== 'webgpu';
+  }
+
+  // A write may prepare the click on Post only in a run that executes a plan
+  // submitting something and is not bound to another site job (a message to
+  // send, a file to commit): the planner told those apart from a post.
+  _socialPublicationPrefetchAllowed(guard) {
+    const job = guard?.siteWorkflow?.job;
+    return !!guard?.enabled && guard.requiresSubmission === true
+      && (!job || (job.id === 'publish-post' && SOCIAL_PLATFORMS.includes(guard.siteWorkflow.adapterName)));
+  }
+
+  // The editor a text write targets: its ref, its selector, or the focused
+  // element.
+  _socialPublicationPrefetchHint(name, args = {}) {
+    if ((name === 'type_ax' || (name === 'set_field' && args?.submit !== true))
+        && typeof args?.ref_id === 'string' && args.ref_id) return { editorRef: args.ref_id };
+    if (name !== 'type_text') return null;
+    return typeof args?.selector === 'string' && args.selector.trim()
+      ? { editorSelector: args.selector.trim() } : { focused: true };
+  }
+
+  async _socialPublicationPrefetchRun(tabId, guard, provider, hint, { contractOnly = false } = {}) {
+    const startedAt = Date.now();
+    const runId = this.currentRunId.get(tabId);
+    const taskKey = guard.taskKey;
+    // The run that started the prefetch: its Stop cancels the background
+    // requests, they are charged to its allowance, and they stop mattering
+    // once another run owns the tab.
+    const runSignal = this._runAbortSignal(tabId);
+    const current = () => this._planExecutionGuards.get(tabId) === guard && guard.taskKey === taskKey
+      && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId)
+      && this._runAbortSignal(tabId) === runSignal && !runSignal?.aborted;
+    const binding = { signal: runSignal, costState: this.currentCostState.get(tabId) || null, current, runId };
+    let status = 'skipped';
+    try {
+      const pageUrl = await this._currentUrl(tabId);
+      if (!current() || !SOCIAL_PLATFORMS.includes(resolveAdapterWorkflowJob(pageUrl, 'publish-post')?.adapterName)) return status;
+      // The same probe the click runs, on the publish control of the composer
+      // that holds the post editor written (found by the app's own markers).
+      const detected = await this._detectLikelySubmitAction(tabId, 'click_ax', { __wbPublicationPrefetch: hint }, { captionPass: 'final' });
+      if (!current() || detected?.isSubmit !== true || detected.publicationControl !== true) return status;
+      const readings = this._socialPublicationPrefetchReadings(tabId, detected.publicationPrefetchCaptions, pageUrl,
+        guard, binding);
+      try {
+        const social = await this._ensureSocialPublicationContract(tabId, provider, { background: true, binding });
+        status = contractOnly
+          ? (social?.contract && this._socialPublicationStateCurrent(guard, social) ? 'contract_ready' : 'skipped')
+          : await this._socialPublicationPrefetchAudit(tabId, guard, provider, social, detected, pageUrl, taskKey, binding);
+      } finally {
+        await readings;
+      }
+      return status;
+    } catch {
+      return (status = 'failed');
+    } finally {
+      // Noted in the trace of the run that started it.
+      if (runId) {
+        try {
+          const pending = trace.recordNote(runId, 0, 'publication_prefetch', { status, durationMs: Date.now() - startedAt });
+          if (pending?.catch) pending.catch(() => {});
+        } catch {}
+      }
+    }
+  }
+
+  async _socialPublicationPrefetchAudit(tabId, guard, provider, social, detected, pageUrl, taskKey, binding) {
+    const { current } = binding;
+    const isCurrent = () => this._socialPublicationStateCurrent(guard, social);
+    if (!current() || !isCurrent() || social.needsRecompile
+        || social.contract?.status !== 'ready' || social.retryBypass) return 'skipped';
+    // The action the click's own workflow binding chooses for this site.
+    const live = resolveAdapterWorkflowJob(pageUrl, 'publish-post');
+    const eligible = publicationProgress(social.contract, social.outcomes).eligible;
+    const action = social.contract.actions.find(a => a.platform === live?.adapterName && eligible.includes(a.id));
+    if (!action) return 'skipped';
+    // The click audits only a draft that passes its preflight; so does this.
+    const snapshot = this._socialPublicationSnapshot(guard, detected.publicationSnapshot);
+    if (this._socialSnapshotActionIssues(action, snapshot).length
+        || !Array.isArray(detected.publicationResourceUrls) || detected.publicationResourceUrlsComplete !== true) return 'skipped';
+    const documentIdentity = detected.frameDocumentIdentity || '';
+    const frameId = Number.isInteger(detected.frameId) ? detected.frameId : 0;
+    const key = this._sha256TextSync(JSON.stringify({ contract: social.key, action, snapshot, pageUrl, documentIdentity, frameId }));
+    if (social.dispatch?.key === key || social.deniedAuditKey === key || social.prefetchedAudit?.key === key) return 'cached';
+    // The click is already deciding this draft's audit itself: its verdict
+    // decides, and a second request would bill the same check twice.
+    if (this._socialPublicationForegroundAudits?.get(social)?.key === key) return 'cached';
+    const audits = this._socialPublicationAuditPrefetches ||= new WeakMap();
+    const running = audits.get(social);
+    // The same draft is already being audited for this run: join it. An
+    // audit of an older draft is superseded: cancel its request, so it
+    // neither spends tokens nor holds a serialized provider queue ahead of
+    // this one.
+    if (running?.key === key && running.runSignal === binding.signal && !running.abort.signal.aborted) return running.done;
+    if (running) this._dropSocialPublicationAuditPrefetch(social, running);
+    const abort = this._socialPublicationBackgroundAbort(binding, tabId);
+    const call = this._socialPublicationBackgroundCall(tabId, guard, binding, abort);
+    const entry = { key, done: null, abort, runSignal: binding.signal, settled: false };
+    audits.set(social, entry);
+    entry.done = this._socialPublicationBackgroundSettle(abort, (async () => {
+      try {
+        const outcome = await this._socialPublicationAuditRun(tabId, provider, guard, social, action, snapshot, key, taskKey,
+          { isCurrent, background: call });
+        if (outcome.status !== 'authorized' && outcome.status !== 'denied') return outcome.status;
+        // Stored only while nothing moved on: the same run, task, contract
+        // and page, no newer prefetch, and no click that already decided.
+        const unchanged = () => audits.get(social) === entry && current() && isCurrent()
+          && !social.needsRecompile && social.dispatch?.key !== key && social.deniedAuditKey !== key;
+        if (!unchanged()) return 'changed';
+        const liveUrl = await this._currentUrl(tabId);
+        if (!unchanged() || this._normalizeUrl(liveUrl) !== this._normalizeUrl(pageUrl)) return 'changed';
+        social.prefetchedAudit = { key, authorized: outcome.status === 'authorized', reason: outcome.reason, at: Date.now() };
+        return outcome.status;
+      } catch {
+        return 'failed';
+      } finally {
+        if (audits.get(social) === entry) audits.delete(social);
+      }
+    })(), 'changed').finally(() => { entry.settled = true; });
+    return entry.done;
+  }
+
+  // Drops the background audit kept for `social` (only `entry`, when given).
+  // A request still running is cancelled first, so it neither spends the
+  // run's allowance nor holds a serialized provider queue ahead of the
+  // click's own audit. A settled one only leaves the map.
+  _dropSocialPublicationAuditPrefetch(social, entry = null) {
+    const audits = this._socialPublicationAuditPrefetches;
+    const kept = social ? audits?.get(social) : null;
+    if (!kept || (entry && kept !== entry)) return;
+    audits.delete(social);
+    if (!kept.settled && !kept.abort.signal.aborted) kept.abort.controller.abort();
+  }
+
+  // Drops the background contract compile kept for `guard` (only `entry`,
+  // when given), cancelling it while it runs. An audit of the state it
+  // compiled is dropped with it, unless that state is being installed as the
+  // run's own (`keepAudit`).
+  _dropSocialPublicationContractPrefetch(guard, entry = null, { keepAudit = false } = {}) {
+    const prefetches = this._socialPublicationContractPrefetches;
+    const kept = guard ? prefetches?.get(guard) : null;
+    if (!kept || (entry && kept !== entry)) return;
+    prefetches.delete(guard);
+    if (!kept.settled && !kept.abort?.signal.aborted) kept.abort?.controller.abort();
+    if (!keepAudit && kept.compiled) this._dropSocialPublicationAuditPrefetch(kept.compiled);
+  }
+
+  // A background publication check's own abort: the Stop or the end of the
+  // run that started it, or a newer check that supersedes it.
+  _socialPublicationBackgroundAbort(binding, tabId = null) {
+    const controller = new AbortController();
+    const runSignal = binding?.signal || null;
+    const onAbort = () => {
+      if (!controller.signal.aborted) controller.abort(runSignal?.reason);
+    };
+    if (runSignal?.aborted) onAbort();
+    else runSignal?.addEventListener?.('abort', onAbort, { once: true });
+    // Kept per tab until it settles, so the end of its run cancels it too
+    // (_cancelSocialPublicationBackground), not only a Stop.
+    const open = tabId == null ? null : (this._socialPublicationBackgroundAborts ||= new Map());
+    if (open && !open.has(tabId)) open.set(tabId, new Set());
+    const abort = {
+      controller,
+      signal: controller.signal,
+      dispose: () => {
+        try { runSignal?.removeEventListener?.('abort', onAbort); } catch {}
+        open?.get(tabId)?.delete(abort);
+      },
+    };
+    open?.get(tabId).add(abort);
+    return abort;
+  }
+
+  // A background prefetch kept per tab until it settles, so its run can wait
+  // for it before closing the trace (_settleSocialPublicationBackground).
+  _trackSocialPublicationBackgroundRun(tabId, run) {
+    const runs = (this._socialPublicationBackgroundRuns ||= new Map());
+    let open = runs.get(tabId);
+    if (!open) runs.set(tabId, (open = new Set()));
+    open.add(run);
+    run.finally(() => {
+      open.delete(run);
+      if (!open.size && runs.get(tabId) === open) runs.delete(tabId);
+    });
+    return run;
+  }
+
+  // Before a run's trace closes: its background publication checks are
+  // cancelled and briefly awaited, so a request that answers late is not
+  // counted after the run's totals, and each check's last note lands before
+  // the trace ends. A check that does not settle in time is cancelled anyway
+  // and records nothing more that matters to this run.
+  async _settleSocialPublicationBackground(tabId, timeoutMs = 2000) {
+    this._cancelSocialPublicationBackground(tabId);
+    const open = this._socialPublicationBackgroundRuns?.get(tabId);
+    if (!open?.size) return;
+    let timer = null;
+    await Promise.race([
+      Promise.allSettled([...open]),
+      new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); }),
+    ]);
+    clearTimeout(timer);
+  }
+
+  // The run on `tabId` ended, however it ended: the background publication
+  // checks it started stop with it, so they neither keep spending nor hold a
+  // provider's queue or the cost allowance for the next run.
+  _cancelSocialPublicationBackground(tabId) {
+    const open = this._socialPublicationBackgroundAborts?.get(tabId);
+    if (!open) return;
+    this._socialPublicationBackgroundAborts.delete(tabId);
+    for (const abort of open) {
+      if (abort.controller.signal.aborted) continue;
+      const reason = new Error('The run that started this background check ended.');
+      reason.name = 'AbortError';
+      abort.controller.abort(reason);
+    }
+  }
+
+  // What a background model call is bound to: its abort, the allowance of the
+  // run that started it, and that run's liveness check.
+  _socialPublicationBackgroundCall(tabId, guard, binding, abort) {
+    return {
+      signal: abort.signal,
+      costState: binding ? binding.costState : (this.currentCostState.get(tabId) || null),
+      // The run whose trace gets the check's requests, responses and failures.
+      runId: binding ? (binding.runId || null) : (this.currentRunId.get(tabId) || null),
+      current: binding?.current || (() => this._planExecutionGuards.get(tabId) === guard && !this._checkAbort(tabId)),
+    };
+  }
+
+  // A cancelled check settles at once with `cancelled`, even when its provider
+  // cannot cancel the request (an in-browser model's queue): nothing waits
+  // behind it, and its late result can no longer be stored.
+  _socialPublicationBackgroundSettle(abort, work, cancelled) {
+    const stopped = new Promise(resolve => {
+      if (abort.signal.aborted) resolve(cancelled);
+      else abort.signal.addEventListener('abort', () => resolve(cancelled), { once: true });
+    });
+    return Promise.race([work, stopped]).finally(() => abort.dispose());
+  }
+
+  // The readings the click's own checks ask for, asked now: what the publish
+  // control and the controls beside it do (the submit probe), and, on a page
+  // whose sends the recipient guard checks, whether activating them sends a
+  // message. Readings are kept per caption, so asking earlier changes no
+  // answer; a caption that differs at the click is read there as before.
+  // Like the contract and the audit, these reads are background checks of
+  // the run that started the prefetch (`binding`): its Stop or end cancels
+  // them, they are charged to its allowance as background requests and
+  // traced to it, and they stop once another run owns the tab.
+  _socialPublicationPrefetchReadings(tabId, captions, pageUrl, guard = null, binding = null) {
+    const list = [...new Set((Array.isArray(captions) ? captions : [])
+      .map(caption => String(caption ?? '').replace(/\s+/g, ' ').trim())
+      .filter(caption => caption && caption.length <= 200))];
+    // A caption an earlier prefetch is still reading is not asked twice: its
+    // read in flight is joined, so this prefetch ends with its answer too.
+    // The wait for it belongs to this prefetch's run like its own reads: that
+    // run's Stop, end or correction stops it, even when every caption is
+    // joined and the read belongs to another tab's run.
+    const reading = this._socialPublicationPrefetchReading ||= new Map();
+    const unread = kind => list.filter(caption => this._pageTextReading(kind, caption) === null);
+    let guarded = false;
+    try { guarded = getMessageRecipientGuardPolicy(pageUrl)?.verifyActiveRecipient === true; } catch {}
+    const unreadEffects = unread('control_effect');
+    const unreadControls = guarded ? unread('message_control') : [];
+    const joined = [...new Set([...unreadEffects.map(caption => reading.get('control_effect\u0000' + caption)),
+      ...unreadControls.map(caption => reading.get('message_control\u0000' + caption))].filter(Boolean))];
+    const effects = unreadEffects.filter(caption => !reading.has('control_effect\u0000' + caption)).slice(0, 24);
+    const controls = unreadControls.filter(caption => !reading.has('message_control\u0000' + caption)).slice(0, 48);
+    if (!effects.length && !controls.length && !joined.length) return Promise.resolve([]);
+    const abort = this._socialPublicationBackgroundAbort(binding, tabId);
+    const background = this._socialPublicationBackgroundCall(tabId, guard, binding, abort);
+    // A correction or clarification cancels them with the contract and the
+    // audit (_invalidateSocialPublicationContract).
+    const captionReads = guard ? ((this._socialPublicationCaptionReads ||= new WeakMap()).get(guard)
+      || this._socialPublicationCaptionReads.set(guard, new Set()).get(guard)) : null;
+    captionReads?.add(abort);
+    const read = (kind, texts, request) => {
+      const pending = Promise.resolve().then(request);
+      for (const text of texts) reading.set(kind + '\u0000' + text, pending);
+      return pending.finally(() => {
+        for (const text of texts) {
+          if (reading.get(kind + '\u0000' + text) === pending) reading.delete(kind + '\u0000' + text);
+        }
+      });
+    };
+    const reads = [...joined];
+    if (effects.length) reads.push(read('control_effect', effects, () => this._readControlEffects(tabId, effects, { background })));
+    if (controls.length) {
+      reads.push(read('message_control', controls, () => this._readPageTexts(tabId, 'message_control', controls, {},
+        { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS, background })));
+    }
+    return this._socialPublicationBackgroundSettle(abort, Promise.allSettled(reads), [])
+      .finally(() => captionReads?.delete(abort));
   }
 
   _socialPublishedContractMatches(binding, guard, pageState) {
@@ -21322,6 +22442,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (runId) {
       trace.recordTurnStart(runId, 0, { mode });
+      const leanRun = this._leanRuns?.get(tabId);
+      if (leanRun && mode === 'act') {
+        trace.recordNote(runId, null, 'lean_mode', {
+          leanMode: leanRun.active === true, setting: leanRun.setting, reason: leanRun.reason,
+          ...(leanRun.family ? { family: leanRun.family } : {}),
+        });
+      }
       this.currentRunId.set(tabId, runId);
       // How an automatically routed turn chose its mode, and how long it waited.
       if (runOptions?.modeRoute) {
@@ -21351,6 +22478,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Shared by the streaming and non-streaming message paths. (#9)
    */
   async _endTraceRun(tabId, runId, status, finalContent, { provider = null, messages = null, mode = '', shareRequest = null, shareResponse = null, hadProviderCompletion = false } = {}) {
+    // The run's background checks end before its trace and diagnostics do.
+    await this._settleSocialPublicationBackground(tabId);
     if (String(provider?.config?.providerName || '').toLowerCase() === 'webbrain-cloud') {
       try {
         const sessionId = this.conversationIds.get(tabId) || null;
@@ -24795,15 +25924,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // Reads, in any language, the captions the submit probe reported unread
   // (the decision model first, the active model within four seconds). A
   // caption no model could read stays unread and decides nothing.
-  async _readControlEffects(tabId, captions = []) {
+  // `background` binds a background read to the run that started it
+  // (_socialPublicationPrefetchReadings); its failures stay its own.
+  async _readControlEffects(tabId, captions = [], { background = null } = {}) {
     const list = [...new Set((Array.isArray(captions) ? captions : [])
       .map(caption => String(caption ?? '').replace(/\s+/g, ' ').trim())
       .filter(caption => caption && caption.length <= 200))].slice(0, 24);
     if (!list.length) return;
+    // A caption a background prefetch is reading now is joined, not read a
+    // second time: _readPageTexts below asks only what is still unread, and
+    // makes a held reading one of the most recent the submit probe gets.
+    if (!background) await this._joinBackgroundPageTextReads('control_effect', list);
     try {
-      await this._readPageTexts(tabId, 'control_effect', list, {}, { maxChars: 200, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+      await this._readPageTexts(tabId, 'control_effect', list, {}, { maxChars: 200, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS,
+        ...(background ? { background } : {}) });
     } catch (error) {
-      if (this._checkAbort(tabId)) throw error;
+      if (!background && this._checkAbort(tabId)) throw error;
     }
   }
 
@@ -24888,6 +26024,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let read = false;
     for (const [kind, list] of byKind) {
       const pending = [...list].slice(0, 48);
+      // Texts a background prefetch is reading now are joined first, so
+      // _readPageTexts asks only what is still unread (and still makes a
+      // held reading one of the most recent the page gets).
+      await this._joinBackgroundPageTextReads(kind, pending);
       try {
         await this._readPageTexts(tabId, kind, pending, {}, { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
       } catch (error) {
@@ -24896,6 +26036,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       read ||= pending.some(text => !!this._pageTextReading(kind, text));
     }
     return read;
+  }
+
+  // Waits for the reads of these texts that a background publication
+  // prefetch has in flight (_socialPublicationPrefetchReadings), so a click
+  // joins them instead of asking a model the same question again. The wait
+  // is capped: a read that does not settle in time is read again here.
+  async _joinBackgroundPageTextReads(kind, texts) {
+    const reading = this._socialPublicationPrefetchReading;
+    if (!reading?.size) return;
+    const pending = [...new Set(texts.map(text => reading.get(kind + '\u0000' + text)).filter(Boolean))];
+    if (!pending.length) return;
+    let timer = null;
+    await Promise.race([Promise.allSettled(pending),
+      new Promise(resolve => { timer = setTimeout(resolve, 2 * CONTROL_READING_TIMEOUT_MS); })]);
+    clearTimeout(timer);
   }
 
   // The recipient guard's check in the page, with the agent's readings of the
@@ -24908,7 +26063,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let result = await check();
     for (let pass = 0; pass < 3; pass += 1) {
       const unread = Array.isArray(result?.pageTextsNeeded) ? result.pageTextsNeeded : [];
-      if (!unread.length || !await this._readUnreadPageTexts(tabId, unread)) break;
+      if (!unread.length) break;
+      const readingStarted = Date.now();
+      const read = await this._readUnreadPageTexts(tabId, unread);
+      this._predispatchStage(tabId, 'recipientReadingMs', Date.now() - readingStarted);
+      if (!read) break;
       result = await check();
     }
     return result;
@@ -25246,7 +26405,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Strict checks; otherwise the read keeps its result and the note says
     // nothing changed since the last one.
     if (block.verifyFormCount > 1 && !this._guardAdvisesFor(advisories, 'form-validation-unchanged-repeat',
-      'The form is unchanged since the last verify_form, so this read shows nothing new. Correct the reported checkbox with set_checked before verifying or submitting again.')) {
+      'The form is unchanged since the last verify_form, so this read shows nothing new. Correct the reported checkbox with set_checked before verifying or submitting again.', { tabId })) {
       result.success = false;
       result.noProgress = true;
       result.blockedValidationVerifyRepeat = true;
@@ -26061,7 +27220,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // recipient, user-input (credentials, payment, a new user decision),
     // terminal-session, native-baseline, duplicate and draft checks are not
     // waivable and keep refusing below (chat-workflow.js says why).
-    const advise = note => this._guardAdvisesFor(advisories, 'chat-send-preconditions', note);
+    const advise = note => this._guardAdvisesFor(advisories, 'chat-send-preconditions', note, { tabId });
     if (previous && observed.newMessages.some(message => message.direction === 'incoming')
         && !observed.session.pendingOutbound && !observed.session.userInput?.required
         && !advise('A new incoming message appeared since your last chat observation; this reply was sent without considering it. Read the conversation (chat_observe) before the next reply.')) {
@@ -27801,11 +28960,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         return results;
       };
-      let rawResults = await runProbe('collect');
+      // A background publication prefetch reads the captions itself, beside
+      // its other work, so its probe goes straight to the final pass.
+      let rawResults = await runProbe(options.captionPass === 'final' ? 'final' : 'collect');
       const captionsNeeded = (Array.isArray(rawResults) ? rawResults : [])
         .flatMap(item => (Array.isArray(item?.captionsNeeded) ? item.captionsNeeded : []));
       if (captionsNeeded.length) {
+        const readingStarted = Date.now();
         await this._readControlEffects(tabId, captionsNeeded);
+        if (typeof options.onCaptionReading === 'function') options.onCaptionReading(Date.now() - readingStarted);
         rawResults = await runProbe('final');
       }
       const detected = (Array.isArray(rawResults) ? rawResults : [])
@@ -27857,6 +29020,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           publicationSnapshot: detected.publicationSnapshot || null,
           publicationAccountIdentity: String(detected.publicationAccountIdentity || '').slice(0, 300),
           publicationAccountIdentityComplete: detected.publicationAccountIdentityComplete === true,
+          ...(Array.isArray(detected.publicationPrefetchCaptions) ? {
+            publicationPrefetchCaptions: detected.publicationPrefetchCaptions
+              .filter(caption => typeof caption === 'string' && caption.length <= 200).slice(0, 48),
+          } : {}),
           transactionOrderIds: Array.isArray(detected.transactionOrderIds)
             ? detected.transactionOrderIds.slice(0, 20)
             : [],
@@ -28867,7 +30034,50 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const interactiveElements = () => Array.from((findTopmostModal() || doc).querySelectorAll(
       'a, button, [role="button"], [role="link"], [role="tab"], [role="menuitem"], input:not([type="hidden"]), textarea, select, input[type="button"], input[type="submit"], summary, label, [onclick], [data-action]'
     )).filter(isVisible);
+    // A background publication prefetch names no control: it asks for the
+    // publish control of the composer that holds the post editor just
+    // written, found by the app's own publish marker nearest that editor. Any
+    // other field, even one beside a Post button, and a missing, hidden or
+    // ambiguous control resolve to nothing.
+    const publicationPrefetchControl = hint => {
+      const adapterName = socialPublishAdapterName();
+      if (!adapterName || !hint || typeof hint !== 'object') return null;
+      let editor = null;
+      try {
+        if (typeof hint.editorRef === 'string' && typeof window.__wb_ax_lookup === 'function') {
+          editor = window.__wb_ax_lookup(hint.editorRef);
+        } else if (typeof hint.editorSelector === 'string' && hint.editorSelector) {
+          const matches = Array.from(doc.querySelectorAll(hint.editorSelector)).filter(isVisible);
+          editor = matches.length === 1 ? matches[0] : null;
+        } else if (hint.focused === true) {
+          editor = doc.activeElement;
+        }
+        // X marks its post editor tweetTextarea_N; Bluesky's is a ProseMirror
+        // editor (composerTextInput in some builds).
+        if (!editor?.closest?.(adapterName === 'twitter'
+          ? '[data-testid^="tweetTextarea_"]'
+          : '[data-testid="composerTextInput"],.ProseMirror[contenteditable="true"]')) return null;
+      } catch {
+        return null;
+      }
+      if (!editor || editor.nodeType !== 1 || !editor.isConnected) return null;
+      const markers = adapterName === 'twitter'
+        ? '[data-testid="tweetButton"],[data-testid="tweetButtonInline"]'
+        : '[data-testid="composerPublishBtn"],[data-testid="composerPublishButton"]';
+      // The nearest ancestor holding a publish control decides; a control of
+      // another composer is refused below, so the climb can be generous.
+      for (let node = editor.parentElement, depth = 0; node && depth < 24; node = node.parentElement, depth += 1) {
+        let controls = [];
+        try { controls = Array.from(node.querySelectorAll(markers)).filter(isVisible); } catch { return null; }
+        if (!controls.length) continue;
+        if (controls.length !== 1) return null;
+        const composer = socialPublishComposerFor(controls[0]);
+        return composer && composer.contains(editor) ? controls[0] : null;
+      }
+      return null;
+    };
     const resolveClickTarget = () => {
+      if (toolName === 'click_ax' && args.__wbPublicationPrefetch) return publicationPrefetchControl(args.__wbPublicationPrefetch);
       if (toolName === 'click_ax' || toolName === 'set_field' || toolName === 'type_ax') {
         try {
           if (typeof window.__wb_ax_lookup === 'function' && typeof args.ref_id === 'string') {
@@ -29339,8 +30549,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // A click is judged by its activated control's captions and by those of
       // the control that owns its activation. On a collect pass, unread ones
       // are reported before anything else; fields and plain links have none.
-      if (args.__wbCaptionPass === 'collect' && ['click', 'click_ax', 'iframe_click'].includes(toolName)
-          && target && !isEditableActivationTarget(target)) {
+      const activationCaptions = () => {
         const subject = labelControlFor(target) || target;
         const subjects = [control, subject.closest?.('button,input,[role="button"],[onclick],[data-action]'),
           subject.closest?.('button,input,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="tab"],[role="option"],[role="treeitem"],[role="switch"],[role="checkbox"],[role="radio"],summary')];
@@ -29348,8 +30557,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // there makes a confirmation ambiguous in any language.
         const dialog = subject.closest?.('dialog[open],[role="dialog"],[role="alertdialog"]');
         if (dialog) subjects.push(...[...dialog.querySelectorAll('button,input[type="button"],input[type="submit"],[role="button"],[role="menuitem"]')].slice(0, 24));
-        const needed = [...new Set(subjects.filter(el => el && !isEditableActivationTarget(el)).flatMap(controlCaptions))]
-          .filter(key => !captionReading(key));
+        return [...new Set(subjects.filter(el => el && !isEditableActivationTarget(el)).flatMap(controlCaptions))];
+      };
+      if (args.__wbCaptionPass === 'collect' && ['click', 'click_ax', 'iframe_click'].includes(toolName)
+          && target && !isEditableActivationTarget(target)) {
+        const needed = activationCaptions().filter(key => !captionReading(key));
         if (needed.length) return { captionsNeeded: needed.slice(0, 24) };
       }
       const actionReading = captionsReading(actionWords);
@@ -29931,6 +31143,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const submitter = owner.closest?.('button,input,[role="button"],[onclick],[data-action]') || owner;
           if (isVisible(submitter) && ordinaryControlEvidence(submitter, ordinaryLabels(submitter))) info.nonCommittingControl = true;
         }
+        // The captions a click on this control would have read, for the
+        // prefetch to read ahead of it.
+        if (args.__wbPublicationPrefetch && toolName === 'click_ax') info.publicationPrefetchCaptions = activationCaptions().slice(0, 48);
         return info;
       }
       if (target && ['click', 'click_ax', 'iframe_click'].includes(toolName)
@@ -30106,6 +31321,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return `${SYSTEM_PROMPT_ACT}\n\n${this.imageGenConfigured ? SYSTEM_PROMPT_GENERATIVE_MEDIA : GENERATIVE_MEDIA_SETUP_NOTE}`;
   }
 
+  // Lean mode's Act prompt. Image generation guidance is added only when
+  // generate_image is offered; the full prompt's setup note is not.
+  _getLeanActPrompt() {
+    return this.imageGenConfigured ? `${SYSTEM_PROMPT_ACT_LEAN}\n\n${SYSTEM_PROMPT_GENERATIVE_MEDIA}` : SYSTEM_PROMPT_ACT_LEAN;
+  }
+
   setBrowserBatchEnabled(enabled) {
     const next = enabled !== false;
     if (this.browserBatchEnabled === next) return;
@@ -30232,8 +31453,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let provider = null;
     try { provider = this._activeProvider(tabId); } catch {}
     const tier = this._resolvePromptTier(provider);
-    let prompt = this._isActionMode(mode) ? this._getActPrompt(provider) : SYSTEM_PROMPT_ASK;
-    if (tier !== 'compact' && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
+    // Lean mode (Act only) swaps in its short prompt and drops the guidance
+    // for tools it does not offer (batching, WebMCP, research escalation,
+    // CAPTCHA solving).
+    const lean = this._leanPromptActive(tabId, mode, provider);
+    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK
+      : lean ? this._getLeanActPrompt() : this._getActPrompt(provider);
+    if (tier !== 'compact' && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled, lean })
         .some(tool => tool.function.name === 'browser_batch')) prompt += `\n\n${SYSTEM_PROMPT_BATCHING}`;
     const botMemory = tabId == null ? null : this._botMemorySessions.get(tabId);
     if (botMemory) prompt += `\n\n${botMemory.systemNote()}\n\n${this._wrapUntrusted('bot_memory_observe', botMemory.contextData())}`;
@@ -30266,7 +31492,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
-    if (this.researchEscalationEnabled) {
+    if (this.researchEscalationEnabled && !lean) {
       // Ask's clarify is only the ChatGPT consent card, so its note must not
       // send the model there for an ordinary missing-constraint question.
       prompt += `\n\n${researchEscalationSystemNote(this._isActionMode(mode) ? 'act' : 'ask')}`;
@@ -30288,7 +31514,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const memoryPrompt = formatUserMemoryPrompt(this.userMemoryRecords, this.userMemoryMaxPromptChars);
       if (memoryPrompt) prompt += `\n\n${memoryPrompt}`;
     }
-    if (this.captchaSolverEnabled && this._captchaToolsAvailable(tabId, mode, tier)) {
+    if (this.captchaSolverEnabled && !lean && this._captchaToolsAvailable(tabId, mode, tier)) {
       prompt += `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. Enabled coverage: ${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'recaptcha_v2')) ? 'reCAPTCHA v2/v3 including Enterprise, Turnstile, and image CAPTCHAs. ' : ''}${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'hcaptcha')) ? 'hCaptcha via NopeCHA or NoneCap. ' : 'hCaptcha requires manual completion. '} For other CAPTCHA families, call get_captcha_capabilities, inspect the chosen method schemas, and supply providerTasks to solve_captcha with inject:false. All documented token, recognition, cookie, and structured-answer methods are available through that route. Supply observed inputs for each compatible enabled provider so weight-based fallback can run. Apply the answer with apply_captcha_solution. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If neither automatic nor native inputs can be obtained, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha. These limits apply per challenge: a new CAPTCHA that appears later, such as after a submit or on a newly loaded page, is a separate challenge. Read the page and solve it once with solve_captcha before asking the user.]`;
     }
     // Ordinary turns get the one-line rendering; the full block is reserved for
@@ -31753,8 +32979,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * (an unknown outcome, a replacement that was not inserted) stays a
    * failure report, but locks nothing.
    */
-  _textWriteAdvisory(name, args, result) {
-    if (!this._guardAdvises('text-write-debt-arm', { decided: false })) return null;
+  _textWriteAdvisory(name, args, result, tabId = null) {
+    if (!this._guardAdvises('text-write-debt-arm', { decided: false, tabId })) return null;
     const unverified = result?.unverified && typeof result.unverified === 'object' ? result.unverified : null;
     const textSent = result.noDispatch !== true && (result.success === true || !!unverified);
     let guard = 'content-action-outcome-unknown';
@@ -31777,7 +33003,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       guard = 'trusted-field-retry-guards';
       reason = 'trusted_retry_failed';
     }
-    if (!this._guardAdvises(guard, { decided })) return null;
+    if (!this._guardAdvises(guard, { decided, tabId })) return null;
     return { guard, reason, decided, textSent };
   }
 
@@ -31819,7 +33045,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // (default mode arms no lock), and so does the content failureScope, so
   // the loop detector does not count the write as a failed target. A write
   // whose text went out reports success with unverifiedWrite and a note.
-  _advisoryTextWriteResult(name, args, result, advisory, { expectedLength, expectedSha256 }) {
+  _advisoryTextWriteResult(name, args, result, advisory, { expectedLength, expectedSha256, tabId = null }) {
     const out = { ...result };
     delete out.repeatBlocked;
     if (out.recoveryRequired === 'verify_or_restore_field') delete out.recoveryRequired;
@@ -31854,7 +33080,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     out.expectedSha256 = expectedSha256;
     const advisories = [];
     this._guardAdvisesFor(advisories, advisory.guard, this._textWriteAdvisoryNote(name, args, out, advisory),
-      { decided: advisory.decided });
+      { decided: advisory.decided, tabId });
     return withGuardAdvisories(out, advisories);
   }
 
@@ -31905,7 +33131,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
     // Bounded: one entry per edited field; the oldest field yields first.
     while (records.size > 32) records.delete(records.keys().next().value);
-    return this._advisoryTextWriteResult(name, args, result, advisory, { expectedLength: text.length, expectedSha256 });
+    return this._advisoryTextWriteResult(name, args, result, advisory, { expectedLength: text.length, expectedSha256, tabId });
   }
 
   // Default mode: a write to a field whose last write went out unverified
@@ -31918,12 +33144,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!prior || (prior.documentToken && target.documentToken && prior.documentToken !== target.documentToken)) return;
     this._guardAdvisesFor(advisories, 'text-write-debt-block',
       'An earlier write to this field was not verified and may already be in it, so this append can duplicate text. Read the field and fix it with one full replacement if needed.',
-      { decided: false });
+      { tabId, decided: false });
   }
 
   async _uncertainTextMutationBlock(tabId, name, args = {}, { advisories = null } = {}) {
     if (!['set_field', 'type_ax', 'type_text'].includes(name)) return null;
     this._notePriorUnverifiedTextWrite(tabId, name, args, advisories);
+    if (this._leanRunActive(tabId)) return null;
     const debts = this._uncertainTextMutations?.get(tabId);
     if (!(debts instanceof Map) || debts.size === 0) return null;
     let target = this._textMutationTarget(tabId, name, args);
@@ -32183,7 +33410,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this._guardAdvisesFor(advisories, 'text-write-debt-block', replacement
       ? 'An earlier write to this field was not verified; this replacement went ahead. Check the field before relying on it.'
       : 'An earlier write to this field was not verified and may already be in it, so this append can duplicate text. Read the field and fix it with one full replacement if needed.',
-    { decided: false })) return null;
+    { tabId, decided: false })) return null;
 
     return {
       success: false,
@@ -32269,7 +33496,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // reported (as an unverified success when its text went out) and kept
       // as a non-blocking record instead of debt that refuses later writes.
       // Strict checks fall through to today's debt and lock.
-      const advisory = this._textWriteAdvisory(name, args, result);
+      const advisory = this._textWriteAdvisory(name, args, result, tabId);
       if (advisory) {
         return this._recordUnverifiedTextWrite(tabId, name, args, result, advisory,
           { target, replacesValue, text, expectedSha256, enrich, liveDigest });
@@ -32452,6 +33679,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._verifiedTextReplacements.delete(tabId);
     // Task-scoped like the proofs it sits beside; it never guarded anything.
     this._unverifiedTextWrites?.delete(tabId);
+    this._predispatchTimings?.delete(tabId);
     this.progressPageScopes.delete(tabId);
     this.progressSessions.delete(tabId);
     this.progressExpectedItems.delete(tabId);
@@ -34602,6 +35830,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       taskText,
       pageScope,
     });
+  }
+
+  // The progress-ledger options a planner gate hands
+  // _ensureProgressSessionForCurrentTask, at a run's start and after each
+  // steering revision. Lean mode keeps no progress ledger (its tools omit
+  // progress_read and progress_update); the call still prepares the
+  // publication contract and the workflow fields hard checks rely on.
+  _progressLedgerGateOptions(tabId, gate) {
+    if (this._leanRunActive(tabId)) return { progressLedgerPolicy: 'disabled', progressAction: null, expectedItems: null };
+    return { progressLedgerPolicy: gate?.progressLedgerPolicy, progressAction: gate?.progressAction,
+      expectedItems: gate?.expectedItems };
   }
 
   async _ensureProgressSessionForCurrentTask(tabId, opts = {}) {
@@ -38996,7 +40235,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _executeToolWithLifecycle(tabId, name, args, onUpdate = null, executionContext = null) {
     // Quality guards that advise instead of refusing leave their notes in
     // this call's list; the result carries them to the model.
-    const guardAdvisories = Array.isArray(executionContext?.guardAdvisories) ? executionContext.guardAdvisories : [];
+    const guardAdvisories = this._trackGuardAdvisories(
+      Array.isArray(executionContext?.guardAdvisories) ? executionContext.guardAdvisories : [], tabId);
     const result = await this._executeToolWithLifecycleInner(tabId, name, args, onUpdate, { ...(executionContext || {}), guardAdvisories });
     // A note says what went through despite a check. When another check
     // then refused the call, nothing went through and the note would mislead.
@@ -39022,7 +40262,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._throwIfAborted(linked.signal);
         if (probe?.success !== true) {
           if (!this._guardAdvisesFor(executionContext.guardAdvisories, 'jev-target-changed', JEV_TARGET_CHANGED_NOTE,
-            { decided: probe?.staleJevTarget === true })) {
+            { tabId, decided: probe?.staleJevTarget === true })) {
             return { success: false, noDispatch: true, dispatched: false, staleJevTarget: true, error: 'Jev target changed; observe again before acting.' };
           }
           // Without Strict checks the fast-path call goes to whatever its
@@ -39304,7 +40544,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // checks the question is shown with a note.
       if (technicalRecipientReason && explicitRecipientQuestion
           && !this._guardAdvisesFor(executionContext?.guardAdvisories, 'recipient-clarify-cannot-repair-technical',
-            `The user's answer cannot supply the page evidence the message guard is missing (${technicalRecipientReason}); a send still needs that evidence or WebBrain's own recipient card. Re-read the recipient and composer after the answer.`)) {
+            `The user's answer cannot supply the page evidence the message guard is missing (${technicalRecipientReason}); a send still needs that evidence or WebBrain's own recipient card. Re-read the recipient and composer after the answer.`, { tabId })) {
         return { success: false, blocked: true, noDispatch: true, dispatched: false, retryable: false,
           messageRecipientGuard: true, reasonCode: technicalRecipientReason,
           error: 'Recipient confirmation cannot repair the unresolved technical message guard. No clarification was shown. Re-read the active recipient and composer evidence; if it remains unavailable, report the blocker instead of requesting the same approval again.' };
@@ -39611,7 +40851,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (nonMonotonic && !this._guardAdvisesFor(executionContext?.guardAdvisories, 'carousel-traversal-guards',
         traversalDirection === 'reverse'
           ? `This reversed carousel scan already processed slides down to ${previousState.minVerifiedIndex}; slide ${target.requestedIndex} was opened anyway. Do not record it again as a new row.`
-          : `This forward carousel scan already processed slides up to ${previousState.maxVerifiedIndex}; slide ${target.requestedIndex} was opened anyway. Do not record it again as a new row.`)) {
+          : `This forward carousel scan already processed slides up to ${previousState.maxVerifiedIndex}; slide ${target.requestedIndex} was opened anyway. Do not record it again as a new row.`, { tabId })) {
         return {
           success: false, dispatched: false, noDispatch: true, nonMonotonic: true,
           requestedIndex: target.requestedIndex, highestVerifiedIndex: previousState.maxVerifiedIndex,
@@ -40352,6 +41592,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const doneStartedAt = Date.now();
       const tableBlock = await this._resolveExactTableDone(tabId, args, onUpdate);
       if (tableBlock) return tableBlock;
+      if (this._leanRunActive(tabId)) return await this._leanDoneResult(tabId, args);
       // A form's ledger check at done uses which fields the request named.
       await this._readWorkflowRequestedFieldMatches(tabId);
       const outcome = normalizeDoneOutcome(args?.outcome);
@@ -40888,7 +42129,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   success: false,
                   blockedDone: true,
                   completionPageBlock: true,
-                  error: verification.completionWarning + this._completionPageWarningSuffix(blocks),
+                  error: verification.completionWarning + this._completionPageWarningSuffix(blocks, tabId),
                   pageUrl: verification.pageUrl,
                   pageState: verification.pageState,
                   ...(dataUrl ? { _attachImage: dataUrl } : {}),
@@ -42324,7 +43565,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // may not be the item it saw.
           if (boundResult?.errorCode === 'media_binding_changed'
               && this._guardAdvisesFor(executionContext?.guardAdvisories, 'media-download-target-binding',
-                'The media in focus changed after your last observation, so WebBrain could not confirm this download is the item you saw. It saved the media now in focus; check the downloaded file (list_downloads) before reporting it.')) {
+                'The media in focus changed after your last observation, so WebBrain could not confirm this download is the item you saw. It saved the media now in focus; check the downloaded file (list_downloads) before reporting it.', { tabId })) {
             this._throwIfAborted?.(executionContext?._contentActionAbortSignal || null);
             return await runDomDownloader({ bound: false });
           }
@@ -43382,7 +44623,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // selector's current match without a binding; Strict checks refuse.
       if (!dispatchBinding?.token && !this._guardAdvisesFor(dispatchContext.guardAdvisories, 'typing-target-identity',
         'The field could not be pinned to the element checked before typing, so the text went to the current match of this selector. Check that the intended field changed.',
-        { decided: false })) {
+        { tabId, decided: false })) {
         return {
           success: false,
           dispatched: false,
@@ -43986,6 +45227,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.set(tabId, onUpdate);
     this._runModeOverrides.set(tabId, mode);
+    // Lean mode is resolved once, now that the run's mode and provider are
+    // known, and holds for every tool list, prompt and guard of this run.
+    const previousLeanRun = this._leanRuns?.get(tabId);
+    this._beginLeanRun(tabId, mode);
     const previousBotMemory = this._botMemorySessions.get(tabId);
     let botMemorySession = null;
     const previousCloudContext = this.cloudRunContexts.get(tabId);
@@ -44019,6 +45264,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
+      if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
+      else this._leanRuns?.delete(tabId);
       if (previousStandaloneChatRun) this._standaloneChatRunTabs.add(tabId);
       else this._standaloneChatRunTabs.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
@@ -44408,7 +45655,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // the planner ended the run by asking the user a question (its status
     // varies), so an unattended caller such as a recurring scheduled task can
     // wait for the user instead of asking again on every run.
-    const runEnd = { needsUserInput: false };
+    const runEnd = { needsUserInput: false, leanMode: this._leanRunActive(tabId) };
     // Voluntary research sharing must only capture runs where the model was
     // actually called. Local-only fast paths (recommended first tool,
     // selection-restoration read, dev/attachment guards) return with status
@@ -44469,7 +45716,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const sourceBoundAttachments = selectionOnly ? [] : attachments;
     if (sourceBoundAttachments && sourceBoundAttachments.length) {
       const attachmentToolNames = new Set(
-        getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled, tier: provider.promptTier, imageGenConfigured: this.imageGenConfigured })
+        getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled, tier: provider.promptTier, imageGenConfigured: this.imageGenConfigured,
+          lean: this._leanRunActive(tabId) })
           .map(tool => tool?.function?.name)
           .filter(Boolean),
       );
@@ -44579,9 +45827,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._ensureProgressSessionForCurrentTask(tabId, {
         provider,
         costState,
-        progressLedgerPolicy: gateOutcome.progressLedgerPolicy,
-        progressAction: gateOutcome.progressAction,
-        expectedItems: gateOutcome.expectedItems,
+        ...this._progressLedgerGateOptions(tabId, gateOutcome),
       });
     }
     const tier = provider.promptTier;
@@ -44589,6 +45835,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
     const cloudRunContext = this.cloudRunContexts.get(tabId) || null;
     let tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
+      lean: this._leanRunActive(tabId),
       strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
       tier,
       imageGenConfigured: this.imageGenConfigured,
@@ -44866,6 +46113,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
       tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
+        lean: this._leanRunActive(tabId),
         strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
         tier,
         imageGenConfigured: this.imageGenConfigured,
@@ -44894,7 +46142,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
       }
-      await this._prepareCalculationReading(tabId);
+      if (!this._leanRunActive(tabId)) await this._prepareCalculationReading(tabId);
       const calculationToolPolicy = this._pureCalculationToolPolicy(tabId);
       if (calculationToolPolicy) tools = tools.filter(tool => calculationToolPolicy.names.includes(tool.function.name));
       const completionRecoveryPolicy = this._completionRecoveryPolicy(tabId, tools, {
@@ -45479,7 +46727,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finalResponse;
       }
       const readFinalLimitation = this._readCompletenessLimitation(tabId);
-      if (readFinalLimitation && !this._guardAdvises('read-coverage-ask-limitation', { decided: false })) {
+      if (readFinalLimitation && !this._guardAdvises('read-coverage-ask-limitation', { tabId, decided: false })) {
         finalResponse = readFinalLimitation;
         _traceStatus = 'read_scope_limited';
         messages.push({ role: 'assistant', content: finalResponse });
@@ -45508,7 +46756,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } = this._plainFinalGuardBlocks(tabId, result.content);
       const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock, exactTableFinalBlock].filter(Boolean);
       if (plainFinalBlocks.length) {
-        if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2 && this._plainFinalTwoStrikeEnds()) {
+        if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2 && this._plainFinalTwoStrikeEnds(tabId)) {
           finalResponse = this._completionPlainFinalPartial(tabId, result.content, {
             progressBlocked: !!progressFinalBlock,
             readBlocked: !!readFinalBlock,
@@ -45523,7 +46771,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (completionFinalBlock) completionPlainFinalRecoveryAttempted++;
         if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2 && steps >= this.maxSteps
-            && this._plainFinalTwoStrikeEnds()) {
+            && this._plainFinalTwoStrikeEnds(tabId)) {
           finalResponse = this._completionPlainFinalPartial(tabId, result.content, {
             progressBlocked: !!progressFinalBlock,
             readBlocked: !!readFinalBlock,
@@ -45592,12 +46840,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       // A plain final is the model's own success claim: a chat message sent
       // in this run is confirmed and its receipt saved first, as done does
-      // (native-chat-receipt-not-durable). Two refusals, or the step budget,
-      // end the run as partial, never as a success.
-      const plainFinalReceiptBlock = await this._plainFinalChatReceiptBlock(tabId);
+      // (native-chat-receipt-not-durable; in a lean run _leanChatReceiptBlock,
+      // which also refuses a send the conversation cannot confirm, once). Two
+      // refusals, or the step budget, end the run as partial, never as a
+      // success.
+      const plainFinalReceiptBlock = this._leanRunActive(tabId)
+        ? await this._leanChatReceiptBlock(tabId)
+        : await this._plainFinalChatReceiptBlock(tabId);
       if (plainFinalReceiptBlock) {
         if (plainFinalReceiptRefusals >= 2 || steps >= this.maxSteps) {
-          finalResponse = this._chatReceiptPartialFinal(result.content);
+          finalResponse = this._chatReceiptPartialFinal(result.content, plainFinalReceiptBlock);
           _traceStatus = 'partial';
           messages.push({ role: 'assistant', content: finalResponse });
           onUpdate('text', { content: finalResponse, replace: true });
@@ -45780,6 +47032,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
     this._runUpdateCallbacks.set(tabId, onUpdate);
     this._runModeOverrides.set(tabId, mode);
+    // Lean mode is resolved once, now that the run's mode and provider are
+    // known, and holds for every tool list, prompt and guard of this run.
+    const previousLeanRun = this._leanRuns?.get(tabId);
+    this._beginLeanRun(tabId, mode);
     const previousBotMemory = this._botMemorySessions.get(tabId);
     let botMemorySession = null;
     const previousCloudContext = this.cloudRunContexts.get(tabId);
@@ -45812,6 +47068,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
+      if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
+      else this._leanRuns?.delete(tabId);
       if (previousStandaloneChatRun) this._standaloneChatRunTabs.add(tabId);
       else this._standaloneChatRunTabs.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
@@ -45938,7 +47196,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let lastTraceStep = 0; // step counter for turn_end, readable outside the loop
     let _traceStatus = 'done';
     // See processMessage: onRunFinished's second argument.
-    const runEnd = { needsUserInput: false };
+    const runEnd = { needsUserInput: false, leanMode: this._leanRunActive(tabId) };
     // See processMessage: only provider-backed completions may be shared.
     let shareHadProviderCompletion = false;
     // Exact pruned request of the last streaming provider call (set before
@@ -46038,9 +47296,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._ensureProgressSessionForCurrentTask(tabId, {
         provider,
         costState,
-        progressLedgerPolicy: gateOutcome.progressLedgerPolicy,
-        progressAction: gateOutcome.progressAction,
-        expectedItems: gateOutcome.expectedItems,
+        ...this._progressLedgerGateOptions(tabId, gateOutcome),
       });
     }
     const tier = provider.promptTier;
@@ -46048,6 +47304,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
     const cloudRunContext = this.cloudRunContexts.get(tabId) || null;
     let tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
+      lean: this._leanRunActive(tabId),
       strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
       tier,
       imageGenConfigured: this.imageGenConfigured,
@@ -46161,6 +47418,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
       tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
+        lean: this._leanRunActive(tabId),
         strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
         tier,
         imageGenConfigured: this.imageGenConfigured,
@@ -46188,7 +47446,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
       }
-      await this._prepareCalculationReading(tabId);
+      if (!this._leanRunActive(tabId)) await this._prepareCalculationReading(tabId);
       const calculationToolPolicy = this._pureCalculationToolPolicy(tabId);
       if (calculationToolPolicy) tools = tools.filter(tool => calculationToolPolicy.names.includes(tool.function.name));
       const completionRecoveryPolicy = this._completionRecoveryPolicy(tabId, tools, {
@@ -46682,7 +47940,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return finish(clarificationFinalDecision.failure, clarificationFinalDecision.status);
         }
         const readFinalLimitation = this._readCompletenessLimitation(tabId);
-        if (readFinalLimitation && !this._guardAdvises('read-coverage-ask-limitation', { decided: false })) {
+        if (readFinalLimitation && !this._guardAdvises('read-coverage-ask-limitation', { tabId, decided: false })) {
           messages.push({ role: 'assistant', content: readFinalLimitation });
           onUpdate('text', { content: readFinalLimitation, replace: true });
           onUpdate('warning', { message: 'Ask mode could not verify that every Gmail message was expanded.' });
@@ -46711,7 +47969,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } = this._plainFinalGuardBlocks(tabId, fullText);
         const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock, exactTableFinalBlock].filter(Boolean);
         if (plainFinalBlocks.length) {
-          if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2 && this._plainFinalTwoStrikeEnds()) {
+          if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2 && this._plainFinalTwoStrikeEnds(tabId)) {
             const partial = this._completionPlainFinalPartial(tabId, fullText, {
               progressBlocked: !!progressFinalBlock,
               readBlocked: !!readFinalBlock,
@@ -46725,7 +47983,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
           if (completionFinalBlock) completionPlainFinalRecoveryAttempted++;
           if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2 && steps >= this.maxSteps
-              && this._plainFinalTwoStrikeEnds()) {
+              && this._plainFinalTwoStrikeEnds(tabId)) {
             const partial = this._completionPlainFinalPartial(tabId, fullText, {
               progressBlocked: !!progressFinalBlock,
               readBlocked: !!readFinalBlock,
@@ -46798,12 +48056,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         // A plain final is the model's own success claim: a chat message sent
         // in this run is confirmed and its receipt saved first, as done does
-        // (native-chat-receipt-not-durable). Two refusals, or the step budget,
-        // end the run as partial, never as a success.
-        const plainFinalReceiptBlock = await this._plainFinalChatReceiptBlock(tabId);
+        // (see the chat loop; a lean run uses _leanChatReceiptBlock). Two
+        // refusals, or the step budget, end the run as partial, never as a
+        // success.
+        const plainFinalReceiptBlock = this._leanRunActive(tabId)
+          ? await this._leanChatReceiptBlock(tabId)
+          : await this._plainFinalChatReceiptBlock(tabId);
         if (plainFinalReceiptBlock) {
           if (plainFinalReceiptRefusals >= 2 || steps >= this.maxSteps) {
-            const partialText = this._chatReceiptPartialFinal(fullText);
+            const partialText = this._chatReceiptPartialFinal(fullText, plainFinalReceiptBlock);
             messages.push({ role: 'assistant', content: partialText });
             onUpdate('text', { content: partialText, replace: true });
             onUpdate('warning', { message: 'Run ended without a saved chat delivery receipt.' });
