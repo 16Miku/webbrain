@@ -73003,6 +73003,23 @@ test('Local OpenAI-compatible Proxy context window: model card, live props, mode
         assert.equal(config().contextWindow, 65536);
       }
 
+      // 5b. Stale auto provenance is cleared when Settings explicitly changes the context window.
+      // (auto 128k → manual 32k → manual 128k: the manual 128k must not be replaced by 64k)
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: 'house-model', contextWindow: 128000, autoContextWindow: 128000,
+        });
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 32768 });
+        assert.equal(config().contextWindow, 32768);
+        assert.equal(config().autoContextWindow, undefined, `${label}: manual edit clears autoContextWindow`);
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 128000 });
+        assert.equal(config().contextWindow, 128000);
+        assert.equal(config().autoContextWindow, undefined, `${label}: returning to 128k remains manual`);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'house-model');
+        assert.equal(result.contextWindow, undefined, `${label}: manual 128k override is kept`);
+        assert.equal(config().contextWindow, 128000);
+      }
+
       // 6. A manual override is never enlarged by a name or the fallback...
       {
         const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {

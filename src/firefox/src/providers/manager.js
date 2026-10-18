@@ -1606,6 +1606,18 @@ export class ProviderManager {
       ...updates,
       configured: !WEBBRAIN_CLOUD_PROVIDER_IDS.has(id) && (markConfigured || current.configured === true),
     };
+    if (Object.hasOwn(updates, 'contextWindow')) {
+      if (!Number.isFinite(Number(current.contextWindow))
+        || Number(updates.contextWindow) !== Number(current.contextWindow)
+        || Number(updates.contextWindow) !== Number(current.autoContextWindow)) {
+        delete merged.autoContextWindow;
+      }
+    } else if (Number.isFinite(Number(current.autoContextWindow)) && Number(merged.contextWindow) !== Number(current.autoContextWindow)) {
+      delete merged.autoContextWindow;
+    }
+    if (Object.hasOwn(updates, 'autoContextWindow') && updates.autoContextWindow == null) {
+      delete merged.autoContextWindow;
+    }
     if (this._providerDefinitionId(id, current) === 'ollama') {
       merged.visionMode = OLLAMA_VISION_MODES.has(merged.visionMode) ? merged.visionMode : 'auto';
       delete merged.supportsVision;
@@ -2217,7 +2229,8 @@ export class ProviderManager {
   _replaceableContextWindows(id, config) {
     if (this._providerDefinitionId(id, config) !== 'local_openai_proxy') return [];
     const auto = Number(config?.autoContextWindow);
-    return [LOCAL_OPENAI_PROXY_CONTEXT_WINDOW, ...(Number.isFinite(auto) && auto > 0 ? [auto] : [])];
+    const matchesCurrent = Number(config?.contextWindow) === auto;
+    return [LOCAL_OPENAI_PROXY_CONTEXT_WINDOW, ...(Number.isFinite(auto) && auto > 0 && matchesCurrent ? [auto] : [])];
   }
 
   _detectedContextWindowFields(id, config, contextWindow) {
