@@ -1644,13 +1644,14 @@ async function queueFirefoxSelectionShortcutPromptAfterProviders(msg, tab, sendR
       { contextWindow },
     )
     : includePageContext
-    ? buildFullContextSelectionPrompt(selectionText, msg.question)
+    ? buildFullContextSelectionPrompt(selectionText, msg.question, { trim: !msg.priorAnswer })
     : buildSelectionPrompt(
       selectionText,
       msg.action,
       msg.question,
       msg.language,
       sourceGrounding,
+      { trim: !msg.priorAnswer },
     );
   if (!tab?.id || !text) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid selection shortcut request.' });

@@ -218,6 +218,7 @@ export function buildSelectionPrompt(
   question = '',
   language = '',
   sourceGrounding = SELECTION_ONLY_SOURCE_GROUNDING,
+  options = {},
 ) {
   const actionId = String(action || '').trim();
   const normalizedSourceGrounding = normalizeSelectionSourceGrounding(sourceGrounding);
@@ -225,16 +226,17 @@ export function buildSelectionPrompt(
   if (normalizedSourceGrounding === SELECTION_CONTEXT_SOURCE_GROUNDING && actionId !== 'custom') return '';
   const instruction = selectionActionInstruction(actionId, question, language);
   if (!instruction) return '';
-  return wrapSelectedPageText(selectionText, instruction, normalizedSourceGrounding);
+  return wrapSelectedPageText(selectionText, instruction, normalizedSourceGrounding, options);
 }
 
-export function buildFullContextSelectionPrompt(selectionText, question) {
+export function buildFullContextSelectionPrompt(selectionText, question, options = {}) {
   const userQuestion = String(question || '').trim();
   if (!userQuestion) return '';
   return wrapSelectedPageText(
     selectionText,
     `${CUSTOM_QUESTION_PREFIX}${userQuestion}`,
     FULL_CONTEXT_PROMPT_GROUNDING,
+    options,
   );
 }
 
