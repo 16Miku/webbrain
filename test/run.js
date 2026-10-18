@@ -41607,6 +41607,208 @@ test('tiny Ask answers in-browser side-panel Ask turns from the page in one tool
   }
 });
 
+test('tiny Ask shows a vision-capable in-browser model the visible page when its own readout says so', async () => {
+  const { tinyAskScreenshotGate, tinyAskScreenshotGateProbability, TINY_ASK_SCREENSHOT_GATE_QUESTION, TINY_ASK_SCREENSHOT_NOTE,
+    TINY_ASK_TEXTLESS_SCREENSHOT_NOTE, TINY_ASK_SYSTEM_PROMPT } = TinyAskCh;
+  // The gate is language-independent: no word lists, only the user's message
+  // and facts WebBrain knows.
+  const gate = tinyAskScreenshotGate({ question: 'Welche Farbe hat der Knopf?', pageChars: 5400, imageAttachment: true, linkedPage: false });
+  assert.match(gate.state, /Welche Farbe hat der Knopf\?/);
+  assert.match(gate.state, /Current page text: about 5400 characters\./);
+  assert.match(gate.state, /The user attached an image: yes\./);
+  assert.match(gate.state, /The message links another page: no\./);
+  assert.deepEqual(gate.questions, { needs_screenshot: { type: 'noul', instructions: TINY_ASK_SCREENSHOT_GATE_QUESTION } });
+  assert.equal(tinyAskScreenshotGateProbability({ needs_screenshot: { type: 'noul', noul: 0.8 } }), 0.8);
+  assert.equal(tinyAskScreenshotGateProbability({}), null);
+  assert.match(tinyAskScreenshotGate({ question: 'x', pageChars: 12 }).state, /Current page text: almost none\./);
+  const long = tinyAskScreenshotGate({ question: `${'Background notes. '.repeat(300)}Compare this with the logo on the current page.` }).state;
+  assert.match(long, /Compare this with the logo on the current page\./, 'a long message keeps its end, where the request is');
+  assert.match(long, /^The user's message to the browser assistant:\nBackground notes\./, 'and its opening');
+  assert.ok(long.length < 2300, 'bounded');
+  assert.match(TINY_ASK_SYSTEM_PROMPT, /a screenshot of its visible part/);
+  assert.match(TINY_ASK_SYSTEM_PROMPT, /one-time codes that appear in page text or a screenshot/, 'the no-secrets rule covers screenshots');
+  assert.match(TINY_ASK_SCREENSHOT_NOTE, /never repeat passwords, keys, tokens or one-time codes/);
+  assert.match(TINY_ASK_TEXTLESS_SCREENSHOT_NOTE, /never repeat passwords, keys, tokens or one-time codes/);
+  assert.ok(TINY_ASK_SYSTEM_PROMPT.length <= 1600);
+
+  const setup = ({ supportsVision = true, visionOverride = null, pageText = 'Blue plan: $5 per month. '.repeat(20), gate = () => 0.9, tabUrl = 'https://shop.example/plans', readFails = false } = {}) => {
+    const requests = [];
+    const decisions = [];
+    const provider = {
+      name: 'webgpu', supportsTools: true, supportsVision, promptTier: 'compact', contextWindow: 16384,
+      model: 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision',
+      chat: async messages => { requests.push(JSON.parse(JSON.stringify(messages))); return { content: 'Answer.', toolCalls: null }; },
+      decide: async request => {
+        decisions.push(request);
+        const value = gate(request);
+        if (value instanceof Error) throw value;
+        return { answers: { needs_screenshot: { type: 'noul', noul: value } } };
+      },
+    };
+    const agent = new AgentCh({
+      getActive: () => provider,
+      getProvider: id => (id === 'webgpu' ? provider : null),
+      getVisionProvider: async () => null,
+      ...(visionOverride ? { resolveVisionRoute: async () => ({ provider: visionOverride, route: 'explicit_override', rawImage: false }) } : {}),
+    });
+    const tabId = 1730;
+    agent.conversationModes.set(tabId, 'ask');
+    agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt('ask', tabId) }]);
+    agent._hydrate = async () => { };
+    agent._startTraceRun = async () => null;
+    agent._endTraceRun = () => { };
+    agent._persist = () => { };
+    agent._checkCostAllowance = async () => null;
+    agent._recordCostUsage = async () => null;
+    agent._getTabUrlTitle = async () => ({ tabUrl, tabTitle: 'Plans' });
+    agent.executeTool = async (_tabId, name) => {
+      if (name === 'read_page') return readFails ? { success: false, error: 'Cannot access contents of the page' } : { text: pageText, hasMore: false, nextOffset: null };
+      if (name === 'get_selection') return { text: '' };
+      if (name === 'fetch_url') return { success: true, text: 'Linked page text.', hasMore: false };
+      throw new Error(`unexpected tool ${name}`);
+    };
+    const captures = [];
+    agent._captureBudgetedAutoScreenshot = async id => {
+      captures.push(id);
+      return { dataUrl: 'data:image/jpeg;base64,c2NyZWVu', width: 800, height: 600, captureId: 'cap_1' };
+    };
+    const run = (text, attachments = []) => agent.processMessage(tabId, text, () => { }, 'ask', attachments, {});
+    return { agent, tabId, requests, decisions, captures, run };
+  };
+  const imagesOf = request => request.flatMap(message => (Array.isArray(message.content) ? message.content : []))
+    .filter(block => block.type === 'image_url').map(block => block.image_url.url);
+
+  {
+    const { agent, tabId, requests, decisions, captures, run } = setup();
+    assert.equal(await run('¿De qué color es el botón de compra?'), 'Answer.');
+    assert.equal(decisions.length, 1, 'one readout before the answer');
+    assert.equal(decisions[0].promptVariant, 'gate');
+    assert.match(decisions[0].state, /¿De qué color es el botón de compra\?/, 'the readout sees the question, in any language');
+    assert.doesNotMatch(decisions[0].state, /Blue plan|shop\.example|Plans/, 'and never page content, URL or title');
+    assert.equal(captures.length, 1, 'a Yes takes one screenshot');
+    assert.equal(requests.length, 1, 'still one answer call');
+    const user = requests[0].at(-1);
+    const noteIndex = user.content.findIndex(block => block.type === 'text' && block.text === TINY_ASK_SCREENSHOT_NOTE);
+    assert.equal(user.content[noteIndex + 1]?.type, 'image_url', 'the untrusted-content note precedes the screenshot');
+    assert.deepEqual(imagesOf(requests[0]), ['data:image/jpeg;base64,c2NyZWVu']);
+    assert.match(JSON.stringify(user.content), /Blue plan: \$5 per month/, 'the page text still goes along');
+    assert.equal(user.content.at(-1).text, '¿De qué color es el botón de compra?', 'the question comes last');
+    assert.doesNotMatch(JSON.stringify(agent.conversations.get(tabId)), /data:image|c2NyZWVu/, 'the screenshot is not persisted');
+    // The gate runs during enrichment, before the trace run starts: its note
+    // is queued (this harness never starts a trace), then flushed below.
+    assert.equal(agent.pendingTinyAskGateTraces.get(tabId)?.probability, 0.9, 'the gate note is kept for the trace');
+    const agentSource = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+    const start = agentSource.slice(agentSource.indexOf('async _startTraceRun('), agentSource.indexOf('async _endTraceRun('));
+    assert.match(start, /const pendingGate = this\.pendingTinyAskGateTraces\.get\(tabId\);\n\s*this\.pendingTinyAskGateTraces\.delete\(tabId\);\n\s*if \(pendingGate\) trace\.recordNote\(runId, null, 'tiny_ask_screenshot_gate', pendingGate\);/,
+      '_startTraceRun records the queued gate note');
+    assert.equal((start.match(/this\.pendingTinyAskGateTraces\.delete\(tabId\)/g) || []).length, 3, 'and drops it when no trace starts');
+  }
+  {
+    const { requests, captures, run } = setup({ gate: () => 0.1 });
+    await run('How much is the blue plan?');
+    assert.equal(captures.length, 0, 'a No takes no screenshot');
+    assert.deepEqual(imagesOf(requests[0]), []);
+  }
+  {
+    // The turn after one answered from a screenshot: the stored question is
+    // marked (never the image), and a short follow-up clears a lower bar. The
+    // readout still sees only the new message. A text-only turn resets it.
+    const { TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD, TINY_ASK_SCREENSHOT_GATE_THRESHOLD } = TinyAskCh;
+    assert.ok(TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD < 0.45 && TINY_ASK_SCREENSHOT_GATE_THRESHOLD > 0.45);
+    const values = [0.9, 0.45, 0.45, 0.1, 0.45];
+    const { agent, tabId, requests, decisions, captures, run } = setup({ gate: () => values[decisions.length - 1] });
+    await run('What colour is the banner?');
+    assert.equal(captures.length, 1);
+    const stored = () => agent.conversations.get(tabId).filter(message => message.role === 'user');
+    assert.equal(stored()[0].webbrainTinyAskScreenshot, true, 'the stored question remembers the screenshot');
+    await run('And the button?');
+    assert.doesNotMatch(decisions[1].state, /banner/, 'the readout sees only the new message');
+    assert.equal(captures.length, 2, 'a follow-up at 0.45 looks again');
+    assert.equal(agent.pendingTinyAskGateTraces.get(tabId)?.threshold, TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD, 'the trace shows the bar used');
+    assert.deepEqual(imagesOf(requests[1]), ['data:image/jpeg;base64,c2NyZWVu'], 'only this turn\'s screenshot reaches the model');
+    assert.doesNotMatch(JSON.stringify(requests[1]), /webbrainTinyAskScreenshot/, 'the marker never reaches the model');
+    await run('Ya logo?');
+    assert.equal(captures.length, 3, 'a chain of visual follow-ups keeps looking');
+    await run('How much is the blue plan?');
+    assert.equal(captures.length, 3);
+    assert.equal(stored()[3].webbrainTinyAskScreenshot, undefined);
+    await run('And the yellow one?');
+    assert.equal(captures.length, 3, 'after a text-only turn the usual bar applies');
+    assert.equal(agent.pendingTinyAskGateTraces.get(tabId)?.threshold, TINY_ASK_SCREENSHOT_GATE_THRESHOLD);
+    assert.doesNotMatch(JSON.stringify(agent.conversations.get(tabId)), /data:image|c2NyZWVu/, 'no screenshot is persisted');
+  }
+  {
+    const { requests, captures, run } = setup({ gate: () => new Error('worker busy') });
+    assert.equal(await run('What color is the Buy button?'), 'Answer.', 'a failed readout still answers');
+    assert.equal(captures.length, 0, 'text-only, as before');
+    assert.deepEqual(imagesOf(requests[0]), []);
+  }
+  {
+    const { requests, decisions, captures, run } = setup({ pageText: '' });
+    await run('Was ist auf dieser Seite?');
+    assert.match(decisions[0].state, /Current page text: almost none\./);
+    assert.equal(captures.length, 1);
+    assert.ok(requests[0].at(-1).content.some(block => block.text === TINY_ASK_TEXTLESS_SCREENSHOT_NOTE),
+      'a textless page tells the model to answer from the image');
+  }
+  {
+    // A stalled worker: the readout never answers. The turn goes ahead
+    // text-only after the gate's deadline, and the readout is cancelled.
+    let gateSignal = null;
+    const { agent, requests, captures, run } = setup();
+    agent.tinyAskGateTimeoutMs = 30;
+    agent._providerForRunOptions(1730, {}).decide = request => { gateSignal = request.signal; return new Promise(() => {}); };
+    const started = Date.now();
+    assert.equal(await run('What colour is the banner?'), 'Answer.', 'a stalled readout does not hold the turn');
+    assert.ok(Date.now() - started < 2000);
+    assert.equal(gateSignal?.aborted, true, 'the readout is cancelled at the deadline');
+    assert.equal(captures.length, 0);
+    assert.deepEqual(imagesOf(requests[0]), []);
+  }
+  {
+    // A gate note left by a turn that ended before its trace started must not
+    // reach the next turn's trace.
+    const { agent, tabId, decisions, run } = setup({ supportsVision: false });
+    agent.pendingTinyAskGateTraces.set(tabId, { probability: 0.42, ms: 7 });
+    await run('How much is the blue plan?');
+    assert.equal(decisions.length, 0);
+    assert.equal(agent.pendingTinyAskGateTraces.has(tabId), false, 'each turn starts without a stale gate note');
+  }
+  {
+    const { requests, decisions, captures, run } = setup({ readFails: true });
+    await run('What colour is the banner?');
+    assert.equal(decisions.length, 1, 'a failed text read on a normal page still reaches the gate');
+    assert.match(decisions[0].state, /Current page text: almost none\./);
+    assert.equal(captures.length, 1);
+    assert.ok(requests[0].at(-1).content.some(block => block.text === TINY_ASK_TEXTLESS_SCREENSHOT_NOTE));
+  }
+  {
+    const { requests, decisions, captures, run } = setup();
+    await run('What is in this image?', [{ kind: 'image', name: 'cat.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,Y2F0' }]);
+    assert.match(decisions[0].state, /The user attached an image: yes\./, 'the readout knows about the attachment');
+    assert.equal(captures.length, 1);
+    assert.deepEqual(imagesOf(requests[0]), ['data:image/jpeg;base64,c2NyZWVu', 'data:image/png;base64,Y2F0'],
+      'when the readout asks for the page as well, both images reach the model');
+  }
+  {
+    const { decisions, run } = setup({ gate: () => 0.1 });
+    await run('What color is the logo at https://brand.example/about?');
+    assert.match(decisions[0].state, /The message links another page: yes\./, 'the readout knows about the linked page');
+  }
+  for (const [label, options, before] of [
+    ['a text-only in-browser model', { supportsVision: false }],
+    ['an override vision model (tiny Ask stays on the device)', { visionOverride: { name: 'openai', supportsVision: true } }],
+    ['Strict Secret Mode', {}, agent => { agent.strictSecretMode = true; }],
+    ['an unreadable page', { tabUrl: 'chrome://settings/' }],
+  ]) {
+    const { agent, decisions, captures, run } = setup(options);
+    before?.(agent);
+    await run('What color is the Buy button?');
+    assert.equal(decisions.length, 0, `${label}: no readout`);
+    assert.equal(captures.length, 0, `${label}: no screenshot`);
+  }
+});
+
 test('tiny Ask leaves the standalone WebGPU window and other providers unchanged', async () => {
   const agent = new AgentCh({ getActive() { throw new Error('standalone prompt must not consult the provider'); } });
   // Byte-identical to the standalone prompt before tiny Ask existed.
