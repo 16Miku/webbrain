@@ -66,6 +66,10 @@ export function systemOneFailureReason(error) {
     JEV_INVALID_DISTRIBUTION: 'invalid_distribution',
     JEV_INVALID_CHOICE: 'invalid_choice',
     JEV_INVALID_SCORE: 'invalid_score',
+    // The local D1 Worker (providers/d1-worker.js) answers without its model.
+    D1_MODEL_LOADING: 'model_loading',
+    D1_MODEL_NOT_LOADED: 'model_not_loaded',
+    D1_REQUEST_CANCELLED: 'cancelled',
   };
   if (mapped[error?.code]) return mapped[error.code];
   const status = Number(error?.status || 0);

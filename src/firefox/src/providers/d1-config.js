@@ -1,6 +1,11 @@
 export const D1_MODEL_ID = 'webbrain-one/d1-browser-decision-fp16';
 export const D1_CONSENT_VERSION = 1;
 export const D1_CONSENT_KEY = 'd1WebgpuConsentVersion';
+// Set by Settings' Download and load / Load cached model, cleared by Unload,
+// Remove and switching D1 off there. While it is set, a decision that finds
+// the model unloaded (a browser restart, a discarded stalled session, a lost
+// GPU device) reloads the verified cache in the background; never downloads.
+export const D1_KEEP_LOADED_KEY = 'd1WebgpuKeepLoaded';
 export const D1_CACHE_NAME = 'webbrain-d1-fp16-v1';
 // Immutable release package; downloaded data is verified before local loading.
 export const D1_RELEASE = Object.freeze({ revision: 'd4916f0c47d46f16e7876e425eb12a122671d3eb', manifestSha256: 'a94fb80ba47cc6c3e05cc3dbda45f9f2b99f4f1999b0770a0a09ba59e0c861ed' });

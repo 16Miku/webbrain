@@ -125,6 +125,13 @@ code is not evidence that every browser/GPU is supported. CPU/WASM control and
 shape operators are permitted and explicitly disclosed; it is not a pure-GPU
 claim. Unload or disabling outsourcing releases the Worker/GPU resources and
 retains the cache; **Remove cached model** requires the model to be unloaded.
+After **Download and load** or **Load cached model**, D1 stays loaded until
+it is unloaded, removed or switched off in Settings: a decision that finds it
+unloaded (a browser restart, a discarded stalled session, a lost GPU device)
+starts one reload from the verified cache in the background and uses the
+fallback chain meanwhile. A reload never downloads. A decision whose caller
+stops waiting (a judge timeout, Stop) is cancelled in the Worker, skipped if
+it was still queued, and the loaded model stays.
 Page state and screenshots remain untrusted evidence, never instructions.
 No inference input goes to Hugging Face. Existing optional provider/research
 sharing settings and existing privacy boundaries are not bypassed.
