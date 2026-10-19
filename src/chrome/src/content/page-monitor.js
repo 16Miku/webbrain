@@ -1414,6 +1414,28 @@
     }
     return null;
   }
+  // A post the page offers as one item to assistive technology: an article
+  // that can take focus (any valid tabindex) and has a name of its own
+  // (aria-label, or aria-labelledby with every reference present), holding a
+  // real link and no editor. X marks each timeline post this way (tabindex 0)
+  // and the post a status page shows (tabindex -1), with no feed position.
+  function namedFocusableArticle(node) {
+    if (!(node instanceof Element) || !node.matches('article,[role="article"]')
+        || !/^\s*-?\d+\s*$/.test(node.getAttribute('tabindex') || '')) return false;
+    let named = !!String(node.getAttribute('aria-label') || '').trim();
+    if (!named) {
+      const ids = String(node.getAttribute('aria-labelledby') || '').trim().split(/\s+/).filter(Boolean);
+      const labels = ids.length ? modelLabels(node) : null;
+      named = !!labels && ids.every(id => labels.some(label => label.node.id === id))
+        && labels.some(label => String(window.__wb_ax_name?.(label.node) || label.node.textContent || '').trim());
+    }
+    if (!named || node.querySelectorAll(modelControlSelector).length > 64
+        || node.querySelector('input:not([type="hidden"]),textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')) return false;
+    return [...node.querySelectorAll('a[href]')].some(link => {
+      const href = String(link.getAttribute('href') || '').trim();
+      return visible(link) && !!href && !href.startsWith('#') && !/^javascript:/i.test(href);
+    });
+  }
   // `keyboard` leaves out which node is on top at the target's centre; only
   // keyboard input to the focused field is checked against such a footprint
   // (see keyboardBoundField).
@@ -1645,11 +1667,12 @@
       // An item of an ARIA feed (an article with its position in the feed,
       // as Mastodon and other social timelines mark each post) is an entity
       // of its own: its controls are bound with the item, and changes in other
-      // items of the feed are not this item's context.
+      // items of the feed are not this item's context. So is an article the
+      // page names and lets take focus as one item (namedFocusableArticle).
       const feedItem = owner.matches('article[aria-posinset],[role="article"][aria-posinset]')
         && !!owner.parentElement?.closest('[role="feed"]');
       meaningfulOwner ||= headings.length > 0 || identities.length > 0 || owner.matches(modelEntityIdentitySelector) || feedItem
-        || namedItemOwner;
+        || namedItemOwner || namedFocusableArticle(owner);
       if (meaningfulOwner) {
         const images = [...owner.querySelectorAll('img')].filter(node => belongs(node, navigationOwner)
           && !node.closest('input,textarea,[contenteditable]:not([contenteditable="false"])')

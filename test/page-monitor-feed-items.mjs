@@ -5,6 +5,8 @@
 // is not a change of context; a change of the item's own controls still is.
 // A post shown on its own page, and each reply around it, is a focusable item
 // the page names for assistive technology; it owns its controls the same way.
+// So is an article the page names and lets take focus as one item, as X marks
+// each timeline post without a feed position.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
@@ -42,6 +44,27 @@ const detail = (wrapper = 'tabindex="0" aria-label="Emre, gönderi 1, 14 Eki 12:
       <div class="detailed-status__action-bar"><button type="button" aria-label="Yanıtla">R</button>
         <button type="button" aria-label="Daha fazla" id="more1">…</button></div>
     </div>${reply(2, 'Mert', '9 dk')}${reply(3, 'Can', '8 dk')}</div></div></div>`;
+
+// An X home timeline post as X renders it: a focusable article named by
+// aria-labelledby (author line, text, engagement group) inside a virtualized
+// cell, with no feed role and no position in a feed.
+const xPost = (n, { name = 'Illia', handle = 'illia', article = 'aria-labelledby="name{n} text{n} group{n}" tabindex="0"',
+  statusHref = `/${handle}/status/211190481654505${n}`, likes = '780' } = {}) => `<div data-testid="cellInnerDiv">
+  <article ${article.replaceAll('{n}', n)} role="article" data-testid="tweet"><div><div>
+    <div data-testid="Tweet-User-Avatar"><a href="/${handle}" role="link" tabindex="-1"><img alt="" width="40" height="40"
+      src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></a></div>
+    <div id="name${n}" data-testid="User-Name"><a href="/${handle}" role="link"><span id="author${n}">${name}</span></a>
+      <a href="/${handle}" role="link" tabindex="-1"><span>@${handle}</span></a><span>·</span>
+      <a id="time${n}" href="${statusHref}" role="link"><time datetime="2026-10-18T02:0${n}:00.000Z">17h</time></a></div>
+    <button id="more${n}" aria-label="More" role="button" type="button">…</button>
+    <div id="text${n}" data-testid="tweetText" lang="en"><span>Post ${n}</span></div>
+    <div id="group${n}" role="group" aria-label="8 replies, ${likes} likes">
+      <button aria-label="8 Replies. Reply" role="button" type="button">8</button>
+      <button id="like${n}" aria-label="${likes} Likes. Like" role="button" type="button">${likes}</button>
+      <button id="bookmark${n}" aria-label="Bookmark" role="button" type="button">B</button></div>
+  </div></div></article></div>`;
+const xTimeline = posts => `<main role="main"><section role="region" aria-labelledby="timeline-heading">
+  <h1 id="timeline-heading">Your Home Timeline</h1><div aria-label="Timeline: Your Home Timeline">${posts}</div></section></main>`;
 
 async function open(engine, build, body, targetId = 'more1') {
   const browser = await engine.launch({ headless: true });
@@ -168,6 +191,71 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(result.ready, false, 'An item that links nowhere');
         assert.equal(result.certificationFailure, 'owner_unresolved');
       } finally { await unlinked.browser.close(); }
+    });
+
+    test(`${build} on ${engineName}: an X post owns its controls`, async () => {
+      // QA P1: "Open the third post on this timeline and bookmark it." Every
+      // click on an X post was uncertified (owner_unresolved), so the
+      // timeline's constant updates blocked each one.
+      const timeline = xTimeline(xPost(1) + xPost(2, { name: 'Ada', handle: 'ada' }) + xPost(3, { name: 'Can', handle: 'can' }));
+      for (const target of ['time1', 'bookmark1']) {
+        const f = await open(engine, build, timeline, target);
+        try {
+          assert.equal((await f.validate()).ready, true, `${target}: the post's own control is certified`);
+          // Another post of the timeline changes: not this post's context.
+          await f.page.evaluate(() => {
+            document.getElementById('author2').textContent = 'Mert';
+            const like = document.getElementById('like2');
+            like.textContent = '781'; like.setAttribute('aria-label', '781 Likes. Like');
+          });
+          assert.equal((await f.validate()).ready, true, `${target}: a change in another post keeps the decision`);
+          // This post's own controls change.
+          await f.page.evaluate(() => {
+            const like = document.getElementById('like1');
+            like.textContent = '781'; like.setAttribute('aria-label', '781 Likes. Like');
+          });
+          const counted = await f.validate();
+          assert.equal(counted.ready, false, target);
+          assert.equal(counted.reason, 'semantic_binding_changed', target);
+        } finally { await f.browser.close(); }
+      }
+      // The post a status page shows is focusable outside the tab order.
+      const status = await open(engine, build, xTimeline(xPost(1, { article: 'aria-labelledby="name{n} text{n} group{n}" tabindex="-1"' })
+        + xPost(2, { name: 'Ada', handle: 'ada' })), 'bookmark1');
+      try {
+        assert.equal((await status.validate()).ready, true, 'The shown post\'s Bookmark is certified');
+      } finally { await status.browser.close(); }
+      // The virtualized cell is reused for another post.
+      const f = await open(engine, build, timeline, 'bookmark1');
+      try {
+        assert.equal((await f.validate()).ready, true);
+        await f.page.evaluate(() => {
+          document.getElementById('author1').textContent = 'Deniz';
+          document.getElementById('time1').setAttribute('href', '/deniz/status/2111904816545051999');
+        });
+        const reused = await f.validate();
+        assert.equal(reused.ready, false);
+        assert.equal(reused.reason, 'semantic_binding_changed');
+      } finally { await f.browser.close(); }
+    });
+
+    test(`${build} on ${engineName}: an article that is not offered as one named, focusable, linked item owns nothing new`, async () => {
+      const cases = [
+        ['unfocusable', xPost(1, { article: 'aria-labelledby="name{n} text{n} group{n}"' })],
+        ['with an invalid tabindex', xPost(1, { article: 'aria-labelledby="name{n} text{n} group{n}" tabindex="first"' })],
+        ['unnamed', xPost(1, { article: 'tabindex="0"' })],
+        ['named by a missing element', xPost(1, { article: 'aria-labelledby="name{n} missing-name" tabindex="0"' })],
+        ['linking nowhere', xPost(1, { handle: 'illia', statusHref: '#' }).replaceAll('href="/illia"', 'href="#"')],
+        ['holding an editor', xPost(1).replace('<div id="text1"', '<textarea aria-label="Reply"></textarea><div id="text1"')],
+      ];
+      for (const [name, post] of cases) {
+        const f = await open(engine, build, xTimeline(post + xPost(2, { name: 'Ada', handle: 'ada' })), 'bookmark1');
+        try {
+          const result = await f.validate();
+          assert.equal(result.ready, false, name);
+          assert.equal(result.certificationFailure, 'owner_unresolved', name);
+        } finally { await f.browser.close(); }
+      }
     });
 
     test(`${build} on ${engineName}: an article outside a feed, or without its place in one, owns nothing new`, async () => {
