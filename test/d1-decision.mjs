@@ -294,8 +294,11 @@ for (const build of ['chrome', 'firefox']) {
       assert.match(branch, /const chatModel = fromInstall && msg\.command === 'download' && msg\.chatModel != null \? String\(msg\.chatModel\) : '';/);
       assert.match(branch, /if \(chatModel && !isSelectableWebgpuPreset\(chatModel\)\) throw new Error\('Unknown local chat model\.'\);/);
       assert.match(branch, /if \(!fromInstall\) return \{ success: true, result \};/);
-      assert.match(branch, /if \(chatModel\) await chatModelAfterD1\.queue\(chatModel\);\s*else if \(msg\.command === 'stop'\) await chatModelAfterD1\.pause\(\);/);
-      assert.match(branch, /msg\.command === 'status'\s*\? await chatModelAfterD1\.advance\(result\)/);
+      assert.match(branch, /if \(chatModel\) await chatModelAfterD1\.queue\(chatModel\);/);
+      // The Pause is recorded before D1 stops, so no check sees the stop alone.
+      assert.ok(branch.indexOf("if (fromInstall && msg.command === 'stop') await chatModelAfterD1.pause();")
+        < branch.indexOf('await d1Request(msg.command'), 'the Pause is recorded before D1 is stopped');
+      assert.match(branch, /msg\.command === 'status'\s*\? await chatModelAfterD1\.advance\(\)/);
       assert.match(branch, /result: \{ \.\.\.result, usedForDecisions: await d1UsedForDecisions\(api\), chatModelQueued \}/);
       assert.match(background, /chrome\.alarms\.onAlarm\.addListener\(\(alarm\) => \{\s*if \(alarm\?\.name !== CHAT_AFTER_D1_ALARM\) return;\s*chatModelAfterD1\.advance\(\)/);
       assert.match(background, /onStartError: \(error\) => \{\s*console\.warn\(/, 'a failed start is reported and retried');
@@ -562,12 +565,21 @@ test('chrome: the install guide queues its chat model behind D1, and the backgro
     assert.equal(await env.queue.queued(), false);
   }
   {
-    // A status the guide just read is used as it is.
+    // D1's status is read inside each check, after any Pause ahead of it: a
+    // Pause and a check at the same moment never start the chat model.
     const env = make({ d1: { status: 'downloading' } });
     await env.queue.queue(model);
-    assert.equal(await env.queue.advance({ status: 'cached', cached: true }), false);
-    assert.deepEqual(env.starts, [model]);
-    assert.equal(env.reads, 0);
+    const pause = env.queue.pause();
+    env.d1 = { status: 'stopped', progress: 50 };
+    assert.equal(await env.queue.advance(), true, 'the Pause is seen with the stop');
+    await pause;
+    assert.deepEqual(env.starts, []);
+    assert.ok(env.reads >= 1);
+    // A status a caller read earlier (just before a Resume, say) is not used.
+    env.d1 = { status: 'downloading' };
+    await env.queue.queue(model);
+    assert.equal(await env.queue.advance({ status: 'stopped' }), true);
+    assert.deepEqual(env.starts, []);
   }
   {
     // A Pause on the guide holds the chat model until Resume queues it again;

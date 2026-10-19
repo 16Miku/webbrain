@@ -34,8 +34,9 @@ export function createChatModelAfterD1({ api, d1Status, chatStatus, startChat, o
     return step;
   };
 
-  // Returns whether the chat model still waits for D1.
-  async function step(status) {
+  // Returns whether the chat model still waits for D1. D1's status is read
+  // here, after any Pause or Resume ahead of this step, never before it.
+  async function step() {
     const queued = await read();
     if (!queued || typeof queued.model !== 'string' || !queued.model) {
       if (queued) await storage.remove(CHAT_AFTER_D1_KEY);
@@ -44,8 +45,8 @@ export function createChatModelAfterD1({ api, d1Status, chatStatus, startChat, o
     }
     const age = now() - Number(queued.queuedAt);
     if (!(age >= 0 && age <= CHAT_AFTER_D1_MAX_AGE_MS)) { await clear(); return false; }
-    let d1 = status;
-    if (!d1) { try { d1 = await d1Status(); } catch { return true; } }
+    let d1;
+    try { d1 = await d1Status(); } catch { return true; }
     const d1State = String(d1?.status || '');
     if (d1?.loaded !== true && D1_TRANSFER_STATUSES.has(d1State)) return true;
     // Paused on the guide: its Resume carries on to the chat model.
@@ -81,13 +82,13 @@ export function createChatModelAfterD1({ api, d1Status, chatStatus, startChat, o
       await storage.set({ [CHAT_AFTER_D1_KEY]: { model, queuedAt: now(), paused: false } });
       try { await api.alarms?.create?.(CHAT_AFTER_D1_ALARM, { periodInMinutes: 0.5 }); } catch { /* the guide's reads still advance it */ }
     }),
-    // The guide paused D1: the chat model waits for its Resume.
+    // The guide pauses D1: the chat model waits for its Resume. Called before
+    // D1 is stopped, so no check sees the stop without the Pause.
     pause: () => serial(async () => {
       const queued = await read();
       if (queued?.model) await storage.set({ [CHAT_AFTER_D1_KEY]: { ...queued, paused: true } });
     }),
     queued: () => serial(async () => !!(await read())?.model),
-    // `status` is a D1 status just read; without one, D1 is asked.
-    advance: (status = null) => serial(() => step(status)),
+    advance: () => serial(step),
   };
 }

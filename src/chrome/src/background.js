@@ -5036,14 +5036,16 @@ async function handleMessage(msg, sender) {
           // Unload, Remove and switching D1 off in Settings end that request.
           await api.storage.local.set({ [D1_KEEP_LOADED_KEY]: false });
         }
+        // The guide's Pause holds its queued chat model; it is recorded
+        // before D1 stops, so no check sees the stop without it.
+        if (fromInstall && msg.command === 'stop') await chatModelAfterD1.pause();
         const result = msg.command === 'consent' ? { consented: true } : await d1Request(msg.command, { consentVersion: D1_CONSENT_VERSION });
         if (!fromInstall) return { success: true, result };
-        // The chat model waits for D1's download, and its Pause; the guide's
-        // reads of D1's status start it once D1's download is over.
+        // The chat model waits for D1's download; the guide's reads of D1's
+        // status start it once D1's download is over.
         if (chatModel) await chatModelAfterD1.queue(chatModel);
-        else if (msg.command === 'stop') await chatModelAfterD1.pause();
         const chatModelQueued = msg.command === 'status'
-          ? await chatModelAfterD1.advance(result).catch((error) => {
+          ? await chatModelAfterD1.advance().catch((error) => {
             console.warn('[WebBrain] The queued local chat-model download could not be checked:', error);
             return false;
           })
