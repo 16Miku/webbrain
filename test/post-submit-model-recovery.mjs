@@ -183,6 +183,17 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(f.agent._planExecutionGuards.get(f.tab).multipleDeliverables, false);
   });
 
+  test(`${browser}: Continue keeps the several-deliverables flag after a run where no tool succeeded`, async () => {
+    const f = fixture();
+    const gate = { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true };
+    f.agent._startPlanExecutionGuard(f.tab, 'act', { ...gate, deliverables: [], multipleDeliverables: true }, {});
+    // The step limit was reached after failed attempts only.
+    f.agent._storeContinuationExecutionEvidence(f.tab);
+    assert.equal(f.agent._continuationExecutionEvidence.get(f.tab)?.multipleDeliverables, true);
+    f.agent._startPlanExecutionGuard(f.tab, 'act', { ...gate, deliverables: [] }, { trustedContinuation: true });
+    assert.equal(f.agent._planExecutionGuards.get(f.tab).multipleDeliverables, true);
+  });
+
   test(`${browser}: a later self-verifying action does not make the earlier submission the latest step`, async () => {
     // The submission left verification debt; scheduling a follow-up then
     // succeeded and proved itself. lastAction still names the submission, but

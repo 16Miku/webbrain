@@ -40636,6 +40636,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (guard?.enabled && !guard.taskDrifted && (
       hasRecipientAuthorization
       || guard.socialPublication?.contract?.status === 'ready'
+      || guard.multipleDeliverables === true
+      || (guard.deliverables || []).length > 1
       || guard.successfulTaskToolCalls > 0
       || guard.successfulConsequentialToolCalls > 0
       || guard.pendingDownloadIds.length > 0
