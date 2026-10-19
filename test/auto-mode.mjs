@@ -351,6 +351,13 @@ for (const build of BUILDS) {
             webbrainSteering: { requestId: `auto-${f.tab}`, messageId: 's1', revision: 1 } });
           return handoff('act', 'downlaod this and then send it to Defne on whatsapp!');
         },
+        messages => {
+          // The correction that arrived during the check superseded the first
+          // call; the model read it before asking again.
+          assert.ok(messages.some(message => message.role === 'user' && String(message.content).startsWith('Use the full-size image.')));
+          assert.equal(messages.some(message => message.role === 'tool'), false, 'the superseded call is not a refusal');
+          return handoff('act', 'downlaod this and then send it to Defne on whatsapp!');
+        },
       ],
     });
     assert.equal(await f.run('downlaod this'), '');
@@ -358,7 +365,7 @@ for (const build of BUILDS) {
       'downlaod this',
       'downlaod this\nand then send it to Defne on whatsapp!',
       'downlaod this\nand then send it to Defne on whatsapp!\nUse the full-size image.',
-    ], 'the page-free check reads every correction, asking again when one arrives during it');
+    ], 'the page-free check reads every correction');
     assert.equal(f.updates.some(update => update.type === 'steering_queued'), false, 'nothing is handed back to the composer');
     const conversation = f.agent.conversations.get(f.tab);
     assert.equal(conversation.some(message => message.role === 'user'), false, 'the turn and its applied correction leave together');
@@ -366,6 +373,7 @@ for (const build of BUILDS) {
 
     // The background restarts the same request in Act: both corrections are
     // applied, in order, before its first model call.
+    const restartFrom = f.updates.length;
     fixtureReplies(f, [messages => {
       const users = messages.filter(message => message.role === 'user').map(message => String(message.content));
       const at = text => users.findIndex(content => content.includes(text));
@@ -376,28 +384,66 @@ for (const build of BUILDS) {
       return { content: 'Stopping.' };
     }]);
     assert.match(await f.run('downlaod this', 'act', [], { modeEscalation: { mode: 'act' } }), /Stopped/);
-    assert.deepEqual(f.updates.filter(update => update.type === 'steering_applied').map(update => update.data.id), ['s1', 's2']);
+    assert.deepEqual(f.updates.slice(restartFrom).filter(update => update.type === 'steering_applied').map(update => update.data.id), ['s1', 's2']);
     assert.equal(f.agent._modeEscalationSteering.has(f.tab), false, 'carried once');
   });
 
   test(`${build}: corrections are carried only into the hand-off's own restart`, async () => {
     const f = fixture(Agent, {
-      decide: (_q, options) => {
-        if (options.mainModel === false) return { choice: null, source: 'unavailable' };
-        const pending = f.agent._steeringRuns.get(f.tab).messages;
-        if (!pending.length && f.questions.length === 2) pending.push({ id: 's3', text: 'Only the 10 am slot.' });
-        return { choice: 'act', source: 'main_model' };
-      },
+      decide: (_q, options) => (options.mainModel === false ? { choice: null, source: 'unavailable' } : { choice: 'act', source: 'main_model' }),
       replies: [handoff('act', 'book the 9 am slot'), done('Answered.')],
     });
+    // Sent after the hand-off was accepted, before the turn returned.
+    f.agent._persistNow = async () => { f.agent._steeringRuns.get(f.tab)?.messages.push({ id: 's3', text: 'Only the 10 am slot.' }); };
     assert.equal(await f.run('Please book the 9 am slot for me.'), '');
     assert.deepEqual(f.agent._modeEscalationSteering.get(f.tab), [{ id: 's3', text: 'Only the 10 am slot.' }]);
+    f.agent._persistNow = async () => null;
     // A new message, not the restart: the carried correction is dropped.
     f.agent.takeModeEscalation(f.tab);
     f.agent._semanticDecision = async () => ({ choice: 'answer', source: 'decision_model' });
     assert.equal(await f.run('What time is it there?'), 'Answered.');
     assert.equal(f.agent._modeEscalationSteering.has(f.tab), false);
     assert.equal(f.updates.some(update => update.type === 'steering_applied'), false);
+  });
+
+  test(`${build}: a correction that needs Dev while the check runs gets a Dev hand-off`, async () => {
+    const f = fixture(Agent, {
+      decide: (question, options) => {
+        if (options.mainModel === false) return { choice: null, source: 'unavailable' };
+        if (f.questions.length === 2) f.agent._steeringRuns.get(f.tab).messages.push({ id: 's6', text: 'instead inspect the console errors' });
+        return /console/.test(question.request) ? { choice: 'dev', source: 'main_model' } : { choice: 'act', source: 'main_model' };
+      },
+      replies: [
+        handoff('act', 'Fix the login button'),
+        messages => {
+          assert.ok(messages.some(message => message.role === 'user' && String(message.content).startsWith('instead inspect the console errors')));
+          return handoff('dev', 'inspect the console errors');
+        },
+      ],
+    });
+    assert.equal(await f.run('Fix the login button.'), '');
+    assert.deepEqual(f.agent.takeModeEscalation(f.tab), { mode: 'dev', evidence: 'inspect the console errors' },
+      'the Act call made before the correction is not combined with a Dev answer');
+  });
+
+  test(`${build}: a carried correction is not acknowledged away by a short confirmation`, async () => {
+    const f = fixture(Agent);
+    f.agent._maybeRunPlannerGate = Agent.prototype._maybeRunPlannerGate;
+    f.agent._beginSteeringRun(f.tab, () => {}, { detachedRequestId: `auto-${f.tab}` });
+    f.agent._steeringRuns.get(f.tab).messages.push({ id: 's7', text: 'but use the 10 am slot' });
+    let revalidated = 0;
+    f.agent._runPlannerIntentGate = async () => ({ proceed: true, requestKind: 'execute', requiresStateChange: true });
+    f.agent._revalidatePendingSteering = async () => { revalidated += 1; return { changed: true, gate: { proceed: true, requestKind: 'execute', requiresStateChange: true } }; };
+    const messages = [{ role: 'system', content: 'x' }];
+    const gate = await f.agent._maybeRunPlannerGate(f.tab, messages,
+      { role: 'user', content: 'yes', webbrainUserAuthoredText: 'yes', webbrainTurnKind: 'acknowledge' }, () => {}, 'act', null, null, null, {});
+    assert.notEqual(gate.reason, 'acknowledged');
+    assert.equal(revalidated, 1, 'the pending correction is revalidated');
+    assert.equal(messages.some(message => message.content === 'Acknowledged.'), false);
+    f.agent._steeringRuns.delete(f.tab);
+    const plain = await f.agent._maybeRunPlannerGate(f.tab, [{ role: 'system', content: 'x' }],
+      { role: 'user', content: 'thanks', webbrainUserAuthoredText: 'thanks', webbrainTurnKind: 'acknowledge' }, () => {}, 'act', null, null, null, {});
+    assert.equal(plain.reason, 'acknowledged', 'without a correction an acknowledgment still ends the turn');
   });
 
   test(`${build}: a correction that never asks for an action keeps the turn in Ask`, async () => {

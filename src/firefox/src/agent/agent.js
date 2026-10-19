@@ -23352,7 +23352,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._finalizeSelectionGroundingScope(tabId, messages, submittedUserMessage);
     }
     await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
-    if (enriched.webbrainTurnKind === 'acknowledge' && runOptions.steeringRevision == null) {
+    // A pending correction (one sent during the turn, or carried by a mode
+    // hand-off) is never acknowledged away: the gate goes on and revalidates it.
+    if (enriched.webbrainTurnKind === 'acknowledge' && runOptions.steeringRevision == null && !this._hasPendingSteering(tabId)) {
       this.plannerFollowUpSkipTabs.delete(tabId);
       const message = 'Acknowledged.';
       messages.push({ role: 'assistant', content: message });
@@ -24157,8 +24159,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // during the turn. Because the calling model has read the page, the
   // page-free `run_mode` question about the corrected request must also
   // answer act or dev (a sure decision-model "answer" from routing is reused
-  // from the cache). Returns { accepted: { mode, evidence }, corrections }
-  // or { refusal: text }; the corrections go with the hand-off.
+  // from the cache). Returns { accepted: { mode, evidence }, corrections },
+  // { refusal: text }, or { superseded: true } when the user corrected the
+  // request while the check ran: the call no longer covers the request, and
+  // the model asks again (for Act or Dev) once it has read the correction.
   async _autoModeEscalation(tabId, toolCalls, enriched, provider, question, messages, snapshot = null) {
     const call = (toolCalls || []).find(item => item?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME);
     const request = typeof enriched?.webbrainUserAuthoredText === 'string'
@@ -24171,26 +24175,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!requested) {
       return { refusal: 'request_action_mode was refused: `evidence` must quote the user\'s own words that ask for the action (from their request or a correction they sent), exactly as written. Answer the request read-only if you can.' };
     }
-    // A correction sent while the check runs is asked about again, so the
-    // answer always covers everything the user said.
-    const sameCorrections = (a, b) => a.length === b.length && a.every((item, index) => item.id === b[index].id);
-    for (let check = 0; check < 3; check += 1) {
-      const base = question || { request, page: {} };
-      const asked = corrections.length ? { ...base, request: corrected(corrections) } : base;
-      // A sure "answer" from routing settles it; an "unclear" one asks again.
-      const verdict = await this._semanticDecision(tabId, 'run_mode', asked, { provider, retryChoices: ['unclear'] });
-      const latest = this._autoModeTurnCorrections(tabId, messages, snapshot);
-      if (!sameCorrections(latest, corrections)) {
-        corrections = latest;
-        continue;
-      }
-      const mode = confirmedEscalationMode(requested, verdict.choice, { tier });
-      if (!mode) {
-        return { refusal: 'request_action_mode was refused: read on its own, the user\'s request does not ask for browser actions. Answer it read-only.' };
-      }
-      return { accepted: { mode, evidence: requested.evidence }, corrections };
+    const base = question || { request, page: {} };
+    const asked = corrections.length ? { ...base, request: corrected(corrections) } : base;
+    // A sure "answer" from routing settles it; an "unclear" one asks again.
+    const verdict = await this._semanticDecision(tabId, 'run_mode', asked, { provider, retryChoices: ['unclear'] });
+    const latest = this._autoModeTurnCorrections(tabId, messages, snapshot);
+    if (latest.length !== corrections.length || latest.some((item, index) => item.id !== corrections[index].id)) {
+      return { superseded: true };
     }
-    return { refusal: 'request_action_mode was refused because the user kept correcting the request during the check. Answer the latest request read-only; the user can send it again to have it done.' };
+    const mode = confirmedEscalationMode(requested, verdict.choice, { tier });
+    if (!mode) {
+      return { refusal: 'request_action_mode was refused: read on its own, the user\'s request does not ask for browser actions. Answer it read-only.' };
+    }
+    return { accepted: { mode, evidence: requested.evidence }, corrections };
   }
 
   // The conversation and per-tab turn state before a routed turn gathers its
@@ -46691,6 +46688,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (mode === 'ask' && this._autoModeEscalationTabs.has(tabId)
           && result.toolCalls?.some(call => call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME)) {
         const handoff = await this._autoModeEscalation(tabId, result.toolCalls, enriched, provider, autoModeQuestion, messages, autoModeTurnStart);
+        if (handoff.superseded) {
+          // Like any response a pending correction supersedes: the next step
+          // applies the correction and the model decides again, so a
+          // correction that needs Dev gets a Dev hand-off.
+          onUpdate('text', { content: '', replace: true });
+          continue;
+        }
         const escalation = handoff.accepted;
         if (escalation) {
           // The caller restarts this turn in the requested mode, from the
