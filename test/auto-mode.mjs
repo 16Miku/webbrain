@@ -357,6 +357,21 @@ for (const build of BUILDS) {
     assert.deepEqual(f.agent.takeModeEscalation(f.tab), { mode: 'act', evidence: request });
   });
 
+  test(`${build}: input that arrives while the hand-off is being confirmed makes the model decide again`, async () => {
+    const request = 'Post on Mastodon: WebBrain QA test, please ignore';
+    let typed = false, emit = null;
+    const f = fixture(Agent, { decide: (question, options) => {
+      // The person types while routing confirms the first hand-off.
+      if (!typed && options.mainModel !== false) { typed = true; emit({ kind: 'input', source: 'user', target: 'textarea#compose' }); }
+      return decidesAct(question, options);
+    } });
+    emit = watchedPage(f);
+    fixtureReplies(f, [handoff('act', request), handoff('act', request)]);
+    assert.equal(await f.run(request), '');
+    assert.equal(f.calls.length, 2, 'the stale hand-off was not accepted');
+    assert.deepEqual(f.agent.takeModeEscalation(f.tab), { mode: 'act', evidence: request });
+  });
+
   test(`${build}: a hand-off quoting anything but the user's words is refused`, async () => {
     const f = fixture(Agent, {
       replies: [
