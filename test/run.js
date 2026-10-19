@@ -2569,6 +2569,9 @@ test('iframe tools say how to name a frame host when urlFilter is only a path', 
       for (const name of ['checkout.cfm', 'order.action', 'frame.shtml', 'handler.ashx', 'pay.jspx']) {
         assert.match(gate.urlFilterHostHint(name, [`https://shop.example/x/${name}`]), new RegExp(`for example "shop\\.example/x/${name.replace('.', '\\.')}"`), `${build}: ${name} is a file name, not a host`);
       }
+      for (const filter of ['stripe.com.', 'https://stripe.com./pay', 'stripe.com.:8443']) {
+        assert.equal(gate.urlFilterHostHint(filter, ['https://evil.example/?next=' + filter]), '', `${build}: ${filter} is a fully qualified host`);
+      }
       assert.equal(gate.urlFilterHostHint('shop.do', ['https://evil.example/?next=shop.do']), '', `${build}: .do is a country domain, so shop.do names a host`);
       // No hint when the filter names a host (even one no frame has: a page
       // cannot steer "stripe.com" to its own frame that mentions it), when

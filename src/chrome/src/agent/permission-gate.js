@@ -594,7 +594,8 @@ export function frameHostMatches(frameUrl, urlFilter) {
 const FILE_NAME_SUFFIX = /\.(?:html?|xhtml|shtml?|php[345]?|phtml|aspx?|ashx|asmx|axd|jspx?|jsf|faces|cfml?|cgi|fcgi|action|esp|nsf|js|mjs|css|json|xml|txt|svg|png|jpe?g|gif|webp|pdf)$/i;
 function urlFilterNamesHost(filter) {
   const first = filter.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#]/)[0];
-  const host = first.replace(/:\d+$/, '');
+  // A fully qualified name may end in a dot ("stripe.com.").
+  const host = first.replace(/:\d+$/, '').replace(/\.$/, '');
   if (!host) return false;
   return /^\[[0-9a-f:.]+\]$/i.test(host) || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.toLowerCase() === 'localhost'
     || (/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(host) && !FILE_NAME_SUFFIX.test(host));
