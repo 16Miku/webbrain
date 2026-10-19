@@ -556,7 +556,9 @@ proxy card require their configured client keys:
 - **LocalAI**: `http://localhost:8080/v1` — LocalAI's OpenAI-compatible server
 - **GPT4All**: `http://localhost:4891/v1` — GPT4All's local API server
 - **Local OpenAI-compatible Proxy**: `http://127.0.0.1:8317/v1` — a generic,
-  authenticated local gateway; the model and proxy client API key are required
+  authenticated local gateway; the model and proxy client API key are required.
+  Its context window is set automatically after **Load Models**, a model pick or
+  **Test Connection**, and falls back to 64k (see below)
 - **Unsloth Studio**: `http://127.0.0.1:8888/v1` by default, with a configurable
   port — Studio's API URL, loaded model, and generated API key are required
 
@@ -622,6 +624,28 @@ Keep the listener on `127.0.0.1`, require a strong random client key, and never
 publish the endpoint to a LAN or the internet. Official provider API keys remain
 the stable default.
 
+**Context window.** After **Load Models**, picking a model from the loaded list,
+or **Test Connection**, WebBrain sets the card's **Context window** from the first
+source that knows it:
+
+1. the proxy's `/v1/models` card for the selected model (`max_model_len`,
+   `max_context_length`, `context_window`, `context_length`, `max_input_tokens`
+   or `input_token_limit`);
+2. `GET /props?model=<model>` at the proxy root, when a llama.cpp server behind it
+   reports the loaded model's live `n_ctx`;
+3. the model name, for hosted models WebBrain knows (`claude-…`, `gpt-5…`,
+   `gemini-…`, …), capped at 128k because subscription gateways can serve less
+   context than the vendor API advertises;
+4. otherwise the **64k** proxy fallback, which is also the card's default
+   (previously 16k, which starved the hosted models these gateways usually front).
+
+A reported window (1 or 2) may shrink a manual value; a name or the fallback only
+replaces the default, the old 16k default, or a value WebBrain filled in itself,
+never a number you typed. If the proxy fronts a small local model and reports
+nothing, lower **Context window** to that model's loaded window, because 64k can
+overflow it. Untouched cards (never saved, no key) move from 16k to 64k on
+upgrade; a saved card still at 16k moves at its next detection.
+
 Ollama, llama.cpp, ODS, LM Studio, and LocalAI default to `visionMode: auto`. WebBrain asks
 the selected server for model capability metadata before enrichment and sends
 screenshots only when the response explicitly reports image input. A failed or
@@ -669,7 +693,7 @@ template/parser, and a current runtime version (LocalAI added tool streaming in
 
 **Context window.** Size the loaded context for the selected prompt tier, its tool schemas, the live page/history and the requested output. **16k is a local configuration fallback, not a reliable minimum for every tier.** Current Mid and Full agent prompts can exceed that window before useful history accumulates. Use a larger loaded window for these tiers; the quality audit verified a Full-tier 64K run with real compaction and restarts. A smaller Compact setup needs its own sizing check and offers fewer tools, including no native long-chat tool set. Automatically summarizing old history cannot shrink the fixed prompt or schemas, and the character-based estimate is not an exact model tokenizer.
 
-The agent reads `provider.contextWindow` (`providers/base.js`) to drive auto-compaction. When no value is configured, local providers default to **16k**; cloud/router defaults depend on the known model, with a category fallback of 128k. **Test connection** / **Load models** auto-detect for **llama.cpp**, **ODS**, **Ollama**, and **LM Studio** when reported (llama.cpp / ODS `GET /props` `n_ctx`, Ollama `GET /api/ps` live context then `/api/show` `num_ctx`, LM Studio `/api/v0/models` `loaded_context_length`). Detection refreshes the local fallback; it shrinks a larger manual override only from live/runtime context (not from Ollama `/api/show` alone). Jan / vLLM / SGLang / LocalAI / Unsloth Studio do not auto-detect yet. Set `config.contextWindow` to match the server's actual loaded window; increasing the setting alone does not enlarge the model server's context.
+The agent reads `provider.contextWindow` (`providers/base.js`) to drive auto-compaction. When no value is configured, local providers default to **16k** (the Local OpenAI-compatible Proxy to **64k**); cloud/router defaults depend on the known model, with a category fallback of 128k. **Test connection** / **Load models** auto-detect for **llama.cpp**, **ODS**, **Ollama**, **LM Studio**, **vLLM**, **SGLang**, **LocalAI** and the **Local OpenAI-compatible Proxy** when reported (llama.cpp / ODS `GET /props` `n_ctx`, Ollama `GET /api/ps` live context then `/api/show` `num_ctx`, LM Studio `/api/v0/models` `loaded_context_length`, vLLM / SGLang `/v1/models` `max_model_len`, LocalAI model config `context_size`, the proxy as described in the [subscription proxy guide](#subscription-proxy-guide-easycliproxyapi--cliproxyapi)). Detection refreshes the local fallback; it shrinks a larger manual override only from live/runtime context (not from Ollama `/api/show` alone). Jan / GPT4All / Unsloth Studio do not auto-detect yet. Set `config.contextWindow` to match the server's actual loaded window; increasing the setting alone does not enlarge the model server's context.
 
 ### Prompt/tool tiers and modes
 

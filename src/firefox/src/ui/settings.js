@@ -2372,6 +2372,12 @@ const CONTEXT_WINDOW_FIELD = {
   step: 1024,
 };
 
+// Matches LOCAL_OPENAI_PROXY_CONTEXT_WINDOW (providers/context-windows.js).
+const LOCAL_PROXY_CONTEXT_WINDOW_FIELD = {
+  ...CONTEXT_WINDOW_FIELD,
+  placeholder: '65536',
+};
+
 const MAX_OUTPUT_TOKENS_FIELD = {
   key: 'maxOutputTokens',
   labelKey: 'st.provider.field.max_output_tokens',
@@ -2893,7 +2899,7 @@ function renderProviders() {
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:8317/v1' },
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'required — use the proxy client API key' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model exposed by the proxy' },
-        CONTEXT_WINDOW_FIELD,
+        LOCAL_PROXY_CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
       ],
@@ -3296,10 +3302,11 @@ function renderProviders() {
         const minAttr = field.min != null ? ` min="${escapeHtml(field.min)}"` : '';
         const stepAttr = field.step != null ? ` step="${escapeHtml(field.step)}"` : '';
         const value = config[field.key] ?? '';
+        const manualAttr = (field.key === 'contextWindow' && config.manualContextWindow === true) ? ' data-manually-edited="true"' : '';
         fieldHTML += `
           <div class="field">
             <label>${escapeHtml(label)}${apiKeyLink}</label>
-            <input type="${field.type}" data-provider="${id}" data-key="${field.key}" data-type="${field.type}" ${listAttr}${minAttr}${stepAttr}
+            <input type="${field.type}" data-provider="${id}" data-key="${field.key}" data-type="${field.type}" ${listAttr}${minAttr}${stepAttr}${manualAttr}
                    value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}">
             ${datalistHTML}
             ${loadBtnHTML}
@@ -3415,7 +3422,13 @@ function renderProviders() {
   });
   document.querySelectorAll('input[data-provider], select[data-provider], textarea[data-provider]').forEach(input => {
     const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
-    input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
+    input.addEventListener(eventName, () => {
+      markProviderDirty(input.dataset.provider);
+      if (input.dataset.key === 'contextWindow') {
+        input.dataset.manuallyEdited = 'true';
+        input.dataset.editVersion = String((Number(input.dataset.editVersion) || 0) + 1);
+      }
+    });
   });
   document.querySelectorAll('input[data-key="shareQueriesForResearch"]').forEach(input => {
     input.addEventListener('click', confirmResearchSharing);
@@ -3708,22 +3721,72 @@ function applyProviderBaseUrl(id, baseUrl) {
   refreshVisionStatus(id);
 }
 
-function applyProviderContextWindow(id, contextWindow) {
-  const n = Number(contextWindow);
-  if (!Number.isFinite(n) || n <= 0) return;
-  if (providersData[id]) providersData[id].contextWindow = n;
+const providerContextPendingSnapshots = new Map();
+
+// What the context field looked like when a background request started. The
+// request returns the window the background already stored, so the field must
+// show it unless the user touched the field in the meantime. Each request keeps
+// its own snapshot, so overlapping Test connection / Load models / model picks
+// cannot consume or replace one another's.
+function markProviderContextDetectionStart(id) {
   const input = document.querySelector(`input[data-provider="${id}"][data-key="contextWindow"]`);
-  if (input && input.value !== String(n)) input.value = String(n);
+  if (!input) return undefined;
+  const snapshot = {
+    value: input.value,
+    manuallyEdited: input.dataset.manuallyEdited === 'true',
+    editVersion: Number(input.dataset.editVersion) || 0,
+  };
+  providerContextPendingSnapshots.set(id, snapshot);
+  return snapshot;
+}
+
+function clearProviderContextDetectionStart(id, snapshot) {
+  if (snapshot === undefined || providerContextPendingSnapshots.get(id) === snapshot) {
+    providerContextPendingSnapshots.delete(id);
+  }
+}
+
+function providerContextEditedSince(input, snapshot) {
+  return input.value !== snapshot.value
+    || (input.dataset.manuallyEdited === 'true') !== snapshot.manuallyEdited
+    || (Number(input.dataset.editVersion) || 0) !== snapshot.editVersion;
+}
+
+function applyProviderContextWindow(id, contextWindow, snapshot = providerContextPendingSnapshots.get(id)) {
+  const n = Number(contextWindow);
+  clearProviderContextDetectionStart(id, snapshot);
+  if (!Number.isFinite(n) || n <= 0) return;
+  const input = document.querySelector(`input[data-provider="${id}"][data-key="contextWindow"]`);
+  if (input) {
+    // Only an edit made after the request started wins. A manual value that
+    // was saved earlier and left alone is still replaced by a window the
+    // background decided to store (a live shrink, say), or the next Save would
+    // write the stale larger value back.
+    if (snapshot && providerContextEditedSince(input, snapshot)) return;
+    if (input.value !== String(n)) input.value = String(n);
+    input.dataset.manuallyEdited = 'false';
+  }
+  if (providersData[id]) {
+    providersData[id].contextWindow = n;
+    providersData[id].manualContextWindow = false;
+  }
 }
 
 async function detectProviderContextWindowForModel(id, model) {
   const value = String(model || '').trim();
   if (!value) return;
+  const snapshot = typeof markProviderContextDetectionStart === 'function'
+    ? markProviderContextDetectionStart(id)
+    : undefined;
   try {
     const res = await sendToBackground('detect_provider_context_window', { providerId: id, model: value });
-    if (res?.ok) applyProviderContextWindow(id, res.contextWindow);
+    if (res?.ok) applyProviderContextWindow(id, res.contextWindow, snapshot);
   } catch {
     // Model picking should still succeed if the backend cannot report a window.
+  } finally {
+    if (typeof clearProviderContextDetectionStart === 'function') {
+      clearProviderContextDetectionStart(id, snapshot);
+    }
   }
 }
 
@@ -3785,21 +3848,30 @@ async function loadProviderModels(id) {
 
   if (!isCurrent()) return;
   setProviderLoadModelsStatus(id, t('st.providers.loading'));
+  const contextSnapshot = typeof markProviderContextDetectionStart === 'function'
+    ? markProviderContextDetectionStart(id)
+    : undefined;
+  const releaseContextSnapshot = () => {
+    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id, contextSnapshot);
+  };
   let res;
   try {
     res = await sendToBackground('list_provider_models', { providerId: id });
   } catch (e) {
+    releaseContextSnapshot();
     if (!isCurrent()) return;
     setProviderLoadModelsStatus(id, providerModelLoadErrorMessage(e.message), 'var(--danger, #c33)');
     return;
   }
 
+  // The snapshot travels with this request (passed to apply below); the shared slot is free again.
+  releaseContextSnapshot();
   if (!isCurrent()) return;
   datalistEl = document.getElementById(`models-${id}`);
   if (!datalistEl) return;
   if (res?.ok) {
     applyProviderBaseUrl(id, res.baseUrl);
-    applyProviderContextWindow(id, res.contextWindow);
+    applyProviderContextWindow(id, res.contextWindow, contextSnapshot);
     const loadedDialogEl = document.querySelector(`.loaded-model-dialog[data-loaded-models-for="${id}"]`);
     datalistEl.innerHTML = res.models
       .map((m) => `<option value="${escapeHtml(m)}"></option>`)
@@ -3840,6 +3912,9 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
         ? parseProviderExtraBodyJson(input.value)
         : providerInputValue(input);
       setProviderConfigValue(config, input.dataset.key, value);
+      if (input.dataset.key === 'contextWindow') {
+        config.manualContextWindow = input.dataset.manuallyEdited === 'true';
+      }
     });
     if (typeof config.label === 'string') config.label = config.label.trim();
     apiKeyWarning = providerApiKeyWarning(id, config);
@@ -3913,17 +3988,22 @@ async function testProvider(id) {
 
   if (!setProviderTestResult(id, '', t('st.providers.testing'), 'var(--text2)')) return;
 
+  const contextSnapshot = typeof markProviderContextDetectionStart === 'function'
+    ? markProviderContextDetectionStart(id)
+    : undefined;
   try {
     const res = await sendToBackground('test_provider', { providerId: id });
     if (res.ok) {
       applyProviderBaseUrl(id, res.baseUrl);
-      applyProviderContextWindow(id, res.contextWindow);
+      applyProviderContextWindow(id, res.contextWindow, contextSnapshot);
       setProviderTestResult(id, 'ok', t('st.providers.connected', { model: res.model || t('st.providers.unknown_model') }));
     } else {
       setProviderTestResult(id, 'fail', t('st.providers.failed', { error: res.error }));
     }
   } catch (e) {
     setProviderTestResult(id, 'fail', t('st.providers.failed', { error: e.message }));
+  } finally {
+    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id, contextSnapshot);
   }
 }
 
@@ -3946,6 +4026,9 @@ function syncInputsIntoProvidersData() {
       return;
     }
     setProviderConfigValue(providersData[id], key, providerInputValue(input));
+    if (key === 'contextWindow') {
+      providersData[id].manualContextWindow = input.dataset.manuallyEdited === 'true';
+    }
   });
 }
 

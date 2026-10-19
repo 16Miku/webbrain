@@ -50372,7 +50372,7 @@ test('settings async test controls surface rejected background results', () => {
     );
     assert.match(
       settings,
-      /async function detectProviderContextWindowForModel\(id, model\) \{[\s\S]*?sendToBackground\('detect_provider_context_window', \{ providerId: id, model: value \}\);[\s\S]*?applyProviderContextWindow\(id, res\.contextWindow\);[\s\S]*?\}/,
+      /async function detectProviderContextWindowForModel\(id, model\) \{[\s\S]*?sendToBackground\('detect_provider_context_window', \{ providerId: id, model: value \}\);[\s\S]*?applyProviderContextWindow\(id, res\.contextWindow, snapshot\);[\s\S]*?\}/,
       `${label}: selected-model context detection should update the provider context field`,
     );
     assert.match(
@@ -72430,9 +72430,10 @@ test('tri-state local vision controls and pre-enrichment preparation stay mirror
 
 test('inferContextWindow: model-aware cloud/router defaults and local 16k fallback', () => {
   for (const infer of [inferContextWindowCh, inferContextWindowFx]) {
-    for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local-openai-proxy']) {
+    for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all']) {
       assert.equal(infer({ category: 'local', providerName, model: 'qwen3.7-plus' }), 16384);
     }
+    assert.equal(infer({ category: 'local', providerName: 'local-openai-proxy', model: 'qwen3.7-plus' }), 65536);
     for (const model of ['gpt-6-luna-pro', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
       assert.equal(infer({ category: 'cloud', providerName: 'openai', model }), 1050000);
     }
@@ -73402,6 +73403,449 @@ test('ProviderManager persists detected local context windows with safe apply po
     else globalThis.chrome = originalChrome;
     if (originalBrowser === undefined) delete globalThis.browser;
     else globalThis.browser = originalBrowser;
+  }
+});
+
+test('Local OpenAI-compatible Proxy context window: model card, live props, model name, 64k fallback', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const jsonOk = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const makeRuntime = (writes) => ({
+    storage: { local: { async get() { return {}; }, async set(patch) { writes.push(patch); } } },
+    runtime: { id: 'test-runtime' },
+  });
+  const modules = [
+    ['chrome', ProviderManagerCh, 'chrome', 'src/chrome/src/providers/context-windows.js'],
+    ['firefox', ProviderManagerFx, 'browser', 'src/firefox/src/providers/context-windows.js'],
+  ];
+  try {
+    for (const [label, PM, runtimeKey, contextRel] of modules) {
+      const cw = await import('file://' + path.join(ROOT, contextRel).replace(/\\/g, '/'));
+      assert.equal(cw.LOCAL_OPENAI_PROXY_CONTEXT_WINDOW, 65536, `${label}: proxy fallback`);
+      // Parsers: only the selected model's card, under any common field name.
+      assert.equal(cw.parseOpenAiProxyModelListContextWindow({ data: [
+        { id: 'other', context_length: 32768 },
+        { id: 'Served-Model', context_length: 200000 },
+      ] }, 'served-model'), 200000);
+      assert.equal(cw.parseOpenAiProxyModelListContextWindow({ data: [{ id: 'm', max_model_len: 40960, context_length: 200000 }] }, 'm'), 40960);
+      assert.equal(cw.parseOpenAiProxyModelListContextWindow({ data: [{ id: 'm', input_token_limit: 1048576 }] }, 'm'), 1048576);
+      assert.equal(cw.parseOpenAiProxyModelListContextWindow({ data: [{ id: 'other', context_length: 32768 }] }, 'm'), null);
+      assert.equal(cw.parseOpenAiProxyModelListContextWindow({ data: [{ id: 'm', context_length: 32768 }] }, ''), null);
+      assert.equal(cw.parseOpenAiProxyModelListContextWindow({ data: [{ id: 'm', object: 'model' }] }, 'm'), null);
+      // vLLM/SGLang parsing is unchanged: context_length stays ignored there.
+      assert.equal(cw.parseOpenAiModelListContextWindow({ data: [{ id: 'm', context_length: 65536 }] }, 'm'), null);
+      // Names: known hosted models, capped at 128k; unknown names stay null.
+      assert.equal(cw.inferLocalProxyModelContextWindow('claude-sonnet-4-5-20250929'), 128000);
+      assert.equal(cw.inferLocalProxyModelContextWindow('gpt-5-codex'), 128000);
+      assert.equal(cw.inferLocalProxyModelContextWindow('gemini-2.5-pro'), 128000);
+      assert.equal(cw.inferLocalProxyModelContextWindow('my-local-qwen'), null);
+      assert.equal(cw.inferKnownModelContextWindow({ model: 'my-local-qwen' }), null);
+      assert.equal(cw.inferContextWindow({ category: 'cloud', model: 'my-local-qwen' }), 128000, `${label}: cloud fallback unchanged`);
+      // Replaceable windows count as defaults; anything else stays an override.
+      assert.equal(cw.shouldApplyDetectedContextWindow(65536, 128000), false);
+      assert.equal(cw.shouldApplyDetectedContextWindow(65536, 128000, { replaceable: [65536] }), true);
+      assert.equal(cw.shouldApplyDetectedContextWindow(128000, 65536, { replaceable: [65536, 128000] }), true);
+      assert.equal(cw.shouldApplyDetectedContextWindow(32768, 65536, { replaceable: [65536] }), false);
+
+      const proxyConfig = (mgr, extra = {}) => ({
+        ...mgr._defaultConfigs().local_openai_proxy,
+        apiKey: 'strong-local-proxy-key',
+        configured: true,
+        ...extra,
+      });
+      const setup = (fetchImpl, extra) => {
+        const writes = [];
+        globalThis[runtimeKey] = makeRuntime(writes);
+        globalThis.fetch = fetchImpl;
+        const mgr = new PM();
+        mgr.providers.set('local_openai_proxy', mgr._createProvider('local_openai_proxy', proxyConfig(mgr, extra)));
+        return { mgr, writes, config: () => mgr.providers.get('local_openai_proxy').config };
+      };
+
+      // 1. Load models: the proxy's card for the selected model sets the window.
+      {
+        const { mgr, writes, config } = setup(async (url) => (String(url).endsWith('/v1/models')
+          ? jsonOk({ data: [{ id: 'other', context_length: 32768 }, { id: 'claude-sonnet-4-5', context_length: 200000 }] })
+          : new Response('missing', { status: 404 })), { model: 'claude-sonnet-4-5' });
+        const result = await mgr.listProviderModels('local_openai_proxy');
+        assert.equal(result.ok, true, `${label}: proxy list ok`);
+        assert.equal(result.contextWindow, 200000, `${label}: proxy card window applied`);
+        assert.equal(config().contextWindow, 200000);
+        assert.equal(config().autoContextWindow, 200000, `${label}: auto-filled window is remembered`);
+        assert.ok(writes.some((patch) => patch.providers?.local_openai_proxy?.contextWindow === 200000));
+      }
+
+      // 2. Model pick: llama.cpp behind the proxy reports the loaded model's live n_ctx.
+      {
+        const urls = [];
+        const { mgr, config } = setup(async (url) => {
+          urls.push(String(url));
+          if (String(url).endsWith('/v1/models')) return jsonOk({ data: [{ id: 'qwen-local', object: 'model' }] });
+          if (String(url).includes('/props?model=qwen-local')) return jsonOk({ default_generation_settings: { n_ctx: 32768 } });
+          return new Response('missing', { status: 404 });
+        }, { model: 'qwen-local' });
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'qwen-local');
+        assert.equal(result.ok, true);
+        assert.equal(result.contextWindow, 32768, `${label}: live n_ctx shrinks the 64k default`);
+        assert.equal(config().contextWindow, 32768);
+        assert.ok(urls.some((url) => url === 'http://127.0.0.1:8317/props?model=qwen-local'), `${label}: props probed at the proxy root`);
+      }
+
+      // 3. Test connection on a set-up card still at the old 16k: a known name wins.
+      {
+        const { mgr, config } = setup(async (url) => {
+          const u = String(url);
+          if (u.endsWith('/chat/completions')) return jsonOk({ choices: [{ message: { content: 'ok' } }] });
+          if (u.endsWith('/v1/models')) return jsonOk({ data: [{ id: 'gpt-5', object: 'model' }] });
+          return new Response('missing', { status: 404 });
+        }, { model: 'gpt-5', contextWindow: 16384 });
+        const result = await mgr.testProvider('local_openai_proxy');
+        assert.equal(result.ok, true, `${label}: proxy test ok`);
+        assert.equal(result.contextWindow, 128000, `${label}: known hosted model, capped at 128k`);
+        assert.equal(config().contextWindow, 128000);
+      }
+
+      // 4. Unknown model on a set-up 16k card: the 64k fallback replaces the old default.
+      {
+        const { mgr, config } = setup(async (url) => (String(url).endsWith('/v1/models')
+          ? jsonOk({ data: [{ id: 'house-model', object: 'model' }] })
+          : new Response('missing', { status: 404 })), { model: 'house-model', contextWindow: 16384 });
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'house-model');
+        assert.equal(result.contextWindow, 65536, `${label}: undetected window falls back to 64k`);
+        assert.equal(config().contextWindow, 65536);
+      }
+
+      // 5. A window WebBrain filled in for the previous model does not stick.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: 'house-model', contextWindow: 128000, autoContextWindow: 128000,
+        });
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'house-model');
+        assert.equal(result.contextWindow, 65536, `${label}: auto 128k from a known model is replaceable`);
+        assert.equal(config().contextWindow, 65536);
+      }
+
+      // 5b. Stale auto provenance is cleared when Settings explicitly changes the context window.
+      // (auto 128k → manual 32k → manual 128k: the manual 128k must not be replaced by 64k)
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: 'house-model', contextWindow: 128000, autoContextWindow: 128000,
+        });
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 32768 });
+        assert.equal(config().contextWindow, 32768);
+        assert.equal(config().autoContextWindow, undefined, `${label}: manual edit clears autoContextWindow`);
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 128000 });
+        assert.equal(config().contextWindow, 128000);
+        assert.equal(config().autoContextWindow, undefined, `${label}: returning to 128k remains manual`);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'house-model');
+        assert.equal(result.contextWindow, undefined, `${label}: manual 128k override is kept`);
+        assert.equal(config().contextWindow, 128000);
+      }
+
+      // 5c. A manually entered 64k context window is preserved as a user override
+      // and not enlarged by name-based detection.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: 'claude-sonnet-4-5',
+        });
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 65536 });
+        assert.equal(config().contextWindow, 65536);
+        assert.equal(config().manualContextWindow, true, `${label}: manual 64k recorded as manualContextWindow`);
+        assert.equal(config().autoContextWindow, undefined);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.contextWindow, undefined, `${label}: manual 64k override is preserved against name inference`);
+        assert.equal(config().contextWindow, 65536);
+      }
+
+      // 5d. An untouched 64k default saved before detection (e.g. from Settings serialization)
+      // is not marked manual and can be enlarged by detection.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: '', contextWindow: 65536,
+        });
+        await mgr.updateProvider('local_openai_proxy', {
+          baseUrl: 'http://127.0.0.1:8317/v1',
+          model: 'claude-sonnet-4-5',
+          contextWindow: 65536,
+          manualContextWindow: false,
+        });
+        assert.equal(config().contextWindow, 65536);
+        assert.equal(config().manualContextWindow, undefined, `${label}: untouched 64k has no manualContextWindow`);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.contextWindow, 128000, `${label}: untouched 64k is enlarged to 128k by name inference`);
+        assert.equal(config().contextWindow, 128000);
+      }
+
+      // 5e. An untargeted multi-field save that includes unchanged 64k without manualContextWindow
+      // does not turn untouched default into manual override.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: '', contextWindow: 65536,
+        });
+        await mgr.updateProvider('local_openai_proxy', {
+          baseUrl: 'http://127.0.0.1:8317/v1',
+          model: 'claude-sonnet-4-5',
+          contextWindow: 65536,
+        });
+        assert.equal(config().contextWindow, 65536);
+        assert.equal(config().manualContextWindow, undefined, `${label}: unchanged 64k in full save is not manual`);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.contextWindow, 128000, `${label}: unchanged 64k can be enlarged`);
+        assert.equal(config().contextWindow, 128000);
+      }
+
+      // 5e'. Re-entering the auto-filled number as a manual choice drops the auto provenance, so a
+      // later name-based detection cannot enlarge the deliberate cap.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: 'claude-sonnet-4-5', contextWindow: 65536, autoContextWindow: 65536,
+        });
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 65536, manualContextWindow: true });
+        assert.equal(config().manualContextWindow, true, `${label}: explicit manual flag is kept for an unchanged number`);
+        assert.equal(config().autoContextWindow, undefined, `${label}: explicit manual flag clears the auto provenance`);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.contextWindow, undefined, `${label}: a deliberate 64k is not replaced by the name-based 128k`);
+        assert.equal(config().contextWindow, 65536);
+      }
+
+      // 5e''. A deliberate 16k (the generic local default) behind the proxy is a manual choice too.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: 'claude-sonnet-4-5', contextWindow: 65536,
+        });
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 16384, manualContextWindow: true });
+        assert.equal(config().contextWindow, 16384);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.contextWindow, undefined, `${label}: a saved manual 16k is not enlarged by the model name`);
+        assert.equal(config().contextWindow, 16384);
+        // Without the manual marker the same 16k is the old default and is still replaced.
+        const legacy = setup(async () => new Response('missing', { status: 404 }), { model: 'claude-sonnet-4-5', contextWindow: 16384 });
+        assert.equal((await legacy.mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5')).contextWindow, 128000);
+      }
+
+      // 5e-3. A window the proxy reported is not replaced by a name guess or the 64k fallback when a
+      // later probe cannot reach the metadata; a different model starts over.
+      {
+        let reachable = true;
+        const { mgr, config } = setup(async (url) => (reachable && String(url).endsWith('/v1/models')
+          ? jsonOk({ data: [{ id: 'claude-sonnet-4-5', max_model_len: 8192 }, { id: 'other-model', max_model_len: 32768 }] })
+          : new Response('missing', { status: 404 })), { model: 'claude-sonnet-4-5', contextWindow: 65536 });
+        assert.equal((await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5')).contextWindow, 8192);
+        assert.equal(config().autoContextWindowSource, 'reported');
+        reachable = false;
+        const failed = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(failed.contextWindow, undefined, `${label}: the name-based 128k does not replace the reported 8k`);
+        assert.equal(config().contextWindow, 8192);
+        const listFail = await mgr._attachDetectedContextWindow('local_openai_proxy', mgr.providers.get('local_openai_proxy'), { ok: true, models: [] }, { model: 'claude-sonnet-4-5' });
+        assert.equal(listFail.contextWindow, undefined, `${label}: Load models / Test connection keep it too`);
+        assert.equal(config().contextWindow, 8192);
+        // The same model name behind another Base URL is another server: the old report does not apply.
+        await mgr.updateProvider('local_openai_proxy', { baseUrl: 'http://127.0.0.1:9999/v1' });
+        const moved = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(moved.contextWindow, 128000, `${label}: a window reported by the old endpoint is not kept for the new one`);
+        assert.equal(config().autoContextWindowSource, 'inferred');
+        assert.equal(config().autoContextWindowBaseUrl, 'http://127.0.0.1:9999/v1');
+        // A user edit drops the provenance with the auto window.
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 4096, manualContextWindow: true });
+        assert.equal(config().autoContextWindowBaseUrl, undefined);
+        assert.equal(config().autoContextWindowSource, undefined);
+        assert.equal(config().autoContextWindowModel, undefined);
+      }
+      // ...and an inferred window stays replaceable by a later reported one.
+      {
+        let reachable = false;
+        const { mgr, config } = setup(async (url) => (reachable && String(url).endsWith('/v1/models')
+          ? jsonOk({ data: [{ id: 'claude-sonnet-4-5', max_model_len: 8192 }] })
+          : new Response('missing', { status: 404 })), { model: 'claude-sonnet-4-5', contextWindow: 65536 });
+        assert.equal((await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5')).contextWindow, 128000);
+        assert.equal(config().autoContextWindowSource, 'inferred');
+        reachable = true;
+        assert.equal((await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5')).contextWindow, 8192, `${label}: a reported window replaces an inferred one`);
+      }
+
+      // 5f. Settings UI: edits made while detection is pending are preserved
+      {
+        const settingsSource = fs.readFileSync(path.join(ROOT, label === 'chrome' ? 'src/chrome/src/ui/settings.js' : 'src/firefox/src/ui/settings.js'), 'utf8');
+        const start = settingsSource.indexOf('const providerContextPendingSnapshots = new Map();');
+        const end = settingsSource.indexOf('\nasync function detectProviderContextWindowForModel', start);
+        assert.ok(start >= 0 && end > start, `${label}: context snapshot runtime missing`);
+
+        const inputEl = {
+          value: '65536',
+          dataset: { provider: 'local_openai_proxy', key: 'contextWindow', manuallyEdited: 'false' },
+        };
+        const providersData = {
+          local_openai_proxy: { contextWindow: 65536, manualContextWindow: false },
+        };
+        const document = {
+          querySelector: (sel) => (sel.includes('contextWindow') ? inputEl : null),
+        };
+
+        const { markProviderContextDetectionStart, clearProviderContextDetectionStart, applyProviderContextWindow } = Function(
+          'document', 'providersData',
+          `${settingsSource.slice(start, end)}\nreturn { markProviderContextDetectionStart, clearProviderContextDetectionStart, applyProviderContextWindow };`,
+        )(document, providersData);
+
+        // Case A: Detection starts with default 65536. User edits to 32768 while pending.
+        markProviderContextDetectionStart('local_openai_proxy');
+        inputEl.value = '32768';
+        inputEl.dataset.manuallyEdited = 'true';
+        // Detected window 128000 arrives:
+        applyProviderContextWindow('local_openai_proxy', 128000);
+        assert.equal(inputEl.value, '32768', `${label}: user edit made while pending is not overwritten`);
+        assert.equal(inputEl.dataset.manuallyEdited, 'true');
+        assert.equal(providersData.local_openai_proxy.contextWindow, 65536, `${label}: providersData was not overwritten with detected window`);
+
+        // Case B: Detection starts untouched, user does not edit. Detected window applies.
+        inputEl.value = '65536';
+        inputEl.dataset.manuallyEdited = 'false';
+        markProviderContextDetectionStart('local_openai_proxy');
+        applyProviderContextWindow('local_openai_proxy', 128000);
+        assert.equal(inputEl.value, '128000', `${label}: untouched input is updated by detection`);
+        assert.equal(inputEl.dataset.manuallyEdited, 'false');
+        assert.equal(providersData.local_openai_proxy.contextWindow, 128000);
+
+        // Case C: a manual value saved earlier and left alone while detection runs still takes the
+        // window the background stored (a live shrink), so the next Save cannot write the old value back.
+        inputEl.value = '131072';
+        inputEl.dataset.manuallyEdited = 'true';
+        providersData.local_openai_proxy = { contextWindow: 131072, manualContextWindow: true };
+        markProviderContextDetectionStart('local_openai_proxy');
+        applyProviderContextWindow('local_openai_proxy', 32768);
+        assert.equal(inputEl.value, '32768', `${label}: an untouched saved manual value follows the stored live window`);
+        assert.equal(inputEl.dataset.manuallyEdited, 'false');
+        assert.equal(providersData.local_openai_proxy.contextWindow, 32768);
+        assert.equal(providersData.local_openai_proxy.manualContextWindow, false);
+
+        // Case D: overlapping requests keep separate snapshots; an edit made after the first one
+        // started is still protected when the first one answers last.
+        inputEl.value = '65536';
+        inputEl.dataset.manuallyEdited = 'false';
+        providersData.local_openai_proxy = { contextWindow: 65536, manualContextWindow: false };
+        const first = markProviderContextDetectionStart('local_openai_proxy');
+        inputEl.value = '24576';
+        inputEl.dataset.manuallyEdited = 'true';
+        inputEl.dataset.editVersion = '1';
+        const second = markProviderContextDetectionStart('local_openai_proxy');
+        applyProviderContextWindow('local_openai_proxy', 131072, second);
+        assert.equal(inputEl.value, '131072', `${label}: the later request saw the edit as its starting point`);
+        inputEl.value = '24576';
+        inputEl.dataset.manuallyEdited = 'true';
+        providersData.local_openai_proxy = { contextWindow: 65536, manualContextWindow: false };
+        applyProviderContextWindow('local_openai_proxy', 131072, first);
+        assert.equal(inputEl.value, '24576', `${label}: the earlier request cannot overwrite an edit made after it started`);
+        assert.equal(providersData.local_openai_proxy.contextWindow, 65536);
+
+        // Case E: re-typing the same number is still an edit (value unchanged, version bumped).
+        inputEl.value = '65536';
+        inputEl.dataset.manuallyEdited = 'false';
+        inputEl.dataset.editVersion = '5';
+        const retyped = markProviderContextDetectionStart('local_openai_proxy');
+        inputEl.dataset.editVersion = '6';
+        inputEl.dataset.manuallyEdited = 'true';
+        applyProviderContextWindow('local_openai_proxy', 131072, retyped);
+        assert.equal(inputEl.value, '65536', `${label}: re-entering the same number counts as a user edit`);
+      }
+
+      // 6. A manual override is never enlarged by a name or the fallback...
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: 'claude-sonnet-4-5', contextWindow: 24576,
+        });
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.ok, true);
+        assert.equal(result.contextWindow, undefined, `${label}: override kept`);
+        assert.equal(config().contextWindow, 24576);
+      }
+      // ...but a reported window may shrink it.
+      {
+        const { mgr, config } = setup(async (url) => (String(url).endsWith('/v1/models')
+          ? jsonOk({ data: [{ id: 'served', max_model_len: 8192 }] })
+          : new Response('missing', { status: 404 })), { model: 'served', contextWindow: 24576 });
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'served');
+        assert.equal(result.contextWindow, 8192, `${label}: reported card shrinks an override`);
+        assert.equal(config().contextWindow, 8192);
+      }
+
+      // 7. No model selected: nothing to detect.
+      {
+        const { mgr } = setup(async () => { throw new Error('no request without a model'); }, { model: '' });
+        assert.equal(await mgr._detectLocalContextWindow('local_openai_proxy', mgr.providers.get('local_openai_proxy')), null);
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('ProviderManager load moves untouched Local OpenAI-compatible Proxy cards from 16k to 64k', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const makeRuntime = (storageData) => ({
+    storage: {
+      local: {
+        async get(keys) {
+          if (Array.isArray(keys)) return Object.fromEntries(keys.map((key) => [key, storageData[key]]));
+          if (typeof keys === 'string') return { [keys]: storageData[keys] };
+          return { ...storageData };
+        },
+        async set(patch) { Object.assign(storageData, patch); },
+        async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete storageData[key]; },
+      },
+    },
+    runtime: {
+      id: 'test-runtime',
+      getPlatformInfo(cb) {
+        const info = { os: 'test', arch: 'x64', nacl_arch: 'x64' };
+        if (typeof cb === 'function') cb(info);
+        return Promise.resolve(info);
+      },
+    },
+  });
+  try {
+    for (const [label, PM, runtimeKey] of [
+      ['chrome', ProviderManagerCh, 'chrome'],
+      ['firefox', ProviderManagerFx, 'browser'],
+    ]) {
+      const defaults = new PM()._defaultConfigs().local_openai_proxy;
+      const snapshot = { ...defaults, contextWindow: 16384 };
+      for (const [name, stored, expected] of [
+        ['untouched snapshot', { ...snapshot, configured: false }, 65536],
+        ['legacy snapshot without a configured marker', { ...snapshot }, 65536],
+        ['set-up card', { ...snapshot, configured: true, apiKey: 'strong-local-proxy-key', model: 'm' }, 16384],
+        ['legacy card with a key', { ...snapshot, apiKey: 'strong-local-proxy-key' }, 16384],
+        ['edited window', { ...snapshot, configured: false, contextWindow: 32768 }, 32768],
+      ]) {
+        const storageData = { webbrainDeviceGuid: '11111111-1111-4111-8111-111111111111', providers: { local_openai_proxy: stored } };
+        globalThis[runtimeKey] = makeRuntime(storageData);
+        const mgr = new PM();
+        await mgr.load();
+        assert.equal(mgr.providers.get('local_openai_proxy').config.contextWindow, expected, `${label}: ${name}`);
+      }
+      const fresh = new PM();
+      globalThis[runtimeKey] = makeRuntime({ webbrainDeviceGuid: '11111111-1111-4111-8111-111111111111' });
+      await fresh.load();
+      assert.equal(fresh.providers.get('local_openai_proxy').config.contextWindow, 65536, `${label}: new installs start at 64k`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
+test('Settings shows the 64k proxy context default as the field placeholder in both builds', () => {
+  for (const settingsRel of ['src/chrome/src/ui/settings.js', 'src/firefox/src/ui/settings.js']) {
+    const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
+    assert.match(settings, /const LOCAL_PROXY_CONTEXT_WINDOW_FIELD = \{\s*\.\.\.CONTEXT_WINDOW_FIELD,\s*placeholder: '65536',\s*\};/, `${settingsRel}: proxy placeholder`);
+    const block = settings.slice(settings.indexOf('local_openai_proxy: {'), settings.indexOf('\n    },', settings.indexOf('local_openai_proxy: {')));
+    assert.match(block, /LOCAL_PROXY_CONTEXT_WINDOW_FIELD,/, `${settingsRel}: proxy card uses the 64k field`);
   }
 });
 
@@ -75825,7 +76269,7 @@ test('_defaultConfigs: generic local OpenAI-compatible proxy is safe and configu
     assert.equal(config.providerName, 'local-openai-proxy');
     assert.equal(config.model, '', `${label}: users must choose a proxy-exposed model`);
     assert.equal(config.requiresModel, true, `${label}: proxy requests need an explicit model`);
-    assert.equal(config.contextWindow, 16384, `${label}: proxy should inherit the conservative local context default`);
+    assert.equal(config.contextWindow, 65536, `${label}: proxy fronts hosted models, so its undetected fallback is 64k`);
     assert.equal(config.apiKey, '', `${label}: no shared credential should ship`);
     assert.equal(config.requiresApiKey, true, `${label}: proxy authentication must be required`);
     assert.equal(config.supportsAskStreaming, true, `${label}: compatible proxy should use Ask streaming with fallback`);
