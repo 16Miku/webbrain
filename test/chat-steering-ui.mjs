@@ -174,6 +174,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         function normalizeSelectionSourceGrounding() { return null; }
         function normalizeSelectionAction() { return ''; }
         function waitForVisibleSidePanelStateRefresh() { refreshCalls++; return heldRefresh || Promise.resolve(); }
+        async function restoreComposerModeBeforeSend() {}
         function dismissSelectionAskAction() {}
         function stopListening() {}
         function permissionSkipCommandContextForDraft() { return null; }

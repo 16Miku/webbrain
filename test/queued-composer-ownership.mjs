@@ -33,6 +33,8 @@ function fixture(build, { preferences = Promise.resolve(), refresh = Promise.res
     steeringRequestsByTab: new Map(), queuedComposerMessageSeq: 0,
     composerDeliveryModeReady: preferences, composerDeliveryMode: 'queue',
     waitForVisibleSidePanelStateRefresh: () => refresh,
+    // The tab's kept mode is already read in these fixtures.
+    restoreComposerModeBeforeSend: async () => {},
     parseSlashCommands: async text => { await parsing; return text; },
     submitted, errors, tabInputDrafts: drafts,
     saveInputDraftForTab: (tabId, text) => drafts.set(Number(tabId), text),
