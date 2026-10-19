@@ -30863,7 +30863,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // stands for, so it adds no text of its own (<time><span>8 min</span></time>).
     const stableTexts = nodes => [...new Set(nodes
       .filter(node => !inStamp(node))
-      .map(stableText).filter(value => value.length <= 25000))];
+      // Timestamp markers can be longer than the labels they replace: a value
+      // that only the stabilized text pushes over the limit keeps its rendered text.
+      .map(node => { const value = stableText(node); return value.length > 25000 && typeof node.innerText === 'string' ? node.innerText : value; }).filter(value => value.length <= 25000))];
     const nativeResourceProofs = () => {
       if (args.__wbNativeResourceAdapter !== 'mastodon') return [];
       const signedIn = nativeSignedInAccount();

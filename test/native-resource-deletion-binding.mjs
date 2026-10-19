@@ -471,6 +471,31 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await f.page.close(); }
       });
 
+      await t.test('a value that only the stabilized text pushes over the size limit stays in the key', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<time datetime="2026-10-18T19:22:00.000Z">8 dk</time>';
+            // A long text that is the record's own text node, so only the record carries it.
+            const record = document.querySelector('#record-200');
+            const filler = document.createTextNode('x');
+            record.append(filler);
+            // The record's rendered text is just under the limit; the timestamp marker lifts it over.
+            filler.data = 'x'.repeat(24995 - record.innerText.length + 1);
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { const own = document.querySelector('#record-200').lastChild; own.data = 'y'.repeat(own.data.length); });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'An edit of the long text is another post');
+        } finally { await f.page.close(); }
+      });
+
       await t.test('hidden text equal to the relative time does not hide the timestamp from the key', async () => {
         const f = await fixture();
         try {
