@@ -70,6 +70,7 @@ export function systemOneFailureReason(error) {
     D1_MODEL_LOADING: 'model_loading',
     D1_MODEL_NOT_LOADED: 'model_not_loaded',
     D1_REQUEST_CANCELLED: 'cancelled',
+    JEV_STATE_EXCEEDS_MODEL_INPUT: 'state_too_long',
   };
   if (mapped[error?.code]) return mapped[error.code];
   const status = Number(error?.status || 0);
@@ -123,6 +124,31 @@ function validateState(state, multimodal = false) {
   let serialized;
   try { serialized = JSON.stringify(state); } catch { throw new Error('TypeSafe System One state is not serializable.'); }
   if (new TextEncoder().encode(serialized).length > (multimodal ? 8 * 1024 * 1024 : 16_000)) throw new Error('TypeSafe System One state is too large.');
+}
+
+// Models that read only the start of a long text state. OpenRouter's Clef Flash
+// page says Workers AI clips it to roughly the first 2K tokens, and completion
+// evidence puts its results last, so a verdict from a clipped read could be
+// confident and wrong. A state past the budget is not sent at all; the caller
+// takes the same fallback as for any unavailable decision model. Images are
+// counted separately by the provider and are not part of this text.
+// The budget is in UTF-8 bytes: a byte-level BPE tokenizer never produces more
+// tokens than bytes, so the byte count is a bound that holds for any text (CJK,
+// emoji, punctuation, hashes) without shipping a tokenizer. 1,500 sits well
+// under the roughly 2K tokens the model reads.
+export const SYSTEM_ONE_TEXT_BYTE_BUDGETS = Object.freeze({ 'cloudflare/clef-flash': 1500 });
+
+function assertStateFitsModel(model, state) {
+  const budget = SYSTEM_ONE_TEXT_BYTE_BUDGETS[model];
+  if (!budget) return;
+  // Screenshots ride inside the state as structured image_url blocks; the
+  // provider counts images separately, so only those blocks' payloads are left
+  // out. A data URL that sits in ordinary text is text and is measured.
+  const text = JSON.stringify(state, (_key, value) => (value && typeof value === 'object' && value.type === 'image_url'
+    && value.image_url && typeof value.image_url === 'object' ? { type: 'image_url' } : value));
+  if (new TextEncoder().encode(text).length > budget) {
+    throw systemOneError('JEV_STATE_EXCEEDS_MODEL_INPUT', `The decision state is longer than ${model} reads; the fallback answers instead.`);
+  }
 }
 
 function validateQuestions(questions) {
@@ -288,6 +314,7 @@ export function createSystemOneJudge({
       const model = config?.model || SYSTEM_ONE_MODEL;
       validateState(state, config?.supportsVision === true);
       validateQuestions(questions);
+      assertStateFitsModel(model, state);
       const started = now();
       const cap = config?.provider === 'webgpu_chat' ? SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS : SYSTEM_ONE_TIMEOUT_MS;
       const request = requestSignal(signal, Math.max(1, Math.min(cap, Number(timeoutMs) || cap)));
