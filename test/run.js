@@ -42613,7 +42613,7 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
     assert.match(panel, /function replaceCachedScheduleComposer\(tabId, composerId, job\) \{[\s\S]*?form\.remove\(\);[\s\S]*?renderScheduledJobCreatedMessage\(job, msgEl, wrapper\);[\s\S]*?persistTabChat\(tabId, wrapper\.innerHTML\);[\s\S]*?\}/, `${label}: completed off-tab schedule creates should reconcile cached composer messages by job id`);
     assert.match(panel, /function updateCachedScheduleComposerError\(tabId, composerId, message\) \{[\s\S]*?form\.schedule-composer\[data-composer-id="\$\{composerId\}"\][\s\S]*?submit\.disabled = false;[\s\S]*?errorEl\.textContent = message \|\| '';[\s\S]*?\}/, `${label}: failed off-tab schedule creates should re-enable cached composers with the error`);
     assert.match(panel, /async function renderScheduleComposer\(prefillPrompt = '', tabId = currentTabId\)/, `${label}: schedule form should capture the requested tab`);
-    assert.match(panel, /const initialScheduleUrl = await getCurrentScheduleUrl\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;[\s\S]*?addMessage\('system', t\('sp\.schedule_form\.opened'\)\)/, `${label}: schedule form should resolve target defaults before rendering and drop stale tab switches`);
+    assert.match(panel, /const initialScheduleUrl = await getCurrentScheduleUrl\(tabId\);[\s\S]*?if \(currentTabId !== tabId\) return;[\s\S]*?addMessage\('system', systemHtml\(t\('sp\.schedule_form\.opened'\)\)\)/, `${label}: schedule form should resolve target defaults before rendering and drop stale tab switches; its heading is markup, not text`);
     assert.match(panel, /form\.dataset\.tabId = String\(tabId\);/, `${label}: schedule form should retain its captured target tab`);
     assert.match(panel, /form\.dataset\.composerId = `schedule-\$\{Date\.now\(\)\}-\$\{Math\.random\(\)\.toString\(36\)\.slice\(2\)\}`;/, `${label}: schedule form should tag its cached composer instance`);
     assert.match(panel, /titleInput\.className = 'schedule-title'[\s\S]*?promptInput\.className = 'schedule-prompt'[\s\S]*?modeInput\.className = 'schedule-mode'/, `${label}: schedule form controls should have stable selectors for restore rebinding`);
@@ -42624,7 +42624,21 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
     assert.match(panel, /if \(currentTabId !== tabId\) \{[\s\S]*?replaceCachedScheduleComposer\(tabId, form\.dataset\.composerId, \{[\s\S]*?id: res\.jobId,[\s\S]*?scheduledAt: res\.scheduledAt,[\s\S]*?\}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?form\.remove\(\);[\s\S]*?renderScheduledJobCreatedMessage/, `${label}: schedule form should reconcile hidden and visible composer confirmations by job id`);
     assert.match(panel, /catch \(err\) \{[\s\S]*?if \(currentTabId !== tabId\) \{[\s\S]*?updateCachedScheduleComposerError\(tabId, form\.dataset\.composerId, err\.message\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?submit\.disabled = false;[\s\S]*?errorEl\.textContent = err\.message;/, `${label}: schedule form failures should update hidden cached composers instead of leaving disabled forms`);
     assert.match(panel, /renderScheduleComposer\(payload, tabId\)/, `${label}: /schedule should pass the initiating tab into the async composer`);
-    assert.match(panel, /urlInput\.value = initialScheduleUrl/, `${label}: schedule form should prefill URL targets from the active tab`);
+    assert.match(panel, /const targetUrl = scheduleUrlFromPrompt\(prefillPrompt\) \|\| initialScheduleUrl;\s*if \(isHttpScheduleUrl\(targetUrl\)\) \{\s*urlInput\.value = targetUrl;/, `${label}: schedule form should prefill URL targets from the prompt, else the active tab`);
+    {
+      const helpers = vm.createContext({ URL });
+      vm.runInContext(['isHttpScheduleUrl', 'scheduleUrlFromPrompt'].map(name => {
+        const start = panel.indexOf(`function ${name}(`);
+        return panel.slice(start, panel.indexOf('\n}\n', start) + 2);
+      }).join('\n'), helpers);
+      const pick = prompt => vm.runInContext(`scheduleUrlFromPrompt(${JSON.stringify(prompt)})`, helpers);
+      assert.equal(pick('Every 30 days, check https://example.com/ and tell me if it changed.'), 'https://example.com/');
+      assert.equal(pick('Open (https://example.com/a?b=1), then report.'), 'https://example.com/a?b=1');
+      assert.equal(pick('Compare https://a.example/ with https://b.example/'), '', `${label}: two addresses leave the target to the user`);
+      assert.equal(pick('Check https://example.com/ twice: https://example.com/'), 'https://example.com/');
+      assert.equal(pick('Check the open page.'), '');
+      assert.equal(pick('Run javascript:alert(1) on ftp://example.com'), '');
+    }
     assert.match(panel, /targetType\.value = 'url'/, `${label}: schedule form should default http(s) pages to URL targets`);
     assert.match(panel, /content\.appendChild\(form\)/, `${label}: schedule form should append after initial target defaults are applied`);
     assert.match(locale, /'sp\.slash\.schedule':/, `${label}: /schedule description missing`);

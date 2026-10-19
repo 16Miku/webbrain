@@ -4237,6 +4237,17 @@ function isHttpScheduleUrl(value) {
   }
 }
 
+// The one http(s) address a task's prompt names, so "check https://example.com/
+// every day" targets that page rather than whatever tab is open.
+function scheduleUrlFromPrompt(prompt) {
+  const urls = new Set();
+  for (const match of String(prompt || '').matchAll(/https?:\/\/[^\s<>"'`]+/gi)) {
+    const url = match[0].replace(/[)\].,;:!?]+$/, '');
+    if (isHttpScheduleUrl(url)) urls.add(url);
+  }
+  return urls.size === 1 ? [...urls][0] : '';
+}
+
 async function getCurrentScheduleUrl(tabId = currentTabId) {
   if (tabId == null) return '';
   try {
@@ -4437,7 +4448,7 @@ async function renderScheduleComposer(prefillPrompt = '', tabId = currentTabId) 
   const initialScheduleUrl = await getCurrentScheduleUrl(tabId);
   if (currentTabId !== tabId) return;
 
-  const msgEl = addMessage('system', t('sp.schedule_form.opened'));
+  const msgEl = addMessage('system', systemHtml(t('sp.schedule_form.opened')));
   const content = msgEl.querySelector('.message-content');
   const form = document.createElement('form');
   form.className = 'schedule-composer';
@@ -4507,8 +4518,9 @@ async function renderScheduleComposer(prefillPrompt = '', tabId = currentTabId) 
   urlInput.className = 'schedule-url';
   urlInput.placeholder = 'https://example.com/';
   addScheduleField(form, t('sp.schedule_form.target_url'), urlInput);
-  if (isHttpScheduleUrl(initialScheduleUrl)) {
-    urlInput.value = initialScheduleUrl;
+  const targetUrl = scheduleUrlFromPrompt(prefillPrompt) || initialScheduleUrl;
+  if (isHttpScheduleUrl(targetUrl)) {
+    urlInput.value = targetUrl;
     targetType.value = 'url';
   }
 
