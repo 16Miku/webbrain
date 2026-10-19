@@ -517,6 +517,33 @@ for (const build of BUILDS) {
     assert.equal(f.agent.takeModeEscalation(f.tab), null);
   });
 
+  test(`${build}: a correction sent while the action run's browser setup starts keeps the turn read-only`, async () => {
+    // The last await before the mode is committed: Chrome's dialog handling,
+    // Firefox's BiDi run.
+    const setup = build === 'chrome'
+      ? { module: await import('../src/chrome/src/cdp/cdp-client.js'), owner: 'cdpClient', start: 'startDialogHandling', stop: 'stopDialogHandling' }
+      : { module: await import('../src/firefox/src/bidi/client.js'), owner: 'firefoxBidi', start: 'startRun', stop: 'stopRun' };
+    const client = setup.module[setup.owner];
+    const original = { start: client[setup.start], stop: client[setup.stop] };
+    let stopped = 0;
+    const f = fixture(Agent, {
+      decide: (_q, options) => (options.mainModel === false ? { choice: 'act', source: 'decision_model' } : { choice: 'act', source: 'main_model' }),
+      replies: [done('Read the console.')],
+    });
+    client[setup.start] = async () => { f.agent._steeringRuns.get(f.tab)?.messages.push({ id: 's14', text: 'instead inspect the console errors' }); };
+    client[setup.stop] = () => { stopped += 1; };
+    try {
+      assert.equal(await f.run('Fix the login button.'), 'Read the console.');
+    } finally {
+      client[setup.start] = original.start;
+      client[setup.stop] = original.stop;
+    }
+    assert.deepEqual(runModes(f.updates), [{ mode: 'ask', source: 'route_corrected' }]);
+    assert.ok(stopped >= 1, 'the setup is undone');
+    assert.ok(f.calls[0].tools.includes('request_action_mode'));
+    assert.ok(!f.calls[0].tools.includes('click_ax') && !f.calls[0].tools.includes('click'));
+  });
+
   test(`${build}: corrections checked with the hand-off do not route the restart again`, async () => {
     const f = fixture(Agent, {
       decide: (_q, options) => (options.mainModel === false ? { choice: null, source: 'unavailable' } : { choice: 'act', source: 'main_model' }),

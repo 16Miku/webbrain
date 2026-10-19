@@ -24131,12 +24131,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const waitStartedAt = Date.now();
     let routed = await settleAutoModeRoute(route);
     // The route read the request and the corrections it was given. One the
-    // user sent while it ran is not covered, so an action route is not
-    // trusted: the turn starts read-only, applies the correction and can
-    // still hand itself off through request_action_mode.
+    // user sent while it ran, or while the action run's browser setup below
+    // starts, is not covered, so an action route is not trusted: the turn
+    // starts read-only, applies the correction and can still hand itself off
+    // through request_action_mode. The check comes after the last await, so
+    // nothing can arrive between it and the mode being committed.
     const covered = new Set(runOptions?.autoModeRouting?.correctionIds || []);
-    if (routed.mode !== 'ask'
-        && (this._steeringRuns.get(tabId)?.messages || []).some(item => !covered.has(String(item.id)))) {
+    const corrected = () => (this._steeringRuns.get(tabId)?.messages || []).some(item => !covered.has(String(item.id)));
+    if (routed.mode !== 'ask' && !corrected() && !this._isStandaloneChatRun(runOptions)) {
+      await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
+    }
+    if (routed.mode !== 'ask' && corrected()) {
+      firefoxBidi.stopRun(tabId);
       routed = { mode: 'ask', choice: null, source: 'route_corrected', latencyMs: routed.latencyMs };
     }
     const mode = routed.mode;
@@ -24146,7 +24152,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._runModeOverrides.set(tabId, mode);
       this.getConversation(tabId, mode);
       withRoutedRuntimeMode(enriched, mode);
-      if (!this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
     }
     onUpdate('run_mode', { mode, source: routed.source });
     return {
