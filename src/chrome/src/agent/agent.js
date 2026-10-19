@@ -2628,9 +2628,9 @@ export class Agent extends LoopDetector {
     }
     this._completionSubmitStates.set(tabId, state);
     // A later non-committing form (a GET search) replaces this receipt, so the
-    // guard remembers that something other than a deletion was committed.
-    if (state.dispatched && publicationGuard && state.nonCommitting !== true && state.mutationKind !== 'delete') {
-      publicationGuard.ordinaryCommitDispatched = true;
+    // guard remembers the kind of the last action that did commit.
+    if (state.dispatched && publicationGuard && state.nonCommitting !== true) {
+      publicationGuard.lastCommitKind = state.mutationKind;
     }
     if (state.dispatched && publicationGuard?.resourceMutationAuthorization) {
       const record = state.actionRecord;
@@ -6583,7 +6583,7 @@ export class Agent extends LoopDetector {
         socialPublication: structuredClone(previous?.socialPublication || null),
       } : null);
       guard.resourceMutationDispatches = structuredClone(previous?.resourceMutationDispatches || []);
-      guard.ordinaryCommitDispatched = previous?.ordinaryCommitDispatched === true;
+      guard.lastCommitKind = previous?.lastCommitKind || null;
       if (priorSubmission || attemptedPublication) guard.evidenceTaskKey = guard.taskKey;
       guard.socialPublicationSteering = previous?.socialPublicationSteering || null;
       guard.socialPublicationClarifications = previous?.socialPublicationClarifications || [];
@@ -40018,7 +40018,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       steeringPriorContext: carryMatches ? structuredClone(carried.steeringPriorContext || null) : null,
       steeringPriorSubmissionReconciliation: carryMatches ? structuredClone(carried.steeringPriorSubmissionReconciliation || null) : null,
       resourceMutationDispatches: carryMatches ? structuredClone(carried.resourceMutationDispatches || []) : [],
-      ordinaryCommitDispatched: carryMatches && carried.ordinaryCommitDispatched === true,
+      lastCommitKind: carryMatches ? carried.lastCommitKind || null : null,
       // The user's answers on WebBrain's deletion card hold for the same task.
       deletionDecisions: carryMatches && Array.isArray(carried.deletionDecisions)
         ? structuredClone(carried.deletionDecisions.slice(-32)) : [],
@@ -40566,7 +40566,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         steeringPriorContext: structuredClone(guard.steeringPriorContext || null),
         steeringPriorSubmissionReconciliation: structuredClone(guard.steeringPriorSubmissionReconciliation || null),
         resourceMutationDispatches: structuredClone(guard.resourceMutationDispatches || []),
-        ordinaryCommitDispatched: guard.ordinaryCommitDispatched === true,
+        lastCommitKind: guard.lastCommitKind || null,
         deletionDecisions: structuredClone((guard.deletionDecisions || []).slice(-32)),
         unverifiedStepDecisions: structuredClone(this._carriedUnverifiedStepDecisions(guard)),
         socialPublication: guard.socialPublication ? structuredClone(guard.socialPublication) : null,
@@ -40897,18 +40897,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // caveat. The one-nudge budget and run-ending statuses below are the
     // strict path.
     // The unverified action is a deletion only when deletions are all that was
-    // dispatched. A dispatched deletion is also the current submit receipt
-    // (_recordCompletionSubmitState keeps both), so that receipt is fine; a
-    // later ordinary form submission replaces it with one that is not a
-    // deletion and leaves no resource-mutation record of its own. A
-    // non-committing form (a GET search that checks the item is gone) also
-    // replaces the receipt but dispatches no second mutation, so it is ignored.
-    const currentReceipt = missingRequiredSubmission ? this._currentCompletionSubmitState(tabId) : null;
+    // dispatched and the last action that committed was a deletion. A form
+    // submitted after it (or before it, if a deletion came last) is told apart
+    // by the kind of the last commit, which a later non-committing form such as
+    // a GET search does not overwrite.
     const missingDeletion = missingRequiredSubmission
       && Array.isArray(state.resourceMutationDispatches) && state.resourceMutationDispatches.length > 0
       && state.resourceMutationDispatches.every(attempt => attempt?.mutationKind === 'delete')
-      && state.ordinaryCommitDispatched !== true
-      && (currentReceipt?.dispatched !== true || currentReceipt.mutationKind === 'delete' || currentReceipt.nonCommitting === true);
+      && (state.lastCommitKind == null || state.lastCommitKind === 'delete');
     const advisory = this._planGuardAdvisory(tabId, state, { viaDone, looksPlanOnly, runtimeModeContradiction,
       structuredPlan: structuredPlan
         || (state.allowsPlannerShapedResult !== true && this._isPlannerShapedJson(content)),
