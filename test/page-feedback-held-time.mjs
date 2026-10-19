@@ -65,6 +65,15 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._pageFeedbackModelHeldMs(state), 158000);
   }));
 
+  test(`${build}: a card its own timeout settles is reported as held time too`, () => withClock(async advance => {
+    const { agent, tab, state } = watched();
+    agent.clarifyTimeoutSec = 0; // the automatic choice fires on the next timer tick
+    const pending = agent._promptUnverifiedStepConfirmation(tab, {}, () => {});
+    advance(150000); // the card was on screen for two and a half minutes
+    await pending;
+    assert.equal(agent._pageFeedbackModelHeldMs(state), 150000);
+  }));
+
   test(`${build}: every check of the pre-inference certificate carries the held time`, () => withClock(async advance => {
     const { agent, tab, state } = watched();
     advance(46000);
