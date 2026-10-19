@@ -270,8 +270,16 @@ function validSettingValue(key, value) {
 // provider as it is.
 function dropChromeOnlyDecisionProvider(settings, { sparse = false } = {}) {
   if (settings.decisionProvider !== 'webgpu_chat') return;
-  if (sparse) delete settings.decisionProvider;
-  else settings.decisionProvider = DEFAULT_CONFIG_SETTINGS.decisionProvider;
+  if (sparse) {
+    delete settings.decisionProvider;
+    // A sparse patch only changes what it names: a provider-only patch must not
+    // rewrite the mode of an existing On or Off profile. A mode the patch does
+    // carry is still downgraded, as in a full restore.
+    if (Object.hasOwn(settings, 'systemOneEnabled')) settings.systemOneEnabled = false;
+    if (Object.hasOwn(settings, 'decisionMode') && settings.decisionMode !== 'off') settings.decisionMode = 'auto';
+    return;
+  }
+  settings.decisionProvider = DEFAULT_CONFIG_SETTINGS.decisionProvider;
   settings.systemOneEnabled = false;
   // On with that provider becomes Auto here; an explicit Off stays off.
   if (settings.decisionMode !== 'off') settings.decisionMode = 'auto';

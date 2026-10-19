@@ -232,3 +232,20 @@ test('Firefox imports a Chrome On selection of the Chrome-only chat model in Aut
   const off = transfer.parseConfigImport(JSON.stringify({ ...chromeExport, settings: { ...chromeExport.settings, decisionMode: 'off' } })).settings;
   assert.equal(off.decisionMode, 'off', 'an explicit Off stays off');
 });
+
+test('a provider-only Chrome patch leaves the Firefox mode alone', async () => {
+  const transfer = await import('../src/firefox/src/config-transfer.js');
+  const sparse = (settings) => transfer.parseConfigPatchImport(JSON.stringify({ schema: transfer.CONFIG_SCHEMA, settings })).settings;
+  const providerOnly = sparse({ decisionProvider: 'webgpu_chat' });
+  assert.deepEqual(providerOnly, {}, 'the unusable provider is dropped and nothing else is invented');
+  // Merged over an existing On or Off profile, nothing about the mode changes.
+  for (const mode of ['on', 'off']) {
+    const stored = { decisionMode: mode, systemOneEnabled: mode === 'on', decisionProvider: 'openrouter' };
+    assert.deepEqual({ ...stored, ...transfer.mergeConfigPatchSettings(stored, providerOnly) }, stored, `${mode} profile unchanged`);
+  }
+  // A patch that names the mode still downgrades On, and keeps an explicit Off.
+  const named = sparse({ decisionProvider: 'webgpu_chat', decisionMode: 'on', systemOneEnabled: true });
+  assert.equal(named.decisionMode, 'auto'); assert.equal(named.systemOneEnabled, false);
+  assert.equal(sparse({ decisionProvider: 'webgpu_chat', decisionMode: 'off' }).decisionMode, 'off');
+  assert.equal(Object.hasOwn(sparse({ decisionProvider: 'webgpu_chat', decisionMode: 'off' }), 'systemOneEnabled'), false);
+});
