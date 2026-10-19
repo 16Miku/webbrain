@@ -1017,6 +1017,13 @@ for (const build of ['chrome', 'firefox']) {
       guard.successfulConsequentialToolCalls = 1; guard.successfulTaskToolCalls = 1; guard.evidenceTaskKey = guard.taskKey;
     }), { summary: 'Sent the form.', outcome: 'success' }, 'I couldn\'t confirm that the submission went through.', `${build} submission`);
 
+    // A deletion is described as one, so the caveat never speaks of a
+    // "submission" the user did not make.
+    await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, guard => {
+      guard.successfulConsequentialToolCalls = 1; guard.successfulTaskToolCalls = 1; guard.evidenceTaskKey = guard.taskKey;
+      guard.resourceMutationDispatches = [{ mutationKind: 'delete', resourceUrl: 'https://mastoturk.org/@owned/1' }];
+    }), { summary: 'Deleted the post.', outcome: 'success' }, 'I couldn\'t confirm that the deletion took effect.', `${build} deletion`);
+
     await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, guard => {
       guard.siteWorkflow = { adapterName: 'github', job: { id: 'edit-file-and-commit', template: 'publish', requiresSubmission: true } };
       guard.successfulConsequentialToolCalls = 1; guard.successfulTaskToolCalls = 1; guard.evidenceTaskKey = guard.taskKey;

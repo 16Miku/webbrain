@@ -101,6 +101,15 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(f.updates.find(x => x.type === 'failure_recovery').data.retryMode, 'resume');
     assert.equal(f.updates.at(-1).type, 'error');
   });
+  test(`${browser}: the recovered answer claims only the verified submission`, async () => {
+    const f = fixture();
+    f.agent._currentUrl = async () => 'https://mastoturk.org/@owned/117';
+    const result = await f.agent._recoverPostActionModelFailure(f.tab, f.messages, f.update, {}, 4);
+    assert.equal(result.status, 'done');
+    assert.match(result.content, /stopped responding after the submission/);
+    assert.match(result.content, /no later step of the request was attempted/);
+    assert.doesNotMatch(result.content, /requested submission completed/);
+  });
   test(`${browser}: recovery uses the submitted frame when present`, async () => {
     const f = fixture({ iframe: true });
     await f.agent._recoverPostActionModelFailure(f.tab, f.messages, f.update, {}, 4);

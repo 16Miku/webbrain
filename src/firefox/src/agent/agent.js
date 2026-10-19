@@ -5539,7 +5539,12 @@ export class Agent extends LoopDetector {
       add('plan-publication-evidence-missing', false, caveat);
       if (githubFile) add('github-committed-file-verification', false, caveat);
     } else if (flags.missingRequiredSubmission && !flags.missingSocialPublishTargets.length) {
-      add('plan-submission-evidence-missing', false, 'I couldn\'t confirm that the submission went through.');
+      // A deletion is not a "submission" to the user who asked for it.
+      const deletions = Array.isArray(state.resourceMutationDispatches) && state.resourceMutationDispatches.length > 0
+        && state.resourceMutationDispatches.every(attempt => attempt?.mutationKind === 'delete');
+      add('plan-submission-evidence-missing', false, deletions
+        ? 'I couldn\'t confirm that the deletion took effect.'
+        : 'I couldn\'t confirm that the submission went through.');
     }
     if (flags.missingEvidence && findings.every(finding => ['plan-plain-final-protocol', 'plan-done-summary-shape'].includes(finding.id))) {
       add('plan-execution-evidence-missing', false, state.requiresStateChange === false
@@ -7331,9 +7336,12 @@ export class Agent extends LoopDetector {
       if (!current() || this._completionDoneBlock(tabId, 'done', { outcome: 'success' })) return null;
       const pageUrl = await this._currentUrl(tabId);
       if (!current()) return null;
+      // WebBrain writes this answer, not the model, so it claims only what it
+      // checked: the one submission on this page. A request with later steps
+      // (another site, more items) did not get them.
       const summary = /^https:\/\/addons\.mozilla\.org\//i.test(pageUrl)
         ? 'The AMO version was submitted for review and the submission confirmation was verified.'
-        : 'The requested submission completed and its result was verified.';
+        : 'The model stopped responding after the submission. WebBrain read the page and verified that submission; no later step of the request was attempted.';
       const result = await runReadOnly('done', { outcome: 'success', summary });
       if (current() && result?.action === 'return' && !result.status
           && this._completionVerdicts.get(tabId)?.outcome === 'succeeded') {
