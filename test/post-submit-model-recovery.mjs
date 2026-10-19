@@ -63,7 +63,8 @@ for (const browser of ['chrome', 'firefox']) {
     agent._completionDoneBlock = () => agent.completionInvariants.get(tab)?.verificationDebt ? { reason: 'verification_required' } : null;
     agent.completionInvariants.set(tab, { runToken: 'owned-run', sequence: 3, verificationDebt: true,
       lastAction: { name: 'click_ax', sequence: 3, uncertain: true } });
-    agent._completionSubmitStates.set(tab, { dispatched: true });
+    agent._completionSubmitStates.set(tab, { dispatched: true, actionSequence: 3,
+      originatingUrl: 'https://addons.mozilla.org/developers/addon/owned/versions/submit' });
     agent._executeToolBatch = async (_tab, calls, transcript) => {
       const call = calls[0], name = call.function.name, args = JSON.parse(call.function.arguments);
       operations.push({ name, args });
@@ -128,6 +129,44 @@ for (const browser of ['chrome', 'firefox']) {
     const f = fixture(); f.agent._completionSubmitStates.delete(f.tab);
     assert.equal(await f.agent._recoverPostActionModelFailure(f.tab, f.messages, f.update, {}, 4), null);
     assert.deepEqual(f.operations, []);
+  });
+  test(`${browser}: a failure after later steps names the earlier submission, not the latest step`, async () => {
+    // QA K1: the Mastodon post went out, the run opened x.com for the X post,
+    // and then the model request failed. x.com cannot speak for the Mastodon
+    // post, and "the action may have completed" made the next run treat the
+    // unsent X post as a possible duplicate.
+    const f = fixture();
+    f.agent._completionSubmitStates.set(f.tab, { dispatched: true, actionSequence: 2,
+      originatingUrl: 'https://mastoturk.org/home', currentUrl: 'https://mastoturk.org/home' });
+    f.agent._currentUrl = async () => 'https://x.com/home';
+    assert.equal(await f.agent._recoverPostActionModelFailure(f.tab, f.messages, f.update, {}, 7), null);
+    const error = Object.assign(new Error('offscreen proxy timed out'), { code: 'TRANSPORT' });
+    const result = await f.agent._finalModelFailure(f.tab, f.messages, f.update, {}, error, 7);
+    assert.deepEqual(f.operations, []);
+    assert.equal(result.status, 'partial');
+    assert.equal(result.content, 'Failed while requesting the model response. A submission on mastoturk.org was sent '
+      + 'earlier in this task, so review the current result before choosing Retry.');
+    const offer = f.updates.find(x => x.type === 'failure_recovery').data;
+    assert.equal(offer.stage, 'model');
+    assert.equal(offer.retryMode, 'resume');
+    assert.equal(f.updates.some(x => x.type === 'warning'), false, 'No post-submit inspection notice');
+  });
+  test(`${browser}: a navigation bound to the submission's result still lets WebBrain check it`, async () => {
+    const f = fixture();
+    f.agent._completionSubmitStates.set(f.tab, { dispatched: true, actionSequence: 2,
+      mastodonPublication: { verificationNavigation: { url: 'https://mastoturk.org/@owned', actionSequence: 3, documentToken: '' } } });
+    const result = await f.agent._recoverPostActionModelFailure(f.tab, f.messages, f.update, {}, 4);
+    assert.equal(result.status, 'done');
+    assert.deepEqual(f.operations.map(x => x.name), ['get_accessibility_tree', 'done']);
+  });
+  test(`${browser}: one checked submission does not finish a task with several deliverables`, async () => {
+    const f = fixture();
+    f.agent._planExecutionGuards.set(f.tab, { deliverables: ['Post the text on Mastodon.', 'Post the same text on X.'] });
+    assert.equal(await f.agent._recoverPostActionModelFailure(f.tab, f.messages, f.update, {}, 4), null);
+    const result = await f.agent._finalModelFailure(f.tab, f.messages, f.update, {}, new Error('timed out'), 4);
+    assert.deepEqual(f.operations, []);
+    assert.equal(result.status, 'partial');
+    assert.match(result.content, /^Failed during final verification\. The action may have completed\./);
   });
 
   test(`${browser}: response generation failures and empty output offer a bound generic Retry`, async () => {
@@ -325,7 +364,8 @@ for (const browser of ['chrome', 'firefox']) {
         state.pending = structuredClone(harness.jobs().find(job => job.id === state.sourceId).pendingToolCall);
         const click = { success: true, dispatched: true, verified: false, inconclusive: true, observedEffects: ['network_request'] };
         agent._recordCompletionToolResult(tabId, 'click_ax', {}, click);
-        agent._completionSubmitStates.set(tabId, { dispatched: true });
+        agent._completionSubmitStates.set(tabId, { dispatched: true,
+          actionSequence: agent.completionInvariants.get(tabId).lastAction.sequence });
         assert.equal(await runOptions.afterConsequentialTool({ name: 'click_ax', result: click, outcomeUnknown: true }), false);
         try {
           state.recovered = await agent._recoverPostActionModelFailure(tabId, messages, onUpdate, provider, 3, {
