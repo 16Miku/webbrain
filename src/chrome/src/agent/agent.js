@@ -11314,8 +11314,8 @@ export class Agent extends LoopDetector {
       const allowed = ['filter', 'maxDepth', 'maxChars', 'ref_id', 'page', 'tree_revision'];
       // Two values agree when they are the same once scalar types and the
       // case of a filter are normalized, as the call is repaired below.
-      const normalized = value => { const scalar = decimal(value); return typeof scalar === 'string' ? scalar.trim().toLowerCase() : scalar; };
-      const agrees = (key, value) => !Object.hasOwn(next, key) || Object.is(normalized(next[key]), normalized(value));
+      const normalized = (value, key) => { const scalar = decimal(value); return typeof scalar === 'string' ? (key === 'filter' ? scalar.trim().toLowerCase() : scalar.trim()) : scalar; };
+      const agrees = (key, value) => !Object.hasOwn(next, key) || Object.is(normalized(next[key], key), normalized(value, key));
       // Only a truncated result returns a continuation, and it is always for
       // page 2 or later with a tree revision. One for page 1 without a
       // revision, on a call that names none either, continues nothing: the
@@ -11325,7 +11325,7 @@ export class Agent extends LoopDetector {
       const restart = continuation && typeof continuation === 'object' && !Array.isArray(continuation)
         && Object.keys(continuation).length > 0 && Object.keys(continuation).every(key => allowed.includes(key))
         && !String(continuation.tree_revision ?? '').trim() && !String(next.tree_revision ?? '').trim()
-        && [undefined, null, '', 1].includes(normalized(continuation.page))
+        && [undefined, null, '', 1].includes(normalized(continuation.page, 'page'))
         // It is a placeholder only beside a read of the call's own. A restart
         // the tool returns is always anchored (it names a ref_id), so one that
         // names none cannot be genuine and is dropped beside any top-level read;
