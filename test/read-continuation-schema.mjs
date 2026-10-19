@@ -184,6 +184,38 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: a page-1 continuation without a tree revision is dropped from a first read`, () => {
+    // QA B1, G1, X5: the model filled every field of the schema, including
+    // a continuationArgs for page 1 that differed from the read it asked for,
+    // and the read failed as invalid arguments.
+    const agent = new Agent({ getActive: () => null });
+    const schema = getToolsForMode('act', { tier: 'full' }).find(tool => tool.function.name === 'get_accessibility_tree').function.parameters;
+    const read = { filter: 'all', maxDepth: 8, maxChars: 5000, ref_id: '', page: 1, tree_revision: '' };
+    for (const placeholder of [
+      { filter: 'visible', maxDepth: 10, maxChars: 6000, ref_id: '', page: 1, tree_revision: '' },
+      { filter: 'all', maxDepth: 15, maxChars: 6000, ref_id: '', page: '1', tree_revision: '' },
+      { filter: 'interactive' },
+    ]) {
+      const args = { ...read, continuationArgs: placeholder };
+      const repaired = agent._repairToolCallArgs('get_accessibility_tree', args);
+      assert.equal(repaired.result, undefined, JSON.stringify(placeholder));
+      assert.equal(repaired.repaired, true);
+      assert.deepEqual(repaired.args, read, 'The read is the one the call asked for');
+      assert.equal(validateToolArguments('get_accessibility_tree', repaired.args, schema).ok, true);
+      assert.ok(Object.hasOwn(args, 'continuationArgs'), 'The provider call is not mutated');
+    }
+    // A real continuation still may not conflict with the call, and a
+    // placeholder may still not carry undeclared fields.
+    for (const args of [
+      { filter: 'visible', maxDepth: 10, page: 1, tree_revision: '',
+        continuationArgs: { filter: 'visible', maxDepth: 15, maxChars: 6000, ref_id: '', page: 2, tree_revision: 'fnv1a64:d0891b5ff4884d4a' } },
+      { ...read, continuationArgs: { page: 1, undeclared: true } }, { ...read, continuationArgs: {} },
+      { ...read, continuationArgs: { ...continuation, page: 1, filter: 'visible' } },
+    ]) {
+      assert.equal(agent._repairToolCallArgs('get_accessibility_tree', args).result?.errorCode, 'invalid_tool_arguments', JSON.stringify(args));
+    }
+  });
+
   test(`${browser}: oversized declared prose windows are bounded without losing the requested document position`, () => {
     const agent = new Agent({ getActive: () => null });
     const schema = getToolsForMode('act', { tier: 'full' })

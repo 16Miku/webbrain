@@ -11312,7 +11312,21 @@ export class Agent extends LoopDetector {
         try { continuation = continuation.length <= 32768 ? JSON.parse(continuation) : null; } catch { continuation = null; }
       }
       const allowed = ['filter', 'maxDepth', 'maxChars', 'ref_id', 'page', 'tree_revision'];
-      const valid = continuation && typeof continuation === 'object' && !Array.isArray(continuation)
+      // Only a truncated result returns a continuation, and it is always for
+      // page 2 or later with a tree revision. One for page 1 without a
+      // revision, on a call that names none either, continues nothing: the
+      // call starts a read, and its top-level fields are that read. Models
+      // that fill every field of the schema send one with each first read,
+      // often with other values, so it is dropped instead of failing the read.
+      const restart = continuation && typeof continuation === 'object' && !Array.isArray(continuation)
+        && Object.keys(continuation).length > 0 && Object.keys(continuation).every(key => allowed.includes(key))
+        && !String(continuation.tree_revision ?? '').trim() && !String(next.tree_revision ?? '').trim()
+        && [undefined, null, '', 1, '1'].includes(continuation.page);
+      if (restart) {
+        delete next.continuationArgs;
+        repaired = true;
+      }
+      const valid = restart || continuation && typeof continuation === 'object' && !Array.isArray(continuation)
         && Object.keys(continuation).length > 0
         && Object.keys(continuation).every(key => allowed.includes(key))
         && Object.entries(continuation).every(([key, value]) => !Object.hasOwn(next, key) || Object.is(next[key], value));
@@ -11324,8 +11338,10 @@ export class Agent extends LoopDetector {
           error: 'get_accessibility_tree continuationArgs must be one complete JSON object containing only declared read fields, with no conflicting top-level fields. Re-emit the exact returned continuation fields as top-level arguments.',
         } };
       }
-      next = this._normalizeContinuationToolArgs(name, { ...next, continuationArgs: continuation });
-      repaired = true;
+      if (!restart) {
+        next = this._normalizeContinuationToolArgs(name, { ...next, continuationArgs: continuation });
+        repaired = true;
+      }
     }
     for (const key of ['maxDepth', 'maxChars', 'page']) {
       const value = decimal(next[key]);
