@@ -831,7 +831,7 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
-  test(`${browser}: an edited approved plan no longer carries the planner's deliverables`, async () => {
+  test(`${browser}: an edited approved plan drops the planner's deliverable list but stays possibly several`, async () => {
     for (const edit of [false, true]) {
       const provider = { promptTier: 'full', model: 'neutral-planner-display-test', name: 'neutral-planner-display-test' };
       const agent = new Agent({ getActive: () => provider, getVisionProvider: async () => null });
@@ -847,7 +847,7 @@ for (const browser of ['chrome', 'firefox']) {
         () => {}, null, null, '', { tabUrl: 'https://example.test/owned', tabTitle: 'Owned neutral page' },
         'try', 'act', { locale: 'en' });
       assert.equal(gate.proceed, true, JSON.stringify(gate));
-      assert.equal(gate.multipleDeliverables, !edit, `${browser}: edited=${edit}`);
+      assert.equal(gate.multipleDeliverables, true, `${browser}: edited=${edit}: an edit may have kept or added deliverables`);
       assert.deepEqual(gate.deliverables, edit ? [] : ['The first result', 'The second result']);
     }
   });

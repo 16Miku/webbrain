@@ -25490,10 +25490,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresStateChange: approvedRequiresStateChange,
         requiresSubmission: approvedRequiresSubmission,
         readScope: approvedReadScope,
-        // The reviewed text is not parsed for deliverables, so an edit drops the
-        // planner's list instead of enforcing what the person may have removed.
+        // The reviewed text is not parsed for deliverables: an edit drops the
+        // planner's list (the person may have removed some), and since the edit
+        // may equally have added some, the plan is treated as possibly naming
+        // several, which keeps one verified submission from finishing the task.
         deliverables: approvedPlanEdited ? [] : this._plannerCompletionGateFields(plan).deliverables,
-        multipleDeliverables: approvedPlanEdited ? false : this._plannerCompletionGateFields(plan).multipleDeliverables,
+        multipleDeliverables: approvedPlanEdited ? true : this._plannerCompletionGateFields(plan).multipleDeliverables,
         siteWorkflowUrl: tabUrl,
         messaging: approvedPlanEdited ? null : plan.messaging,
         requestedMessaging: approvedPlanEdited ? null : plan.requested_messaging,
