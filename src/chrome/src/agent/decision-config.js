@@ -1,9 +1,25 @@
 import { D1_MODEL_ID, D1_CONSENT_KEY, D1_CONSENT_VERSION } from '../providers/d1-config.js';
 export const DEFAULT_DECISION_MODEL = 'perplexity/pplx-decider-v1.1-27b';
+// Auto (the default) uses a decision model only when one is already on hand,
+// On uses the configured one for every decision, Off never uses one.
+export const DECISION_MODE_KEY = 'decisionMode';
+export const DECISION_MODES = Object.freeze(['auto', 'on', 'off']);
+// The stored switch for each decision a decision model can answer. Semantic
+// decisions (what a request says about an action) have no switch: they follow
+// the configured model in On and Compass in Auto.
+export const DECISION_FEATURE_KEYS = Object.freeze({
+  done: 'systemOneDoneEnabled',
+  watch: 'systemOneWatchEnabled',
+  completion: 'systemOneCompletionEnabled',
+  classifications: 'systemOneFastClassifications',
+  browser: 'systemOneFastBrowser',
+});
+export const DECISION_FEATURES = Object.freeze([...Object.keys(DECISION_FEATURE_KEYS), 'semantic']);
 export const DECISION_SETTINGS_KEYS = [
-  'systemOneEnabled', 'typesafeApiKey', 'decisionProvider', 'decisionModel',
+  DECISION_MODE_KEY, 'systemOneEnabled', 'typesafeApiKey', 'decisionProvider', 'decisionModel',
   'decisionApiKey', 'decisionLocalApiKey', 'decisionBaseUrl', 'decisionVisionMode', 'decisionVisionSupported',
   'decisionInputRate', 'decisionOutputRate', 'systemOneDoneEnabled', 'systemOneDoneThreshold',
+  'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser',
   D1_CONSENT_KEY,
 ];
 
@@ -12,16 +28,105 @@ export const DECISION_SETTINGS_KEYS = [
 // with WEBGPU_DECISION_MODEL_ID in providers/webgpu.js.
 export const WEBGPU_CHAT_DECISION_MODEL = 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision';
 
-// Resolve legacy settings without rewriting credentials or opted-in features.
-export function resolveDecisionConfig(stored = {}, compass = null) {
-  const explicitD1 = stored.decisionProvider === 'webgpu_d1' && stored.systemOneEnabled === true && stored[D1_CONSENT_KEY] === D1_CONSENT_VERSION;
-  const explicitChat = stored.decisionProvider === 'webgpu_chat' && stored.systemOneEnabled === true;
+const NO_DECISION_FEATURES = Object.freeze(Object.fromEntries(DECISION_FEATURES.map(feature => [feature, false])));
+// Auto with Compass keeps what Compass did before modes existed: completion
+// checks and semantic decisions on its managed model.
+const AUTO_COMPASS_FEATURES = Object.freeze({ ...NO_DECISION_FEATURES, done: true, semantic: true });
+// Auto with the downloaded in-browser model: the checks its probe was trained
+// for. Fast classifications, fast browser actions and semantic decisions need
+// an explicit On, so the experimental and guard-facing paths stay opt-in.
+const AUTO_LOCAL_FEATURES = Object.freeze({ ...NO_DECISION_FEATURES, done: true, watch: true, completion: true });
+
+// A saved mode wins. Profiles saved before modes existed map an enabled
+// System One switch to On and everything else to the Auto default, without
+// rewriting storage.
+export function resolveDecisionMode(stored = {}) {
+  if (DECISION_MODES.includes(stored?.[DECISION_MODE_KEY])) return stored[DECISION_MODE_KEY];
+  return stored?.systemOneEnabled === true ? 'on' : 'auto';
+}
+
+// Only Auto without Compass looks for the in-browser model, so callers can skip
+// the cache lookup otherwise.
+export function decisionNeedsLocalAssist(stored = {}, compass = null) {
+  return resolveDecisionMode(stored) === 'auto' && !compass;
+}
+
+// Whether the resolved configuration answers this decision. Every caller asks
+// here instead of reading the mode or the feature switches itself.
+export function decisionFeatureEnabled(config, feature) {
+  return config?.enabled === true && config.features?.[feature] === true;
+}
+
+function doneThreshold(stored) {
+  return Number.isFinite(stored.systemOneDoneThreshold) && stored.systemOneDoneThreshold >= .5 && stored.systemOneDoneThreshold <= .99 ? stored.systemOneDoneThreshold : .9;
+}
+
+// On: every decision unless its switch was turned off. A profile from before
+// modes keeps the defaults it had then: feature switches opt in, and completion
+// checks on an in-browser model opt in too.
+function onDecisionFeatures(stored, config, legacy) {
+  if (!legacy) {
+    return { ...Object.fromEntries(Object.entries(DECISION_FEATURE_KEYS).map(([feature, key]) => [feature, stored[key] !== false])), semantic: true };
+  }
+  return {
+    done: config.doneEnabled === true,
+    watch: stored.systemOneWatchEnabled === true,
+    completion: stored.systemOneCompletionEnabled === true,
+    classifications: stored.systemOneFastClassifications === true,
+    browser: stored.systemOneFastBrowser === true,
+    semantic: true,
+  };
+}
+
+// Resolve settings without rewriting credentials or opted-in features. The
+// result keeps the selected provider's fields even when no decision is
+// answered, so Settings and model discovery see the same configuration.
+// `localAssistReady` says whether Ternary Bonsai 2 2B Vision is downloaded
+// (providers/webgpu-model-cache.js); only Auto without Compass reads it.
+export function resolveDecisionConfig(stored = {}, compass = null, { localAssistReady = false } = {}) {
+  stored = stored || {};
+  const mode = resolveDecisionMode(stored);
+  const legacy = mode === 'on' && !DECISION_MODES.includes(stored[DECISION_MODE_KEY]);
+  if (mode === 'auto' && !compass && localAssistReady === true) {
+    const config = selectedDecisionConfig({ ...stored, decisionProvider: 'webgpu_chat', decisionVisionMode: 'auto' }, null, true);
+    return { ...config, doneEnabled: true, mode, source: 'local_assist', features: { ...AUTO_LOCAL_FEATURES } };
+  }
+  const on = mode === 'on';
+  const config = selectedDecisionConfig(stored, mode === 'off' ? null : compass, on);
+  const features = mode === 'off' ? { ...NO_DECISION_FEATURES }
+    : on ? onDecisionFeatures(stored, config, legacy)
+      : config.provider === 'compass' ? { ...AUTO_COMPASS_FEATURES } : { ...NO_DECISION_FEATURES };
+  const source = mode === 'off' ? 'off' : config.provider === 'compass' ? 'compass' : on ? 'configured' : 'none';
+  return { ...config, enabled: mode !== 'off' && config.enabled, doneEnabled: features.done, mode, source, features };
+}
+
+// A profile saved before modes existed and left in On keeps the feature defaults it had then: a
+// missing switch means off. Writing an explicit mode makes the modern reading apply (missing means
+// on), so the switches the user sees have to be written down before the mode changes. Returns the
+// explicit values to store; nothing for a profile that already has a mode or was not On.
+export function materializeLegacyDecisionFeatures(stored = {}) {
+  stored = stored || {};
+  if (DECISION_MODES.includes(stored[DECISION_MODE_KEY]) || stored.systemOneEnabled !== true) return {};
+  const { features } = resolveDecisionConfig(stored);
+  const values = {};
+  for (const [feature, key] of Object.entries(DECISION_FEATURE_KEYS)) {
+    if (!Object.hasOwn(stored, key)) values[key] = features[feature] === true;
+  }
+  return values;
+}
+
+// The provider configuration itself. `on` means the user turned decisions on:
+// only then can an explicit local choice (D1, the chat model) or a configured
+// key answer; Compass answers whenever it is passed in.
+function selectedDecisionConfig(stored, compass, on) {
+  const explicitD1 = stored.decisionProvider === 'webgpu_d1' && on && stored[D1_CONSENT_KEY] === D1_CONSENT_VERSION;
+  const explicitChat = stored.decisionProvider === 'webgpu_chat' && on;
   const provider = explicitD1 ? 'webgpu_d1' : explicitChat ? 'webgpu_chat' : compass ? 'compass' : (stored.decisionProvider || (stored.typesafeApiKey ? 'typesafe' : 'openrouter'));
   if (provider === 'webgpu_d1') return {
     provider, model: D1_MODEL_ID, apiKey: '', baseUrl: '', url: '', local: true,
-    enabled: stored.systemOneEnabled === true && stored[D1_CONSENT_KEY] === D1_CONSENT_VERSION,
+    enabled: on && stored[D1_CONSENT_KEY] === D1_CONSENT_VERSION,
     doneEnabled: stored.systemOneDoneEnabled === true,
-    threshold: Number.isFinite(stored.systemOneDoneThreshold) && stored.systemOneDoneThreshold >= .5 && stored.systemOneDoneThreshold <= .99 ? stored.systemOneDoneThreshold : .9,
+    threshold: doneThreshold(stored),
     supportsVision: stored.decisionVisionMode !== 'off', experimental: true,
     requiresIndependentSuccessConfirmation: true,
     config: { category: 'local', providerName: provider, inputCostPerMillionUsd: 0, outputCostPerMillionUsd: 0 },
@@ -30,9 +135,9 @@ export function resolveDecisionConfig(stored = {}, compass = null) {
   // leaves the browser. A positive completion still needs independent proof.
   if (provider === 'webgpu_chat') return {
     provider, model: WEBGPU_CHAT_DECISION_MODEL, apiKey: '', baseUrl: '', url: '', local: true,
-    enabled: stored.systemOneEnabled === true,
+    enabled: on,
     doneEnabled: stored.systemOneDoneEnabled === true,
-    threshold: Number.isFinite(stored.systemOneDoneThreshold) && stored.systemOneDoneThreshold >= .5 && stored.systemOneDoneThreshold <= .99 ? stored.systemOneDoneThreshold : .9,
+    threshold: doneThreshold(stored),
     supportsVision: stored.decisionVisionMode !== 'off', experimental: true,
     requiresIndependentSuccessConfirmation: true,
     config: { category: 'local', providerName: provider, inputCostPerMillionUsd: 0, outputCostPerMillionUsd: 0 },
@@ -55,9 +160,9 @@ export function resolveDecisionConfig(stored = {}, compass = null) {
     provider, model, apiKey, baseUrl: baseUrl.replace(/\/$/, ''),
     url: baseUrl.replace(/\/$/, '') + (['compass', 'openrouter'].includes(provider) ? '/decisions' : provider === 'typesafe' || url.pathname.replace(/\/$/, '').endsWith('/v1') ? '/systemone' : '/v1/systemone'),
     local: provider === 'local' && loopback,
-    enabled: !!compass || (stored.systemOneEnabled === true && (provider === 'local' || !!apiKey)),
+    enabled: !!compass || (on && (provider === 'local' || !!apiKey)),
     doneEnabled: !!compass || stored.systemOneDoneEnabled !== false,
-    threshold: Number.isFinite(stored.systemOneDoneThreshold) && stored.systemOneDoneThreshold >= .5 && stored.systemOneDoneThreshold <= .99 ? stored.systemOneDoneThreshold : .9,
+    threshold: doneThreshold(stored),
     supportsVision: visionMode === 'on' || (visionMode !== 'off' && (compass ? true : stored.decisionVisionSupported === true)),
     config: { category: provider === 'local' && loopback ? 'local' : 'cloud', providerName: provider === 'compass' ? 'webbrain-cloud' : provider,
       inputCostPerMillionUsd: rate(stored.decisionInputRate, provider === 'typesafe' ? .042 : provider === 'local' ? 0 : .02),

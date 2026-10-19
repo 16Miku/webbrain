@@ -1581,7 +1581,15 @@ Key points:
 
 ### Jev scheduled-task verification
 
-The static Jev card lives in Settings → Assistive Models, after Vision and
+Which decisions a decision model answers is resolved in one place:
+`decision-config.js` maps the stored `decisionMode` (Auto, On, Off; a profile
+from before modes with `systemOneEnabled` reads as On) to a configuration whose
+`features` say which decisions it answers, and callers ask
+`decisionFeatureEnabled(config, feature)`. `decision-availability.js` adds the
+one thing Auto needs at run time, whether Ternary Bonsai 2 2B Vision is
+downloaded (Chrome only; Firefox's copy never finds it).
+
+The static decision-models card lives in Settings → Assistive Models, after Vision and
 Speech to text, outside the dynamic provider list. It never participates in
 chat model selection. The tab retains its internal `multimodal` identifier for
 existing links and remembered selections. `systemone-judge.js` owns the pinned HTTP contract,

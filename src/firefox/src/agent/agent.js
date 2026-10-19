@@ -1,7 +1,8 @@
 import '../content/file-upload-policy.js';
 const { validateUploadFile, source: FILE_UPLOAD_POLICY_SOURCE } = globalThis.__wbFileUploadPolicy;
 import { captureCalculationCompletion, captureCalculationEvidence, completionReportingContext, refreshCalculationEvidence, verifyBrowserCompletion } from './completion-runtime.js';
-import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
+import { DECISION_SETTINGS_KEYS, decisionFeatureEnabled } from './decision-config.js';
+import { resolveCurrentDecisionConfig } from './decision-availability.js';
 import { completionStopError, withCompletionTimeout } from './completion-verifier.js';
 import { incompleteCompletionBlock } from './incomplete-completion.js';
 import { COMPLETION_DOCUMENT_STAMP_SCRIPT, COMPLETION_DOCUMENT_IDENTITY_SCRIPT } from './completion-document.js';
@@ -8728,18 +8729,34 @@ export class Agent extends LoopDetector {
     return image;
   }
 
-  async _jevSettings(tabId, provider = this._activeProvider(tabId)) {
+  // The decision settings when the decision model answers `feature`
+  // (decision-config.js DECISION_FEATURES), otherwise null.
+  async _jevSettings(tabId, provider = this._activeProvider(tabId), feature = 'semantic') {
     const stored = await browser.storage.local.get([...JEV_FAST_KEYS, ...DECISION_SETTINGS_KEYS]);
     const compass = provider?.config?.providerName === 'webbrain-cloud' ? provider.config : null;
-    const decisionConfig = resolveDecisionConfig(stored, compass);
-    return decisionConfig.enabled && !this.strictSecretMode && (decisionConfig.local || globalThis.navigator?.onLine !== false) ? { ...stored, decisionConfig } : null;
+    const decisionConfig = await resolveCurrentDecisionConfig(stored, compass);
+    return decisionFeatureEnabled(decisionConfig, feature) && !this.strictSecretMode && (decisionConfig.local || globalThis.navigator?.onLine !== false) ? { ...stored, decisionConfig } : null;
+  }
+
+  // Which decision model an answer came from. A cached answer of a decision model is reused only
+  // while that same model is still enabled: after a switch to Off (or another provider) the
+  // question is asked again instead of continuing on the earlier model's answer.
+  _semanticDecisionKey(settings) {
+    const config = settings?.decisionConfig;
+    return config ? JSON.stringify([config.provider, config.model, config.baseUrl || '', config.mode || '']) : '';
+  }
+
+  async _semanticCacheHit(tabId, provider, cached) {
+    if (!cached || cached.answeredBy !== 'decision_model') return cached || null;
+    const current = this._semanticDecisionKey(await this._jevSettings(tabId, provider));
+    return current && current === cached.decisionKey ? cached : null;
   }
 
   async _jevClassify(tabId, instructions, criteria, state) {
     const context = this.systemOneContext(tabId);
     try {
-      const settings = await this._jevSettings(tabId);
-      if (settings?.systemOneEnabled !== true || !settings.systemOneFastClassifications || this._jevSessions?.get(tabId)?.hardStopped || this._checkAbort(tabId) || !context.isCurrent()) return null;
+      const settings = await this._jevSettings(tabId, this._activeProvider(tabId), 'classifications');
+      if (!decisionFeatureEnabled(settings?.decisionConfig, 'classifications') || this._jevSessions?.get(tabId)?.hardStopped || this._checkAbort(tabId) || !context.isCurrent()) return null;
       // Classification receives plain text only; multimodal requests stay with the active provider.
       if (!state || Object.values(state).some(value => value != null && typeof value !== 'string')) return null;
       const text = JSON.stringify(state);
@@ -8785,10 +8802,11 @@ export class Agent extends LoopDetector {
     const data = boundedSemanticData(page);
     const cacheKey = this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, kind, trusted, data]));
     this._semanticDecisionCache ??= new Map();
-    const cached = this._semanticDecisionCache.get(cacheKey);
+    const cached = await this._semanticCacheHit(tabId, provider, this._semanticDecisionCache.get(cacheKey));
     if (cached && !retryChoices.includes(cached.choice)) return { ...cached, source: 'cache' };
+    let decisionKey = '';
     const remember = result => {
-      this._semanticDecisionCache.set(cacheKey, { choice: result.choice, evidence: result.evidence, answeredBy: result.source });
+      this._semanticDecisionCache.set(cacheKey, { choice: result.choice, evidence: result.evidence, answeredBy: result.source, decisionKey: result.source === 'decision_model' ? decisionKey : '' });
       while (this._semanticDecisionCache.size > 256) this._semanticDecisionCache.delete(this._semanticDecisionCache.keys().next().value);
       return result;
     };
@@ -8796,6 +8814,7 @@ export class Agent extends LoopDetector {
     const context = this.systemOneContext(tabId);
     try {
       const settings = await this._jevSettings(tabId, provider);
+      decisionKey = this._semanticDecisionKey(settings);
       const decisionText = redactSystemOneText(JSON.stringify({ request: trusted, page: data }));
       // Keep the existing bounded fast route, but use the full-text main
       // model directly when a relationship question cannot fit in it.
@@ -8853,13 +8872,16 @@ export class Agent extends LoopDetector {
     const data = (Array.isArray(items) ? items : []).map(item => boundedSemanticData(item));
     const keys = data.map(item => this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, kind, trusted, item])));
     this._semanticDecisionCache ??= new Map();
-    const results = keys.map(key => {
-      const cached = this._semanticDecisionCache.get(key);
-      return cached ? { ...cached, source: 'cache' } : null;
-    });
+    const cachedEntries = keys.map(key => this._semanticDecisionCache.get(key));
+    const currentDecisionKey = cachedEntries.some(entry => entry?.answeredBy === 'decision_model')
+      ? this._semanticDecisionKey(await this._jevSettings(tabId, provider))
+      : '';
+    const results = cachedEntries.map(cached => (cached && (cached.answeredBy !== 'decision_model'
+      || (currentDecisionKey && currentDecisionKey === cached.decisionKey)) ? { ...cached, source: 'cache' } : null));
+    let decisionKey = '';
     const remember = (index, result) => {
       results[index] = result;
-      this._semanticDecisionCache.set(keys[index], { choice: result.choice, evidence: result.evidence, answeredBy: result.source });
+      this._semanticDecisionCache.set(keys[index], { choice: result.choice, evidence: result.evidence, answeredBy: result.source, decisionKey: result.source === 'decision_model' ? decisionKey : '' });
       while (this._semanticDecisionCache.size > 512) this._semanticDecisionCache.delete(this._semanticDecisionCache.keys().next().value);
     };
     const pending = () => results.map((result, index) => (result ? -1 : index)).filter(index => index >= 0);
@@ -8872,6 +8894,7 @@ export class Agent extends LoopDetector {
     if (open.length) {
       try {
         const settings = await this._jevSettings(tabId, provider);
+        decisionKey = this._semanticDecisionKey(settings);
         for (const chunk of settings ? semanticBatchChunks(open.map(index => data[index]), SEMANTIC_BATCH_LIMITS.decision) : []) {
           if (stopped()) break;
           const indexes = chunk.map(position => open[position]);
@@ -9061,8 +9084,8 @@ export class Agent extends LoopDetector {
     if (!['act', 'dev'].includes(mode) || this._checkAbort(tabId)) return null;
     let session;
     try {
-      const settings = await this._jevSettings(tabId, provider);
-      if (settings?.systemOneEnabled !== true || !settings.systemOneFastBrowser || !context.isCurrent()) return null;
+      const settings = await this._jevSettings(tabId, provider, 'browser');
+      if (!decisionFeatureEnabled(settings?.decisionConfig, 'browser') || !context.isCurrent()) return null;
       let skipReason = '';
       if (recovery) skipReason = 'recovery_turn';
       else if (runOptions.cloudRun) skipReason = 'cloud_run';

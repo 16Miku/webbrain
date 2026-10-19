@@ -58,7 +58,31 @@ cannot establish live account access or upstream availability.
 
 ### Decision models
 
-Select OpenRouter (the default), TypeSafe directly, or a local/custom System One
+A decision model answers the agent's fixed-choice questions (is the task
+finished, did a watch find what it waited for, what does a request say about an
+action) so the chat model does not have to. Settings asks one question first:
+
+- **Auto** (default) needs no setup. In Chrome it uses Ternary Bonsai 2 2B
+  Vision once that preset is downloaded (Providers → WebGPU, the install page or
+  Apocalypse Mode), for completion checks and scheduled watch and completion
+  checks only. While Compass is the chat provider, Compass's managed decision
+  model answers instead, as before. Otherwise no decision model is used.
+  Readiness is the WebGPU worker's ready marker in Cache Storage
+  (`providers/webgpu-model-cache.js`), read without starting the offscreen
+  document. Firefox has no in-browser model, so Auto there means Compass or
+  nothing.
+- **On** uses the provider configured below for every decision: completion,
+  scheduled watches and completions, fast classifications, fast browser
+  actions and semantic decisions. The first five each have a switch in the collapsed
+  "Choose which decisions use it" section (an unset switch is on), while semantic
+  decisions always use the selected provider. Profiles saved before modes existed
+  with System One enabled read as On and keep their opt-in switches.
+- **Off** uses no decision model, Compass's managed one included. The active
+  chat model keeps verifying completion.
+
+`decisionMode` (`auto`/`on`/`off`) is stored with the other decision settings;
+`decision-config.js` resolves it, and `decisionFeatureEnabled()` is the single
+check every caller makes. For On, select OpenRouter (the default), TypeSafe directly, or a local/custom System One
 endpoint. OpenRouter's model list comes from its decision-model catalog and includes
 all publishers. The new default is `perplexity/pplx-decider-v1-27b`; existing
 TypeSafe keys, enabled features and scheduler thresholds stay on their original
@@ -108,7 +132,9 @@ sharing settings and existing privacy boundaries are not bypassed.
 **In-browser chat model (experimental, Chrome)** answers decisions with the
 WebGPU chat model itself, Ternary Bonsai 2 2B Vision, so one downloaded model
 serves chat, screenshots and decisions. It needs no extra download, key or
-endpoint: download that preset under Providers → WebGPU first. Each option is
+endpoint: download that preset under Providers → WebGPU first. Auto uses it
+by itself once it is downloaded; choosing it under On also sends it fast
+classifications, fast browser actions and semantic decisions. Each option is
 scored from a short continuation of the prefilled page state by a small
 probe trained on d1's synthetic data, with the model's weights unchanged. On
 d1's held-out test it answers more questions correctly than D1 but accepts

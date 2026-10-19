@@ -30,7 +30,7 @@ async function captureDocScreenshots(page, directory) {
     const card = document.querySelector('#system-one-card').getBoundingClientRect();
     return { x: card.x + scrollX, y: heading.y + scrollY, width: card.width, height: card.bottom - heading.y };
   });
-  await page.screenshot({ animations: 'disabled', caret: 'hide', path: resolve(directory, 'settings-jev.jpg'), type: 'jpeg', quality: 85, fullPage: true, clip });
+  await page.screenshot({ animations: 'disabled', caret: 'hide', path: resolve(directory, 'settings-decision-models.jpg'), type: 'jpeg', quality: 85, fullPage: true, clip });
   await page.locator('[data-tab="display"]').click();
   await page.locator('#input-general-search').fill('Strict secret');
   await page.evaluate(() => { document.activeElement?.blur(); scrollTo(0, 0); });
@@ -93,10 +93,48 @@ try {
         await page.waitForFunction(() => document.querySelector('#system-one-heading')?.textContent.trim() === (localStorage.getItem('wbLocale') === 'tr' ? 'Karar modelleri' : 'Decision models'));
         assert.equal(await page.locator('[data-panel="multimodal"]').isVisible(), true);
         assert.equal(await page.evaluate(() => testRequests.filter(r => r.action === 'test_system_one').length), 0);
-        assert.equal(await page.locator('#toggle-system-one-classifications').isChecked(), false);
-        assert.equal(await page.locator('#toggle-system-one-browser').isChecked(), false);
+        const statusText = () => page.locator('#decision-auto-status').textContent();
+        const tr = lang === 'tr';
+        // Auto is the default: nothing to configure, and it says what it uses.
+        assert.equal(await page.locator('input[name="decision-mode"][value="auto"]').isChecked(), true);
+        assert.equal(await page.locator('#decision-configured').isVisible(), false);
+        assert.equal(await page.locator('#btn-save-system-one').isVisible(), false);
+        await page.waitForFunction(() => !document.querySelector('#decision-auto-status').hidden);
+        assert.match(await statusText(), build === 'firefox'
+          ? (tr ? /Açık’ı seçin/ : /Choose On to set up/)
+          : (tr ? /WebGPU altından/ : /Providers → WebGPU/));
+        assert.equal(await page.locator('#btn-test-system-one').isVisible(), false, 'nothing to test while Auto uses nothing');
+        await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-auto.png` });
+        if (build === 'chrome') {
+          // A finished Bonsai download leaves the worker's ready marker in Cache Storage.
+          await page.evaluate(async () => {
+            const { webgpuTextReadyMarkerUrl, WEBGPU_LOCAL_ASSIST_MODEL_ID } = await import('/src/chrome/src/providers/webgpu-model-cache.js');
+            await (await caches.open('transformers-cache')).put(webgpuTextReadyMarkerUrl(WEBGPU_LOCAL_ASSIST_MODEL_ID), new Response('{}'));
+            dispatchEvent(new Event('focus'));
+          });
+          await page.waitForFunction(() => document.querySelector('#decision-auto-status').dataset.state === 'active');
+          assert.match(await statusText(), /Ternary Bonsai 2 2B Vision/);
+          assert.equal(await page.locator('#btn-test-system-one').isVisible(), true);
+          await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-auto-ready.png` });
+          await page.locator('#btn-test-system-one').click();
+          await page.waitForFunction(() => testRequests.filter(r => r.action === 'test_system_one').length === 1);
+          assert.equal(await page.evaluate(() => testRequests.at(-1).settings.decisionMode), 'auto');
+          await page.evaluate(async () => { await caches.delete('transformers-cache'); });
+        }
+        const tests = build === 'chrome' ? 1 : 0;
+        // On applies at once and shows the provider fields; switches stay folded.
+        await page.locator('input[name="decision-mode"][value="on"]').locator('..').click();
+        await page.waitForFunction(() => testStore.decisionMode === 'on' && testStore.systemOneEnabled === true);
+        assert.equal(await page.locator('#decision-configured').isVisible(), true);
+        assert.equal(await page.locator('#decision-auto-status').isVisible(), false);
+        assert.equal(await page.locator('#decision-features').evaluate(el => el.open), false);
+        assert.equal(await page.locator('#toggle-system-one-browser').isVisible(), false);
+        await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-on.png` });
+        await page.locator('#decision-features summary').click();
+        for (const id of ['toggle-decision-done', 'toggle-system-one-watch', 'toggle-system-one-completion', 'toggle-system-one-classifications', 'toggle-system-one-browser']) {
+          assert.equal(await page.locator(`#${id}`).isChecked(), true, `${id} is on by default in On`);
+        }
         await page.locator('#toggle-system-one-classifications').locator('..').click();
-        await page.locator('#toggle-system-one-browser').locator('..').click();
         await page.locator('#decision-provider').selectOption('typesafe');
         await page.locator('#system-one-api-key').fill('synthetic-test-key');
         await page.locator('[data-tab="providers"]').click();
@@ -107,20 +145,15 @@ try {
         assert.equal(await page.locator('#system-one-api-key').inputValue(), 'synthetic-test-key');
         await page.locator('#btn-save-system-one').click();
         await page.waitForFunction(() => testStore.typesafeApiKey === 'synthetic-test-key');
+        assert.equal(await page.evaluate(() => testStore.decisionMode), 'on');
+        assert.equal(await page.evaluate(() => testStore.systemOneEnabled), true);
         assert.equal(await page.evaluate(() => testStore.systemOneWatchEnabled), true);
         assert.equal(await page.evaluate(() => testStore.systemOneCompletionEnabled), true);
-        await page.locator('#toggle-system-one').locator('..').click();
-        await page.locator('#btn-save-system-one').click();
-        await page.waitForFunction(() => testStore.systemOneEnabled === true);
-        await page.locator('#toggle-system-one').locator('..').click();
-        await page.locator('#btn-save-system-one').click();
-        await page.waitForFunction(() => testStore.systemOneEnabled === false);
-        assert.equal(await page.evaluate(() => testStore.systemOneWatchEnabled), true);
-        assert.equal(await page.evaluate(() => testStore.systemOneCompletionEnabled), true);
+        assert.equal(await page.evaluate(() => testStore.systemOneFastClassifications), false);
         assert.equal(await page.evaluate(() => testStore.systemOneFastBrowser), true);
-        assert.equal(await page.evaluate(() => testStore.systemOneFastClassifications), true);
         await page.locator('#btn-test-system-one').click();
-        await page.waitForFunction(() => testRequests.filter(r => r.action === 'test_system_one').length === 1);
+        await page.waitForFunction(count => testRequests.filter(r => r.action === 'test_system_one').length === count, tests + 1);
+        assert.equal(await page.evaluate(() => testRequests.at(-1).settings.decisionMode), 'on');
         await page.locator('#decision-provider').selectOption('openrouter');
         assert.equal(await page.locator('#decision-model').inputValue(), 'perplexity/pplx-decider-v1.1-27b');
         assert.equal(await page.locator('#system-one-api-key').inputValue(), '', 'TypeSafe key must not be copied into OpenRouter');
@@ -137,29 +170,36 @@ try {
         assert.equal(await page.locator('#decision-model').inputValue(), 'kev-latest');
         assert.equal(await page.locator('#system-one-api-key').inputValue(), '');
         assert.equal(await page.locator('#decision-endpoint-field').isVisible(), true);
-        await page.locator('#toggle-system-one').locator('..').click();
         await page.locator('#btn-save-system-one').click();
         await page.waitForFunction(() => testStore.decisionProvider === 'local' && testStore.systemOneEnabled === true);
         assert.equal(await page.evaluate(() => testStore.decisionLocalApiKey), '', 'local key remains optional');
         await page.locator('#btn-test-system-one').click();
-        await page.waitForFunction(() => testRequests.filter(r => r.action === 'test_system_one').length === 2);
+        await page.waitForFunction(count => testRequests.filter(r => r.action === 'test_system_one').length === count, tests + 2);
         assert.equal(await page.evaluate(() => testRequests.filter(r => r.action === 'test_system_one').at(-1).settings.decisionModel), 'kev-latest');
         await page.locator('#decision-provider').selectOption('typesafe');
         assert.equal(await page.locator('#system-one-api-key').inputValue(), 'synthetic-test-key');
         await page.locator('#decision-provider').selectOption('openrouter');
         assert.equal(await page.locator('#system-one-api-key').inputValue(), 'synthetic-openrouter-key');
-        await page.locator('#system-one-card details').evaluate(el => { el.open = true; });
         await page.screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}.png`, fullPage: true });
         await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-decision-card.png` });
+        // Off applies at once and hides everything but the explanation.
+        await page.locator('input[name="decision-mode"][value="off"]').locator('..').click();
+        await page.waitForFunction(() => testStore.decisionMode === 'off' && testStore.systemOneEnabled === false);
+        assert.equal(await page.locator('#decision-configured').isVisible(), false);
+        assert.equal(await page.locator('#btn-test-system-one').isVisible(), false);
+        assert.equal(await page.locator('#btn-save-system-one').isVisible(), false);
+        assert.equal(await page.locator('#decision-auto-status').isVisible(), false);
+        await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-off.png` });
+        // Reset returns to Auto with On's defaults and deletes the keys.
         await page.locator('#btn-clear-system-one').click();
+        await page.waitForFunction(() => testStore.decisionMode === undefined && testStore.typesafeApiKey === undefined);
+        assert.equal(await page.locator('input[name="decision-mode"][value="auto"]').isChecked(), true);
         assert.equal(await page.locator('#range-system-one-watch-threshold').inputValue(), '70');
-        assert.equal(await page.locator('#toggle-system-one-watch').isChecked(), false);
-        assert.equal(await page.locator('#toggle-system-one').isChecked(), false);
-        assert.equal(await page.locator('#toggle-system-one-completion').isChecked(), false);
         assert.equal(await page.locator('#range-system-one-completion-threshold').inputValue(), '70');
-        assert.equal(await page.locator('#toggle-system-one-browser').isChecked(), false);
-        assert.equal(await page.locator('#toggle-system-one-classifications').isChecked(), false);
-        assert.equal(await page.evaluate(() => testStore.typesafeApiKey), undefined);
+        for (const id of ['toggle-decision-done', 'toggle-system-one-watch', 'toggle-system-one-completion', 'toggle-system-one-classifications', 'toggle-system-one-browser']) {
+          assert.equal(await page.locator(`#${id}`).isChecked(), true, `${id} back to On's default`);
+        }
+        assert.equal(await page.locator('#decision-configured').isVisible(), false);
         if (build === 'chrome' && lang === 'en' && width === 1280 && process.env.JEV_DOC_SCREENSHOTS) {
           await captureDocScreenshots(page, process.env.JEV_DOC_SCREENSHOTS);
         }
