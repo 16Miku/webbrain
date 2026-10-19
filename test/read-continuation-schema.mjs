@@ -269,7 +269,7 @@ for (const browser of ['chrome', 'firefox']) {
     const partial = agent._repairToolCallArgs('get_accessibility_tree', { filter: 'all', continuationArgs: { maxDepth: 1, page: 1 } });
     assert.equal(partial.result, undefined);
     assert.deepEqual(partial.args, { filter: 'all' });
-    for (const page of [' 1 ', '1.0', '01']) {
+    for (const page of [' 1 ', '1.0', '01', 0, 1.5, '0', -2]) {
       const loose = agent._repairToolCallArgs('get_accessibility_tree', { filter: 'all', maxDepth: 8,
         continuationArgs: { filter: 'visible', maxDepth: 15, page } });
       assert.equal(loose.result, undefined, JSON.stringify(page));

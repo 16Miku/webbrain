@@ -11321,6 +11321,13 @@ export class Agent extends LoopDetector {
         return typeof scalar === 'string' && key === 'filter' ? scalar.trim().toLowerCase() : scalar;
       };
       const agrees = (key, value) => !Object.hasOwn(next, key) || Object.is(normalized(next[key], key), normalized(value, key));
+      // Every page value the read treats as the first (Math.max(1, floor(Number(page) || 1))).
+      const firstPage = value => {
+        if (value === undefined || value === null || value === '') return true;
+        const page = normalized(value, 'page');
+        const number = typeof page === 'string' ? decimal(page) : page;
+        return typeof number === 'number' && Number.isFinite(number) && Math.max(1, Math.floor(number)) === 1;
+      };
       // Only a truncated result returns a continuation, and it is always for
       // page 2 or later with a tree revision. One for page 1 without a
       // revision, on a call that names none either, continues nothing: the
@@ -11330,7 +11337,7 @@ export class Agent extends LoopDetector {
       const restart = continuation && typeof continuation === 'object' && !Array.isArray(continuation)
         && Object.keys(continuation).length > 0 && Object.keys(continuation).every(key => allowed.includes(key))
         && !String(continuation.tree_revision ?? '').trim() && !String(next.tree_revision ?? '').trim()
-        && [undefined, null, '', 1].includes(normalized(continuation.page, 'page'))
+        && firstPage(continuation.page)
         // It is a placeholder only beside a read of the call's own. A restart
         // the tool returns is always anchored (it names a ref_id), so one that
         // names none cannot be genuine and is dropped beside any top-level read;
