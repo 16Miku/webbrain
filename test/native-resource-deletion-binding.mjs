@@ -368,6 +368,26 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await f.page.close(); }
       });
 
+      // The post says what its timestamp renders ("8 dk") before the timestamp.
+      await t.test('a relative time that the post text also says keeps the same post when it ticks over', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<span>Back in 8 dk</span> <time datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__relative-time time').textContent = '9 dk'; });
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Only the timestamp ticked');
+        } finally { await f.page.close(); }
+      });
+
       await t.test('a relative time with nested markup ticking over keeps the same post', async () => {
         const f = await fixture();
         try {

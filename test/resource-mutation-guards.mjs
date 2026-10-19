@@ -195,6 +195,17 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal((await f.check()).actionGuard.reason, 'prior_effect_unreconciled', 'A cached authorization cannot replace fresh original-effect proof');
   });
 
+  test(`${build}: the stabilized text of a resource is not part of the authorization evidence`, async () => {
+    const url = 'https://example.test/records/900';
+    const f = fixture(`Update ${url} to Corrected and save it.`, { generic: true });
+    f.detected = { isSubmit: true, publicationControl: false, frameDocumentIdentity: 'owned-document',
+      actionResource: { ...record(url), stableTextValues: ['Original'] }, reconciliationResources: [record(url)],
+      fields: [{ label: 'Title', value: 'Corrected' }], actionUrl: 'https://example.test/save' };
+    assert.equal(await f.check(), null);
+    assert.equal(f.audits[0].input.resource.url, url);
+    assert.equal(Object.hasOwn(f.audits[0].input.resource, 'stableTextValues'), false, 'only the key uses the stabilized text');
+  });
+
   test(`${build}: new correction, Stop, changed native target and fabricated authority during audit veto dispatch`, async () => {
     for (const change of ['task', 'Stop', 'target', 'fabricated-evidence']) {
       const f = fixture(`Delete ${savedUrl}.`), original = f.agent._chatWithCostAllowance;
