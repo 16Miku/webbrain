@@ -965,6 +965,92 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 
 .permission-gate-popover.hidden { display: none; }
 
+/* Mode picker at the top of the "!" popover. Automatic is the default; a mode
+   chosen here lasts for the tab's chat, and the trigger then shows it, so a
+   kept mode stays visible while the popover is closed. Act and Dev use the
+   warning color of the old Ask/Act/Dev toggle. */
+.composer-mode-picker {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Each option takes its name's width and shares the rest; long names wrap
+   onto a second row instead of being cut off. */
+.composer-mode-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-input);
+}
+
+.composer-mode-option {
+  flex: 1 0 auto;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.composer-mode-option:hover {
+  color: var(--text-primary);
+  background: var(--tint-medium);
+}
+
+.composer-mode-option.active {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.composer-mode-option.active:is([data-composer-mode="act"], [data-composer-mode="dev"]) {
+  color: var(--warning);
+  background: rgba(255, 152, 0, 0.12);
+}
+
+.composer-mode-option:focus-visible {
+  outline: 2px solid var(--accent, #6c63ff);
+  outline-offset: 1px;
+}
+
+#btn-permission-gate.has-mode-pin {
+  width: auto;
+  min-width: 28px;
+  gap: 4px;
+  padding-inline: 6px 8px;
+  border-radius: 14px;
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+#btn-permission-gate.has-mode-pin:is([data-composer-mode="act"], [data-composer-mode="dev"]) {
+  color: var(--warning);
+  background: rgba(255, 152, 0, 0.12);
+}
+
+.composer-mode-badge {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.composer-mode-badge[hidden] { display: none; }
+
+/* The standalone window always stays in Ask. */
+html[data-standalone="true"] .composer-mode-picker { display: none; }
+
 .permission-gate-row {
   display: flex;
   align-items: flex-start;

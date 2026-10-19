@@ -54395,7 +54395,7 @@ test('standalone window transport, sizing, and translations are mirrored', async
     assert.match(css, /html\[data-standalone="true"\] #header #btn-expand \{\s*display: none;/, `${label}: standalone header still shows its redundant launcher`);
     assert.match(css, /html\[data-standalone="true"\] #header #btn-history \{\s*display: none;/, `${label}: standalone header should not offer History`);
     assert.match(panel, /function normalizeAgentMode\(mode\) \{\s*if \(isStandaloneWindow\) return 'ask';/, `${label}: standalone mode is not pinned to Ask`);
-    assert.match(panel, /function setMode\(mode\) \{\s*mode = normalizeAgentMode\(mode\);/, `${label}: visible mode changes bypass the standalone Ask boundary`);
+    assert.match(panel, /function setMode\(mode, \{ pinned = false \} = \{\}\) \{\s*mode = normalizeAgentMode\(mode\);/, `${label}: visible mode changes bypass the standalone Ask boundary`);
     assert.match(panel, /function modeForMessageText\(text\) \{\s*if \(isStandaloneWindow\) return 'ask';/, `${label}: slash commands can change standalone mode`);
     assert.match(panel, /async function sendMessage\(extraChatParams = \{\}\) \{\s*if \(isStandaloneWindow\) \{\s*if \(extraChatParams\?\.workflowId\) \{\s*rejectStandaloneWorkflowRun\(\);\s*return false;[\s\S]*?__mode: 'ask',[\s\S]*?__retry: \{ \.\.\.retryOptions, mode: 'ask' \}/, `${label}: standalone starts, retries, or workflow replays can escape Ask mode`);
     assert.match(panel, /async function continueAgent\(options = \{\}\) \{\s*if \(isStandaloneWindow\) options = \{ \.\.\.options, mode: 'ask' \};/, `${label}: standalone continuations can escape Ask mode`);

@@ -559,7 +559,8 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         const inputEl = document.getElementById('user-input');
         const sendBtn = document.getElementById('btn-send');
         let currentTabId = 7, renderedTabId = 7, isProcessing = true, agentMode = 'ask', composerDeliveryMode = 'queue';
-        let autoModeSelection = false; // Settings → Mode selection: Manual
+        let autoModeSelection = false; // a mode kept in the "!" menu
+        const isStandaloneWindow = false;
         let tabSwitchTransitionId = null, visibleStateRefreshPending = false, visibleStateRefreshInProgress = false, clearing = false;
         const processingTabs = new Set([7]), abortRequestedTabs = new Set();
         const queuedComposerMessagesByTab = new Map(), steeringRequestsByTab = new Map();

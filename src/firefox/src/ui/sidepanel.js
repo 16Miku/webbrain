@@ -10,6 +10,7 @@ import { saveScreenshot } from './screenshot-download.js';
 
 import { createQuotaController } from './compass-quota.js';
 import { createTimeoutRing, updateTimeoutRing } from './timeout-ring.js';
+import { createComposerModePins } from './composer-mode-pin.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
@@ -1132,11 +1133,19 @@ let currentAssistantEl = null;
 let verboseMode = false;
 let compactProgressVisible = true;
 let agentMode = 'ask'; // 'ask' | 'act' | 'dev'
-// Mode selection is always Automatic: the composer sends "auto" and the agent
-// routes each turn (src/*/src/agent/auto-mode.js); slash commands and the
-// mode shortcuts choose a mode for one message. The standalone window always
-// stays in Ask.
-const autoModeSelection = !isStandaloneWindow;
+// Mode selection is Automatic by default: the composer sends "auto" and the
+// agent routes each turn (src/*/src/agent/auto-mode.js); slash commands and
+// the mode shortcuts choose a mode for one message. Ask, Act or Dev chosen in
+// the "!" menu is kept for the tab's chat (composer-mode-pin.js) and turns
+// Automatic off until a new chat. The standalone window always stays in Ask.
+let autoModeSelection = !isStandaloneWindow;
+const composerModePins = createComposerModePins(() => browser.storage?.session);
+// Set once the "!" menu's controls exist; run-state changes may render it earlier.
+let composerModePickerReady = false;
+// The latest pick wins over an older one still waiting on its checks.
+let composerModePickGeneration = 0;
+// A provider change during a run is checked against the kept mode when it ends.
+let composerModePinCheckPending = false;
 let abortRequested = false;
 const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
@@ -1204,6 +1213,8 @@ function setTabProcessing(tabId, processing) {
   else processingTabs.delete(numericTabId);
   if (sameTabId(currentTabId, numericTabId)) {
     isProcessing = effectiveProcessing;
+    renderComposerModePicker();
+    if (!effectiveProcessing && composerModePinCheckPending) void revalidateComposerModePin();
     syncSelectionScopeRestoreAvailability();
     if (typeof syncFailureRecoveryButtons === 'function') syncFailureRecoveryButtons();
     if (typeof updateActWarning === 'function') updateActWarning();
@@ -1277,8 +1288,11 @@ function syncSelectionScopeUi() {
       ? t('sp.selection_scope.description')
       : t(button === modeActBtn ? 'sp.mode.act.title' : 'sp.mode.dev.title');
   }
-  if (scoped && agentMode !== 'ask') setMode('ask');
-  else resetInputPlaceholderRotation();
+  if (scoped && agentMode !== 'ask') {
+    // Act and Dev are unavailable in a selection scope; a kept mode drops to Ask.
+    if (composerModePinForCurrentTab()) setComposerModePinForTab(currentTabId, 'ask');
+    else setMode('ask');
+  } else resetInputPlaceholderRotation();
   syncSelectionScopeDividers();
 }
 
@@ -1439,6 +1453,7 @@ function syncCurrentTabRunFlags() {
   const numericTabId = Number(currentTabId);
   isProcessing = Number.isFinite(numericTabId) && processingTabs.has(numericTabId);
   abortRequested = Number.isFinite(numericTabId) && abortRequestedTabs.has(numericTabId);
+  renderComposerModePicker();
 }
 
 function createRunRequestId(tabId) {
@@ -1458,7 +1473,8 @@ const {
   getCurrentTabId: () => currentTabId,
   getIsProcessing: () => isProcessing || isConversationClearInProgress(),
   // "auto" makes context-menu and selection prompts send as Ask, as in Manual.
-  getAgentMode: () => (autoModeSelection ? 'auto' : agentMode),
+  // A mode kept in the "!" menu does not apply to them either.
+  getAgentMode: () => (isStandaloneWindow ? agentMode : 'auto'),
   setMode,
   getInputEl: () => inputEl,
   autoResizeInput,
@@ -1985,11 +2001,194 @@ function renderPermissionGateControl() {
   permissionGateBtn.classList.toggle('is-gate-off', off);
   // The generic i18n pass re-reads these keys after a locale change.
   const key = off ? 'sp.permissions.button_off' : 'sp.permissions.button';
+  const pin = composerModePinForCurrentTab();
+  if (pin) {
+    // The kept mode joins the label; the locale handlers render it again.
+    delete permissionGateBtn.dataset.i18nTitle;
+    delete permissionGateBtn.dataset.i18nAriaLabel;
+    const label = t('sp.mode_picker.button_pinned', { mode: t(`sp.mode.${pin}`), permissions: t(key) });
+    permissionGateBtn.title = label;
+    permissionGateBtn.setAttribute('aria-label', label);
+    return;
+  }
   permissionGateBtn.dataset.i18nTitle = key;
   permissionGateBtn.dataset.i18nAriaLabel = key;
   permissionGateBtn.title = t(key);
   permissionGateBtn.setAttribute('aria-label', t(key));
 }
+
+// --- Mode picker in the "!" menu ---
+// Automatic unless the user keeps Ask, Act or Dev for the tab's chat. The
+// kept mode is the manual mode the composer sends (agentMode); Automatic's
+// one-message slash commands and shortcuts still work on top of it.
+const composerModeOptions = [...document.querySelectorAll('.composer-mode-option')];
+const composerModeBadge = document.getElementById('composer-mode-badge');
+const composerModeDesc = document.getElementById('composer-mode-desc');
+
+// Mode checks still going (a pick waiting on its Act/Dev check, a restored
+// or changed provider's check). A send waits for them before choosing its mode.
+const composerModeTasks = new Set();
+function trackComposerModeTask(task) {
+  const tracked = Promise.resolve(task).catch(() => {}).finally(() => composerModeTasks.delete(tracked));
+  composerModeTasks.add(tracked);
+  return task;
+}
+async function settleComposerModeTasks() {
+  for (let round = 0; round < 4 && composerModeTasks.size; round += 1) await Promise.allSettled([...composerModeTasks]);
+}
+
+function composerModePinForCurrentTab() {
+  return isStandaloneWindow ? null : composerModePins.get(currentTabId);
+}
+
+function renderComposerModePicker() {
+  if (!composerModePickerReady) return;
+  const pin = composerModePinForCurrentTab();
+  const current = pin || 'auto';
+  // Like the mode shortcuts, the picker waits for the visible tab's run to
+  // end: leaving Dev mid-run would drain diagnostics the run still reads.
+  const busy = isProcessing;
+  for (const option of composerModeOptions) {
+    const on = option.dataset.composerMode === current;
+    option.classList.toggle('active', on);
+    option.setAttribute('aria-checked', String(on));
+    option.tabIndex = on ? 0 : -1;
+    option.disabled = busy;
+  }
+  if (composerModeDesc) {
+    composerModeDesc.dataset.i18n = busy ? 'sp.mode_picker.busy' : 'sp.mode_picker.desc';
+    composerModeDesc.textContent = t(composerModeDesc.dataset.i18n);
+  }
+  if (composerModeBadge) {
+    composerModeBadge.hidden = !pin;
+    if (pin) composerModeBadge.dataset.i18n = `sp.mode.${pin}`;
+    else delete composerModeBadge.dataset.i18n;
+    composerModeBadge.textContent = pin ? t(`sp.mode.${pin}`) : '';
+  }
+  if (permissionGateBtn) {
+    permissionGateBtn.classList.toggle('has-mode-pin', !!pin);
+    if (pin) permissionGateBtn.dataset.composerMode = pin;
+    else delete permissionGateBtn.dataset.composerMode;
+  }
+  renderPermissionGateControl();
+}
+
+// Applies the visible tab's kept mode, or Automatic.
+function syncComposerModeForCurrentTab() {
+  if (isStandaloneWindow) return;
+  const pin = composerModePinForCurrentTab();
+  autoModeSelection = !pin;
+  setMode(pin || 'ask', { pinned: true });
+  renderComposerModePicker();
+}
+
+// On startup and tab switches: a reopened panel finds the tab's kept mode.
+function restoreComposerModeForCurrentTab() {
+  // A tab switch supersedes a pick still waiting on its checks, even when the
+  // user comes back to the same tab before they finish.
+  composerModePickGeneration += 1;
+  syncComposerModeForCurrentTab();
+  const tabId = currentTabId;
+  if (isStandaloneWindow || tabId == null) return;
+  trackComposerModeTask(composerModePins.load(tabId).then(() => {
+    if (!sameTabId(currentTabId, tabId)) return null;
+    syncComposerModeForCurrentTab();
+    return revalidateComposerModePin();
+  }));
+}
+
+async function restoreComposerModeBeforeSend(tabId) {
+  if (isStandaloneWindow || tabId == null) return;
+  const before = composerModePins.get(tabId);
+  await composerModePins.load(tabId);
+  if (sameTabId(currentTabId, tabId) && composerModePins.get(tabId) !== before) syncComposerModeForCurrentTab();
+  // A pick or a provider check still going decides the mode first.
+  await settleComposerModeTasks();
+}
+
+function setComposerModePinForTab(tabId, mode) {
+  if (isStandaloneWindow || tabId == null) return;
+  // Any change (a pick, a new chat, a recovered record, a selection scope, a
+  // provider check) supersedes a pick still waiting on its checks.
+  composerModePickGeneration += 1;
+  void composerModePins.set(tabId, mode);
+  if (sameTabId(currentTabId, tabId)) syncComposerModeForCurrentTab();
+}
+
+function pickComposerMode(choice) {
+  return trackComposerModeTask(pickComposerModeNow(choice));
+}
+
+async function pickComposerModeNow(choice) {
+  if (isStandaloneWindow || isProcessing) return;
+  const tabId = currentTabId;
+  if (tabId == null) return;
+  const pin = ['ask', 'act', 'dev'].includes(choice) ? choice : null;
+  const generation = ++composerModePickGeneration;
+  if (pin === composerModePinForCurrentTab()) return;
+  // The same checks as the mode shortcuts: a selection scope, an in-browser
+  // model or a Compact provider (Dev) keep the choice where it was.
+  const allowed = pin === 'act' ? await ensureActMode({ switchMode: false })
+    : pin === 'dev' ? await ensureDevMode({ switchMode: false })
+      : true;
+  // A later pick, a tab switch or a run that started meanwhile wins.
+  if (generation !== composerModePickGeneration || !sameTabId(currentTabId, tabId) || isProcessing) return;
+  if (!allowed) {
+    renderComposerModePicker();
+    return;
+  }
+  setComposerModePinForTab(tabId, pin);
+}
+
+// A kept Act or Dev that the active provider cannot run (an in-browser model,
+// or a Compact provider for Dev) goes back to Auto, with the shortcut's notice.
+// During a run the check waits for the run to end.
+function revalidateComposerModePin() {
+  return trackComposerModeTask(checkComposerModePin());
+}
+
+async function checkComposerModePin() {
+  const tabId = currentTabId;
+  const pin = composerModePinForCurrentTab();
+  if (pin !== 'act' && pin !== 'dev') {
+    composerModePinCheckPending = false;
+    return;
+  }
+  if (isProcessing) {
+    composerModePinCheckPending = true;
+    return;
+  }
+  composerModePinCheckPending = false;
+  const generation = composerModePickGeneration;
+  const allowed = pin === 'act' ? await ensureActMode({ switchMode: false }) : await ensureDevMode({ switchMode: false });
+  if (allowed || generation !== composerModePickGeneration || !sameTabId(currentTabId, tabId)
+      || composerModePinForCurrentTab() !== pin) return;
+  if (isProcessing) {
+    composerModePinCheckPending = true;
+    return;
+  }
+  composerModePickGeneration += 1;
+  setComposerModePinForTab(tabId, null);
+}
+
+for (const option of composerModeOptions) {
+  option.addEventListener('click', () => { void pickComposerMode(option.dataset.composerMode); });
+}
+// A radio group: the arrow keys move the choice, Home and End jump to the ends.
+composerModeOptions[0]?.parentElement?.addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  if (isProcessing) return;
+  const count = composerModeOptions.length;
+  const index = Math.max(0, composerModeOptions.indexOf(document.activeElement));
+  const rtl = document.documentElement.dir === 'rtl';
+  const forward = event.key === 'ArrowDown' || event.key === (rtl ? 'ArrowLeft' : 'ArrowRight');
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? count - 1
+      : (index + (forward ? 1 : -1) + count) % count;
+  composerModeOptions[next].focus();
+  void pickComposerMode(composerModeOptions[next].dataset.composerMode);
+});
 
 function setPermissionGateFromPanel(askBefore) {
   const write = permissionGateWriteQueue.then(async () => {
@@ -2048,19 +2247,24 @@ document.addEventListener('click', (event) => {
   if (permissionGateMenu?.contains(event.target)) return;
   closePermissionGatePopover();
 });
+composerModePickerReady = true;
 renderPermissionGateControl();
+renderComposerModePicker();
 
 // An automatically routed run that is acting in the visible tab.
-function autoActionRunVisible() {
-  return autoModeSelection && isProcessing
-    && ['act', 'dev'].includes(currentAssistantEl?.dataset?.runMode);
+// The mode of the run on screen, while it is going. It can differ from the
+// mode the next message uses (Auto, or the one kept in the "!" menu): an
+// automatic route, a one-message slash command, Retry or Continue.
+function visibleRunMode() {
+  const mode = isProcessing ? currentAssistantEl?.dataset?.runMode : '';
+  return ['ask', 'act', 'dev'].includes(mode) ? mode : '';
 }
 
 function updateActWarning() {
   if (!actWarning) return;
   const show = actWarningPreferenceLoaded
     && !actWarningDismissed
-    && (agentMode !== 'ask' || autoActionRunVisible())
+    && (visibleRunMode() ? visibleRunMode() !== 'ask' : agentMode !== 'ask')
     && !askBeforeConsequential;
   actWarning.classList.toggle('hidden', !show);
 }
@@ -3288,6 +3492,7 @@ async function renderClearedConversationForTab(tabId, { allowCacheClearFailure =
   if (sameTabId(currentTabId, tabId)) releaseRetryAttachmentsInTree(messagesEl);
   clearRetryAttachmentsForTab(tabId);
   setApiMutationsAllowedForTab(tabId, false);
+  setComposerModePinForTab(tabId, null);
   await resetChatHistoryStateForTab(tabId);
   if (currentTabId !== tabId) return;
   resetChatNavigation();
@@ -5095,6 +5300,7 @@ async function init() {
   syncProgressDisplayMode();
   alwaysAllowApiMutations = stored.alwaysAllowApiMutations === undefined || stored.alwaysAllowApiMutations === true;
   syncApiMutationsAllowedForCurrentTab();
+  restoreComposerModeForCurrentTab();
 
   // Restore prior conversation for this tab (if any) — survives close/reopen.
   const restoreTabId = currentTabId;
@@ -5163,6 +5369,7 @@ async function init() {
     }
     if (changes.providers || changes.activeProvider) {
       void loadProviders();
+      void revalidateComposerModePin();
     }
   });
 
@@ -5267,6 +5474,7 @@ async function switchToTab(newTabId) {
       queuedTabSwitchMessages = queuedTabSwitchMessages.filter(msg => msg?.tabId === retainedTabId);
       syncCurrentTabRunFlags();
       syncApiMutationsAllowedForCurrentTab();
+      restoreComposerModeForCurrentTab();
       syncSelectionScopeUi();
       await restoreActiveRunState(retainedTabId);
       return;
@@ -5298,6 +5506,7 @@ async function switchToTab(newTabId) {
     resetChatNavigation();
     syncCurrentTabRunFlags();
     syncApiMutationsAllowedForCurrentTab();
+    restoreComposerModeForCurrentTab();
     syncSelectionScopeUi();
 
     // Acquire shared handoff ownership for the destination before its DOM can
@@ -9506,6 +9715,9 @@ async function sendMessage(extraChatParams = {}) {
   if (selectionAction) chatExtraParams.selectionAction = selectionAction;
   await composerDeliveryModeReady;
   await waitForVisibleSidePanelStateRefresh();
+  // A reopened panel may still be reading the tab's kept mode: never send a
+  // message as Auto that the user kept in Ask, Act or Dev.
+  await restoreComposerModeBeforeSend(composerSubmission.tabId);
   if (!sameTabId(submissionRenderedTabId, composerSubmission.tabId)
       || !composerSubmissionIsCurrent(composerSubmission, { allowProcessing: submissionStartedDuringRun })) {
     await releaseOwnedContextMenuClaim();
@@ -14391,21 +14603,21 @@ async function handleGlobalKeydown(e) {
   // In Automatic mode the shortcuts choose a mode for the next message only.
   if (mod && e.shiftKey && e.key === 'A' && !isProcessing) {
     e.preventDefault();
-    if (autoModeSelection) prefixComposerModeCommand('/ask');
+    if (!isStandaloneWindow) prefixComposerModeCommand('/ask');
     else setMode('ask');
     return;
   }
   // Ctrl+Shift+X: switch to Act mode (blocked while agent is running)
   if (mod && e.shiftKey && e.key === 'X' && !isProcessing) {
     e.preventDefault();
-    if (autoModeSelection) prefixComposerModeCommand('/act');
+    if (!isStandaloneWindow) prefixComposerModeCommand('/act');
     else await ensureActMode();
     return;
   }
   // Ctrl+Shift+D: switch to Dev mode (blocked while agent is running)
   if (mod && e.shiftKey && e.key === 'D' && !isProcessing) {
     e.preventDefault();
-    if (autoModeSelection) prefixComposerModeCommand('/dev');
+    if (!isStandaloneWindow) prefixComposerModeCommand('/dev');
     else await ensureDevMode();
     return;
   }
@@ -14432,10 +14644,13 @@ function positionModeHighlight(btn, { instant = false } = {}) {
   if (instant) requestAnimationFrame(() => modeToggleHighlight.classList.remove('instant'));
 }
 
-function setMode(mode) {
+function setMode(mode, { pinned = false } = {}) {
   mode = normalizeAgentMode(mode);
   // Automatic never pins a mode: callers pass the mode of their own send.
   if (autoModeSelection) mode = 'ask';
+  // A mode kept in the "!" menu changes only there; other callers (slash
+  // commands, Retry, Continue) pass their own send's mode.
+  else if (!pinned && composerModePinForCurrentTab()) return;
   agentMode = mode;
 
   modeAskBtn.classList.toggle('active', mode === 'ask');
@@ -14473,12 +14688,12 @@ async function ensureActMode({ switchMode = true } = {}) {
   return true;
 }
 
-async function ensureDevMode() {
+async function ensureDevMode({ switchMode = true } = {}) {
   if (isSelectionGroundedForTab(currentTabId)) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return false;
   }
-  if (agentMode === 'dev') return true;
+  if (agentMode === 'dev' && switchMode) return true;
   try {
     const tierInfo = await sendToBackground('get_active_prompt_tier');
     if (tierInfo?.tier === 'compact') {
@@ -14491,7 +14706,7 @@ async function ensureDevMode() {
     // The agent also enforces this server-side; don't block Dev on a stale
     // sidepanel/background lookup failure.
   }
-  if (autoModeSelection) return true;
+  if (autoModeSelection || !switchMode) return true;
   setMode('dev');
   return true;
 }
@@ -15681,6 +15896,7 @@ async function recoverHistoryRecord(recordId, tabId, pageUrl) {
     chatHistoryConversationIdsByTab.set(tabId, result.conversationId);
     chatHistoryCreatedAtByTab.set(tabId, Date.now());
     applyConversationScopeState(tabId, result);
+    setComposerModePinForTab(tabId, null);
     setMode('ask');
     // The background already durably committed this HTML with the model state.
     tabChatHandoffGenerations.set(Number(tabId), result.handoffGeneration);
@@ -15934,6 +16150,7 @@ if (languageSelect) {
     syncProviderPickerButton();
     updateInputPlaceholder();
     syncSelectionScopeUi();
+    renderComposerModePicker();
     scheduleChatNavigationUpdate();
   });
   document.addEventListener('wb-locale-changed', () => {
@@ -15942,6 +16159,7 @@ if (languageSelect) {
     syncProviderPickerButton();
     updateInputPlaceholder();
     syncSelectionScopeUi();
+    renderComposerModePicker();
     scheduleChatNavigationUpdate();
   });
 }
