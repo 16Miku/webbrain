@@ -939,7 +939,12 @@ export function recordCompletionToolResult(state, name, args = {}, result, { cha
     next.hadAction = true;
     // A persisted scheduler result proves its own mutation, but it must never
     // erase verification debt opened by an earlier page action.
-    if (selfVerified && current.verificationDebt) return next;
+    if (selfVerified && current.verificationDebt) {
+      // The run has moved on, though lastAction still names the page action the
+      // debt belongs to: the later action's sequence is kept apart.
+      next.laterSelfVerifiedSequence = sequence;
+      return next;
+    }
     next.verificationDebt = !selfVerified;
     next.lastAction = {
       name,

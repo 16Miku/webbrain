@@ -179,6 +179,15 @@ for (const browser of ['chrome', 'firefox']) {
     const after = modelFailureRecovery(error, { postAction: true });
     assert.match(after.message, /action may have completed/);
     assert.match(after.message, /Review the current result before choosing Retry/);
+    const earlier = modelFailureRecovery(error, { earlierSubmission: { host: 'mastoturk.org' } });
+    assert.equal(earlier.message, 'Failed while contacting WebBrain Cloud. The model service could not finish this request. '
+      + 'A submission on mastoturk.org was sent earlier in this task, so review the current result before choosing Retry.');
+    assert.equal(earlier.stage, 'model');
+    assert.equal(modelFailureRecovery(new Error('timed out'), { earlierSubmission: { host: '' } }).message,
+      'Failed while requesting the model response. A submission was sent earlier in this task, so review the current result before choosing Retry.');
+    // Without a submission the messages stay as they were.
+    assert.equal(model.message, 'Failed while contacting WebBrain Cloud. The model service could not finish this request. You can retry from the current state.');
+    assert.equal(modelFailureRecovery(new Error('timed out')).message, 'Failed while requesting the model response. You can retry from the current state.');
   });
 
   test(`${browser}: checker trace budgets survive metadata projection while raw validation content stays private`, () => {
@@ -409,13 +418,42 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: a model failure after the run moved to the next site names where the earlier post went`, async () => {
+    // QA K1 with the real recorders: post on Mastodon, read the result, open
+    // x.com for the X post, then the model request fails.
+    const agent = setup(), messages = agent.conversations.get(tabId), updates = [], operations = [];
+    const home = 'https://mastoturk.org/home';
+    agent.conversationModes.set(tabId, 'act');
+    agent._planExecutionGuards.set(tabId, { requiresSubmission: true, requiresStateChange: true });
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_publish' }, { success: true, dispatched: true });
+    agent._recordCompletionSubmitAttempt(tabId, { isSubmit: true }, 'click_ax', { ref_id: 'ref_publish' },
+      home, home, { success: true, dispatched: true }, 'document-1', 'document-1');
+    assert.equal(agent._completionSubmissionIsLatestAction(tabId), true);
+    agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, { success: true, pageContent: 'article "Hello"' });
+    assert.equal(agent._completionSubmissionIsLatestAction(tabId), true, 'Reading the result is not a later step');
+    agent._recordCompletionToolResult(tabId, 'navigate', { url: 'https://x.com' },
+      { success: true, dispatched: true, verified: true, url: 'https://x.com/', pageUrlChanged: true });
+    assert.equal(agent._completionSubmissionIsLatestAction(tabId), false);
+    agent._executeToolBatch = async (_tab, calls) => { operations.push(calls[0].function.name); return { action: 'continue' }; };
+    agent._currentUrl = async () => 'https://x.com/home';
+    const error = Object.assign(new Error('local proxy timed out'), { code: 'TRANSPORT' });
+    const result = await agent._finalModelFailure(tabId, messages, (type, data) => updates.push({ type, data }), {}, error, 7);
+    assert.deepEqual(operations, [], 'Nothing is read or completed on x.com in the Mastodon post\'s name');
+    assert.equal(result.status, 'partial');
+    assert.equal(result.content, 'Failed while requesting the model response. A submission on mastoturk.org was sent '
+      + 'earlier in this task, so review the current result before choosing Retry.');
+    assert.equal(updates.find(x => x.type === 'failure_recovery').data.stage, 'model');
+  });
+
   test(`${browser}: reconciliation stops on exact-task, conversation or in-place run-token changes during its read`, async () => {
     for (const change of ['exact-task', 'conversation', 'run-token']) {
       const agent = setup(), operations = [];
       agent.conversationModes.set(tabId, 'act');
       agent._beginCompletionInvariant(tabId);
       agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'submit' }, { success: true, dispatched: true });
-      agent._completionSubmitStates.set(tabId, { dispatched: true });
+      agent._completionSubmitStates.set(tabId, { dispatched: true,
+        actionSequence: agent.completionInvariants.get(tabId).lastAction.sequence });
       agent._completionDoneBlock = () => null;
       agent._executeToolBatch = async (_tab, calls) => {
         const name = calls[0].function.name;

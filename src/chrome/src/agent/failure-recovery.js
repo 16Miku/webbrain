@@ -42,13 +42,22 @@ export class FailureRecoveryRegistry {
   clear(tabId) { this.offers.delete(tabId); this.monitoringRetries.delete(tabId); }
 }
 
-export function modelFailureRecovery(error, { postAction = false, phase = 'model' } = {}) {
+// postAction: the request failed while checking the submission that is the
+// run's latest action. earlierSubmission ({ host }): the run sent a submission
+// and then went on to other actions, so the request failed on a later step.
+// That message says where the submission went instead of suggesting that the
+// latest step may have submitted something.
+export function modelFailureRecovery(error, { postAction = false, earlierSubmission = null, phase = 'model' } = {}) {
   const code = String(error?.code || 'model_request_failed');
   const stage = postAction ? 'completion_verification' : phase;
+  const failed = code === 'webbrain_cloud_upstream_error'
+    ? 'Failed while contacting WebBrain Cloud. The model service could not finish this request.'
+    : 'Failed while requesting the model response.';
+  const host = String(earlierSubmission?.host || '').slice(0, 253);
   const message = postAction
     ? 'Failed during final verification. The action may have completed. Review the current result before choosing Retry.'
-    : code === 'webbrain_cloud_upstream_error'
-      ? 'Failed while contacting WebBrain Cloud. The model service could not finish this request. You can retry from the current state.'
-      : 'Failed while requesting the model response. You can retry from the current state.';
+    : earlierSubmission
+      ? `${failed} A submission${host ? ` on ${host}` : ''} was sent earlier in this task, so review the current result before choosing Retry.`
+      : `${failed} You can retry from the current state.`;
   return { stage, code, message, retryMode: 'resume', diagnostics: String(error?.message || error || '').slice(0,6000) };
 }

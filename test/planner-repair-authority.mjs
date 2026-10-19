@@ -830,4 +830,25 @@ for (const browser of ['chrome', 'firefox']) {
       assert.ok(gate.approvedScratchpadText.includes('বাংলা'));
     }
   });
+
+  test(`${browser}: an edited approved plan drops the planner's deliverable list but stays possibly several`, async () => {
+    for (const edit of [false, true]) {
+      const provider = { promptTier: 'full', model: 'neutral-planner-display-test', name: 'neutral-planner-display-test' };
+      const agent = new Agent({ getActive: () => provider, getVisionProvider: async () => null });
+      agent.setPlanReviewSettings({ mode: 'always' });
+      agent._chatWithCostAllowance = async () => ({ content: JSON.stringify(modelPlan({ deliverables: ['The first result', 'The second result'] })) });
+      agent._waitForPlanReview = async (_tabId, _planId, plan, compact, _update, verbose) => {
+        const editedText = verbose.replace(plan.steps[0].action, 'Read the page and report only the first result.');
+        if (!edit) return { action: 'approve' };
+        const dataset = { planDirty: 'true', planEditSource: 'raw', editedText, planMarkdownMode: 'verbose', originalCompactMarkdown: compact };
+        return { action: 'approve', ...review.approval({ dataset: JSON.parse(JSON.stringify(dataset)), querySelector: () => null }) };
+      };
+      const gate = await agent._runPlannerGate(42, { role: 'user', content: 'Read the current owned page without changing it.' },
+        () => {}, null, null, '', { tabUrl: 'https://example.test/owned', tabTitle: 'Owned neutral page' },
+        'try', 'act', { locale: 'en' });
+      assert.equal(gate.proceed, true, JSON.stringify(gate));
+      assert.equal(gate.multipleDeliverables, true, `${browser}: edited=${edit}: an edit may have kept or added deliverables`);
+      assert.deepEqual(gate.deliverables, edit ? [] : ['The first result', 'The second result']);
+    }
+  });
 }

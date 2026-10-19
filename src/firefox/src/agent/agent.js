@@ -7335,11 +7335,48 @@ export class Agent extends LoopDetector {
     return descriptor;
   }
 
+  // Whether the run's latest action is the submission it sent, or a
+  // navigation bound to that submission's result (the committed resource, or
+  // the Mastodon profile that shows the post). Only then does the current page
+  // speak for that submission. After any other action (the next site of a
+  // two-site post, say) the run has moved on to a later step.
+  _completionSubmissionIsLatestAction(tabId) {
+    const submit = this._completionSubmitStates.get(tabId);
+    const lastAction = this.completionInvariants.get(tabId)?.lastAction;
+    if (submit?.dispatched !== true || !lastAction) return false;
+    const resultSequence = submit.semanticCommit?.verificationNavigation?.actionSequence
+      ?? submit.mastodonPublication?.verificationNavigation?.actionSequence
+      ?? submit.actionSequence;
+    // A self-verifying action (a scheduled task, a verified chat send) after
+    // the submission leaves lastAction on the submission but is a later step.
+    const later = Number(this.completionInvariants.get(tabId)?.laterSelfVerifiedSequence || 0);
+    if (later > Number(resultSequence)) return false;
+    return Number.isFinite(Number(resultSequence)) && Number(resultSequence) === Number(lastAction.sequence);
+  }
+
+  // The site the run's submission was sent on, for the failure message.
+  _completionSubmissionHost(tabId) {
+    const submit = this._completionSubmitStates.get(tabId);
+    for (const url of [submit?.originatingUrl, submit?.currentUrl]) {
+      try {
+        const host = new URL(String(url || '')).hostname;
+        if (host) return host;
+      } catch { /* not a page address */ }
+    }
+    return '';
+  }
+
   async _recoverPostActionModelFailure(tabId, messages, onUpdate, provider, step, runOptions = {}) {
     const submit = this._completionSubmitStates.get(tabId);
     const invariant = this.completionInvariants.get(tabId);
     if (submit?.dispatched !== true || !invariant?.lastAction || !this._isActionMode(this._effectiveRunMode(tabId))
         || this._checkAbort(tabId) || this._hasPendingSteering(tabId)) return null;
+    // WebBrain reads the current page to speak for the submission, so the
+    // submission must still be the run's latest step. And when the plan names
+    // several deliverables, one verified submission cannot finish the task.
+    if (!this._completionSubmissionIsLatestAction(tabId)
+        || this._planExecutionGuards.get(tabId)?.multipleDeliverables === true
+        || (this._planExecutionGuards.get(tabId)?.deliverables || []).length > 1) return null;
     const binding = this._failureRecoveryBinding(tabId);
     const actionSequence = invariant.lastAction.sequence;
     const runToken = invariant.runToken;
@@ -7407,11 +7444,16 @@ export class Agent extends LoopDetector {
     if (runId) trace.recordError(runId, step, 'model', formatErrorMessage(error), this._traceErrorCodeFor(error));
     const recovered = await this._recoverPostActionModelFailure(tabId, messages, onUpdate, provider, step, runOptions);
     if (recovered) return recovered;
-    const postAction = this._completionSubmitStates.get(tabId)?.dispatched === true;
-    const details = modelFailureRecovery(error, { postAction });
+    const submitted = this._completionSubmitStates.get(tabId)?.dispatched === true;
+    // "The action may have completed" refers to the latest step. After later
+    // steps the message names the earlier submission's site instead, so a
+    // next run does not take an unsent later step for a possible duplicate.
+    const postAction = submitted && this._completionSubmissionIsLatestAction(tabId);
+    const details = modelFailureRecovery(error, { postAction,
+      earlierSubmission: submitted && !postAction ? { host: this._completionSubmissionHost(tabId) } : null });
     this._offerFailureRecovery(tabId, details, onUpdate);
     onUpdate?.('error', { message: details.message });
-    return { content: details.message, status: postAction ? 'partial' : 'error' };
+    return { content: details.message, status: submitted ? 'partial' : 'error' };
   }
 
   _restoreFailureRecoveryStart(tabId, requestId, onUpdate = null, retry = this._failureRecovery.monitoringRetries.get(tabId)) {
@@ -23625,6 +23667,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requiresSubmission: typeof gate.requiresSubmission === 'boolean' ? gate.requiresSubmission : null,
       readScope: gate.readScope || null,
       deliverables: gate.deliverables || [],
+      multipleDeliverables: gate.multipleDeliverables === true || (gate.deliverables || []).length > 1,
       siteWorkflowUrl: gate.siteWorkflowUrl || '',
       messaging: normalizeMessageTarget(gate.messaging),
       // Who else the request named besides the open conversation, and that
@@ -24020,6 +24063,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && plan.deliverables.every(value => typeof value === 'string' && value.length <= 1000)
         ? [...plan.deliverables]
         : [],
+      // The list above is dropped past eight entries; whether the plan names
+      // several deliverables is kept regardless.
+      multipleDeliverables: Array.isArray(plan?.deliverables) && plan.deliverables.length > 1,
     };
   }
 
@@ -25449,7 +25495,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresStateChange: approvedRequiresStateChange,
         requiresSubmission: approvedRequiresSubmission,
         readScope: approvedReadScope,
-        deliverables: this._plannerCompletionGateFields(plan).deliverables,
+        // The reviewed text is not parsed for deliverables: an edit drops the
+        // planner's list (the person may have removed some), and since the edit
+        // may equally have added some, the plan is treated as possibly naming
+        // several, which keeps one verified submission from finishing the task.
+        deliverables: approvedPlanEdited ? [] : this._plannerCompletionGateFields(plan).deliverables,
+        multipleDeliverables: approvedPlanEdited ? true : this._plannerCompletionGateFields(plan).multipleDeliverables,
         siteWorkflowUrl: tabUrl,
         messaging: approvedPlanEdited ? null : plan.messaging,
         requestedMessaging: approvedPlanEdited ? null : plan.requested_messaging,
@@ -36894,6 +36945,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && gateOutcome.deliverables.every(value => typeof value === 'string' && value.length <= 1000)
         ? [...gateOutcome.deliverables]
         : [],
+      // A continuation of the same task still owes the deliverables the first run did.
+      multipleDeliverables: gateOutcome?.multipleDeliverables === true
+        || (Array.isArray(gateOutcome?.deliverables) && gateOutcome.deliverables.length > 1)
+        || (carryScopeMatches && carried?.multipleDeliverables === true),
       siteWorkflowUrl: String(gateOutcome?.siteWorkflowUrl || ''),
       messaging,
       messagingConversationScope,
@@ -37433,6 +37488,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (guard?.enabled && !guard.taskDrifted && (
       hasRecipientAuthorization
       || guard.socialPublication?.contract?.status === 'ready'
+      || guard.multipleDeliverables === true
+      || (guard.deliverables || []).length > 1
       || guard.successfulTaskToolCalls > 0
       || guard.successfulConsequentialToolCalls > 0
       || guard.pendingDownloadIds.length > 0
@@ -37470,6 +37527,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         scheduledResume: guard.scheduledResume === true,
         conditionalSiteWorkflow: guard.conditionalSiteWorkflow,
         conditionalMutationBlocked: guard.conditionalMutationBlocked === true,
+        multipleDeliverables: guard.multipleDeliverables === true || (guard.deliverables || []).length > 1,
         approvedPlanAnchor: guard.approvedPlanAnchor,
         approvedPlanText: guard.approvedPlanText,
         taskKey: guard.taskKey,
