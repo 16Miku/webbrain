@@ -1787,14 +1787,14 @@ chrome.storage.onChanged.addListener((changes) => {
 });
 
 
-// Header switch for the same storage-backed gate as Settings → Permissions and
+// Composer switch for the same storage-backed gate as Settings → Permissions and
 // /dangerously-skip-permissions. Turning prompts off posts the command's
 // persistent notice. A permission card already waiting is left for the user to
 // answer: a display switch must never approve a pending action on its own.
 const permissionGateMenu = document.getElementById('permission-gate-menu');
 const permissionGateBtn = document.getElementById('btn-permission-gate');
 const permissionGatePopover = document.getElementById('permission-gate-popover');
-const permissionGateToggle = document.getElementById('toggle-permission-gate-header');
+const permissionGateToggle = document.getElementById('toggle-permission-gate-panel');
 const permissionGateOffNote = document.getElementById('permission-gate-off-note');
 const permissionGateSettingsBtn = document.getElementById('btn-permission-gate-settings');
 let permissionGateWriteQueue = Promise.resolve();
@@ -1813,7 +1813,7 @@ function renderPermissionGateControl() {
   permissionGateBtn.setAttribute('aria-label', t(key));
 }
 
-function setPermissionGateFromHeader(askBefore) {
+function setPermissionGateFromPanel(askBefore) {
   const write = permissionGateWriteQueue.then(async () => {
     const changed = askBeforeConsequential !== askBefore;
     await chrome.storage.local.set({ [PERMISSION_GATE_KEY]: askBefore });
@@ -1854,7 +1854,7 @@ permissionGateBtn?.addEventListener('click', () => {
   if (willOpen) permissionGateToggle?.focus({ preventScroll: true });
 });
 permissionGateToggle?.addEventListener('change', () => {
-  setPermissionGateFromHeader(permissionGateToggle.checked).catch(() => {});
+  setPermissionGateFromPanel(permissionGateToggle.checked).catch(() => {});
 });
 permissionGateSettingsBtn?.addEventListener('click', () => {
   closePermissionGatePopover();
