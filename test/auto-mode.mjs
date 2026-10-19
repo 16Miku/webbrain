@@ -843,6 +843,22 @@ for (const build of BUILDS) {
     assert.equal(classified, 0, 'the runtime limitation is offered without asking the classifier');
   });
 
+  test(`${build}: the runtime's Ask limitation text is forgotten when its run ends or the next begins`, async () => {
+    const f = fixture(Agent, { replies: [done('Unused.')] });
+    const state = { required: true, complete: false, requiresExpansionEvidence: true, treeCoverageComplete: true };
+    f.agent.readCompletenessStates.set(f.tab, state);
+    const limitation = f.agent._readCompletenessLimitation(f.tab);
+    assert.equal(f.agent._runtimeAskLimitations.get(f.tab), limitation);
+    f.agent._clearReadCompleteness(f.tab);
+    assert.equal(f.agent._runtimeAskLimitations.has(f.tab), false, 'cleared with the read state');
+    f.agent.readCompletenessStates.set(f.tab, state);
+    f.agent._readCompletenessLimitation(f.tab);
+    delete f.agent._beginReadCompleteness; // the fixture stubs it
+    f.agent._currentUrl = async () => 'https://example.test/';
+    await f.agent._beginReadCompleteness(f.tab, 'Summarize this thread', {});
+    assert.equal(f.agent._runtimeAskLimitations.has(f.tab), false, 'cleared when the next run begins');
+  });
+
   test(`${build}: a slow decision model leaves the turn read-only after the grace period`, async () => {
     // The decision never answers; the turn goes on without it.
     const f = fixture(Agent, { decide: () => new Promise(() => {}), replies: [done('Read-only answer.')] });

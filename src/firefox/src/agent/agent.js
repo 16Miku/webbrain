@@ -988,6 +988,8 @@ export class Agent extends LoopDetector {
   }
 
   async _beginReadCompleteness(tabId, userMessage, runOptions = {}) {
+    // A limitation text remembered for an earlier run is not this run's.
+    this._runtimeAskLimitations?.delete(tabId);
     this._readCompletenessRunCounter += 1;
     const token = `read_${tabId}_${Date.now()}_${this._readCompletenessRunCounter}`;
     if (this._isStandaloneChatRun(runOptions)) {
@@ -1007,6 +1009,7 @@ export class Agent extends LoopDetector {
     if (!state) return;
     if (runToken && state.runToken !== runToken) return;
     this.readCompletenessStates.delete(tabId);
+    this._runtimeAskLimitations?.delete(tabId);
   }
 
 
