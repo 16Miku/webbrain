@@ -7473,6 +7473,7 @@ function resumeAfterSubscription(btn) {
   setMode(mode);
   void continueAgent({
     mode,
+    autoRouted: btn?.closest?.('.message.assistant')?.dataset?.autoRouted === 'true',
     foreground: btn?.dataset?.resumeForeground === 'true',
   });
 }
@@ -7899,6 +7900,7 @@ function bindFailureRecoveryCard(card) {
           const accepted = await continueAgent({
             failureRecoveryId: recoveryId,
             mode: card.dataset.runMode,
+            ...(card.dataset.autoRouted === 'true' ? { autoRouted: true } : {}),
             foreground: card.dataset.foreground === 'true',
             onFailureRecoveryAccepted: () => {
               card.dataset.recoveryChosen = 'true';
@@ -7942,6 +7944,7 @@ function renderFailureRecoveryCard(assistantEl, data, { tabId = currentTabId, re
   card.dataset.tabId = String(tabId);
   card.dataset.runRequestId = String(requestId);
   card.dataset.runMode = assistantEl.dataset.runMode || agentMode;
+  card.dataset.autoRouted = assistantEl.dataset.autoRouted === 'true' ? 'true' : 'false';
   card.dataset.foreground = assistantEl.dataset.retryForeground || 'false';
   card.dataset.recoveryCurrent = 'true';
   assistantEl.querySelector('.message-content')?.appendChild(card);
@@ -10734,6 +10737,9 @@ function handleAgentUpdateMessage(msg) {
       // its Retry, Continue and recovery controls then reuse.
       if (['ask', 'act', 'dev'].includes(data?.mode) && (eventAssistantEl || currentAssistantEl)) {
         (eventAssistantEl || currentAssistantEl).dataset.runMode = data.mode;
+        // Only an automatic run reports its mode. Continuing one that went
+        // read-only routes it again (continueAgent).
+        (eventAssistantEl || currentAssistantEl).dataset.autoRouted = 'true';
         updateActWarning();
       }
       break;
@@ -13628,15 +13634,19 @@ function showContinueButton(options = {}) {
 // In Automatic mode a continuation keeps the routed mode of the latest run.
 function automaticContinuationMode() {
   if (!autoModeSelection) return {};
-  const mode = [...messagesEl.querySelectorAll('.message.assistant')].at(-1)?.dataset?.runMode;
-  return ['ask', 'act', 'dev'].includes(mode) ? { mode } : {};
+  const latest = [...messagesEl.querySelectorAll('.message.assistant')].at(-1)?.dataset;
+  const mode = latest?.runMode;
+  return ['ask', 'act', 'dev'].includes(mode) ? { mode, ...(latest.autoRouted === 'true' ? { autoRouted: true } : {}) } : {};
 }
 
 async function continueAgent(options = {}) {
   if (isStandaloneWindow) options = { ...options, mode: 'ask' };
   if (isProcessing) return false;
   const tabId = currentTabId;
-  const modeForSend = ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
+  // A run WebBrain routed to Ask is routed again when continued, so it can
+  // still hand itself to Act; any other run keeps its mode.
+  const modeForSend = autoModeSelection && options?.autoRouted === true && options?.mode === 'ask' ? 'auto'
+    : ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
   if (rejectSelectionScopedMode(modeForSend, tabId)) return false;
   const requestId = createRunRequestId(tabId);
   const foregroundForSend = options?.foreground === true;
