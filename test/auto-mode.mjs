@@ -426,6 +426,51 @@ for (const build of BUILDS) {
       'the Act call made before the correction is not combined with a Dev answer');
   });
 
+  test(`${build}: a correction sent after the hand-off was checked routes the restart again`, async () => {
+    const f = fixture(Agent, {
+      decide: (question, options) => {
+        if (options.mainModel === false) {
+          return /console/.test(question.request) ? { choice: 'dev', source: 'decision_model' } : { choice: null, source: 'unavailable' };
+        }
+        return { choice: 'act', source: 'main_model' };
+      },
+      replies: [handoff('act', 'Fix the login button')],
+    });
+    // Sent while the accepted hand-off is being saved.
+    f.agent._persistNow = async () => { f.agent._steeringRuns.get(f.tab)?.messages.push({ id: 's8', text: 'instead inspect the console errors' }); };
+    assert.equal(await f.run('Fix the login button.'), '');
+    f.agent._persistNow = async () => null;
+    const escalation = f.agent.takeModeEscalation(f.tab);
+    assert.deepEqual(escalation, { mode: 'act', evidence: 'Fix the login button', reroute: true }, 'the Act answer does not cover the late correction');
+
+    // The background routes the restart again: the route reads the
+    // correction with the request and picks Dev.
+    const from = f.updates.length;
+    fixtureReplies(f, [messages => {
+      assert.ok(messages.some(message => message.role === 'user' && /runtime_mode=dev; mutation_tools_enabled=true/.test(String(message.content))), 'the restart runs in Dev');
+      assert.ok(messages.some(message => message.role === 'user' && String(message.content).startsWith('instead inspect the console errors')));
+      f.agent.abort(f.tab);
+      return { content: 'Stopping.' };
+    }]);
+    assert.match(await f.run('Fix the login button.', 'auto', [], { modeEscalation: { mode: 'act', reroute: true } }), /Stopped/);
+    assert.equal(f.questions.at(-1).question.request, 'Fix the login button.\ninstead inspect the console errors');
+    assert.deepEqual(runModes(f.updates.slice(from)), [{ mode: 'dev', source: 'decision_model' }]);
+    assert.equal(f.agent._modeEscalationSteering.has(f.tab), false);
+  });
+
+  test(`${build}: corrections checked with the hand-off do not route the restart again`, async () => {
+    const f = fixture(Agent, {
+      decide: (_q, options) => (options.mainModel === false ? { choice: null, source: 'unavailable' } : { choice: 'act', source: 'main_model' }),
+      replies: [() => {
+        f.agent.conversations.get(f.tab).push({ role: 'user', content: 'use the 10 am slot',
+          webbrainSteering: { requestId: `auto-${f.tab}`, messageId: 's9', revision: 1 } });
+        return handoff('act', 'book the 9 am slot');
+      }],
+    });
+    assert.equal(await f.run('Please book the 9 am slot for me.'), '');
+    assert.deepEqual(f.agent.takeModeEscalation(f.tab), { mode: 'act', evidence: 'book the 9 am slot' });
+  });
+
   test(`${build}: a carried correction is not acknowledged away by a short confirmation`, async () => {
     const f = fixture(Agent);
     f.agent._maybeRunPlannerGate = Agent.prototype._maybeRunPlannerGate;
@@ -723,7 +768,8 @@ for (const build of BUILDS) {
   test(`${build}: the background restarts a hand-off under the same request and reports the routed mode`, () => {
     const background = source(build, 'background.js');
     const chat = background.slice(background.indexOf("    case 'chat': {"), background.indexOf("    case 'chat_stream': {"));
-    assert.match(chat, /const escalation = mode === 'auto' \? agent\.takeModeEscalation\(tabId\) : null;\s*if \(escalation\) \{\s*result = await agent\.processMessage\(tabId, msg\.text, publishUpdate, escalation\.mode, msg\.attachments, \{\s*\.\.\.runOptions,\s*modeEscalation: \{ mode: escalation\.mode \},/);
+    assert.match(chat, /let escalation = mode === 'auto' \? agent\.takeModeEscalation\(tabId\) : null;\s*for \(let restarts = 0; escalation; restarts \+= 1\) \{\s*const reroute = escalation\.reroute === true && restarts < 2;\s*result = await agent\.processMessage\(tabId, msg\.text, publishUpdate, reroute \? 'auto' : escalation\.mode, msg\.attachments, \{\s*\.\.\.runOptions,\s*modeEscalation: \{ mode: escalation\.mode, \.\.\.\(reroute \? \{ reroute: true \} : \{\}\) \},\s*\}\);\s*escalation = reroute \? agent\.takeModeEscalation\(tabId\) : null;\s*\}/,
+      'a late correction routes the restart again, and the last restart always runs in the mode it asked for');
     assert.match(chat, /if \(type === 'run_mode' && \['ask', 'act', 'dev'\]\.includes\(data\?\.mode\)\) effectiveMode = data\.mode;/);
     assert.match(chat, /mode: effectiveMode,/);
     assert.match(chat, /effectiveMode === 'ask' \? askCompletionSucceededForBadge/);

@@ -7573,6 +7573,10 @@ export class Agent extends LoopDetector {
     const carriedIds = new Set(carried.map(item => item.id));
     if (carried.length) {
       this._modeEscalationSteering.set(tabId, carried);
+      // One sent after the hand-off was checked may need another mode: the
+      // restart routes the corrected request again instead of trusting it.
+      const checked = run.handoffChecked || new Set();
+      if (carried.some(item => !checked.has(item.id))) this._pendingModeEscalations.get(tabId).reroute = true;
       void this._steeringJournal.forget(tabId, [...carriedIds]);
       for (const item of carried) void this._steeringJournal.accept(tabId, run.requestId, item);
     } else if (run?.messages.length) {
@@ -7593,9 +7597,9 @@ export class Agent extends LoopDetector {
     this._modeEscalationSteering.delete(tabId);
     const run = this._steeringRuns.get(tabId);
     const fresh = run ? carried.filter(item => !run.acceptedIds.has(item.id)) : [];
-    if (!fresh.length) return;
     for (const item of fresh) run.acceptedIds.add(item.id);
-    run.messages.unshift(...fresh);
+    if (fresh.length) run.messages.unshift(...fresh);
+    return carried;
   }
 
   async _completeInitialResponseOnlyTurn(tabId, messages, onUpdate, mode, provider, costState, runId, runOptions, gate, enriched, priorMessages) {
@@ -27031,11 +27035,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // The `run_mode` question of a routed turn, read before the turn joins the
   // conversation: the user's words, the previous turn's mode and the earlier
   // task, never page content.
-  _autoModeQuestion(messages, userMessage, previousMode = null) {
+  _autoModeQuestion(messages, userMessage, previousMode = null, corrections = []) {
     const binding = this._activeTaskBinding(messages || []);
     const task = binding.index >= 0 ? String(binding.requestText || binding.text || '') : '';
     return {
-      request: this._messageText(userMessage),
+      // A rerouted hand-off restart also reads the corrections it carries.
+      request: [this._messageText(userMessage), ...(Array.isArray(corrections) ? corrections : [])].join('\n'),
       page: {
         previous_mode: isRunMode(previousMode) ? previousMode : 'none',
         // An earlier selection prompt with page context is not the user's own words.
@@ -53846,8 +53851,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._hydrate(tabId);
     this._pendingModeEscalations.delete(tabId);
     if (mode === AUTO_MODE) {
-      this._modeEscalationSteering.delete(tabId);
+      // A hand-off restart routed again keeps its carried corrections, and
+      // its route reads them with the request.
+      const reroute = runOptions?.modeEscalation?.reroute === true;
+      if (!reroute) this._modeEscalationSteering.delete(tabId);
       ({ mode, runOptions } = this._beginAutoModeRun(tabId, userMessage, attachments, runOptions, onUpdate));
+      const carried = reroute ? this._takeModeEscalationSteering(tabId) : [];
+      if (carried.length && runOptions?.autoModeRouting) {
+        runOptions = { ...runOptions, autoModeRouting: { ...runOptions.autoModeRouting, corrections: carried.map(item => item.text) } };
+      }
     } else if (runOptions?.modeEscalation && isRunMode(mode)) {
       runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation' } };
       onUpdate('run_mode', { mode, source: 'escalation' });
@@ -54261,7 +54273,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // An automatically routed turn asks the decision model while its page
     // context is gathered below (see auto-mode.js).
     const autoModeQuestion = runOptions?.autoModeRouting
-      ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode)
+      ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode, runOptions.autoModeRouting.corrections)
       : null;
     const autoModeRoute = autoModeQuestion ? this._routeAutoRunMode(tabId, autoModeQuestion) : null;
 
@@ -55299,6 +55311,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (steeringRun) {
             const pendingIds = new Set(steeringRun.messages.map(item => String(item.id)));
             steeringRun.handoffApplied = (handoff.corrections || []).filter(item => !pendingIds.has(item.id));
+            steeringRun.handoffChecked = new Set((handoff.corrections || []).map(item => item.id));
           }
           this._restoreAutoModeTurn(tabId, messages, autoModeTurnStart);
           this._pendingModeEscalations.set(tabId, escalation);
