@@ -41,7 +41,7 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(requests.length, 2);
       for (const request of requests) {
         assert.equal(request.url, 'https://api.webbrain.one/v1/decisions');
-        assert.equal(request.body.model, 'perplexity/pplx-decider-v1.1-27b');
+        assert.equal(request.body.model, 'cloudflare/clef-flash');
         assert.equal(request.headers['X-WebBrain-Device-Id'], 'decision-test-device');
         assert.equal(request.headers['X-WebBrain-Help-Improve'], '0');
         assert.equal(request.headers['X-WebBrain-Client'], 'extension');
