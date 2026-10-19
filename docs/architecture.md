@@ -1017,6 +1017,15 @@ object is recognized by its shape, and one the model rates at zero confidence
 is its refusal; a plain final message in an Act run gets one recovery whatever
 it says. No word list reads a summary or a final message.
 
+When the model request fails after an Act run sent a submission, WebBrain reads
+the page itself and completes the run only while that submission is still the
+run's latest action (or a navigation bound to its result) and the plan names at
+most one deliverable; its answer claims only that submission. Otherwise the run
+stops as partial with Retry and Give up. Right after the submission the message
+says the action may have completed. After later steps, such as opening the next
+site of a two-site post, it names the site the earlier submission went to, so
+the next run does not take a later, unsent step for a possible duplicate.
+
 A request that contains one arithmetic expression (found by structure: the
 one span the calculator accepts, not digits inside a word or code) is read with
 the `calculation_request` question when the planner gave it no page reads,
