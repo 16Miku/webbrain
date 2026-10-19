@@ -6491,6 +6491,8 @@ export class Agent extends LoopDetector {
     this._ownedNativeChatReadRepairs.delete(tabId);
     // Only consume at model/tool boundaries, after all tool results are present.
     // Human corrections stay ordinary user messages; no page context is added.
+    // A correction may change the user's mind about a declined submission.
+    this.permissions?.clearDeclinedSubmissions?.(tabId);
     for (const item of run.messages.splice(0)) {
       const priorBinding = this._activeTaskBinding(messages);
       const parentTaskKey = this._progressTaskKeyForText(priorBinding.text);
@@ -16622,6 +16624,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const canGroupSearch = submitRisk.risk === SubmitRisk.LOW_RISK_SEARCH
             && ['click', 'click_ax', 'press_keys'].includes(fnName);
           let choice = null;
+          let alreadyDeclined = false;
           if (canGroupSearch) {
             const intentKey = submitActionKey(submitConfirmation, submitConfirmation.url);
             choice = await this._authorizeGroupedSearch(
@@ -16647,7 +16650,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               capabilities = capabilities.filter(capability => capability !== Capability.CLICK);
             }
           } else {
-            choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
+            // The user already said no to this exact submission (same form,
+            // same values) in this turn: refuse it again without a new card.
+            const declineKey = submitActionKey(submitConfirmation, submitConfirmation.url);
+            if (this.permissions?.isSubmissionDeclined?.(declineKey, tabId) === true) {
+              choice = 'deny';
+              alreadyDeclined = true;
+            } else {
+              choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
+              if (choice === 'deny') this.permissions?.declineSubmission?.(declineKey, tabId);
+            }
           }
           if (this._hasPendingSteering(tabId) && !this._checkAbort(tabId)) return skipSteeredPermissionWait(toolIndex);
           if (choice === null) {
@@ -16668,12 +16680,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 success: false,
                 denied: true,
                 ...(canGroupSearch ? { permissionRequired: true, groupedPermission: true } : { submitConfirmationRequired: true }),
+                ...(alreadyDeclined ? { alreadyDeclined: true } : {}),
                 error: canGroupSearch
                   ? `The user did not allow the grouped low-risk search actions on ${submitRisk.host || submitConfirmation.host || 'this site'}. Do NOT retry this unchanged search unless the user explicitly allows it.`
-                  : `The user did not confirm submitting the form on ${submitConfirmation.host || 'this site'}. Do NOT retry this submit action unless the user explicitly confirms it.`,
+                  : alreadyDeclined
+                    ? `The user already declined this exact form submission on ${submitConfirmation.host || 'this site'} in this task, so WebBrain did not ask again and nothing was submitted. Do NOT retry it. If a value must change, ask the user what to change; otherwise report that the form was not submitted.`
+                    : `The user did not confirm submitting the form on ${submitConfirmation.host || 'this site'}. Do NOT retry this submit action unless the user explicitly confirms it.`,
               }),
             });
-            onUpdate('warning', { message: canGroupSearch ? 'Low-risk search blocked until the user allows the grouped actions.' : 'Form submission blocked until the user confirms.' });
+            onUpdate('warning', { message: canGroupSearch ? 'Low-risk search blocked until the user allows the grouped actions.'
+              : alreadyDeclined ? 'Not asked again: you declined this exact submission.' : 'Form submission blocked until the user confirms.' });
             predispatchBlocked('submitConfirmationMs');
             if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
             continue;
@@ -21858,6 +21874,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // The time the user took to answer one of WebBrain's own cards does not
     // age the page observation the pending action was decided on.
     this._noteClarifyHeld(tabId, entry);
+    // The user answering any card is the user speaking again: a submission
+    // declined earlier in the turn may be asked about once more. A timeout's
+    // or Instant's answer is WebBrain's, not the user's.
+    if (source === 'user') this.permissions?.clearDeclinedSubmissions?.(tabId);
     this._settleClarification(entry, { answer, source });
     return true;
   }

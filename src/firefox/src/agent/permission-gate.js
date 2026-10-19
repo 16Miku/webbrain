@@ -722,6 +722,7 @@ export class PermissionManager {
     this.permissions = [];
     this.intentGrants = [];
     this.intentCandidates = [];
+    this.declinedSubmissions = [];
     this._hydrated = false;
   }
 
@@ -766,6 +767,29 @@ export class PermissionManager {
     this.permissions = this.permissions.filter(p => p.duration === 'always' || p.tabId !== tabId);
     this.intentGrants = this.intentGrants.filter(grant => grant.tabId !== tabId);
     this.intentCandidates = this.intentCandidates.filter(candidate => candidate.tabId !== tabId);
+    this.clearDeclinedSubmissions(tabId);
+  }
+
+  /**
+   * A form submission the user declined on WebBrain's own submit card in
+   * this turn. The key is submitActionKey(): the resolved form, its method
+   * and the values that changed, hashed. WebBrain does not ask about the
+   * same submission again in the turn; a changed value, a new turn, a
+   * correction or the user's own answer on a later card asks again.
+   */
+  declineSubmission(key, tabId) {
+    const normalizedKey = String(key || '');
+    if (!normalizedKey || this.isSubmissionDeclined(normalizedKey, tabId)) return;
+    this.declinedSubmissions.push({ key: normalizedKey, tabId, ts: Date.now() });
+  }
+
+  isSubmissionDeclined(key, tabId) {
+    const normalizedKey = String(key || '');
+    return !!normalizedKey && this.declinedSubmissions.some(item => item.key === normalizedKey && item.tabId === tabId);
+  }
+
+  clearDeclinedSubmissions(tabId) {
+    this.declinedSubmissions = this.declinedSubmissions.filter(item => item.tabId !== tabId);
   }
 
   /**
