@@ -22,5 +22,6 @@ for (const build of ['chrome', 'firefox']) {
     assert.doesNotMatch(prompt.match(/Type only values[^\n]*/)[0], /done\(/);
     const names = tools.getToolsForMode('act', { tier: 'compact' }).map(tool => tool.function.name);
     assert.ok(names.includes('clarify'), 'compact exposes clarify');
+    assert.match(prompt, /^- clarify\(\{question[^\n]*\n- done\(/m, 'the compact tool list names clarify (it says use ONLY these)');
 });
 }
