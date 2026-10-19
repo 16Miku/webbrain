@@ -3454,6 +3454,23 @@ html[dir="rtl"] .composer-toolbar .provider-picker-menu {
   right: 0;
 }
 
+/* Narrow panel at a large UI scale (150%/175% leave ~160-200px inside the
+   composer): the model picker takes its own row, so the fixed-width controls
+   (attach, status, permissions, mic, send) can no longer squeeze it to a few
+   pixels. The second row keeps them right-aligned through the spacer. */
+html[data-ui-scale="150"] .composer-toolbar,
+html[data-ui-scale="175"] .composer-toolbar {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+html[data-ui-scale="150"] .composer-toolbar .provider-picker,
+html[data-ui-scale="175"] .composer-toolbar .provider-picker {
+  order: -1;
+  flex: 1 1 100%;
+  max-width: none;
+}
+
 #input-wrapper:focus-within {
   border-color: var(--accent);
 }
