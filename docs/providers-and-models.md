@@ -84,7 +84,7 @@ action) so the chat model does not have to. Settings asks one question first:
 `decision-config.js` resolves it, and `decisionFeatureEnabled()` is the single
 check every caller makes. For On, select OpenRouter (the default), TypeSafe directly, or a local/custom System One
 endpoint. OpenRouter's model list comes from its decision-model catalog and includes
-all publishers. The new default is `perplexity/pplx-decider-v1-27b`; existing
+all publishers. The default is `cloudflare/clef-flash`; existing
 TypeSafe keys, enabled features and scheduler thresholds stay on their original
 provider until changed. Provider keys are stored separately.
 
