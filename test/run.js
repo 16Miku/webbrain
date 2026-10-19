@@ -2569,6 +2569,9 @@ test('iframe tools say how to name a frame host when urlFilter is only a path', 
       for (const name of ['checkout.cfm', 'order.action', 'frame.shtml', 'handler.ashx', 'pay.jspx']) {
         assert.match(gate.urlFilterHostHint(name, [`https://shop.example/x/${name}`]), new RegExp(`for example "shop\\.example/x/${name.replace('.', '\\.')}"`), `${build}: ${name} is a file name, not a host`);
       }
+      for (const filter of ['https://payments/path', '//stripe.com/pay', 'http://intranet:8080/x']) {
+        assert.equal(gate.urlFilterHostHint(filter, ['https://evil.example/?next=' + filter]), '', `${build}: ${filter} is an explicit address`);
+      }
       for (const filter of ['stripe.com.', 'https://stripe.com./pay', 'stripe.com.:8443']) {
         assert.equal(gate.urlFilterHostHint(filter, ['https://evil.example/?next=' + filter]), '', `${build}: ${filter} is a fully qualified host`);
       }

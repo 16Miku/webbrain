@@ -593,6 +593,13 @@ export function frameHostMatches(frameUrl, urlFilter) {
 // domain people use as a host (.do, .pl, .py, .sh, .cc) is left out on purpose.
 const FILE_NAME_SUFFIX = /\.(?:html?|xhtml|shtml?|php[345]?|phtml|aspx?|ashx|asmx|axd|jspx?|jsf|faces|cfml?|cgi|fcgi|action|esp|nsf|js|mjs|css|json|xml|txt|svg|png|jpe?g|gif|webp|pdf)$/i;
 function urlFilterNamesHost(filter) {
+  // An explicit address ("https://payments/path", "//stripe.com/pay") names
+  // whatever host it parses to, a single-label internal name included.
+  if (/^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(filter)) {
+    try {
+      if (new URL(filter.startsWith('//') ? `https:${filter}` : filter).hostname) return true;
+    } catch { /* not an address; the host heuristics below decide */ }
+  }
   const first = filter.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#]/)[0];
   // A fully qualified name may end in a dot ("stripe.com.").
   const host = first.replace(/:\d+$/, '').replace(/\.$/, '');
