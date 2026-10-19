@@ -11312,6 +11312,10 @@ export class Agent extends LoopDetector {
         try { continuation = continuation.length <= 32768 ? JSON.parse(continuation) : null; } catch { continuation = null; }
       }
       const allowed = ['filter', 'maxDepth', 'maxChars', 'ref_id', 'page', 'tree_revision'];
+      // Two values agree when they are the same once scalar types and the
+      // case of a filter are normalized, as the call is repaired below.
+      const normalized = value => { const scalar = decimal(value); return typeof scalar === 'string' ? scalar.trim().toLowerCase() : scalar; };
+      const agrees = (key, value) => !Object.hasOwn(next, key) || Object.is(normalized(next[key]), normalized(value));
       // Only a truncated result returns a continuation, and it is always for
       // page 2 or later with a tree revision. One for page 1 without a
       // revision, on a call that names none either, continues nothing: the
@@ -11327,7 +11331,7 @@ export class Agent extends LoopDetector {
         // that agree with it (a partial copy), is the restart the tool
         // returned (page 1 of an anchored subtree after its revision changed),
         // and it is the read.
-        && Object.entries(continuation).some(([key, value]) => String(next[key] ?? '').trim() !== '' && !Object.is(next[key], value));
+        && Object.entries(continuation).some(([key, value]) => String(next[key] ?? '').trim() !== '' && !agrees(key, value));
       if (restart) {
         delete next.continuationArgs;
         repaired = true;
@@ -11335,7 +11339,7 @@ export class Agent extends LoopDetector {
       const valid = restart || continuation && typeof continuation === 'object' && !Array.isArray(continuation)
         && Object.keys(continuation).length > 0
         && Object.keys(continuation).every(key => allowed.includes(key))
-        && Object.entries(continuation).every(([key, value]) => !Object.hasOwn(next, key) || Object.is(next[key], value));
+        && Object.entries(continuation).every(([key, value]) => agrees(key, value));
       if (!valid) {
         return { args, repaired: false, note: '', result: {
           success: false, invalidArguments: true, invalidToolArguments: true,

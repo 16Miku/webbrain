@@ -233,6 +233,12 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(partial.result, undefined);
     assert.equal(partial.args.ref_id, 'ref_12');
     assert.equal(partial.args.filter, 'interactive');
+    // So it is beside values that only differ in type or case.
+    for (const top of [{ page: '1' }, { maxChars: '6000' }, { filter: 'INTERACTIVE' }, { maxDepth: ' 15 ' }]) {
+      const mixed = agent._repairToolCallArgs('get_accessibility_tree', { ...top, continuationArgs: restart });
+      assert.equal(mixed.result, undefined, JSON.stringify(top));
+      assert.equal(mixed.args.ref_id, 'ref_12', JSON.stringify(top));
+    }
   });
 
   test(`${browser}: oversized declared prose windows are bounded without losing the requested document position`, () => {
