@@ -75,7 +75,7 @@ A dozen end-to-end tasks for evaluating the WebBrain browser agent across a spre
 Ranked from easiest to most ambitious.
 
 ### 1. Tracing you already have (lowest-effort baseline)
-Tracing is already built in. Turn it on in Settings → "Record traces", run each scenario by hand once per model you want to compare, then open the Traces page and diff side by side. This is what we've been doing in this session. Cheap to start, but scoring is manual.
+Tracing is already built in. Turn it on in Settings → Advanced → "Record traces", run each scenario by hand once per model you want to compare, then open the Traces page and diff side by side. This is what we've been doing in this session. Cheap to start, but scoring is manual.
 
 ### 2. Scenario runner from the side panel
 Add a `tests.json` containing `{ url, prompt, check }` rows. Build a small Test Runner tab (mirror Traces) that loops through entries: for each one, open the URL, stuff the prompt into the side panel's input, wait for the agent to finish, then evaluate `check`. Three useful flavors of `check`:

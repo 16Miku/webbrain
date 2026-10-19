@@ -86,7 +86,7 @@ function pickProvider(providers) {
  * Read the user's explicit transcription override from storage if set.
  *
  * Lives in chrome.storage.local under `transcriptionModel = {baseUrl, apiKey,
- * model}` — written by Settings → Multimodal → Transcription. All three
+ * model}` — written by Providers → Speech. All three
  * fields must be present (baseUrl, model required; apiKey optional for
  * local servers like LM Studio / llama.cpp) for the override to win over
  * the auto-pick path. Returns null when not set so callers can fall
@@ -127,7 +127,7 @@ export async function transcribeAudio(providers, audioBlob, opts = {}) {
   if (!audioBlob || audioBlob.size === 0) {
     return { ok: false, error: 'Transcription: empty audio blob.' };
   }
-  // Explicit Settings → Multimodal → Transcription override wins over the
+  // Explicit Providers → Speech override wins over the
   // auto-pick path. When the user has bothered to fill in a base URL +
   // model, that's a strong signal that they want THOSE rather than the
   // first OpenAI-compatible provider in their list.
@@ -136,7 +136,7 @@ export async function transcribeAudio(providers, audioBlob, opts = {}) {
   if (!picked) {
     return {
       ok: false,
-      error: 'No Whisper-compatible provider configured. Add an API key to OpenAI (whisper-1) or Groq (whisper-large-v3) in Settings → Providers, OR set an explicit Transcription endpoint in Settings → Multimodal → Transcription, then re-record.',
+      error: 'No Whisper-compatible provider configured. Add an API key to OpenAI (whisper-1) or Groq (whisper-large-v3) in Providers → LLM, OR set an explicit transcription endpoint in Providers → Speech, then re-record.',
     };
   }
 
@@ -206,9 +206,9 @@ export async function transcribeAudio(providers, audioBlob, opts = {}) {
           `not multipart audio uploads. ` +
           (isLocal
             ? `Either load a GGUF Whisper model in that server (LM Studio 0.3+ and recent llama.cpp builds support whisper.cpp models), ` +
-              `or add an API key for OpenAI (whisper-1) or Groq (whisper-large-v3) in Settings → Providers — those host Whisper natively ` +
+              `or add an API key for OpenAI (whisper-1) or Groq (whisper-large-v3) in Providers → LLM — those host Whisper natively ` +
               `and will be auto-picked when configured.`
-            : `Add an API key for OpenAI (whisper-1) or Groq (whisper-large-v3) in Settings → Providers — webbrain auto-picks the first ` +
+            : `Add an API key for OpenAI (whisper-1) or Groq (whisper-large-v3) in Providers → LLM — webbrain auto-picks the first ` +
               `Whisper-capable provider, so a configured OpenAI key takes priority.`),
       };
     }

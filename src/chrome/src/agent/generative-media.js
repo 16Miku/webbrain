@@ -219,7 +219,7 @@ export async function generateImage(args, options = {}) {
   const fetchImpl = typeof options === 'function' ? options : options.fetchImpl || fetch;
   try {
     const config = Object.hasOwn(options, 'config') ? options.config : await readMediaConfig();
-    if (!config) throw new Error('Configure Generative Media in Settings → Assistive Models.');
+    if (!config) throw new Error('Configure Generative Media in Providers → Generative.');
     const result = await runMediaGeneration({ prompt: args?.prompt, config, fetchImpl, signal: options.signal });
     if (result.url.startsWith('data:')) {
       const asset = await storeGeneratedMedia(result.url);

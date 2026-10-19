@@ -36,7 +36,7 @@ for its available flags.
 | `/teach --end` | Stop teaching and compile the captured actions into a value-free saved workflow |
 | `/allow-api` | **Per-conversation API mutation override.** See [below](#allow-api). |
 | `/foreground [prompt]` | Run one local task in the foreground for visual compatibility |
-| `/dangerously-skip-permissions` | **Global permission-prompt bypass.** Turns off `Ask before consequential actions` without opening Settings. WebBrain will act without per-site prompts until you re-enable the setting (Settings → Permissions, or the warning button next to the microphone in the side panel composer). |
+| `/dangerously-skip-permissions` | **Global permission-prompt bypass.** Turns off `Ask before consequential actions` without opening Settings. WebBrain will act without per-site prompts until you re-enable the setting (the Permissions page, or the warning button next to the microphone in the side panel composer). |
 | `/compact` | Force context compaction for the current conversation |
 | `/verbose` | Toggle verbose/compact tool display |
 | `/reset` | Clear the conversation and all per-conversation flags |
@@ -94,7 +94,7 @@ agent may use POST/PUT/PATCH/DELETE via `fetch_url` or `research_url` when the U
 is failing. A badge appears while it is active, and it clears on `/reset`.
 
 To keep the same policy active across conversations and browser restarts, turn
-on **Always allow API mutations** under **Settings → General → Advanced**. The
+on **Always allow API mutations** under **Settings → Advanced**. The
 setting is on by default and remains active until you turn it off. `/reset`
 still clears the conversation-only `/allow-api` override, but does not change
 the persistent setting.

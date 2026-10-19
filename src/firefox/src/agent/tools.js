@@ -1298,7 +1298,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'solve_captcha',
-      description: "Solve a CAPTCHA using compatible providers enabled in Settings → General → Advanced, in descending weight order. A single call may charge multiple providers on fallback. Follow the runtime CAPTCHA gate: never repurchase an unresolved challenge from an attempted provider. A new challenge or a runtime-offered AWS fallback can proceed after fresh inspection. Omit providerTasks for automatic reCAPTCHA v2/v3, hCaptcha, Turnstile, AWS WAF, and image handling. AWS WAF observes initial or secondary verification inputs and applies its cookie; reload once and read the page to verify clearance. For ALL other documented methods, first read get_captcha_capabilities and the selected method schemas, then provide one native task per compatible enabled provider with observed parameters and inject:false. Native methods preserve tokens, cookies, coordinates, audio/text, and structured answers; apply them using apply_captcha_solution. Unknown or missing parameters fail before spending. Verify page progress; a returned answer is not proof of clearance. Missing provider/input or failed solving requires manual completion.",
+      description: "Solve a CAPTCHA using compatible providers enabled in Settings → CAPTCHA, in descending weight order. A single call may charge multiple providers on fallback. Follow the runtime CAPTCHA gate: never repurchase an unresolved challenge from an attempted provider. A new challenge or a runtime-offered AWS fallback can proceed after fresh inspection. Omit providerTasks for automatic reCAPTCHA v2/v3, hCaptcha, Turnstile, AWS WAF, and image handling. AWS WAF observes initial or secondary verification inputs and applies its cookie; reload once and read the page to verify clearance. For ALL other documented methods, first read get_captcha_capabilities and the selected method schemas, then provide one native task per compatible enabled provider with observed parameters and inject:false. Native methods preserve tokens, cookies, coordinates, audio/text, and structured answers; apply them using apply_captcha_solution. Unknown or missing parameters fail before spending. Verify page progress; a returned answer is not proof of clearance. Missing provider/input or failed solving requires manual completion.",
       parameters: {
         type: 'object',
         properties: {
@@ -1342,7 +1342,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'generate_image',
-      description: 'Generate media (usually an image) from a text prompt using the user\'s configured generative media provider (Settings → Assistive Models → Generative Media). Supports fal.ai, OpenRouter, Comfy Router and local ComfyUI workflows; generation may take several minutes. Returns a media URL or inline media displayed in the chat. Not available in Ask mode.',
+      description: 'Generate media (usually an image) from a text prompt using the user\'s configured generative media provider (Providers → Generative). Supports fal.ai, OpenRouter, Comfy Router and local ComfyUI workflows; generation may take several minutes. Returns a media URL or inline media displayed in the chat. Not available in Ask mode.',
       parameters: {
         type: 'object',
         properties: {
@@ -1799,7 +1799,7 @@ export function getToolsForMode(mode, opts = {}) {
   const tier = opts.tier || (opts.compact ? 'compact' : 'full');
   const normalizedMode = mode === 'dev' ? 'dev' : (mode === 'ask' ? 'ask' : 'act');
   const devCompactBlocked = normalizedMode === 'dev' && tier === 'compact';
-  // Lean mode (Settings → General → "Lean mode", Act only): strong models get
+  // Lean mode (Settings → Advanced → "Lean mode", Act only): strong models get
   // a small subset of the normal tools instead of the tier's list. Same
   // schemas, no new tools; see lean-mode.js and LEAN_TOOL_NAMES below.
   const lean = opts.lean === true && normalizedMode === 'act';
@@ -2454,7 +2454,7 @@ LISTINGS:
 - On listing/search-result pages, EXTRACT first, paginate second: list each visible item to the user (title + price/date + link), then move to the next page. For "give me the links/items" tasks, call done with what you have as soon as it's useful — partial-but-delivered beats complete-but-never-delivered.`;
 
 /**
- * Lean tool set (Settings → General → "Lean mode", Act only). A thin surface
+ * Lean tool set (Settings → Advanced → "Lean mode", Act only). A thin surface
  * in the spirit of Claude in Chrome for strong models: read the page, act by
  * ref or by a point from a screenshot, type, press keys, scroll, navigate,
  * wait, upload, and ask or finish. Tabs are not model-callable in WebBrain, so

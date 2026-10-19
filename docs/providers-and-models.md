@@ -4,11 +4,13 @@
 
 ## Main provider and assistive models
 
-**Settings → Providers** selects the main model for conversation, planning and
-final replies. **Settings → Assistive Models** groups Vision (including screenshot
-limits and redaction), Speech to text, Generative Media (powering the
-`generate_image` agent tool), Decision models, and SafeSocial. Configuring an assistive
-model does not replace the active provider. Decision models share one provider/model
+The **Providers** page (`ui/providers.html`, opened from **More…** in the side
+panel's model menu or from the Settings header) selects the main model for
+conversation, planning and final replies on its **LLM** tab. Its other tabs hold
+the assistive models: Vision, Speech (speech to text), Generative (powering the
+`generate_image` agent tool), Decision models, and SafeSocial. Screenshot limits
+are in Settings → Budgets and screenshot redaction in Settings → Advanced.
+Configuring an assistive model does not replace the active provider. Decision models share one provider/model
 selection with separate completion, watch, scheduled-check, classification and browser
 decision switches. See [the settings guide](https://webbrain.one/docs/settings/#multimodal)
 and [data flow](privacy-and-data-flow.md#decision-models-and-completion-verification)
@@ -23,7 +25,7 @@ and private inference-profile ARNs are omitted from this identity context.
 
 ### Gemini 4 Argon and new Muse models
 
-Settings suggests `gemini-4-argon` on Google Gemini and
+The Providers page suggests `gemini-4-argon` on Google Gemini and
 `google/gemini-4-argon`, `meta/muse-wonder`, and `meta/muse-spark-open` on
 OpenRouter. These models support native tools and screenshot input. WebBrain
 infers their 1,048,576-token context unless a user or local runtime overrides it.
@@ -60,7 +62,8 @@ cannot establish live account access or upstream availability.
 
 A decision model answers the agent's fixed-choice questions (is the task
 finished, did a watch find what it waited for, what does a request say about an
-action) so the chat model does not have to. Settings asks one question first:
+action) so the chat model does not have to. The Decision tab of the Providers
+page asks one question first:
 
 - **Auto** (default) needs no setup. In Chrome it uses Ternary Bonsai 2 2B
   Vision once that preset is downloaded (Providers → WebGPU, the install page or
@@ -138,7 +141,7 @@ shape operators are permitted and explicitly disclosed; it is not a pure-GPU
 claim. **Unload** or disabling outsourcing releases the Worker/GPU resources and
 retains the cache; **Remove cached model** requires the model to be unloaded.
 After **Download and load** or **Load**, D1 stays loaded until
-it is unloaded, removed or switched off in Settings: a decision that finds it
+it is unloaded, removed or switched off on the Providers page: a decision that finds it
 unloaded (a browser restart, a discarded stalled session, a lost GPU device)
 starts one reload from the verified cache in the background and uses the
 fallback chain meanwhile. A reload never downloads. A decision whose caller
@@ -215,7 +218,7 @@ An older Cloud deployment falls through to the active LLM and existing checks.
 
 ### Generative Media
 
-Configure **Settings → Assistive Models → Generative Media** for the
+Configure **Providers → Generative** for the
 `generate_image` agent tool. Select one provider and save its settings:
 
 | Provider | Required settings | Generation |
@@ -260,7 +263,7 @@ Inline bytes are shown in chat and excluded from model context.
 
 ### SafeSocial image classifier (experimental)
 
-**Settings → Assistive Models → SafeSocial** optionally filters Instagram images
+**Providers → SafeSocial** optionally filters Instagram images
 and video posters using the local, multilabel
 [EfficientNet-Lite0 classifier](https://huggingface.co/webbrain-one/safesocial-trigger-classifier-efficientnet-lite0).
 It is off by default and does not replace the chat or screenshot vision model.
@@ -362,8 +365,8 @@ class BaseLLMProvider {
 | `z_ai`               | `openai`       | cloud    | `glm-5.2`                                                          | Model-name regex                |
 
 The sidepanel also exposes `webbrain_cloud_max` as **WebBrain Compass XL**.
-It is a managed, sidepanel-only runtime profile rather than a second Settings
-provider card. It uses the same endpoint and sends `model: max`; the hosted
+It is a managed, sidepanel-only runtime profile rather than a second provider
+card on the Providers page. It uses the same endpoint and sends `model: max`; the hosted
 backend returns `WebBrain Compass XL 1.0` and consumes usage credits at five
 times the standard rate.
 
@@ -372,8 +375,8 @@ times the standard rate.
 WebBrain also ships 80 disabled-by-default provider cards. Most are sourced
 from the OpenCode provider catalog snapshot at commit
 `62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
-their official API documentation. Together with the original cards, Settings
-contains **113 built-in providers on Chromium** and **112 on Firefox**; the
+their official API documentation. Together with the original cards, the
+Providers page lists **113 built-in providers on Chromium** and **112 on Firefox**; the
 difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs                                                                                                                                                                                                                                                                                                                        |
@@ -411,7 +414,7 @@ the proxy server and are never entered into WebBrain.
 
 [IO.NET](https://io.net/docs/guides/intelligence/io-intelligence) and
 [Synthetic](https://synthetic.new/) are built-in OpenAI-compatible cloud
-providers. Add each service's bearer API key in its Settings card, choose a
+providers. Add each service's bearer API key in its card on the Providers page, choose a
 model, save, and select the provider.
 
 #### NEAR AI Cloud
@@ -426,7 +429,7 @@ same API and billing but do not inherit the TEE privacy guarantees. See the
 [OpenAI compatibility](https://docs.near.ai/cloud/guides/openai-compatibility)
 guides.
 
-In WebBrain, open **Settings -> Providers -> NEAR AI Cloud**. Generate an API
+In WebBrain, open **Providers -> LLM -> NEAR AI Cloud**. Generate an API
 key from the [NEAR AI Cloud dashboard](https://cloud.near.ai/), paste it into
 the card, keep the default `z-ai/glm-5.3-flash` model, then click **Test
 Connection**. If selecting a model with a smaller context window, such as
@@ -485,8 +488,8 @@ duplicate request.
 ### Local Providers
 
 On Chromium, **WebGPU (In-browser)** is an endpoint-free local provider.
-Settings and Apocalypse Mode offer the same two presets, in this order, and
-Settings also accepts a custom Hugging Face repository:
+The Providers page and Apocalypse Mode offer the same two presets, in this
+order, and the Providers page also accepts a custom Hugging Face repository:
 
 | Model | Download | Images | Browser context |
 | --- | --- | --- | --- |
@@ -495,7 +498,7 @@ Settings also accepts a custom Hugging Face repository:
 
 These presets ship but are hidden from the pickers for now
 (`WEBGPU_HIDDEN_MODEL_IDS` in `src/chrome/src/providers/webgpu.js`). A saved
-selection still loads: Settings shows it as a custom model, and Apocalypse Mode
+selection still loads: the Providers page shows it as a custom model, and Apocalypse Mode
 switches to an offered preset.
 
 | Model | Download | Images | Browser context |
@@ -572,11 +575,11 @@ validates the template after loading and rejects incompatible repositories.
 The provider defaults to the Compact prompt tier. For Compass, budget roughly
 4 GB of GPU headroom (about 1.87 GB of
 weights plus KV cache that grows with context length); on constrained GPUs,
-lower the context window on the WebGPU card in Settings → Providers (16384 is
+lower the context window on the WebGPU card on the Providers page (16384 is
 a safe fallback) and retry with a short prompt. Each repository is cached
 separately in Chrome.
-After downloading a preset in Apocalypse Mode, the WebGPU card in
-**Settings -> Providers** can be configured, tested, and selected as the normal
+After downloading a preset in Apocalypse Mode, the WebGPU card on the
+**Providers** page can be configured, tested, and selected as the normal
 chat provider. The nuclear standalone-chat control remains available as a
 per-run override that does not change the global selection. Once its files are
 cached, the selected model works without Apocalypse Mode enabled.
@@ -609,7 +612,7 @@ proxy card require their configured client keys:
 
 #### ODS
 
-Open **Settings → Providers → ODS (Local)**, set the server URL to the local
+Open **Providers → LLM → ODS (Local)**, set the server URL to the local
 inference port in ODS's `.env`, click **Load Models**, select the running model,
 and click **Test Connection**. ODS exposes OpenAI-compatible `/v1/models` and
 `/v1/chat/completions`; WebBrain reads `/props` for the live context window and
@@ -620,7 +623,7 @@ model in WebBrain unless your ODS installation exposes a stable alias. See the
 
 #### Osaurus
 
-Start the Osaurus server on your Mac, then open **Settings → Providers →
+Start the Osaurus server on your Mac, then open **Providers → LLM →
 Osaurus (Local)**. Keep `http://127.0.0.1:1337/v1` as the server URL, click
 **Load Models**, select a model, and click **Test Connection**. A model ID is
 required; discovery uses Osaurus's OpenAI-compatible `/v1/models` endpoint.
@@ -643,7 +646,7 @@ then start Studio and load a chat model. In Studio, open the avatar menu,
 choose **Settings → API Access**, and create an API key. Keys currently use the
 `sk-unsloth-` prefix; keep the full value private.
 
-In WebBrain, open **Settings → Providers → Unsloth Studio (Local)**. Enter the
+In WebBrain, open **Providers → LLM → Unsloth Studio (Local)**. Enter the
 Studio API address as `http://127.0.0.1:8888/v1`, replacing `8888` when the
 running Studio instance shows a different port. Enter the generated API key,
 click **Load Models**, select the loaded model, then click **Test Connection**.
@@ -695,7 +698,7 @@ Ollama, llama.cpp, ODS, LM Studio, and LocalAI default to `visionMode: auto`. We
 the selected server for model capability metadata before enrichment and sends
 screenshots only when the response explicitly reports image input. A failed or
 malformed metadata request is text-only for that turn and is retried later;
-Settings can override Auto with Force on or Off. For providers whose Model
+The Providers page can override Auto with Force on or Off. For providers whose Model
 field may be blank, WebBrain coalesces concurrent checks but rechecks once per
 user turn, so changing the model loaded by the server cannot reuse a stale
 answer. Other local providers retain
@@ -757,7 +760,7 @@ Provider tier and conversation mode are separate knobs:
 
 Ask mode ignores provider tier and stays read-only. Act mode uses the selected tier's normal tools. Dev mode requires Mid or Full, uses the selected Act prompt, appends `SYSTEM_PROMPT_DEV_APPENDIX`, and adds Dev-only source/style tools plus Dev-extended shadow/frame inspection for Mid-tier debugging. Compact Dev is blocked before an LLM request is sent.
 
-**Lean mode** (Settings → General → Lean mode; Auto by default) replaces the tier's Act tools and prompt with a 17-tool set and a short prompt, and skips WebBrain's quality checks. Under Auto it applies only to a strong model on a cloud or router provider whose tier is Full; Compact and Mid tiers and local providers keep their tier. See [lean-mode.md](lean-mode.md).
+**Lean mode** (Settings → Advanced → Lean mode; Auto by default) replaces the tier's Act tools and prompt with a 17-tool set and a short prompt, and skips WebBrain's quality checks. Under Auto it applies only to a strong model on a cloud or router provider whose tier is Full; Compact and Mid tiers and local providers keep their tier. See [lean-mode.md](lean-mode.md).
 
 ### Vision Detection
 
@@ -833,7 +836,7 @@ await pm.setActive("openai"); // Switch active provider
 await pm.updateProvider("openai", { model: "gpt-5" }); // Update config
 await pm.duplicateProvider("openai"); // Create openai__duplicate
 await pm.removeDuplicateProvider("openai__duplicate"); // Remove it
-pm.getAll(); // All provider configs (for Settings UI)
+pm.getAll(); // All provider configs (for the Providers page)
 await pm.testProvider("openai"); // Test connection
 ```
 
@@ -844,11 +847,11 @@ state and is separate from `activeProvider`, which is the provider currently
 configured. Connection tests report reachability but do not control the Active
 flag.
 
-Settings can rename configurable providers using **Provider title** and Save.
-The persisted `label` appears in Settings and the chat provider picker without
+The Providers page can rename configurable providers using **Provider title**
+and Save. The persisted `label` appears there and in the chat provider picker without
 changing the provider's ID, implementation, or model.
 
-Settings can create any number of independent duplicates of each configurable
+The Providers page can create any number of independent duplicates of each configurable
 endpoint provider, including from a saved duplicate. The first duplicate keeps
 the existing ID `<source>__duplicate`; subsequent instances use
 `<source>__duplicate_2`, `<source>__duplicate_3`, and so on. Each stores a
@@ -864,9 +867,9 @@ Chromium-only WebGPU runtime are not duplicable because they do not represent
 independent user-managed API credentials or endpoints; their cards keep the
 Duplicate affordance disabled with an explanatory tooltip.
 
-### Settings Search
+### Provider Search
 
-The Settings search index includes provider IDs, labels, type/category, model,
+The search on the Providers page's LLM tab indexes provider IDs, labels, type/category, model,
 base URL, field labels/placeholders, suggestions, and compatibility options.
 Matching cards are ordered by exact provider name/ID, then name/ID prefix, then
 name/ID substring, then field-only matches. Original provider order breaks
@@ -881,7 +884,7 @@ Deprecated provider entries (`webbrain`, `openai_subscription`,
 
 ### Cost Allowances
 
-Settings exposes session and total cloud cost allowances. The agent prefers a provider-reported `usage.cost`/`usage.cost_usd` value when present (OpenRouter reports this directly). For direct cloud providers that only return token counts, WebBrain estimates spend from the provider config fields:
+Settings → Budgets exposes session and total cloud cost allowances. The agent prefers a provider-reported `usage.cost`/`usage.cost_usd` value when present (OpenRouter reports this directly). For direct cloud providers that only return token counts, WebBrain estimates spend from the provider config fields:
 
 - `inputCostPerMillionUsd`
 - `cacheReadCostPerMillionUsd`
@@ -918,7 +921,7 @@ const vision = await providerManager.getVisionProvider();
 // active-provider vision and the explicitly enabled, ready local fallback.
 ```
 
-On Chromium, **Settings -> Assistive Models -> Vision** also offers an
+On Chromium, **Providers -> Vision** also offers an
 in-browser vision model, chosen from **Auto** (default), **Ternary Bonsai 2 2B
 Vision**, **WebBrain VL 2 450M** or **Off**. The choice is stored in the
 Chrome-only `webgpuVisionChoice` key (`storedWebgpuVisionChoice()` and
@@ -949,10 +952,10 @@ Firefox, whose build has no MV3 offscreen document and no local option.
 Neither local model is in the general provider catalog as a vision sidecar or
 ever receives agent tools or planning turns. No choice, Apocalypse Mode or
 screenshot operation starts a download. Downloads run in Chrome's offscreen
-extension worker, so the user may switch tabs or close Settings while they
+extension worker, so the user may switch tabs or close the Providers page while they
 continue, but must keep Chrome running. Screenshots stay on-device and only the
-generated description is passed to the active provider. Only Settings and
-Apocalypse Mode may change the choice (`set_webgpu_vision_choice`).
+generated description is passed to the active provider. Only the Providers
+page and Apocalypse Mode may change the choice (`set_webgpu_vision_choice`).
 
 Screenshot routing is deterministic: an explicit dedicated vision endpoint,
 then a vision-capable active provider receiving raw pixels, then the in-browser

@@ -1,4 +1,4 @@
-// Settings → Decision models with D1 selected: one button downloads what is
+// Providers → Decision with D1 selected: one button downloads what is
 // missing and loads, and reads "Load" once the package is cached; Unload is
 // short. Firefox runs only where its Playwright browser is installed.
 import { chromium, firefox } from 'playwright';
@@ -49,7 +49,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
           commands: { getAll: async () => [] }, tabs: { create: async () => ({}) },
         };
       }, { build, version });
-      await page.goto(`${origin}/src/${build}/src/ui/settings.html#multimodal`);
+      await page.goto(`${origin}/src/${build}/src/ui/providers.html#decision`);
       await page.waitForFunction(() => !document.querySelector('#d1-controls')?.hidden);
       const commands = await page.locator('#d1-controls button[data-d1-command]').evaluateAll(buttons => buttons.map(button => button.dataset.d1Command));
       assert.deepEqual(commands, ['download', 'stop', 'reset', 'clear'], 'Download and Load share one button');

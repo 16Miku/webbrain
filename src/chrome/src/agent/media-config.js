@@ -1,6 +1,6 @@
 // Provider settings are user-authored. Model tool arguments never select a host or key.
 export const IMAGE_GEN_MODEL_KEY = 'imageGenModel';
-export const GENERATIVE_MEDIA_SETUP_NOTE = 'Built-in media generation requires setup in Settings → Assistive Models → Generative Media.';
+export const GENERATIVE_MEDIA_SETUP_NOTE = 'Built-in media generation requires setup in Providers → Generative.';
 export const GENERATIVE_MEDIA_TIER_NOTE = 'Built-in media generation requires Full-tier Act mode.';
 export const MEDIA_PROVIDERS = Object.freeze({
   fal: { label: 'fal.ai', model: 'fal-ai/flux/schnell', keyPlaceholder: 'FAL_KEY', docs: 'https://fal.ai/dashboard/keys' },

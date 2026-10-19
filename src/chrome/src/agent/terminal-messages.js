@@ -103,6 +103,6 @@ export function stepLimitUserMessage(steps, lastAssistantText = '') {
   const lines = [`I reached the step limit${count ? ` (${count} step${count === 1 ? '' : 's'})` : ''} before finishing the task.`];
   const snippet = String(lastAssistantText || '').replace(/\s+/g, ' ').trim();
   if (snippet) lines.push(`Where I stopped: "${snippet.slice(0, 280)}${snippet.length > 280 ? '...' : ''}"`);
-  lines.push('This usually means the task is too complex for the current model, the step limit is too low (you can raise it in Settings), or the task should be split into smaller parts.');
+  lines.push('This usually means the task is too complex for the current model, the step limit is too low (you can raise it in Settings → Budgets), or the task should be split into smaller parts.');
   return lines.join('\n\n');
 }

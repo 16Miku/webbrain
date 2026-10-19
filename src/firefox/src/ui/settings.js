@@ -3,22 +3,19 @@ import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
 import { D1_MODEL_ID } from '../providers/d1-config.js';
 import { initD1Settings } from './d1-settings.js';
 /**
- * WebBrain Settings Page — provider configuration + display settings.
+ * WebBrain Settings pages — settings.html (preferences, budgets, memory,
+ * skills, CAPTCHA, Bridge, advanced), providers.html (the chat provider and
+ * the assistive models) and permissions.html (site permissions).
+ *
+ * One controller serves all three pages: each section below wires itself up
+ * only when its markup is on the current page.
  */
 
-import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
+import { t } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { MEDIA_PROVIDERS, mediaProvider, validateMediaConfig } from '../agent/media-config.js';
 import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
-import {
-  UI_SCALE_LEVELS,
-  UI_SCALE_STORAGE_KEY,
-  loadUiScale,
-  nextUiScale,
-  normalizeUiScale,
-  saveUiScale,
-} from './ui-scale.js';
 import { renderSkillMarkdown } from './skill-markdown.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import {
@@ -88,10 +85,8 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 const EXT_VERSION = '42.0.6';
 
 const providersContainer = document.getElementById('providers');
-const displaySettings = document.getElementById('display-settings');
 const generalSearchInput = document.getElementById('input-general-search');
 const generalSearchEmpty = document.getElementById('general-search-empty');
-const advancedSettings = document.querySelector('.advanced-settings');
 const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
 const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
@@ -131,7 +126,6 @@ const completionConfettiToggle = document.getElementById('toggle-completion-conf
 const completionFlashTabToggle = document.getElementById('toggle-completion-flash-tab');
 const tracingToggle = document.getElementById('toggle-tracing');
 const feedbackDiagnosticsToggle = document.getElementById('toggle-feedback-diagnostics');
-const losslessTracingToggle = document.getElementById('toggle-lossless-tracing');
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
 const strictGuardsToggle = document.getElementById('toggle-strict-guards');
 const leanModeSelect = document.getElementById('select-lean-mode');
@@ -244,7 +238,18 @@ function activeProviderIsCompass() {
   const config = providersData?.[activeProviderId];
   return !!activeProviderId && (providerDefinitionId(activeProviderId) === 'webbrain_cloud' || config?.providerName === 'webbrain-cloud');
 }
+// The Strict Secret Mode switch is on settings.html and the decision card on
+// providers.html, so the card follows the stored setting, not the switch.
+let strictSecretModeOn = false;
+if (globalThis.browser?.storage?.onChanged) {
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.strictSecretMode) return;
+    strictSecretModeOn = changes.strictSecretMode.newValue === true;
+    syncDecisionStatus();
+  });
+}
 function syncDecisionStatus() {
+  if (!decisionModeInputs.length) return;
   const mode = selectedDecisionMode();
   for (const description of document.querySelectorAll('[data-decision-mode-desc]')) description.hidden = description.dataset.decisionModeDesc !== mode;
   const configured = document.getElementById('decision-configured');
@@ -257,7 +262,7 @@ function syncDecisionStatus() {
   status.hidden = mode !== 'auto';
   if (mode !== 'auto') return;
   // Strict Secret Mode keeps page content away from every decision model, so Auto has nothing to use.
-  const strict = strictSecretToggle?.checked === true;
+  const strict = strictSecretModeOn;
   const compass = !strict && activeProviderIsCompass();
   const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : 'st.decision.status.none_firefox';
   status.dataset.i18n = key;
@@ -291,14 +296,7 @@ const systemOneBrowserToggle = document.getElementById('toggle-system-one-browse
 const btnTestSystemOne = document.getElementById('btn-test-system-one');
 const btnClearSystemOne = document.getElementById('btn-clear-system-one');
 const systemOneTestResult = document.getElementById('test-system-one');
-const languageSelect = document.getElementById('select-language');
 const themeSelect = document.getElementById('select-theme');
-const settingsUiScaleDecrease = document.getElementById('settings-ui-scale-decrease');
-const settingsUiScaleValue = document.getElementById('settings-ui-scale-value');
-const settingsUiScaleIncrease = document.getElementById('settings-ui-scale-increase');
-const settingsUiScaleReset = document.getElementById('settings-ui-scale-reset');
-const settingsUiScaleShortcuts = document.getElementById('settings-ui-scale-shortcuts');
-const settingsUiScaleManageShortcuts = document.getElementById('settings-ui-scale-manage-shortcuts');
 const downloadDirectoryInput = document.getElementById('input-download-directory');
 const subtitleEl = document.getElementById('subtitle');
 
@@ -306,99 +304,36 @@ const subtitleEl = document.getElementById('subtitle');
 // Loaded from browser.storage.local (canonical) with a localStorage mirror
 // kept in sync by theme.js — so the FOUC bootstrap in <head> always has the
 // latest mode on next page open. watch() keeps every open extension page
-// (this settings tab + the side panel) in sync if any one of them flips it.
+// (the settings pages + the side panel) in sync if any one of them flips it.
+// Only settings.html has the picker; the other pages still follow changes.
 let currentThemeMode = 'system';
-if (themeSelect) {
-  loadMode().then((mode) => {
-    currentThemeMode = mode;
-    themeSelect.value = mode;
-    applyMode(mode, { syncStorage: false }); // already loaded, just paint
-  });
-  themeSelect.addEventListener('change', async () => {
-    const mode = THEME_MODES.includes(themeSelect.value) ? themeSelect.value : 'system';
-    currentThemeMode = mode;
-    await applyMode(mode);
-  });
-  watch(() => currentThemeMode);
-  // If another Settings tab or the side panel flips the theme, watch()
-  // already re-paints this page — but the closure variable and the select
-  // value won't update on their own. Without this, the picker drifts out
-  // of sync and a later OS-theme flip can re-apply the stale 'system'.
-  if (globalThis.browser?.storage?.onChanged) {
-    browser.storage.onChanged.addListener((changes, area) => {
-      if (area !== 'local' || !changes.themeMode) return;
-      const next = changes.themeMode.newValue;
-      if (!THEME_MODES.includes(next)) return;
-      currentThemeMode = next;
-      if (themeSelect.value !== next) themeSelect.value = next;
-    });
-  }
-}
-
-let currentSettingsUiScale = 100;
-let settingsUiScaleReady = false;
-
-function renderSettingsUiScale(value) {
-  currentSettingsUiScale = normalizeUiScale(value);
-  settingsUiScaleReady = true;
-  if (settingsUiScaleValue) settingsUiScaleValue.textContent = `${currentSettingsUiScale}%`;
-  if (settingsUiScaleDecrease) settingsUiScaleDecrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[0];
-  if (settingsUiScaleIncrease) settingsUiScaleIncrease.disabled = currentSettingsUiScale === UI_SCALE_LEVELS[UI_SCALE_LEVELS.length - 1];
-}
-
-// Serialized so each step reads the scale rendered by the step before it:
-// holding Enter on a focused +/- button repeats faster than the storage write
-// resolves, and an unqueued step would keep re-reading the same stale scale.
-let settingsUiScaleWriteQueue = Promise.resolve();
-
-function changeSettingsUiScale(action) {
-  if (!settingsUiScaleReady) return Promise.resolve();
-  const write = settingsUiScaleWriteQueue.then(async () => {
-    const next = nextUiScale(currentSettingsUiScale, action);
-    await saveUiScale(browser.storage.local, next);
-    renderSettingsUiScale(next);
-  });
-  // Keep the chain alive after a rejected write while still handing the
-  // failure to this caller.
-  settingsUiScaleWriteQueue = write.catch(() => {});
-  return write;
-}
-
-loadUiScale(browser.storage.local).then(renderSettingsUiScale);
-if (settingsUiScaleDecrease) settingsUiScaleDecrease.disabled = true;
-if (settingsUiScaleIncrease) settingsUiScaleIncrease.disabled = true;
-settingsUiScaleDecrease?.addEventListener('click', () => changeSettingsUiScale('decrease').catch(() => {}));
-settingsUiScaleIncrease?.addEventListener('click', () => changeSettingsUiScale('increase').catch(() => {}));
-settingsUiScaleReset?.addEventListener('click', () => changeSettingsUiScale('reset').catch(() => {}));
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes[UI_SCALE_STORAGE_KEY]) {
-    renderSettingsUiScale(changes[UI_SCALE_STORAGE_KEY].newValue);
-  }
+loadMode().then((mode) => {
+  currentThemeMode = mode;
+  if (themeSelect) themeSelect.value = mode;
+  applyMode(mode, { syncStorage: false }); // already loaded, just paint
 });
-
-const UI_SCALE_COMMAND_NAMES = ['decrease-ui-scale', 'increase-ui-scale', 'reset-ui-scale'];
-
-async function refreshUiScaleShortcuts() {
-  if (!settingsUiScaleShortcuts) return;
-  const commands = await browser.commands.getAll();
-  const shortcuts = UI_SCALE_COMMAND_NAMES.map((name) => commands.find((command) => command.name === name)?.shortcut)
-    .filter(Boolean);
-  const summary = shortcuts.length ? shortcuts.join(' · ') : t('st.display.ui_scale.shortcuts_none');
-  settingsUiScaleShortcuts.textContent = t('st.display.ui_scale.shortcuts', { shortcuts: summary });
-}
-
-refreshUiScaleShortcuts().catch(() => {});
-window.addEventListener('focus', () => refreshUiScaleShortcuts().catch(() => {}));
-settingsUiScaleManageShortcuts?.addEventListener('click', async () => {
-  if (browser.commands.openShortcutSettings) {
-    await browser.commands.openShortcutSettings();
-  } else {
-    await browser.tabs.create({ url: 'about:addons' });
-  }
+themeSelect?.addEventListener('change', async () => {
+  const mode = THEME_MODES.includes(themeSelect.value) ? themeSelect.value : 'system';
+  currentThemeMode = mode;
+  await applyMode(mode);
 });
+watch(() => currentThemeMode);
+// If another Settings tab or the side panel flips the theme, watch()
+// already re-paints this page — but the closure variable and the select
+// value won't update on their own. Without this, the picker drifts out
+// of sync and a later OS-theme flip can re-apply the stale 'system'.
+if (globalThis.browser?.storage?.onChanged) {
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.themeMode) return;
+    const next = changes.themeMode.newValue;
+    if (!THEME_MODES.includes(next)) return;
+    currentThemeMode = next;
+    if (themeSelect && themeSelect.value !== next) themeSelect.value = next;
+  });
+}
 
 function renderSubtitle() {
-  if (subtitleEl) subtitleEl.textContent = t('st.subtitle', { version: EXT_VERSION });
+  if (subtitleEl) subtitleEl.textContent = t(subtitleEl.dataset.subtitleKey || 'st.subtitle', { version: EXT_VERSION });
 }
 renderSubtitle();
 
@@ -428,69 +363,52 @@ function searchTextForGeneralItem(item) {
   return normalizeGeneralSearchText(`${item.textContent || ''} ${keyedText}`);
 }
 
+// The search hides rows with a class of its own and leaves the hidden
+// attribute to the code that owns each row, so clearing a search cannot bring
+// back a card that is hidden for another reason (a managed CAPTCHA card, say).
 function setGeneralSearchHidden(item, hidden) {
-  item.hidden = hidden;
   item.classList.toggle('general-search-hidden', hidden);
 }
 
+// The search box covers the tabs marked data-search (General, Budgets,
+// CAPTCHA and Advanced). With a query, those tabs show together and keep only
+// their matching rows; settings-tabs.js clears the query when a tab is picked.
+const searchPanels = Array.from(document.querySelectorAll('.tab-panel[data-search]'));
+
 function filterGeneralSettings() {
-  if (!displaySettings || !generalSearchInput) return;
+  if (!generalSearchInput || !searchPanels.length) return;
   const query = normalizeGeneralSearchText(generalSearchInput.value);
-  const visibleItems = Array.from(displaySettings.children)
-    .filter((el) => el.classList?.contains('setting-row'));
-  const advancedBody = advancedSettings?.querySelector('.advanced-settings-body');
-  const advancedItems = advancedBody
-    ? Array.from(advancedBody.children).filter((el) => el.classList?.contains('setting-row') || el.classList?.contains('provider-card'))
-    : [];
-
-  let visibleMatches = 0;
-  let advancedMatches = 0;
-  visibleItems.forEach((item) => {
-    const matches = !query || searchTextForGeneralItem(item).includes(query);
-    setGeneralSearchHidden(item, !!query && !matches);
-    if (matches) visibleMatches += 1;
-  });
-  advancedItems.forEach((item) => {
-    const matches = !query || searchTextForGeneralItem(item).includes(query);
-    setGeneralSearchHidden(item, !!query && !matches);
-    if (matches) advancedMatches += 1;
-  });
-
-  if (advancedSettings) {
-    setGeneralSearchHidden(advancedSettings, !!query && advancedMatches === 0);
-    if (query && advancedMatches > 0) advancedSettings.open = true;
+  document.body.classList.toggle('settings-searching', !!query);
+  let totalMatches = 0;
+  for (const panel of searchPanels) {
+    const scope = panel.querySelector('[data-search-scope]') || panel;
+    let panelMatches = 0;
+    for (const item of Array.from(scope.children)) {
+      const matches = !query || (!item.hidden && searchTextForGeneralItem(item).includes(query));
+      setGeneralSearchHidden(item, !!query && !matches);
+      if (matches) panelMatches += 1;
+    }
+    setGeneralSearchHidden(panel, !!query && panelMatches === 0);
+    totalMatches += panelMatches;
   }
   if (generalSearchEmpty) {
-    generalSearchEmpty.hidden = !query || (visibleMatches + advancedMatches) > 0;
+    generalSearchEmpty.hidden = !query || totalMatches > 0;
   }
 }
 
-if (generalSearchInput) {
-  generalSearchInput.addEventListener('input', filterGeneralSettings);
-}
+generalSearchInput?.addEventListener('input', filterGeneralSettings);
 
-if (languageSelect) {
-  languageSelect.innerHTML = LANGUAGES.map((l) => `<option value="${l.code}">${l.label}</option>`).join('');
-  languageSelect.value = getLocale();
-  languageSelect.addEventListener('change', async () => {
-    await setLocale(languageSelect.value);
-    renderSubtitle();
-    refreshUiScaleShortcuts().catch(() => {});
-    filterGeneralSettings();
-    renderProviders();
-  });
-  document.addEventListener('wb-locale-changed', () => {
-    languageSelect.value = getLocale();
-    renderSubtitle();
-    refreshUiScaleShortcuts().catch(() => {});
-    filterGeneralSettings();
-    if (providersContainer) renderProviders();
-    renderSkills();
-    renderPermissions();
-    refreshProfileSyncState();
-    refreshApocalypseModeStatus();
-  });
-}
+// The language is chosen in the side panel; i18n.js re-translates the static
+// markup, and this re-renders what the script writes itself.
+document.addEventListener('wb-locale-changed', () => {
+  renderSubtitle();
+  filterGeneralSettings();
+  renderProviders();
+  renderSkills();
+  renderPermissions();
+  if (profileSyncStatus) refreshProfileSyncState();
+  refreshApocalypseModeStatus();
+});
 globalThis.addEventListener('focus', () => refreshApocalypseModeStatus());
 
 let providersData = {};
@@ -657,24 +575,27 @@ async function init() {
   browser.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await browser.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'strictGuards', 'leanMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'clarifyTimeoutPolicy', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await browser.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'strictSecretMode', 'strictGuards', 'leanMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'clarifyTimeoutPolicy', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
-  verboseToggle.checked = stored.verboseMode || false;
+  strictSecretModeOn = stored.strictSecretMode === true;
+  if (verboseToggle) verboseToggle.checked = stored.verboseMode || false;
   if (composerDeliveryModeSelect) {
     composerDeliveryModeSelect.value = stored.composerDeliveryMode === 'steer' ? 'steer' : 'queue';
   }
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
   if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
   if (helpImproveToggle) helpImproveToggle.checked = stored.helpImproveWebBrain !== false; // on by default
-  screenshotToggle.checked = stored.screenshotFallback ?? true; // on by default
-  if (isUnlimitedMaxAgentSteps(stored.maxAgentSteps)) {
-    maxStepsRange.value = MAX_AGENT_STEPS_UNLIMITED_SENTINEL;
-    stepsValueLabel.textContent = '∞';
-  } else {
-    maxStepsRange.value = boundedMaxAgentSteps(stored.maxAgentSteps);
-    stepsValueLabel.textContent = maxStepsRange.value;
+  if (screenshotToggle) screenshotToggle.checked = stored.screenshotFallback ?? true; // on by default
+  if (maxStepsRange && stepsValueLabel) {
+    if (isUnlimitedMaxAgentSteps(stored.maxAgentSteps)) {
+      maxStepsRange.value = MAX_AGENT_STEPS_UNLIMITED_SENTINEL;
+      stepsValueLabel.textContent = '∞';
+    } else {
+      maxStepsRange.value = boundedMaxAgentSteps(stored.maxAgentSteps);
+      stepsValueLabel.textContent = maxStepsRange.value;
+    }
   }
   // requestTimeoutMs is stored in milliseconds, displayed as seconds.
   if (requestTimeoutRange && requestTimeoutValueLabel) {
@@ -708,7 +629,9 @@ async function init() {
   if (clarifyTimeoutPolicySelect) {
     clarifyTimeoutPolicySelect.value = stored.clarifyTimeoutPolicy === 'safe' ? 'safe' : 'finish';
   }
-  if (autoScreenshotSelect) autoScreenshotSelect.value = stored.autoScreenshot || 'state_change';
+  // On navigation (default) captures after the agent opens a page, not after
+  // every click or keystroke.
+  if (autoScreenshotSelect) autoScreenshotSelect.value = stored.autoScreenshot || 'navigation';
   if (imageDetailSelect) imageDetailSelect.value = stored.imageDetail || 'auto';
   if (maxScreenshotsSelect) maxScreenshotsSelect.value = String(stored.maxScreenshotsPerTurn != null ? stored.maxScreenshotsPerTurn : 0);
   if (maxImageDimensionSelect) maxImageDimensionSelect.value = String(stored.maxImageDimension || 1568);
@@ -730,14 +653,9 @@ async function init() {
   if (notifySoundToggle) notifySoundToggle.checked = stored.notifySound ?? true;
   if (completionConfettiToggle) completionConfettiToggle.checked = stored.completionConfetti ?? true;
   if (completionFlashTabToggle) completionFlashTabToggle.checked = stored.completionFlashTab ?? true;
+  // One switch records traces with full request details, or neither.
   if (tracingToggle) tracingToggle.checked = stored.tracingEnabled === true;
   if (feedbackDiagnosticsToggle) feedbackDiagnosticsToggle.checked = stored.feedbackDiagnosticsEnabled !== false;
-  if (losslessTracingToggle) {
-    losslessTracingToggle.checked = stored.losslessTrace === true;
-    // Lossless recording only means something when tracing is on; mirror the
-    // disabled state so the disclosure reads honestly.
-    losslessTracingToggle.disabled = tracingToggle?.checked !== true;
-  }
   const sessionLimit = normalizeCostAmount(stored.costAllowanceSessionUsd);
   const totalLimit = normalizeCostAmount(stored.costAllowanceTotalUsd);
   const totalSpent = normalizeCostAmount(stored.meteredProviderCostSpentUsd, 0);
@@ -752,37 +670,41 @@ async function init() {
   if (scheduledConfirmToggle) scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false;
   // The On fields show the configuration On uses: a profile in On as it is
   // stored, any other with On's defaults.
-  const storedDecisionMode = resolveDecisionMode(stored);
-  setDecisionMode(storedDecisionMode);
-  const decisionConfig = resolveDecisionConfig(storedDecisionMode === 'on' ? stored : { ...stored, [DECISION_MODE_KEY]: 'on' });
-  decisionProviderInput.value = previousDecisionProvider = decisionConfig.provider;
-  decisionModelInput.value = decisionConfig.model;
-  decisionEndpointInput.value = stored.decisionBaseUrl || 'http://127.0.0.1:8009';
-  decisionVisionInput.value = stored.decisionVisionMode || 'auto';
-  decisionVisionSupported = stored.decisionVisionSupported === true;
-  decisionThresholdInput.value = String(decisionConfig.threshold * 100);
-  await refreshD1Settings();
-  decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
-  decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
-  decisionKeyDrafts.set('local', stored.decisionLocalApiKey || '');
-  document.getElementById('decision-endpoint-field').hidden = decisionConfig.provider !== 'local';
-  decisionDoneToggle.checked = decisionConfig.features.done;
-  if (systemOneWatchToggle) systemOneWatchToggle.checked = decisionConfig.features.watch;
-  if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = decisionConfig.features.classifications;
-  if (systemOneBrowserToggle) systemOneBrowserToggle.checked = decisionConfig.features.browser;
-  if (systemOneCompletionToggle) systemOneCompletionToggle.checked = decisionConfig.features.completion;
-  if (systemOneApiKeyInput) systemOneApiKeyInput.value = decisionConfig.apiKey;
-  if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
-  if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
-  syncDecisionStatus();
-  updateSystemOneThresholdLabels();
+  if (decisionProviderInput) {
+    const storedDecisionMode = resolveDecisionMode(stored);
+    setDecisionMode(storedDecisionMode);
+    const decisionConfig = resolveDecisionConfig(storedDecisionMode === 'on' ? stored : { ...stored, [DECISION_MODE_KEY]: 'on' });
+    decisionProviderInput.value = previousDecisionProvider = decisionConfig.provider;
+    decisionModelInput.value = decisionConfig.model;
+    decisionEndpointInput.value = stored.decisionBaseUrl || 'http://127.0.0.1:8009';
+    decisionVisionInput.value = stored.decisionVisionMode || 'auto';
+    decisionVisionSupported = stored.decisionVisionSupported === true;
+    decisionThresholdInput.value = String(decisionConfig.threshold * 100);
+    await refreshD1Settings();
+    decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
+    decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
+    decisionKeyDrafts.set('local', stored.decisionLocalApiKey || '');
+    document.getElementById('decision-endpoint-field').hidden = decisionConfig.provider !== 'local';
+    decisionDoneToggle.checked = decisionConfig.features.done;
+    if (systemOneWatchToggle) systemOneWatchToggle.checked = decisionConfig.features.watch;
+    if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = decisionConfig.features.classifications;
+    if (systemOneBrowserToggle) systemOneBrowserToggle.checked = decisionConfig.features.browser;
+    if (systemOneCompletionToggle) systemOneCompletionToggle.checked = decisionConfig.features.completion;
+    if (systemOneApiKeyInput) systemOneApiKeyInput.value = decisionConfig.apiKey;
+    if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
+    if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
+    syncDecisionStatus();
+    updateSystemOneThresholdLabels();
+  }
 
   // Load vision model config
-  const visionStored = await browser.storage.local.get(['visionModel']);
-  const vision = visionStored.visionModel || {};
-  visionBaseUrlInput.value = vision.baseUrl || '';
-  visionApiKeyInput.value = vision.apiKey || '';
-  visionModelInput.value = vision.model || '';
+  if (visionBaseUrlInput) {
+    const visionStored = await browser.storage.local.get(['visionModel']);
+    const vision = visionStored.visionModel || {};
+    visionBaseUrlInput.value = vision.baseUrl || '';
+    visionApiKeyInput.value = vision.apiKey || '';
+    visionModelInput.value = vision.model || '';
+  }
 
   // Load transcription service config. Same shape as visionModel; used by
   // recorder/host.js → transcribe.js when transcribing recorded audio.
@@ -816,11 +738,16 @@ async function init() {
   await initScreenshotRedactionToggle();
   await refreshApocalypseModeStatus();
 
-  // Load providers
-  const res = await sendToBackground('get_providers');
-  providersData = res.providers;
-  activeProviderId = res.active;
-  renderProviders();
+  // Load providers. The decision card's Auto status reads the active one too.
+  if (providersContainer || decisionModeInputs.length) {
+    const res = await sendToBackground('get_providers');
+    providersData = res.providers;
+    activeProviderId = res.active;
+    renderProviders();
+    syncDecisionStatus();
+  }
+  // Tooling (UI tests, docs screenshots) waits for this before reading the page.
+  document.documentElement.dataset.settingsReady = 'true';
 }
 
 // --- Site permissions (capability × origin grants) ---
@@ -1338,7 +1265,7 @@ downloadDirectoryInput?.addEventListener('change', async () => {
   await browser.storage.local.set({ [DOWNLOAD_DIRECTORY_STORAGE_KEY]: directory }).catch(() => {});
 });
 
-verboseToggle.addEventListener('change', async () => {
+verboseToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ verboseMode: verboseToggle.checked }).catch(() => {});
 });
 
@@ -1354,15 +1281,15 @@ helpImproveToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ helpImproveWebBrain: helpImproveToggle.checked }).catch(() => {});
 });
 
-screenshotToggle.addEventListener('change', async () => {
+screenshotToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ screenshotFallback: screenshotToggle.checked }).catch(() => {});
 });
 
-maxStepsRange.addEventListener('input', () => {
+maxStepsRange?.addEventListener('input', () => {
   stepsValueLabel.textContent = Number(maxStepsRange.value) === MAX_AGENT_STEPS_UNLIMITED_SENTINEL ? '∞' : maxStepsRange.value;
 });
 
-maxStepsRange.addEventListener('change', async () => {
+maxStepsRange?.addEventListener('change', async () => {
   await browser.storage.local.set({
     maxAgentSteps: Number(maxStepsRange.value) === MAX_AGENT_STEPS_UNLIMITED_SENTINEL
       ? 0
@@ -1503,19 +1430,11 @@ completionFlashTabToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ completionFlashTab: completionFlashTabToggle.checked }).catch(() => {});
 });
 
+// Record traces is one switch for both trace tiers: on records every run with
+// its full request details (losslessTrace), off records neither.
 tracingToggle?.addEventListener('change', async () => {
-  await browser.storage.local.set({ tracingEnabled: tracingToggle.checked }).catch(() => {});
-  if (losslessTracingToggle) {
-    losslessTracingToggle.disabled = tracingToggle.checked !== true;
-    if (!tracingToggle.checked) {
-      losslessTracingToggle.checked = false;
-      await browser.storage.local.set({ losslessTrace: false }).catch(() => {});
-    }
-  }
-});
-
-losslessTracingToggle?.addEventListener('change', async () => {
-  await browser.storage.local.set({ losslessTrace: losslessTracingToggle.checked }).catch(() => {});
+  const enabled = tracingToggle.checked;
+  await browser.storage.local.set({ tracingEnabled: enabled, losslessTrace: enabled }).catch(() => {});
 });
 
 feedbackDiagnosticsToggle?.addEventListener('change', async () => {
@@ -1740,7 +1659,7 @@ function flashVisionResult(className, text) {
   setTimeout(() => resultEl.classList.remove('show'), 2000);
 }
 
-btnSaveVision.addEventListener('click', async () => {
+btnSaveVision?.addEventListener('click', async () => {
   const baseUrl = normalizeOpenAICompatibleBaseUrl(visionBaseUrlInput.value);
   const apiKey = visionApiKeyInput.value.trim();
   const model = visionModelInput.value.trim();
@@ -1758,7 +1677,7 @@ btnSaveVision.addEventListener('click', async () => {
   flashVisionResult('ok', t('st.vision.saved'));
 });
 
-btnTestVision.addEventListener('click', async () => {
+btnTestVision?.addEventListener('click', async () => {
   const baseUrl = normalizeOpenAICompatibleBaseUrl(visionBaseUrlInput.value);
   const apiKey = visionApiKeyInput.value.trim();
   const model = visionModelInput.value.trim();
@@ -1788,7 +1707,7 @@ btnTestVision.addEventListener('click', async () => {
   }
 });
 
-btnClearVision.addEventListener('click', async () => {
+btnClearVision?.addEventListener('click', async () => {
   visionBaseUrlInput.value = '';
   visionApiKeyInput.value = '';
   visionModelInput.value = '';
@@ -2010,8 +1929,15 @@ function renderProfileSyncState(state) {
   if (profileSyncStatus) profileSyncStatus.textContent = describeProfileSyncState(state || {});
 }
 async function refreshProfileSyncState() { const state = await sendToBackground('profile_sync_state').catch(e => ({ status: 'error', error: e.message })); renderProfileSyncState(state); return state; }
-async function reloadProfileSyncData() { const stored = await browser.storage.local.get(['profileEnabled', 'profileText', 'visionModel', 'transcriptionModel', 'imageGenModel']); if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled; if (profileTextArea) profileTextArea.value = stored.profileText || ''; const vision = stored.visionModel || {}; visionBaseUrlInput.value = vision.baseUrl || ''; visionApiKeyInput.value = vision.apiKey || ''; visionModelInput.value = vision.model || ''; const transcription = stored.transcriptionModel || {}; if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || ''; if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || ''; if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || ''; const imageGen = stored.imageGenModel || {}; if (imageGenApiKeyInput) imageGenApiKeyInput.value = imageGen.apiKey || ''; if (imageGenModelInput) imageGenModelInput.value = imageGen.model || ''; updateMultimodalDetectedProvider('vision'); updateMultimodalDetectedProvider('transcription'); await loadUserMemorySettings(); const res = await sendToBackground('get_providers'); providersData = res.providers; activeProviderId = res.active; renderProviders(); }
+async function reloadProfileSyncData() { const stored = await browser.storage.local.get(['profileEnabled', 'profileText', 'visionModel', 'transcriptionModel', 'imageGenModel']); if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled; if (profileTextArea) profileTextArea.value = stored.profileText || ''; const vision = stored.visionModel || {}; if (visionBaseUrlInput) { visionBaseUrlInput.value = vision.baseUrl || ''; visionApiKeyInput.value = vision.apiKey || ''; visionModelInput.value = vision.model || ''; } const transcription = stored.transcriptionModel || {}; if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || ''; if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || ''; if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || ''; const imageGen = stored.imageGenModel || {}; if (imageGenApiKeyInput) imageGenApiKeyInput.value = imageGen.apiKey || ''; if (imageGenModelInput) imageGenModelInput.value = imageGen.model || ''; updateMultimodalDetectedProvider('vision'); updateMultimodalDetectedProvider('transcription'); await loadUserMemorySettings(); if (!providersContainer) return; const res = await sendToBackground('get_providers'); providersData = res.providers; activeProviderId = res.active; renderProviders(); }
 async function requestProfileSyncDataConsent() { const permissions = await browser.permissions.getAll(); if (!Object.hasOwn(permissions, 'data_collection')) return window.confirm(t('st.sync.consent.legacy')); return browser.permissions.request({ data_collection: ['personallyIdentifyingInfo', 'authenticationInfo', 'personalCommunications', 'websiteContent', 'technicalAndInteraction'] }); }
+// Profile sync runs from Settings, but what it pulls also fills the Providers
+// page. Settings pages open in other tabs reload what they show, so a Save
+// there cannot write stale values over the synced ones.
+const settingsPagesChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('webbrain-settings-pages') : null;
+settingsPagesChannel?.addEventListener('message', (event) => {
+  if (event.data?.type === 'profile-sync-data-changed') reloadProfileSyncData().catch(() => {});
+});
 function profileSyncButtonRestore(button, pendingLabel) {
   if (!button) return () => {};
   const previousDisabled = button.disabled;
@@ -2025,7 +1951,10 @@ async function profileSyncAction(action, data = {}, options = {}) {
   try {
     if (options.pending) showProfileSyncResult(true, options.pending);
     const result = await sendToBackground(action, data);
-    if (['profile_sync_unlock', 'profile_sync_now', 'profile_sync_reset'].includes(action)) await reloadProfileSyncData();
+    if (['profile_sync_unlock', 'profile_sync_now', 'profile_sync_reset'].includes(action)) {
+      settingsPagesChannel?.postMessage({ type: 'profile-sync-data-changed' });
+      await reloadProfileSyncData();
+    }
     showProfileSyncResult(true, options.success || t('st.sync.result.updated'));
     await refreshProfileSyncState();
     return result;
@@ -2046,7 +1975,7 @@ btnProfileSyncLock?.addEventListener('click', () => profileSyncAction('profile_s
 btnProfileSyncChange?.addEventListener('click', async () => { const oldPassword = window.prompt(t('st.sync.prompt.current_password')); if (!oldPassword) return; let newPassword; try { newPassword = promptConfirmedSyncPassword(); } catch (e) { showProfileSyncResult(false, e.message); return; } if (newPassword) await profileSyncAction('profile_sync_change_password', { oldPassword, newPassword }).catch(() => {}); });
 btnProfileSyncDisable?.addEventListener('click', () => { if (window.confirm(t('st.sync.confirm.disable'))) profileSyncAction('profile_sync_disable').catch(() => {}); });
 btnProfileSyncReset?.addEventListener('click', async () => { if (!window.confirm(t('st.sync.confirm.reset'))) return; let password; try { password = promptConfirmedSyncPassword(t('st.sync.prompt.replacement_password')); } catch (e) { showProfileSyncResult(false, e.message); return; } if (password) await profileSyncAction('profile_sync_reset', { password }).catch(() => {}); });
-refreshProfileSyncState();
+if (profileSyncStatus) refreshProfileSyncState();
 
 // Persisted to browser.storage.local in plaintext; the agent picks the
 // changes up via the storage.onChanged listener in background.js and
@@ -2191,6 +2120,7 @@ function renderUserMemoryRecords(records = []) {
 }
 
 async function loadUserMemorySettings() {
+  if (!userMemoryList) return;
   const res = await sendToBackground('get_user_memory').catch((error) => ({ ok: false, error: error.message }));
   if (!res?.ok) {
     renderUserMemoryRecords([]);
@@ -2841,6 +2771,7 @@ async function refreshWebbrainPaymentNotice() {
 }
 
 function renderProviders() {
+  if (!providersContainer) return;
   providersContainer.innerHTML = '';
   syncDecisionStatus();
 

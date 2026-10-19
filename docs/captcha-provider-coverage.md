@@ -23,7 +23,7 @@ This integration exposes **seven providers and 198 catalog method variants**. A 
 
 ## Setup and consent
 
-Open **Settings → General → Advanced → CAPTCHA solvers**. Each provider has its own API key, enabled checkbox, Save/Test/Clear controls, supported-family list, and official documentation link.
+Open **Settings → CAPTCHA**. Each provider has its own API key, enabled checkbox, Save/Test/Clear controls, supported-family list, and official documentation link.
 
 Typing an API key checks that provider's enabled box unless the user has manually disabled it while editing. Save persists the checkbox state. A saved key can remain present while its provider is disabled. Testing a balance does not enable solving or save consent. Clearing a key disables that provider.
 
@@ -233,7 +233,7 @@ Automatic widget solves save the selected widget and a paid-attempt gate before 
 
 The CAPTCHA gate permits `done` with `outcome: "failed"` or `"partial"` in every gate state. Cancelling or reporting blocked work must not require a solve. This exception does not authorize page mutations or bypass verification for successful completion.
 
-**Managed Cloud is separate.** Managed browsers continue using the server-side CapSolver broker and ignore personal keys and weights. Native catalog discovery/submission is excluded for that route. This change does not expand or deploy the server-side broker's allowlist, quotas, or billing.
+**Managed Cloud is separate.** Managed browsers continue using the server-side CapSolver broker and ignore personal keys and weights. Settings hides its CAPTCHA tab there, since there is nothing to configure. Native catalog discovery/submission is excluded for that route. This change does not expand or deploy the server-side broker's allowlist, quotas, or billing.
 
 ## Troubleshooting
 

@@ -44,7 +44,7 @@ try {
             } }, commands: { getAll: async () => [] }, tabs: { create: async () => ({}) },
           };
         }, { build, lang });
-        await page.goto(`${origin}/src/${build}/src/ui/settings.html#multimodal`);
+        await page.goto(`${origin}/src/${build}/src/ui/providers.html#safesocial`);
         await page.waitForFunction(() => document.querySelector('#safesocial-status')?.textContent.length > 0);
         const card = page.locator('#safesocial-card');
         assert.equal(await page.locator('#safesocial-heading').textContent(), lang === 'tr'

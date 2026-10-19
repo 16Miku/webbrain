@@ -250,7 +250,7 @@ try {
   assert.ok(deferredResult.calls.includes('openRun'));
   const settings = await session.send('browsingContext.create', { type: 'tab' });
   await session.send('browsingContext.navigate', { context: settings.context, url: extensionOrigin + '/src/ui/settings.html', wait: 'complete' });
-  await session.send('script.evaluate', { target: { context: settings.context }, expression: "(async () => { document.querySelector('[data-tab=display]').click(); await new Promise(r => setTimeout(r, 500)); document.getElementById('firefox-bidi-card').closest('details').open = true; document.getElementById('firefox-bidi-card').scrollIntoView({behavior:'instant', block:'center'}); await new Promise(r => setTimeout(r, 250)); })()", awaitPromise: true });
+  await session.send('script.evaluate', { target: { context: settings.context }, expression: "(async () => { document.querySelector('[data-tab=advanced]').click(); await new Promise(r => setTimeout(r, 500)); document.getElementById('firefox-bidi-card').scrollIntoView({behavior:'instant', block:'center'}); await new Promise(r => setTimeout(r, 250)); })()", awaitPromise: true });
   const screenshot = await extensionEval(`browser.tabs.query({}).then(tabs => browser.tabs.captureTab(tabs.find(tab => tab.url.endsWith('/src/ui/settings.html')).id, {format:'png'}))`);
   await writeFile(join(artifacts, 'webbrain3-firefox-bidi-settings.png'), Buffer.from(screenshot.value.split(',')[1], 'base64'));
   await evaluate(`window.addEventListener('beforeunload', event => { event.preventDefault(); event.returnValue = ''; })`);

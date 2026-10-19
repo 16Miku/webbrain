@@ -96,8 +96,11 @@ src/firefox/
 │   └── ui/
 │       ├── sidepanel.html
 │       ├── sidepanel.js            # Chat UI, verbose mode, deep verbose
-│       ├── settings.html
-│       ├── settings.js
+│       ├── settings.html               # Settings: General, Budgets, Memory, Skills, CAPTCHA, Bridge, Advanced
+│       ├── providers.html              # Providers: LLM, Vision, Speech, Generative, Decision, SafeSocial
+│       ├── permissions.html            # Site permissions
+│       ├── settings.css                # Shared by the three settings pages
+│       ├── settings.js                 # One controller for all three settings pages
 │       ├── traces.html
 │       └── traces.js
 ├── skills/                         # Packaged default skills (removable after seeding)

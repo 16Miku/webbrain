@@ -71,7 +71,7 @@ class BaseLLMProvider {
 
 WebBrain 从 OpenCode 提供商目录提交
 `62e4641235d7847dadc60da37cca8a023dd54fc1` 的快照中新增了 76 张默认禁用的
-提供商卡片。设置中在 **Chromium 上共有 106 个内置提供商**，在 **Firefox
+提供商卡片。提供商页面在 **Chromium 上共有 106 个内置提供商**，在 **Firefox
 上共有 105 个**；两者的差异是仅 Chromium 提供的本地 WebGPU 运行时。完整 ID
 列表如下：
 
@@ -111,7 +111,7 @@ WebBrain 会直接记录；若服务省略用量，则记录基于字符数的�
 
 ### 本地提供商
 
-在 Chromium 上，**WebGPU（浏览器内）** 是无端点的本地提供商。Settings 和末日模式选择器提供两个预设：**Compass Tiny v2.1**（默认，`q4f16`，约 1.87 GB，仅文本，32k 上下文）和 **Ternary Bonsai 2 2B Vision**（约 1.45 GB，支持图片，16k 上下文），走 Transformers.js / ONNX；Settings 还接受自定义 Hugging Face 仓库。其他 Bonsai 2 预设随扩展提供，但暂时不在选择器中显示。启用末日模式时会自动下载所选模型；缓存完成后，即使未启用末日模式也可正常使用。在显存受限的 GPU 上，可在 Settings → Providers 中调低上下文窗口。Firefox 不提供该卡片。
+在 Chromium 上，**WebGPU（浏览器内）** 是无端点的本地提供商。提供商页面和末日模式选择器提供两个预设：**Compass Tiny v2.1**（默认，`q4f16`，约 1.87 GB，仅文本，32k 上下文）和 **Ternary Bonsai 2 2B Vision**（约 1.45 GB，支持图片，16k 上下文），走 Transformers.js / ONNX；提供商页面还接受自定义 Hugging Face 仓库。其他 Bonsai 2 预设随扩展提供，但暂时不在选择器中显示。启用末日模式时会自动下载所选模型；缓存完成后，即使未启用末日模式也可正常使用。在显存受限的 GPU 上，可在提供商页面的 WebGPU 卡片中调低上下文窗口。Firefox 不提供该卡片。
 
 浏览器内模型只回答问题。在侧边栏中，每个 Ask 回合只进行一次不带工具的调用：WebBrain 先读取当前页面、选中文本、PDF 标签页以及问题中链接的页面，再把这些文本和一个简短提示一起发送（tiny Ask，见 `docs/webgpu-models.md`）。该提供商不支持 Act 和 Dev 模式；如需在浏览器中执行操作，请选择其他提供商。
 
@@ -155,7 +155,7 @@ CLIProxyAPI 官方插件商店安装 `gemini-cli`，重启代理，再使用 `--
 
 Ollama、llama.cpp、LM Studio 和 LocalAI 默认使用 `visionMode: auto`。WebBrain 在
 页面上下文增强前读取所选模型的原生服务器元数据，只有服务器明确报告支持图像输入时才
-发送截图。元数据请求失败或格式错误时，本回合按纯文本处理，之后会重试。设置中
+发送截图。元数据请求失败或格式错误时，本回合按纯文本处理，之后会重试。提供商页面中
 可选择自动、强制开启或关闭。模型字段为空时，每个用户回合都会重新检测当前加载
 模型的能力，以便服务端热切换立即生效；其他本地提供商保持现有的显式开关行为。
 
@@ -268,13 +268,13 @@ await pm.save();                    // 持久化到 chrome.storage.local
 pm.getActive();                     // 获取当前激活的提供商实例
 await pm.setActive('openai');       // 切换激活的提供商
 await pm.updateProvider('openai', { model: 'gpt-5' }); // 更新配置
-pm.getAll();                        // 所有提供商配置（用于设置界面）
+pm.getAll();                        // 所有提供商配置（用于提供商页面）
 await pm.testProvider('openai');    // 测试连接
 ```
 
-### 设置搜索
+### 提供商搜索
 
-设置搜索索引包括提供商 ID、标签、类型/类别、模型、Base URL、字段标签与占位符、建议项和兼容性选项。匹配卡片依次按提供商名称/ID 完全匹配、前缀匹配、子串匹配和仅字段匹配排序；同级结果保持原始提供商顺序，当前选中的提供商在类别筛选时始终可见。
+提供商页面 LLM 标签页的搜索索引包括提供商 ID、标签、类型/类别、模型、Base URL、字段标签与占位符、建议项和兼容性选项。匹配卡片依次按提供商名称/ID 完全匹配、前缀匹配、子串匹配和仅字段匹配排序；同级结果保持原始提供商顺序，当前选中的提供商在类别筛选时始终可见。
 
 ### 配置持久化
 
@@ -284,7 +284,7 @@ await pm.testProvider('openai');    // 测试连接
 
 ### 费用限额
 
-设置界面暴露会话和总云端费用限额。智能体优先使用提供商报告的 `usage.cost`/`usage.cost_usd` 值（OpenRouter 直接报告此值）。对于仅返回令牌计数的直接云端提供商，WebBrain 根据提供商配置字段估算费用：
+“设置 → 预算”提供会话和总云端费用限额。智能体优先使用提供商报告的 `usage.cost`/`usage.cost_usd` 值（OpenRouter 直接报告此值）。对于仅返回令牌计数的直接云端提供商，WebBrain 根据提供商配置字段估算费用：
 
 - `inputCostPerMillionUsd`
 - `cacheReadCostPerMillionUsd`

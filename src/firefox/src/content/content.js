@@ -3030,7 +3030,7 @@
     if (isModelManagedEditor(el)) {
       // Framework editors own their DOM. Native BiDi input bypasses this
       // fallback; without it, leave the draft intact instead of corrupting it.
-      return failure('This rich-text editor requires Firefox trusted automation. Enable it in Settings → General → Advanced and retry.',
+      return failure('This rich-text editor requires Firefox trusted automation. Enable it in Settings → Advanced and retry.',
         { trustedTypeRequired: true, recoveryRequired: 'trusted_input', retryable: false });
     }
     if (typeof doc.execCommand !== 'function') {

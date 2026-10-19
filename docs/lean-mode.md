@@ -8,7 +8,7 @@ Lean mode follows the Claude in Chrome model ([claude-chrome-comparison.md](clau
 
 ## The setting
 
-Settings → General → **Lean mode** (storage key `leanMode`):
+Settings → Advanced → **Lean mode** (storage key `leanMode`):
 
 - **Auto** (default): on for strong cloud models, off for local and small models (rules below).
 - **On**: always, for every provider and tier.

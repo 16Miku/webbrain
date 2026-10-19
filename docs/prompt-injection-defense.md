@@ -37,7 +37,7 @@ them in sync — the test suite asserts the pure modules are byte-identical.
    the human is the trust anchor.
    - Code: `permission-gate.js` (`capabilityFor`, `requiredHosts`,
      `PermissionManager`); the gate loop in `agent.js _executeToolBatch`.
-   - User control: Settings → Permissions (review/revoke grants + the master
+   - User control: the Permissions page (review/revoke grants + the master
      switch "Ask before consequential actions"). The warning button in the side panel's
      composer toolbar toggles the same master switch; it never answers a pending
      permission card.
@@ -168,7 +168,7 @@ booleans (verified, failed, credential field) beside the child's tool name and
 `ref_N` target, never result text.
 
 ### Don't weaken the boundary for "trusted sites"
-The master switch (Settings → Permissions) disables **Layer 3 only** (the
+The master switch (Permissions page) disables **Layer 3 only** (the
 prompts). Layers 1, 2, and 4 stay on always — they cost nothing and are what
 protect the user on the trusted sites where injected content actually lives
 (a reputable domain is *anti-correlated* with safe content). Never gate Layers
@@ -187,7 +187,7 @@ protect the user on the trusted sites where injected content actually lives
     grant storage / `hydrateFrom`, content-wrap breakout-stripping.
   - planner prompt parity / boundary checks in `test/security/injection-corpus.mjs`.
 - `test/manual-permissions.md` — the in-browser checklist (the 3-option
-  permission card and the Settings → Permissions tab) that the unit suite can't
+  permission card and the Permissions page) that the unit suite can't
   cover.
 
 **The guard checks that tools are *listed*, not that they're listed

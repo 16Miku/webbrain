@@ -73,7 +73,7 @@ const currentPackage = marker => marker?.revision === D1_RELEASE.revision && mar
 async function status() {
   if (transfer || runtime || loading || ['error', 'stopped'].includes(state.status)) {
     // An error or a stop leaves the verified cache in place (a lost GPU device
-    // after a good download, say); report it so Settings can retry with Load
+    // after a good download, say); report it so the Providers page can retry with Load
     // instead of falling back to a full download pass.
     const cached = !transfer && !runtime && !loading && currentPackage(await readyMarker());
     return { ...state, ready: !!runtime, cached };

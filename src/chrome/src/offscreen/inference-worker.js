@@ -771,7 +771,7 @@ async function enrichWebGpuExecutionError(error) {
   const suffix = [
     details.length ? `GPU detail: ${details.join(' ')}` : '',
     adapter ? `Adapter: ${adapter}.` : '',
-    'Close other GPU-heavy tabs/apps and retry with a short prompt; a retry restarts the on-device worker and re-creates the session from the cached download, it does not re-download. On repeated out-of-memory failures, lower the context window on the WebGPU card in Settings > Providers (16384 is a safe fallback for Compass Tiny v2.1). If it persists, this GPU/driver cannot execute this model with the current WebGPU runtime.',
+    'Close other GPU-heavy tabs/apps and retry with a short prompt; a retry restarts the on-device worker and re-creates the session from the cached download, it does not re-download. On repeated out-of-memory failures, lower the context window on the WebGPU card in Providers (16384 is a safe fallback for Compass Tiny v2.1). If it persists, this GPU/driver cannot execute this model with the current WebGPU runtime.',
   ].filter(Boolean).join(' ');
   return new Error(`${error?.message || String(error)} ${suffix}`);
 }
@@ -1807,7 +1807,7 @@ async function runMultimodalText(payload) {
     decoder_model_merged: 'q4',
   };
   if (!await isTextModelReady(modelId, dtype)) {
-    throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
+    throw new Error(`${modelId} is not downloaded. Open Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
   }
   const runtime = await getVisionRuntime(modelId, dtype, device, {
     localFilesOnly: true,
@@ -1919,7 +1919,7 @@ async function runMultimodalDecision(payload, { isCancelled = () => false } = {}
   const request = normalizeDecisionRequest(payload);
   const dtype = payload?.dtype || { embed_tokens: 'fp16', vision_encoder: 'fp16', decoder_model_merged: 'q2f16' };
   if (!await isTextModelReady(modelId, dtype)) {
-    throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it first.`);
+    throw new Error(`${modelId} is not downloaded. Open Providers > WebGPU or Apocalypse Mode > WebGPU to download it first.`);
   }
   const runtime = await getVisionRuntime(modelId, dtype, payload?.device || 'webgpu', {
     localFilesOnly: true,
@@ -1997,7 +1997,7 @@ async function runMultimodalDecision(payload, { isCancelled = () => false } = {}
           const output = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids, { withHidden: true });
           margins.push(output.logits[yesId] - output.logits[noId]);
           if (variant === 'probe' && !output.hidden) {
-            throw new Error('In-browser decisions need the updated Ternary Bonsai 2 2B Vision decoder. Download the model again in Settings > Providers > WebGPU.');
+            throw new Error('In-browser decisions need the updated Ternary Bonsai 2 2B Vision decoder. Download the model again in Providers > WebGPU.');
           }
           hidden.push(output.hidden);
         }
@@ -2019,7 +2019,7 @@ async function runMultimodalDecision(payload, { isCancelled = () => false } = {}
         const probability = tinyAskGateProbability(modelId, margin, output.hidden);
         // Collecting training data needs only the margin and hidden state.
         if (probability === null && !(returnHidden && output.hidden)) {
-          throw new Error('The screenshot gate needs the updated Ternary Bonsai 2 2B Vision decoder. Download the model again in Settings > Providers > WebGPU.');
+          throw new Error('The screenshot gate needs the updated Ternary Bonsai 2 2B Vision decoder. Download the model again in Providers > WebGPU.');
         }
         answers[id] = {
           type: 'noul',
@@ -2078,7 +2078,7 @@ async function runText(payload) {
   const usesLongOutputBudget = WEBGPU_LONG_OUTPUT_MODEL_IDS.has(modelId);
   const sampling = WEBGPU_TEXT_SAMPLING.get(modelId);
   if (!await isTextModelReady(modelId, dtype)) {
-    throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
+    throw new Error(`${modelId} is not downloaded. Open Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
   }
   const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
   throwIfTextCancelled(requestKey);

@@ -1,4 +1,4 @@
-// Lean mode (Settings → General → "Lean mode"; src/*/src/agent/lean-mode.js).
+// Lean mode (Settings → Advanced → "Lean mode"; src/*/src/agent/lean-mode.js).
 // A lean Act run gets a thin tool list and a short prompt, and every guard of
 // class `quality` is skipped: no refusal, note, caveat, judge or forced turn.
 // The hard classes, permission gates, host checks, budgets and user control
