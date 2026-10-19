@@ -312,7 +312,11 @@ The labelled set is d1's balanced-V3 held-out test (72 synthetic screenshots,
     `decision_hidden` (`scripts/models/bonsai/add_decision_hidden.py`);
     logits and caches are unchanged.
   - Settings → Decision models offers it in Chrome as an explicit, key-free,
-    local provider (`webgpu_chat`). Like D1, a positive completion still needs
+    local provider (`webgpu_chat`), and Auto, the default, uses it on its own
+    once it is downloaded, for completion and scheduled checks only. Auto reads
+    the worker's ready marker from Cache Storage
+    (`providers/webgpu-model-cache.js`) instead of starting the offscreen
+    document. Like D1, a positive completion still needs
     independent confirmation, and the judge allows it 15 s instead of 5 s for
     the first load after a browser restart. An aborted or timed-out decision
     is cancelled in the worker (between prefill slices and continuations),

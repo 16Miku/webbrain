@@ -1,4 +1,5 @@
-import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
+import { DECISION_SETTINGS_KEYS, decisionFeatureEnabled } from './decision-config.js';
+import { resolveCurrentDecisionConfig } from './decision-availability.js';
 import { normalizeUnverifiedStepConfirmation } from './unverified-step.js';
 import { createSystemOneEvidence, systemOneEvidenceState } from './systemone-evidence.js';
 import {
@@ -769,9 +770,6 @@ export class ScheduledJobManager {
       typesafeApiKey: typeof stored[SYSTEM_ONE_API_KEY] === 'string'
         ? stored[SYSTEM_ONE_API_KEY].trim()
         : '',
-      systemOneEnabled: stored[SYSTEM_ONE_ENABLED_KEY] === true,
-      systemOneWatchEnabled: stored[SYSTEM_ONE_WATCH_ENABLED_KEY] === true,
-      systemOneCompletionEnabled: stored[SYSTEM_ONE_COMPLETION_ENABLED_KEY] === true,
       systemOneWatchThreshold: normalizeSystemOneThreshold(stored[SYSTEM_ONE_WATCH_THRESHOLD_KEY]),
       systemOneCompletionThreshold: normalizeSystemOneThreshold(stored[SYSTEM_ONE_COMPLETION_THRESHOLD_KEY]),
       strictSecretMode: stored.strictSecretMode === true,
@@ -1720,9 +1718,17 @@ export class ScheduledJobManager {
     // (sched-systemone-downgrade).
     if (runMeta.leanMode === true) return skip('lean_mode');
     if (!isWatch && runMeta.completionVerdict?.outcome === 'succeeded') return { decision: 'keep', reason: 'done_verified', model: runMeta.completionVerdict.model };
-    const config = resolveDecisionConfig(settings);
-    if (!this.systemOneJudge || !config.enabled || settings.systemOneEnabled !== true
-      || !(isWatch ? settings.systemOneWatchEnabled : settings.systemOneCompletionEnabled)) return skip('disabled');
+    // The switches stay as stored: decision-config.js reads an unset one as on
+    // in On mode and applies the Auto and Off modes.
+    const activeProvider = runMeta.provider
+      || (job.tabId != null && this.agent?._activeProvider?.(job.tabId))
+      || this.agent?._activeProvider?.()
+      || this.agent?.providerManager?.getActive?.()
+      || null;
+    const compass = runMeta.compass
+      ?? (String(activeProvider?.config?.providerName || '').trim().toLowerCase() === 'webbrain-cloud' ? activeProvider.config : null);
+    const config = runMeta.decisionConfig || await resolveCurrentDecisionConfig(settings, compass);
+    if (!this.systemOneJudge || !decisionFeatureEnabled(config, isWatch ? 'watch' : 'completion')) return skip('disabled');
     if (settings.strictSecretMode || runMeta.sidecarAllowed === false || runMeta.signal?.aborted) return skip('unavailable');
     const state = systemOneEvidenceState(job.prompt || job.resumeInstruction || job.reason || '', runMeta.evidence, isWatch ? job.watch?.systemOneBaseline : null);
     if (!state) return skip('no_evidence');
@@ -2462,12 +2468,15 @@ export class ScheduledJobManager {
             && askRunSucceeded(result, sawFailureLikeUpdate)
             ? 'success'
             : null);
+        const activeProvider = tabId != null ? this.agent?._activeProvider?.(tabId) : this.agent?.providerManager?.getActive?.();
+        const compass = String(activeProvider?.config?.providerName || '').trim().toLowerCase() === 'webbrain-cloud' ? activeProvider.config : null;
         await this._complete(running, result, effectiveOutcome, {
           watchAlert, completionVerdict,
           evidence: evidence.snapshot(),
           judgeContext,
           executionId: execution.id,
           settings,
+          compass,
           signal: execution.controller.signal,
           sidecarAllowed: runStatus !== 'cost_limit',
           needsUserInput: endedForUserInput,

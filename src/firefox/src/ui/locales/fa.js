@@ -429,6 +429,7 @@ export default {
   'sp.plan.expired': "این طرح دیگر در انتظار بررسی نیست - اجرا لغو شد.",
   'sp.plan.timed_out': 'مهلت تأیید تمام شد',
   'sp.plan.timed_out_hint': 'هیچ کاری اجرا نشد. برای بررسی یک طرح تازه دوباره تلاش کنید.',
+  'sp.plan.auto_run_in': 'تا {time} دیگر خودکار اجرا می‌شود',
   'sp.plan.awaiting_review': "قبل از ارسال پیام دیگری، طرح فوق را تأیید یا لغو کنید.",
   'sp.plan.intent_unavailable': "برنامه‌ریزی پس از دو تلاش ناموفق بود. ادامه در حالت Act با محافظت‌های معمول انجام می‌شود.",
 
@@ -490,6 +491,12 @@ export default {
 
   'sp.api.enabled_html': "🔓 <strong>جهش های API فعال شد</strong> برای این گفتگو عامل اکنون ممکن است از POST/PUT/PATCH/DELETE از طریق fetch_url و execute_js استفاده کند، زمانی که تشخیص دهد API برای یک مرحله قابل اعتمادتر از UI است. UI-first پیش فرض باقی می ماند. وقتی مکالمه را بازنشانی می کنید، این پرچم پاک می شود.",
   'sp.permissions.disabled_html': "⚠️ <strong>درخواست‌های مجوز خاموش هستند.</strong> WebBrain کلیک می کند، تایپ می کند، پیمایش می کند، جاوا اسکریپت را اجرا می کند، آپلود می کند، دانلود می کند، ضبط می کند و کارهای آینده را بدون درخواست اولیه برنامه ریزی می کند. این را از تنظیمات → مجوزها → قبل از اقدامات بعدی بپرسید دوباره فعال کنید.",
+  'sp.permissions.button': 'درخواست‌های مجوز: روشن',
+  'sp.permissions.button_off': 'درخواست‌های مجوز: خاموش',
+  'sp.permissions.gate_desc': 'WebBrain اولین باری که در یک سایت کلیک می‌کند، تایپ می‌کند، فایلی دانلود می‌کند یا کدی اجرا می‌کند، اجازه می‌گیرد.',
+  'sp.permissions.gate_off': 'خاموش: WebBrain بدون پرسیدن در همهٔ سایت‌ها اقدام می‌کند.',
+  'sp.permissions.manage': 'مدیریت مجوزهای سایت',
+  'sp.permissions.enabled': 'درخواست‌های مجوز دوباره روشن شدند.',
   "sp.help.shortcuts_html": "<strong>میانبرهای صفحه کلید</strong><br><code>Ctrl/Cmd+/</code> - روی ورودی تمرکز کنید<br><code>Ctrl/Cmd+Shift+A</code> - به حالت سؤال بروید<br><code>Ctrl/Cmd+Shift+X</code> - به حالت Act تغییر دهید<br><code>Ctrl/Cmd+Shift+D</code> - به حالت Dev بروید<br><code>Escape</code> - اجرای فعال را متوقف کنید",
   "sp.slash.record_transcribe": "پس از توقف، رونوشت Whisper را ضبط و ذخیره کنید",
   "sp.slash.unknown_command": "دستور اسلش نامشخص {command}. از /help برای دیدن دستورات موجود استفاده کنید.",

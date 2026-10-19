@@ -1,4 +1,4 @@
-import { DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, resolveDecisionConfig } from '../agent/decision-config.js';
+import { DECISION_MODE_KEY, DECISION_SETTINGS_KEYS, materializeLegacyDecisionFeatures, DEFAULT_DECISION_MODEL, resolveDecisionConfig, resolveDecisionMode } from '../agent/decision-config.js';
 import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
 import { D1_MODEL_ID } from '../providers/d1-config.js';
 import { initD1Settings } from './d1-settings.js';
@@ -85,7 +85,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '42.0.1';
+const EXT_VERSION = '42.0.4';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -230,8 +230,55 @@ let decisionVisionSupported = false;
 const decisionKeyDrafts = new Map();
 let previousDecisionProvider = 'openrouter';
 
+// Auto, On or Off. Firefox has no in-browser model, so Auto uses only
+// Compass's managed model while Compass is the chat provider. Only On shows
+// the provider fields and the per-decision switches.
+const decisionModeInputs = [...document.querySelectorAll('input[name="decision-mode"]')];
+function selectedDecisionMode() {
+  return decisionModeInputs.find(input => input.checked)?.value || 'auto';
+}
+function setDecisionMode(mode) {
+  for (const input of decisionModeInputs) input.checked = input.value === mode;
+}
+function activeProviderIsCompass() {
+  const config = providersData?.[activeProviderId];
+  return !!activeProviderId && (providerDefinitionId(activeProviderId) === 'webbrain_cloud' || config?.providerName === 'webbrain-cloud');
+}
+function syncDecisionStatus() {
+  const mode = selectedDecisionMode();
+  for (const description of document.querySelectorAll('[data-decision-mode-desc]')) description.hidden = description.dataset.decisionModeDesc !== mode;
+  const configured = document.getElementById('decision-configured');
+  if (configured) configured.hidden = mode !== 'on';
+  if (btnSaveSystemOne) btnSaveSystemOne.hidden = mode !== 'on';
+  // Test runs here, so only On has something it can check.
+  if (btnTestSystemOne) btnTestSystemOne.hidden = mode !== 'on';
+  const status = document.getElementById('decision-auto-status');
+  if (!status) return;
+  status.hidden = mode !== 'auto';
+  if (mode !== 'auto') return;
+  // Strict Secret Mode keeps page content away from every decision model, so Auto has nothing to use.
+  const strict = strictSecretToggle?.checked === true;
+  const compass = !strict && activeProviderIsCompass();
+  const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : 'st.decision.status.none_firefox';
+  status.dataset.i18n = key;
+  status.dataset.state = compass ? 'active' : 'inactive';
+  status.textContent = t(key);
+}
+for (const input of decisionModeInputs) {
+  input.addEventListener('change', async () => {
+    if (!input.checked) return;
+    const mode = input.value;
+    syncDecisionStatus();
+    // The mode applies at once; On's provider fields still use Save.
+    // A pre-mode On profile shows its stored switches; keep them when the explicit mode replaces that reading.
+    const legacyFeatures = materializeLegacyDecisionFeatures(await browser.storage.local.get(DECISION_SETTINGS_KEYS));
+    await browser.storage.local.set({ ...legacyFeatures, [DECISION_MODE_KEY]: mode, systemOneEnabled: mode === 'on' });
+    if (mode !== 'on') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    showSystemOneResult('ok', t('st.providers.saved'));
+  });
+}
+
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
-const systemOneEnabledToggle = document.getElementById('toggle-system-one');
 const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
 const systemOneCompletionToggle = document.getElementById('toggle-system-one-completion');
 const systemOneWatchThresholdRange = document.getElementById('range-system-one-watch-threshold');
@@ -703,27 +750,31 @@ async function init() {
   if (allowLocalNetworkToggle) allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true;
   if (scheduledTasksToggle) scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false;
   if (scheduledConfirmToggle) scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false;
-  const decisionConfig = resolveDecisionConfig(stored);
+  // The On fields show the configuration On uses: a profile in On as it is
+  // stored, any other with On's defaults.
+  const storedDecisionMode = resolveDecisionMode(stored);
+  setDecisionMode(storedDecisionMode);
+  const decisionConfig = resolveDecisionConfig(storedDecisionMode === 'on' ? stored : { ...stored, [DECISION_MODE_KEY]: 'on' });
   decisionProviderInput.value = previousDecisionProvider = decisionConfig.provider;
   decisionModelInput.value = decisionConfig.model;
   decisionEndpointInput.value = stored.decisionBaseUrl || 'http://127.0.0.1:8009';
   decisionVisionInput.value = stored.decisionVisionMode || 'auto';
   decisionVisionSupported = stored.decisionVisionSupported === true;
-  decisionDoneToggle.checked = decisionConfig.doneEnabled;
   decisionThresholdInput.value = String(decisionConfig.threshold * 100);
   await refreshD1Settings();
   decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
   decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
   decisionKeyDrafts.set('local', stored.decisionLocalApiKey || '');
   document.getElementById('decision-endpoint-field').hidden = decisionConfig.provider !== 'local';
-  if (systemOneEnabledToggle) systemOneEnabledToggle.checked = stored.systemOneEnabled === true;
-  if (systemOneWatchToggle) systemOneWatchToggle.checked = stored.systemOneWatchEnabled === true;
-  if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = stored.systemOneFastClassifications === true;
-  if (systemOneBrowserToggle) systemOneBrowserToggle.checked = stored.systemOneFastBrowser === true;
-  if (systemOneCompletionToggle) systemOneCompletionToggle.checked = stored.systemOneCompletionEnabled === true;
+  decisionDoneToggle.checked = decisionConfig.features.done;
+  if (systemOneWatchToggle) systemOneWatchToggle.checked = decisionConfig.features.watch;
+  if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = decisionConfig.features.classifications;
+  if (systemOneBrowserToggle) systemOneBrowserToggle.checked = decisionConfig.features.browser;
+  if (systemOneCompletionToggle) systemOneCompletionToggle.checked = decisionConfig.features.completion;
   if (systemOneApiKeyInput) systemOneApiKeyInput.value = decisionConfig.apiKey;
   if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
   if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
+  syncDecisionStatus();
   updateSystemOneThresholdLabels();
 
   // Load vision model config
@@ -1496,6 +1547,7 @@ btnResetCostSpend?.addEventListener('click', async () => {
 
 strictSecretToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ strictSecretMode: strictSecretToggle.checked }).catch(() => {});
+  syncDecisionStatus();
 });
 
 strictGuardsToggle?.addEventListener('change', async () => {
@@ -1540,22 +1592,24 @@ function showSystemOneResult(className, text) {
 if (btnSaveSystemOne) {
   btnSaveSystemOne.addEventListener('click', async () => {
     const key = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
-    const enabled = systemOneEnabledToggle?.checked === true;
-    if (enabled && !['local', 'webgpu_d1'].includes(decisionProviderInput.value) && !isValidTypesafeApiKey(key)) {
+    const mode = selectedDecisionMode();
+    const on = mode === 'on';
+    if (on && !['local', 'webgpu_d1'].includes(decisionProviderInput.value) && !isValidTypesafeApiKey(key)) {
       showSystemOneResult('fail', t('st.system_one.need_key'));
       return;
     }
-    if (decisionProviderInput.value === 'webgpu_d1' && enabled) {
+    if (decisionProviderInput.value === 'webgpu_d1' && on) {
       const consentResult = await sendToBackground('d1_control', { command: 'consent', consent: document.getElementById('d1-consent').checked, consentVersion: 1 });
       if (!consentResult.success) { showSystemOneResult('fail', consentResult.error); return; }
     }
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = key;
     let selection;
-    try { selection = decisionSettingsDraft(); resolveDecisionConfig(selection); if (!(selection.systemOneDoneThreshold >= .5 && selection.systemOneDoneThreshold <= .99)) throw new Error('Completion threshold must be 50–99%.'); } catch (error) { showSystemOneResult('fail', error.message); return; }
+    try { selection = decisionSettingsDraft(); resolveDecisionConfig({ ...selection, [DECISION_MODE_KEY]: 'on' }); if (!(selection.systemOneDoneThreshold >= .5 && selection.systemOneDoneThreshold <= .99)) throw new Error('Completion threshold must be 50–99%.'); } catch (error) { showSystemOneResult('fail', error.message); return; }
     await browser.storage.local.set({
       ...selection,
       ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: key } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: key }),
-      systemOneEnabled: enabled && (['local', 'webgpu_d1'].includes(decisionProviderInput.value) || isValidTypesafeApiKey(key)),
+      // Kept for builds from before modes, which read only this switch.
+      systemOneEnabled: on && (['local', 'webgpu_d1'].includes(decisionProviderInput.value) || isValidTypesafeApiKey(key)),
       systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
       systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
       systemOneFastClassifications: systemOneClassificationsToggle?.checked === true,
@@ -1563,25 +1617,25 @@ if (btnSaveSystemOne) {
       systemOneWatchThreshold: normalizeSystemOneThreshold(Number(systemOneWatchThresholdRange?.value) / 100),
       systemOneCompletionThreshold: normalizeSystemOneThreshold(Number(systemOneCompletionThresholdRange?.value) / 100),
     });
-    if (!enabled || decisionProviderInput.value !== 'webgpu_d1') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    if (!on || decisionProviderInput.value !== 'webgpu_d1') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     showSystemOneResult('ok', t('st.providers.saved'));
   });
 }
 
+// Reset returns to Auto with On's defaults and deletes the saved keys.
 if (btnClearSystemOne) {
   btnClearSystemOne.addEventListener('click', async () => {
-    if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = false;
-    if (systemOneBrowserToggle) systemOneBrowserToggle.checked = false;
+    for (const toggle of [decisionDoneToggle, systemOneWatchToggle, systemOneCompletionToggle, systemOneClassificationsToggle, systemOneBrowserToggle]) {
+      if (toggle) toggle.checked = true;
+    }
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = '';
     decisionKeyDrafts.clear();
     decisionProviderInput.value = previousDecisionProvider = 'openrouter';
     decisionModelInput.value = DEFAULT_DECISION_MODEL;
-    decisionDoneToggle.checked = true;
+    decisionThresholdInput.value = '90';
     decisionVisionSupported = false;
     document.getElementById('decision-endpoint-field').hidden = true;
-    if (systemOneEnabledToggle) systemOneEnabledToggle.checked = false;
-    if (systemOneWatchToggle) systemOneWatchToggle.checked = false;
-    if (systemOneCompletionToggle) systemOneCompletionToggle.checked = false;
+    setDecisionMode('auto');
     await browser.storage.local.remove([
       ...DECISION_SETTINGS_KEYS,
       'typesafeApiKey',
@@ -1596,13 +1650,16 @@ if (btnClearSystemOne) {
     updateSystemOneThresholdLabels();
     await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     await refreshD1Settings();
-    showSystemOneResult('ok', t('st.captcha.cleared'));
+    // D1's provider switch unchecks Verify completion; Reset restores On's default.
+    decisionDoneToggle.checked = true;
+    syncDecisionStatus();
+    showSystemOneResult('ok', t('st.decision.reset_done'));
   });
 }
 
 function decisionSettingsDraft() {
   const card = decisionModels.find(m => m.id === decisionModelInput.value);
-  return { decisionProvider: decisionProviderInput.value, decisionModel: decisionModelInput.value.trim(),
+  return { [DECISION_MODE_KEY]: selectedDecisionMode(), decisionProvider: decisionProviderInput.value, decisionModel: decisionModelInput.value.trim(),
     decisionBaseUrl: decisionEndpointInput.value.trim(), decisionVisionMode: decisionVisionInput.value,
     decisionVisionSupported, ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
     systemOneDoneEnabled: decisionDoneToggle.checked, systemOneDoneThreshold: Number(decisionThresholdInput.value) / 100,
@@ -1636,7 +1693,7 @@ document.getElementById('btn-decision-models')?.addEventListener('click', async 
 
 btnTestSystemOne?.addEventListener('click', async () => {
   const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
-  if (!apiKey && !['local', 'webgpu_d1'].includes(decisionProviderInput.value)) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  if (selectedDecisionMode() === 'on' && !apiKey && !['local', 'webgpu_d1'].includes(decisionProviderInput.value)) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
   btnTestSystemOne.disabled = true;
   showSystemOneResult('', t('st.providers.testing'));
   try {
@@ -2372,6 +2429,12 @@ const CONTEXT_WINDOW_FIELD = {
   step: 1024,
 };
 
+// Matches LOCAL_OPENAI_PROXY_CONTEXT_WINDOW (providers/context-windows.js).
+const LOCAL_PROXY_CONTEXT_WINDOW_FIELD = {
+  ...CONTEXT_WINDOW_FIELD,
+  placeholder: '65536',
+};
+
 const MAX_OUTPUT_TOKENS_FIELD = {
   key: 'maxOutputTokens',
   labelKey: 'st.provider.field.max_output_tokens',
@@ -2779,6 +2842,7 @@ async function refreshWebbrainPaymentNotice() {
 
 function renderProviders() {
   providersContainer.innerHTML = '';
+  syncDecisionStatus();
 
   // Field definitions reference i18n keys (labelKey) so switching languages
   // re-renders with translated labels. Placeholders stay as raw values —
@@ -2893,7 +2957,7 @@ function renderProviders() {
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:8317/v1' },
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'required — use the proxy client API key' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model exposed by the proxy' },
-        CONTEXT_WINDOW_FIELD,
+        LOCAL_PROXY_CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
       ],
@@ -3296,10 +3360,11 @@ function renderProviders() {
         const minAttr = field.min != null ? ` min="${escapeHtml(field.min)}"` : '';
         const stepAttr = field.step != null ? ` step="${escapeHtml(field.step)}"` : '';
         const value = config[field.key] ?? '';
+        const manualAttr = (field.key === 'contextWindow' && config.manualContextWindow === true) ? ' data-manually-edited="true"' : '';
         fieldHTML += `
           <div class="field">
             <label>${escapeHtml(label)}${apiKeyLink}</label>
-            <input type="${field.type}" data-provider="${id}" data-key="${field.key}" data-type="${field.type}" ${listAttr}${minAttr}${stepAttr}
+            <input type="${field.type}" data-provider="${id}" data-key="${field.key}" data-type="${field.type}" ${listAttr}${minAttr}${stepAttr}${manualAttr}
                    value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}">
             ${datalistHTML}
             ${loadBtnHTML}
@@ -3415,7 +3480,13 @@ function renderProviders() {
   });
   document.querySelectorAll('input[data-provider], select[data-provider], textarea[data-provider]').forEach(input => {
     const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
-    input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
+    input.addEventListener(eventName, () => {
+      markProviderDirty(input.dataset.provider);
+      if (input.dataset.key === 'contextWindow') {
+        input.dataset.manuallyEdited = 'true';
+        input.dataset.editVersion = String((Number(input.dataset.editVersion) || 0) + 1);
+      }
+    });
   });
   document.querySelectorAll('input[data-key="shareQueriesForResearch"]').forEach(input => {
     input.addEventListener('click', confirmResearchSharing);
@@ -3708,22 +3779,72 @@ function applyProviderBaseUrl(id, baseUrl) {
   refreshVisionStatus(id);
 }
 
-function applyProviderContextWindow(id, contextWindow) {
-  const n = Number(contextWindow);
-  if (!Number.isFinite(n) || n <= 0) return;
-  if (providersData[id]) providersData[id].contextWindow = n;
+const providerContextPendingSnapshots = new Map();
+
+// What the context field looked like when a background request started. The
+// request returns the window the background already stored, so the field must
+// show it unless the user touched the field in the meantime. Each request keeps
+// its own snapshot, so overlapping Test connection / Load models / model picks
+// cannot consume or replace one another's.
+function markProviderContextDetectionStart(id) {
   const input = document.querySelector(`input[data-provider="${id}"][data-key="contextWindow"]`);
-  if (input && input.value !== String(n)) input.value = String(n);
+  if (!input) return undefined;
+  const snapshot = {
+    value: input.value,
+    manuallyEdited: input.dataset.manuallyEdited === 'true',
+    editVersion: Number(input.dataset.editVersion) || 0,
+  };
+  providerContextPendingSnapshots.set(id, snapshot);
+  return snapshot;
+}
+
+function clearProviderContextDetectionStart(id, snapshot) {
+  if (snapshot === undefined || providerContextPendingSnapshots.get(id) === snapshot) {
+    providerContextPendingSnapshots.delete(id);
+  }
+}
+
+function providerContextEditedSince(input, snapshot) {
+  return input.value !== snapshot.value
+    || (input.dataset.manuallyEdited === 'true') !== snapshot.manuallyEdited
+    || (Number(input.dataset.editVersion) || 0) !== snapshot.editVersion;
+}
+
+function applyProviderContextWindow(id, contextWindow, snapshot = providerContextPendingSnapshots.get(id)) {
+  const n = Number(contextWindow);
+  clearProviderContextDetectionStart(id, snapshot);
+  if (!Number.isFinite(n) || n <= 0) return;
+  const input = document.querySelector(`input[data-provider="${id}"][data-key="contextWindow"]`);
+  if (input) {
+    // Only an edit made after the request started wins. A manual value that
+    // was saved earlier and left alone is still replaced by a window the
+    // background decided to store (a live shrink, say), or the next Save would
+    // write the stale larger value back.
+    if (snapshot && providerContextEditedSince(input, snapshot)) return;
+    if (input.value !== String(n)) input.value = String(n);
+    input.dataset.manuallyEdited = 'false';
+  }
+  if (providersData[id]) {
+    providersData[id].contextWindow = n;
+    providersData[id].manualContextWindow = false;
+  }
 }
 
 async function detectProviderContextWindowForModel(id, model) {
   const value = String(model || '').trim();
   if (!value) return;
+  const snapshot = typeof markProviderContextDetectionStart === 'function'
+    ? markProviderContextDetectionStart(id)
+    : undefined;
   try {
     const res = await sendToBackground('detect_provider_context_window', { providerId: id, model: value });
-    if (res?.ok) applyProviderContextWindow(id, res.contextWindow);
+    if (res?.ok) applyProviderContextWindow(id, res.contextWindow, snapshot);
   } catch {
     // Model picking should still succeed if the backend cannot report a window.
+  } finally {
+    if (typeof clearProviderContextDetectionStart === 'function') {
+      clearProviderContextDetectionStart(id, snapshot);
+    }
   }
 }
 
@@ -3785,21 +3906,30 @@ async function loadProviderModels(id) {
 
   if (!isCurrent()) return;
   setProviderLoadModelsStatus(id, t('st.providers.loading'));
+  const contextSnapshot = typeof markProviderContextDetectionStart === 'function'
+    ? markProviderContextDetectionStart(id)
+    : undefined;
+  const releaseContextSnapshot = () => {
+    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id, contextSnapshot);
+  };
   let res;
   try {
     res = await sendToBackground('list_provider_models', { providerId: id });
   } catch (e) {
+    releaseContextSnapshot();
     if (!isCurrent()) return;
     setProviderLoadModelsStatus(id, providerModelLoadErrorMessage(e.message), 'var(--danger, #c33)');
     return;
   }
 
+  // The snapshot travels with this request (passed to apply below); the shared slot is free again.
+  releaseContextSnapshot();
   if (!isCurrent()) return;
   datalistEl = document.getElementById(`models-${id}`);
   if (!datalistEl) return;
   if (res?.ok) {
     applyProviderBaseUrl(id, res.baseUrl);
-    applyProviderContextWindow(id, res.contextWindow);
+    applyProviderContextWindow(id, res.contextWindow, contextSnapshot);
     const loadedDialogEl = document.querySelector(`.loaded-model-dialog[data-loaded-models-for="${id}"]`);
     datalistEl.innerHTML = res.models
       .map((m) => `<option value="${escapeHtml(m)}"></option>`)
@@ -3840,6 +3970,9 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
         ? parseProviderExtraBodyJson(input.value)
         : providerInputValue(input);
       setProviderConfigValue(config, input.dataset.key, value);
+      if (input.dataset.key === 'contextWindow') {
+        config.manualContextWindow = input.dataset.manuallyEdited === 'true';
+      }
     });
     if (typeof config.label === 'string') config.label = config.label.trim();
     apiKeyWarning = providerApiKeyWarning(id, config);
@@ -3877,6 +4010,7 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
 function refreshProviderCardStatus(id) {
   // Saving a provider marks it configured without rebuilding the list. Keep
   // the Active pill in sync even if the card disappeared during the request.
+  syncDecisionStatus();
   refreshActiveProviderFilterCount();
   const card = document.querySelector(`.provider-card[data-provider-id="${id}"]`);
   if (!card) return;
@@ -3913,17 +4047,22 @@ async function testProvider(id) {
 
   if (!setProviderTestResult(id, '', t('st.providers.testing'), 'var(--text2)')) return;
 
+  const contextSnapshot = typeof markProviderContextDetectionStart === 'function'
+    ? markProviderContextDetectionStart(id)
+    : undefined;
   try {
     const res = await sendToBackground('test_provider', { providerId: id });
     if (res.ok) {
       applyProviderBaseUrl(id, res.baseUrl);
-      applyProviderContextWindow(id, res.contextWindow);
+      applyProviderContextWindow(id, res.contextWindow, contextSnapshot);
       setProviderTestResult(id, 'ok', t('st.providers.connected', { model: res.model || t('st.providers.unknown_model') }));
     } else {
       setProviderTestResult(id, 'fail', t('st.providers.failed', { error: res.error }));
     }
   } catch (e) {
     setProviderTestResult(id, 'fail', t('st.providers.failed', { error: e.message }));
+  } finally {
+    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id, contextSnapshot);
   }
 }
 
@@ -3946,6 +4085,9 @@ function syncInputsIntoProvidersData() {
       return;
     }
     setProviderConfigValue(providersData[id], key, providerInputValue(input));
+    if (key === 'contextWindow') {
+      providersData[id].manualContextWindow = input.dataset.manuallyEdited === 'true';
+    }
   });
 }
 

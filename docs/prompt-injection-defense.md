@@ -38,7 +38,9 @@ them in sync — the test suite asserts the pure modules are byte-identical.
    - Code: `permission-gate.js` (`capabilityFor`, `requiredHosts`,
      `PermissionManager`); the gate loop in `agent.js _executeToolBatch`.
    - User control: Settings → Permissions (review/revoke grants + the master
-     switch "Ask before consequential actions").
+     switch "Ask before consequential actions"). The warning button in the side panel's
+     composer toolbar toggles the same master switch; it never answers a pending
+     permission card.
 4. **Output sanitizer (Layer 4).** Model output is HTML-escaped and only
    `[label](url)` markdown becomes an allowlisted (http/https/mailto) link — no
    auto-loading images, no bare-URL linkification.

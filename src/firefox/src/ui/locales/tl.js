@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>Naka-enable ang mga pagbabago sa API</strong> para sa pag-uusap na ito. Maaari nang gamitin ng ahente ang POST/PUT/PATCH/DELETE sa pamamagitan ng fetch_url at execute_js kapag sa tingin niyang mas maaasahan ang API kaysa UI para sa isang hakbang. UI-first pa rin ang default. Maaaclear ang flag na ito kapag ni-reset mo ang pag-uusap.',
   'sp.permissions.disabled_html': '⚠️ <strong>Naka-off ang mga prompt ng pahintulot.</strong> Mag-cli-click, magta-type, magna-navigate, magpapatakbo ng JavaScript, mag-aupload, mag-dadownload, magre-record, at mag-iiskedyul ng mga gawaing hinaharap ang WebBrain nang hindi nagtatanong. I-enable muli mula sa Settings → Pahintulot → Magtanong bago ang mahahalagang aksyon.',
+  'sp.permissions.button': 'Mga prompt ng pahintulot: naka-on',
+  'sp.permissions.button_off': 'Mga prompt ng pahintulot: naka-off',
+  'sp.permissions.gate_desc': 'Nagtatanong ang WebBrain sa unang beses na ito ay mag-click, mag-type, mag-download o magpatakbo ng code sa isang site.',
+  'sp.permissions.gate_off': 'Naka-off: kumikilos ang WebBrain sa bawat site nang hindi nagtatanong.',
+  'sp.permissions.manage': 'Pamahalaan ang mga pahintulot ng site',
+  'sp.permissions.enabled': 'Naka-on muli ang mga prompt ng pahintulot.',
 
   'tool.read_page': 'Binabasa ang pahina',
   'tool.gmail_count_results': 'Binibilang ang mga resulta ng Gmail',
@@ -883,6 +889,7 @@ export default {
   'sp.plan.expired': 'Ang planong ito ay hindi na naghihintay ng pagsusuri — ang pagtakbo ay kinansela.',
   'sp.plan.timed_out': 'Nag-time out ang pag-apruba',
   'sp.plan.timed_out_hint': 'Walang pinatakbo. Subukang muli para suriin ang bagong plano.',
+  'sp.plan.auto_run_in': 'Kusang tatakbo sa loob ng {time}',
   'sp.plan.awaiting_review': 'Aprubahan o kanselahin ang plano sa itaas bago magpadala ng isa pang mensahe.',
   'sp.plan.intent_unavailable': "Nabigo ang pagpaplano matapos ang dalawang pagsubok. Magpapatuloy sa Act mode na may karaniwang mga proteksiyon.",
   'sp.slash.busy_only_oob': 'Nakapila ang mga mensahe habang abala ang WebBrain. Tanging /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, at /verbose ang maaaring tumakbo agad bilang mga slash command.',

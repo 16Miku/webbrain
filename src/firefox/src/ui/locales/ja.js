@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 この会話で <strong>API による変更が有効</strong> になりました。エージェントは UI より API のほうが確実だと判断したとき、fetch_url と execute_js で POST/PUT/PATCH/DELETE を使えるようになります。UI 優先という基本方針は変わりません。このフラグは会話をリセットするとクリアされます。',
   'sp.permissions.disabled_html': '⚠️ <strong>権限の確認がオフです。</strong> WebBrain は確認なしにクリック、入力、移動、JavaScript の実行、アップロード、ダウンロード、録画、将来の作業のスケジュールを行います。設定 → 権限 → 重要な操作の前に確認する から再有効にしてください。',
+  'sp.permissions.button': '権限の確認: オン',
+  'sp.permissions.button_off': '権限の確認: オフ',
+  'sp.permissions.gate_desc': 'サイトで初めてクリック、入力、ダウンロード、コードの実行を行う前に WebBrain が確認します。',
+  'sp.permissions.gate_off': 'オフ: WebBrain はどのサイトでも確認せずに操作します。',
+  'sp.permissions.manage': 'サイトの権限を管理',
+  'sp.permissions.enabled': '権限の確認をオンに戻しました。',
 
   'tool.read_page': 'ページを読み取り中',
   'tool.gmail_count_results': 'Gmail の結果を数えています',
@@ -883,6 +889,7 @@ export default {
   'sp.plan.expired': 'この計画はレビュー待ちではなくなりました — 実行はキャンセルされました。',
   'sp.plan.timed_out': '承認の待機時間が終了しました',
   'sp.plan.timed_out_hint': '何も実行されていません。再試行して新しい計画を確認してください。',
+  'sp.plan.auto_run_in': '{time} 後に自動で実行されます',
   'sp.plan.awaiting_review': '別のメッセージを送信する前に、上の計画を承認またはキャンセルしてください。',
   'sp.plan.intent_unavailable': "2回試行しても計画に失敗しました。通常の安全対策を維持したまま Act モードで続行します。",
   'sp.slash.busy_only_oob': 'WebBrain がビジーの間、メッセージはキューに入ります。/help、/progress、/btw、/scratchpad、/memory、/schedule --list、/watch、/dangerously-skip-permissions、/screenshot、/export、/export --traces、/verbose だけがスラッシュコマンドとしてすぐに実行できます。',

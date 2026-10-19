@@ -763,6 +763,193 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 #header #ui-scale-popover .ui-scale-reset { min-width: auto; padding-inline: 9px; }
 .ui-scale-popover output { min-width: 40px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
 
+/* Permission prompts: the same switch as Settings → Permissions → Ask before
+   consequential actions, as an icon in the composer toolbar next to the
+   microphone. Its popover opens upward like the model picker's menu. When
+   prompts are off the trigger keeps a warning color and dot, so the state stays
+   visible while the popover is closed. The popover anchors to the toolbar (not
+   its trigger) so it always fits a narrow or zoomed panel. */
+.composer-toolbar { position: relative; }
+
+#btn-permission-gate {
+  position: relative;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s, transform 0.1s;
+  flex-shrink: 0;
+}
+
+#btn-permission-gate:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+#btn-permission-gate:active { transform: scale(0.95); }
+
+#btn-permission-gate[aria-expanded="true"] {
+  color: var(--text-primary);
+  background: var(--accent-dim);
+}
+
+#btn-permission-gate.is-gate-off {
+  color: var(--warning);
+}
+
+#btn-permission-gate.is-gate-off::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  inset-inline-end: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 1.5px var(--bg-input);
+}
+
+#btn-permission-gate:focus-visible {
+  outline: 2px solid var(--accent, #6c63ff);
+  outline-offset: 1px;
+}
+
+.permission-gate-popover {
+  position: absolute;
+  z-index: 40;
+  bottom: calc(100% + 10px);
+  inset-inline-end: 0;
+  display: grid;
+  gap: 8px;
+  width: min(272px, calc(100vw / var(--ui-scale-zoom, 1) - 28px));
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.permission-gate-popover.hidden { display: none; }
+
+.permission-gate-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.permission-gate-copy {
+  display: grid;
+  gap: 3px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.permission-gate-title {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.permission-gate-desc {
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* The checkbox stays in the accessibility tree and keyboard order; the track
+   next to it draws the switch. */
+.permission-gate-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.permission-gate-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 18px;
+  margin-top: 1px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--tint-medium);
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.permission-gate-switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  inset-inline-start: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.2s, background 0.2s;
+}
+
+.permission-gate-input:checked + .permission-gate-switch {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.permission-gate-input:checked + .permission-gate-switch::before {
+  transform: translateX(14px);
+  background: #fff;
+}
+
+html[dir="rtl"] .permission-gate-input:checked + .permission-gate-switch::before {
+  transform: translateX(-14px);
+}
+
+.permission-gate-input:focus-visible + .permission-gate-switch {
+  outline: 2px solid var(--accent, #6c63ff);
+  outline-offset: 2px;
+}
+
+.permission-gate-off-note {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.permission-gate-off-note.hidden { display: none; }
+
+.permission-gate-settings {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.permission-gate-settings:hover {
+  color: var(--accent-hover);
+  background: none;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
@@ -3093,6 +3280,24 @@ html[dir="rtl"] .composer-toolbar .provider-picker-menu {
   right: 0;
 }
 
+/* Narrow panel at a large UI scale (150%/175% leave ~160-200px inside the
+   composer): the model picker fills the first row next to the attach button, so
+   the fixed-width controls (status, permissions, mic, send) wrap to a second row
+   instead of squeezing it to a few pixels. The DOM order is unchanged, so
+   keyboard focus follows the visual order. */
+html[data-ui-scale="150"] .composer-toolbar,
+html[data-ui-scale="175"] .composer-toolbar {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+html[data-ui-scale="150"] .composer-toolbar .provider-picker,
+html[data-ui-scale="175"] .composer-toolbar .provider-picker {
+  /* 100% minus the 28px attach button and the 6px gap */
+  flex: 1 1 calc(100% - 34px);
+  max-width: none;
+}
+
 #input-wrapper:focus-within {
   border-color: var(--accent);
 }
@@ -4180,9 +4385,50 @@ html[dir="rtl"] .composer-toolbar .provider-picker-menu {
 }
 
 .clarify-timeout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+/* The clock ring that empties with an auto-timeout: bottom-right of the clarification and plan
+   review cards. */
+.timeout-ring {
+  flex: 0 0 auto;
+  display: inline-flex;
+  margin-inline-start: auto;
+  color: var(--accent);
+  cursor: default;
+}
+
+.timeout-ring svg { display: block; }
+
+.timeout-ring-track {
+  stroke: var(--border);
+}
+
+.timeout-ring-progress,
+.timeout-ring-hand {
+  stroke: currentColor;
+}
+
+.timeout-ring-progress {
+  transition: stroke-dashoffset 0.25s linear, stroke 0.2s;
+}
+
+.timeout-ring-low {
+  color: var(--warning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeout-ring-progress { transition: none; }
+}
+
+.plan-review-actions {
+  align-items: center;
 }
 
 /* ─── Planner gate (issue #165) ───────────────────────────────────── */

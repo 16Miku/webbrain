@@ -13,7 +13,7 @@ import {
 import { AUTO_GROUP_TABS_KEY } from './tab-group-preference.js';
 import { normalizeSettings as normalizeSafeSocialSettings, SETTINGS_KEY as SAFE_SOCIAL_SETTINGS_KEY } from './safesocial/config.js';
 import { normalizeUiScale, UI_SCALE_STORAGE_KEY } from './ui/ui-scale.js';
-import { resolveDecisionConfig } from './agent/decision-config.js';
+import { DECISION_FEATURE_KEYS, DECISION_MODES, resolveDecisionConfig, resolveDecisionMode } from './agent/decision-config.js';
 
 export const CONFIG_SCHEMA = 'webbrain-config/1';
 export const MAX_CONFIG_IMPORT_CHARS = 10_000_000;
@@ -104,6 +104,9 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   nonecapApiKey: '',
   nonecapEnabled: false,
   nonecapWeight: 94,
+  // Unset: decision-config.js maps a profile from before modes (On when
+  // systemOneEnabled is true, else Auto), so old exports keep their meaning.
+  decisionMode: '',
   systemOneEnabled: false,
   systemOneWatchEnabled: false,
   systemOneCompletionEnabled: false,
@@ -207,7 +210,7 @@ const STRING_KEYS = new Set([
   'antiCaptchaApiKey',
   'nopechaApiKey',
   'nonecapApiKey',
-  'decisionProvider', 'decisionModel', 'decisionBaseUrl', 'decisionApiKey', 'decisionLocalApiKey', 'decisionVisionMode',
+  'decisionMode', 'decisionProvider', 'decisionModel', 'decisionBaseUrl', 'decisionApiKey', 'decisionLocalApiKey', 'decisionVisionMode',
   'typesafeApiKey',
 ]);
 const ARRAY_KEYS = new Set([
@@ -243,6 +246,7 @@ function sanitizeProviders(value, { strict = false } = {}) {
 
 function validSettingValue(key, value) {
   if (key === 'decisionProvider') return ['', 'openrouter', 'typesafe', 'local', 'webgpu_d1', 'webgpu_chat'].includes(value);
+  if (key === 'decisionMode') return ['', ...DECISION_MODES].includes(value);
   if (key === 'decisionVisionMode') return ['auto', 'on', 'off'].includes(value);
   if (key === 'leanMode') return ['auto', 'on', 'off'].includes(value);
   if (key === 'decisionBaseUrl') {
@@ -260,15 +264,25 @@ function validSettingValue(key, value) {
 }
 
 // The in-browser chat-model decision provider (webgpu_chat) is Chrome-only.
-// A Chrome configuration that selects it imports here with System One off:
+// A Chrome configuration that selects it imports here in Auto (System One off):
 // neither an unusable provider nor a silent switch of a local-only choice to
 // a cloud provider. `sparse` (provisioning patches) leaves the stored
 // provider as it is.
 function dropChromeOnlyDecisionProvider(settings, { sparse = false } = {}) {
   if (settings.decisionProvider !== 'webgpu_chat') return;
-  if (sparse) delete settings.decisionProvider;
-  else settings.decisionProvider = DEFAULT_CONFIG_SETTINGS.decisionProvider;
+  if (sparse) {
+    delete settings.decisionProvider;
+    // A sparse patch only changes what it names: a provider-only patch must not
+    // rewrite the mode of an existing On or Off profile. A mode the patch does
+    // carry is still downgraded, as in a full restore.
+    if (Object.hasOwn(settings, 'systemOneEnabled')) settings.systemOneEnabled = false;
+    if (Object.hasOwn(settings, 'decisionMode') && settings.decisionMode !== 'off') settings.decisionMode = 'auto';
+    return;
+  }
+  settings.decisionProvider = DEFAULT_CONFIG_SETTINGS.decisionProvider;
   settings.systemOneEnabled = false;
+  // On with that provider becomes Auto here; an explicit Off stays off.
+  if (settings.decisionMode !== 'off') settings.decisionMode = 'auto';
 }
 
 function normalizeSettings(source, { strict = false } = {}) {
@@ -305,6 +319,19 @@ function normalizeSettings(source, { strict = false } = {}) {
     const decisionProvider = settings.decisionProvider;
     settings.decisionInputRate = decisionProvider === 'typesafe' || (!decisionProvider && source.typesafeApiKey)
       ? .042 : ['local', 'webgpu_d1'].includes(decisionProvider) ? 0 : .02;
+  }
+  // A profile saved before modes existed and left in On keeps the old reading: a missing switch is
+  // off. Every other profile (explicit On, Auto or Off, or a pre-mode profile that was not On)
+  // switches to On with the omitted switches enabled, so they are materialized as on and a round
+  // trip does not turn them into the old `false` defaults.
+  const isLegacyOnProfile = !DECISION_MODES.includes(source?.decisionMode) && source?.systemOneEnabled === true;
+  // The legacy reading is resolved from the profile itself (completion verification, for one, is off
+  // for an in-browser provider that never stored its switch), not taken from the modern defaults.
+  const legacyFeatures = isLegacyOnProfile ? resolveDecisionConfig(source).features : null;
+  for (const [feature, key] of Object.entries(DECISION_FEATURE_KEYS)) {
+    if (Object.hasOwn(source, key)) continue;
+    if (legacyFeatures) settings[key] = legacyFeatures[feature] === true;
+    else settings[key] = true;
   }
   return settings;
 }

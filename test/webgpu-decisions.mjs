@@ -346,29 +346,55 @@ test('Settings locks the model and key fields for both fixed in-browser provider
     "D1's change listener is registered first, so this one runs last");
 });
 
-test('Settings suggests the chat model for decisions when Bonsai chats, with D1 as the safer upgrade', async () => {
-  const html = await readFile(new URL('../src/chrome/src/ui/settings.html', import.meta.url), 'utf8');
-  for (const id of ['decision-suggestion', 'decision-suggest-chat', 'decision-suggest-upgrade', 'btn-decision-use-chat', 'btn-decision-use-d1', 'btn-decision-suggest-dismiss']) {
-    assert.match(html, new RegExp(`id="${id}"`), id);
-  }
-  assert.match(html, /id="decision-suggestion" hidden/, 'hidden until Settings decides');
-  const settings = await readFile(new URL('../src/chrome/src/ui/settings.js', import.meta.url), 'utf8');
-  const sync = settings.slice(settings.indexOf('function activeChatModelIsDecisionCapable'), settings.indexOf('function chooseSuggestedDecisionProvider'));
-  assert.match(sync, /providerDefinitionId\(activeProviderId\) !== 'webgpu'/, 'only when WebGPU is the active chat provider');
-  assert.match(sync, /=== WEBGPU_CHAT_DECISION_MODEL/, 'only for the model with a trained decision probe');
-  assert.match(sync, /provider === 'webgpu_chat' \? 'upgrade'/, 'with the chat model chosen, only the D1 upgrade shows');
-  assert.match(sync, /provider !== 'webgpu_d1' && activeChatModelIsDecisionCapable\(\) \? 'suggest'/, 'nothing once D1 is chosen');
-  assert.match(sync, /decisionSuggestionDismissed \? ''/, '"Not now" hides it');
-  const choose = settings.slice(settings.indexOf('function chooseSuggestedDecisionProvider'), settings.indexOf("document.getElementById('btn-decision-suggest-dismiss')"));
-  assert.match(choose, /dispatchEvent\(new Event\('change'\)\)/, 'uses the normal provider switch, so D1 consent and field locks apply');
-  assert.doesNotMatch(choose, /chrome\.storage\.local\.set/, 'nothing is saved until the user clicks Save');
-  assert.match(settings, /function renderProviders\(\) \{\n\s*providersContainer\.innerHTML = '';\n\s*syncDecisionSuggestion\(\);/, 'follows chat-provider changes');
+test('Settings asks one Auto / On / Off question and shows provider fields and switches only for On', async () => {
   const { decisionEnglish, decisionTranslations } = await import('../src/chrome/src/ui/locales/decision-copy.mjs');
-  for (const key of ['st.decision.suggest_chat', 'st.decision.suggest_upgrade', 'st.decision.use_chat', 'st.decision.use_d1', 'st.decision.suggest_dismiss', 'st.decision.suggest_selected']) {
-    assert.ok(decisionEnglish[key] && decisionTranslations.tr[key], key);
+  for (const build of ['chrome', 'firefox']) {
+    const html = await readFile(new URL(`../src/${build}/src/ui/settings.html`, import.meta.url), 'utf8');
+    const card = html.slice(html.indexOf('id="system-one-card"'), html.indexOf('id="safesocial-heading"'));
+    assert.deepEqual([...card.matchAll(/name="decision-mode" value="(\w+)"( checked)?/g)].map(m => m[1] + (m[2] ? '*' : '')), ['auto*', 'on', 'off'], build);
+    assert.ok(card.indexOf('data-i18n="st.decision.intro"') < card.indexOf('id="decision-mode"'), 'the explanation comes first');
+    assert.match(card, /id="decision-configured" hidden/, 'provider fields wait for On');
+    assert.match(card, /<details class="advanced-settings decision-features" id="decision-features">/, 'per-decision switches start collapsed');
+    const features = card.slice(card.indexOf('id="decision-features"'));
+    for (const id of ['toggle-decision-done', 'toggle-system-one-watch', 'toggle-system-one-completion', 'toggle-system-one-classifications', 'toggle-system-one-browser']) {
+      assert.match(features, new RegExp(`id="${id}" checked`), `${build} ${id} lives in the subpane, on by default`);
+    }
+    assert.doesNotMatch(card, /id="toggle-system-one"|decision-suggestion|btn-decision-use-chat/, 'the old switch and suggestion are gone');
+    assert.match(card, new RegExp(`data-i18n="st.decision.mode.auto_desc${build === 'firefox' ? '_firefox' : ''}"`));
+    assert.equal(/value="webgpu_chat"/.test(card), build === 'chrome');
   }
-  const firefoxHtml = await readFile(new URL('../src/firefox/src/ui/settings.html', import.meta.url), 'utf8');
-  assert.doesNotMatch(firefoxHtml, /decision-suggestion/, 'Chrome only');
+  const keys = ['st.decision.intro', 'st.decision.mode.label', 'st.decision.mode.auto', 'st.decision.mode.on', 'st.decision.mode.off',
+    'st.decision.mode.auto_desc', 'st.decision.mode.auto_desc_firefox', 'st.decision.mode.on_desc', 'st.decision.mode.off_desc',
+    'st.decision.status.local', 'st.decision.status.compass', 'st.decision.status.none', 'st.decision.status.none_firefox', 'st.decision.status.strict',
+    'st.decision.features', 'st.decision.features_desc', 'st.decision.reset', 'st.decision.reset_done'];
+  assert.equal(Object.keys(decisionTranslations).length, 22, 'every interface locale');
+  for (const key of keys) assert.ok(decisionEnglish[key], key);
+  // Every string on the card is translated, with its placeholders kept.
+  for (const [key, english] of Object.entries(decisionEnglish)) {
+    for (const [code, dict] of Object.entries(decisionTranslations)) {
+      assert.ok(dict[key], `${code} ${key}`);
+      for (const placeholder of english.match(/\{\w+\}/g) || []) assert.ok(dict[key].includes(placeholder), `${code} ${key} ${placeholder}`);
+    }
+  }
+  assert.doesNotMatch(decisionEnglish['st.system_one.security_html'], /outsourcing/, 'the security note speaks of decision models');
+  for (const key of ['st.decision.suggest_chat', 'st.decision.use_chat', 'st.system_one.enabled.label']) assert.equal(decisionEnglish[key], undefined, key);
+  const firefoxCopy = await readFile(new URL('../src/firefox/src/ui/locales/decision-copy.mjs', import.meta.url), 'utf8');
+  assert.equal(firefoxCopy, await readFile(new URL('../src/chrome/src/ui/locales/decision-copy.mjs', import.meta.url), 'utf8'));
+  const settings = await readFile(new URL('../src/chrome/src/ui/settings.js', import.meta.url), 'utf8');
+  const status = settings.slice(settings.indexOf('async function syncDecisionStatus'), settings.indexOf('\nfor (const input of decisionModeInputs) {'));
+  assert.match(status, /activeProviderIsCompass\(\)/, 'Auto names Compass while it is the chat provider');
+  assert.match(status, /isLocalAssistModelReady\(\)/, 'and otherwise whether Bonsai is downloaded');
+  assert.match(settings, /function renderProviders\(\) \{\n\s*providersContainer\.innerHTML = '';\n\s*void syncDecisionStatus\(\);/, 'follows chat-provider changes');
+  // Strict Secret Mode turns every decision model off, so Auto must say so and follow the toggle.
+  for (const build of ['chrome', 'firefox']) {
+    const source = await readFile(new URL(`../src/${build}/src/ui/settings.js`, import.meta.url), 'utf8');
+    const start = source.indexOf('function syncDecisionStatus');
+    const fn = source.slice(start, source.indexOf('\nfor (const input of decisionModeInputs) {', start));
+    assert.match(fn, /strictSecretToggle\?\.checked === true/, `${build} reads the strict-secret toggle`);
+    assert.match(fn, /strict \? 'st\.decision\.status\.strict'/, `${build} shows the strict status first`);
+    assert.match(fn, /compass = !strict && activeProviderIsCompass\(\)/, `${build} does not call Compass active while strict`);
+    assert.match(source, /strictSecretToggle(\?\.|\.)addEventListener\('change', async \(\) => \{\n\s*await (chrome|browser)\.storage\.local\.set\(\{ strictSecretMode: strictSecretToggle\.checked \}\)\.catch\(\(\) => \{\}\);\n\s*(void )?syncDecisionStatus\(\);/, `${build} refreshes the status when the toggle changes`);
+  }
 });
 
 test('the screenshot gate probe never falls back to the untrained readout', async () => {

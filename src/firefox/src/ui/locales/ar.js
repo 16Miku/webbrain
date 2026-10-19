@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>تفعيل تعديلات واجهة API</strong> لهذه المحادثة. يمكن للوكيل الآن استخدام POST/PUT/PATCH/DELETE عبر fetch_url و execute_js عندما يرى أن API أكثر موثوقية من الواجهة. يظل التفاعل عبر الواجهة هو الافتراضي. تُمسح هذه العلامة عند تصفير المحادثة.',
   'sp.permissions.disabled_html': '⚠️ <strong>مطالبات الأذونات مُعطّلة.</strong> سيُنقر WebBrain ويكتب ويتنقّل ويُشغّل JavaScript ويرفع ويُنزّل ويُسجّل ويجدول أعمالًا مستقبلية دون أن يسأل أولًا. أعد تفعيل هذا من الإعدادات ← الأذونات ← السؤال قبل الإجراءات المهمة.',
+  'sp.permissions.button': 'مطالبات الأذونات: مُفعّلة',
+  'sp.permissions.button_off': 'مطالبات الأذونات: مُعطّلة',
+  'sp.permissions.gate_desc': 'يسأل WebBrain في أول مرة ينقر فيها أو يكتب أو ينزّل ملفات أو يشغّل تعليمات برمجية على موقع.',
+  'sp.permissions.gate_off': 'مُعطّل: يتصرف WebBrain على كل المواقع دون أن يسأل.',
+  'sp.permissions.manage': 'إدارة أذونات المواقع',
+  'sp.permissions.enabled': 'تم تفعيل مطالبات الأذونات مجددًا.',
 
   'tool.read_page': 'قراءة الصفحة',
   'tool.gmail_count_results': 'عدّ نتائج Gmail',
@@ -883,6 +889,7 @@ export default {
   'sp.plan.expired': 'لم تعد هذه الخطة قيد المراجعة — تم إلغاء التشغيل.',
   'sp.plan.timed_out': 'انتهت مهلة الموافقة',
   'sp.plan.timed_out_hint': 'لم يتم تنفيذ أي شيء. أعد المحاولة لمراجعة خطة جديدة.',
+  'sp.plan.auto_run_in': 'يعمل تلقائيًا بعد {time}',
   'sp.plan.awaiting_review': 'وافق على الخطة أعلاه أو ألغها قبل إرسال رسالة أخرى.',
   'sp.plan.intent_unavailable': "فشل التخطيط بعد محاولتين. ستتم المتابعة في وضع Act مع إجراءات الحماية المعتادة.",
   'sp.slash.busy_only_oob': 'تُضاف الرسائل إلى قائمة الانتظار بينما يكون WebBrain مشغولًا. يمكن فقط لـ /help و /progress و /btw و /scratchpad و /memory و /schedule --list و /watch و /dangerously-skip-permissions و /screenshot و /export و /export --traces و /verbose العمل فورًا كأوامر slash.',

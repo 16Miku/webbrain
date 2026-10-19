@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>Perubahan melalui API diaktifkan</strong> untuk percakapan ini. Agen kini dapat menggunakan POST/PUT/PATCH/DELETE melalui fetch_url dan execute_js bila menilai API lebih andal daripada UI untuk suatu langkah. UI tetap menjadi pilihan utama secara bawaan. Flag ini akan terhapus saat Anda mereset percakapan.',
   'sp.permissions.disabled_html': '⚠️ <strong>Pertanyaan izin dimatikan.</strong> WebBrain akan mengeklik, mengetik, menavigasi, menjalankan JavaScript, mengunggah, mengunduh, merekam, dan menjadwalkan pekerjaan mendatang tanpa bertanya terlebih dahulu. Aktifkan kembali dari Pengaturan → Izin → Tanya sebelum tindakan penting.',
+  'sp.permissions.button': 'Permintaan izin: aktif',
+  'sp.permissions.button_off': 'Permintaan izin: nonaktif',
+  'sp.permissions.gate_desc': 'WebBrain bertanya saat pertama kali mengklik, mengetik, mengunduh, atau menjalankan kode di sebuah situs.',
+  'sp.permissions.gate_off': 'Nonaktif: WebBrain bertindak di setiap situs tanpa bertanya.',
+  'sp.permissions.manage': 'Kelola izin situs',
+  'sp.permissions.enabled': 'Permintaan izin aktif kembali.',
 
   'tool.read_page': 'Membaca halaman',
   'tool.gmail_count_results': 'Menghitung hasil Gmail',
@@ -883,6 +889,7 @@ export default {
   'sp.plan.expired': 'Rencana ini tidak lagi menunggu peninjauan — proses dibatalkan.',
   'sp.plan.timed_out': 'Waktu persetujuan habis',
   'sp.plan.timed_out_hint': 'Tidak ada yang dijalankan. Coba lagi untuk meninjau rencana baru.',
+  'sp.plan.auto_run_in': 'Berjalan sendiri dalam {time}',
   'sp.plan.awaiting_review': 'Setujui atau batalkan rencana di atas sebelum mengirim pesan lain.',
   'sp.plan.intent_unavailable': "Perencanaan gagal setelah dua percobaan. Proses dilanjutkan dalam mode Act dengan perlindungan normal.",
   'sp.slash.busy_only_oob': 'Pesan dimasukkan ke antrean saat WebBrain sibuk. Hanya /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, dan /verbose yang dapat langsung berjalan sebagai perintah slash.',

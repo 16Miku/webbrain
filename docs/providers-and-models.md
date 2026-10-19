@@ -58,7 +58,31 @@ cannot establish live account access or upstream availability.
 
 ### Decision models
 
-Select OpenRouter (the default), TypeSafe directly, or a local/custom System One
+A decision model answers the agent's fixed-choice questions (is the task
+finished, did a watch find what it waited for, what does a request say about an
+action) so the chat model does not have to. Settings asks one question first:
+
+- **Auto** (default) needs no setup. In Chrome it uses Ternary Bonsai 2 2B
+  Vision once that preset is downloaded (Providers → WebGPU, the install page or
+  Apocalypse Mode), for completion checks and scheduled watch and completion
+  checks only. While Compass is the chat provider, Compass's managed decision
+  model answers instead, as before. Otherwise no decision model is used.
+  Readiness is the WebGPU worker's ready marker in Cache Storage
+  (`providers/webgpu-model-cache.js`), read without starting the offscreen
+  document. Firefox has no in-browser model, so Auto there means Compass or
+  nothing.
+- **On** uses the provider configured below for every decision: completion,
+  scheduled watches and completions, fast classifications, fast browser
+  actions and semantic decisions. The first five each have a switch in the collapsed
+  "Choose which decisions use it" section (an unset switch is on), while semantic
+  decisions always use the selected provider. Profiles saved before modes existed
+  with System One enabled read as On and keep their opt-in switches.
+- **Off** uses no decision model, Compass's managed one included. The active
+  chat model keeps verifying completion.
+
+`decisionMode` (`auto`/`on`/`off`) is stored with the other decision settings;
+`decision-config.js` resolves it, and `decisionFeatureEnabled()` is the single
+check every caller makes. For On, select OpenRouter (the default), TypeSafe directly, or a local/custom System One
 endpoint. OpenRouter's model list comes from its decision-model catalog and includes
 all publishers. The new default is `perplexity/pplx-decider-v1-27b`; existing
 TypeSafe keys, enabled features and scheduler thresholds stay on their original
@@ -108,7 +132,9 @@ sharing settings and existing privacy boundaries are not bypassed.
 **In-browser chat model (experimental, Chrome)** answers decisions with the
 WebGPU chat model itself, Ternary Bonsai 2 2B Vision, so one downloaded model
 serves chat, screenshots and decisions. It needs no extra download, key or
-endpoint: download that preset under Providers → WebGPU first. Each option is
+endpoint: download that preset under Providers → WebGPU first. Auto uses it
+by itself once it is downloaded; choosing it under On also sends it fast
+classifications, fast browser actions and semantic decisions. Each option is
 scored from a short continuation of the prefilled page state by a small
 probe trained on d1's synthetic data, with the model's weights unchanged. On
 d1's held-out test it answers more questions correctly than D1 but accepts
@@ -556,7 +582,9 @@ proxy card require their configured client keys:
 - **LocalAI**: `http://localhost:8080/v1` — LocalAI's OpenAI-compatible server
 - **GPT4All**: `http://localhost:4891/v1` — GPT4All's local API server
 - **Local OpenAI-compatible Proxy**: `http://127.0.0.1:8317/v1` — a generic,
-  authenticated local gateway; the model and proxy client API key are required
+  authenticated local gateway; the model and proxy client API key are required.
+  Its context window is set automatically after **Load Models**, a model pick or
+  **Test Connection**, and falls back to 64k (see below)
 - **Unsloth Studio**: `http://127.0.0.1:8888/v1` by default, with a configurable
   port — Studio's API URL, loaded model, and generated API key are required
 
@@ -622,6 +650,28 @@ Keep the listener on `127.0.0.1`, require a strong random client key, and never
 publish the endpoint to a LAN or the internet. Official provider API keys remain
 the stable default.
 
+**Context window.** After **Load Models**, picking a model from the loaded list,
+or **Test Connection**, WebBrain sets the card's **Context window** from the first
+source that knows it:
+
+1. the proxy's `/v1/models` card for the selected model (`max_model_len`,
+   `max_context_length`, `context_window`, `context_length`, `max_input_tokens`
+   or `input_token_limit`);
+2. `GET /props?model=<model>` at the proxy root, when a llama.cpp server behind it
+   reports the loaded model's live `n_ctx`;
+3. the model name, for hosted models WebBrain knows (`claude-…`, `gpt-5…`,
+   `gemini-…`, …), capped at 128k because subscription gateways can serve less
+   context than the vendor API advertises;
+4. otherwise the **64k** proxy fallback, which is also the card's default
+   (previously 16k, which starved the hosted models these gateways usually front).
+
+A reported window (1 or 2) may shrink a manual value; a name or the fallback only
+replaces the default, the old 16k default, or a value WebBrain filled in itself,
+never a number you typed. If the proxy fronts a small local model and reports
+nothing, lower **Context window** to that model's loaded window, because 64k can
+overflow it. Untouched cards (never saved, no key) move from 16k to 64k on
+upgrade; a saved card still at 16k moves at its next detection.
+
 Ollama, llama.cpp, ODS, LM Studio, and LocalAI default to `visionMode: auto`. WebBrain asks
 the selected server for model capability metadata before enrichment and sends
 screenshots only when the response explicitly reports image input. A failed or
@@ -669,7 +719,7 @@ template/parser, and a current runtime version (LocalAI added tool streaming in
 
 **Context window.** Size the loaded context for the selected prompt tier, its tool schemas, the live page/history and the requested output. **16k is a local configuration fallback, not a reliable minimum for every tier.** Current Mid and Full agent prompts can exceed that window before useful history accumulates. Use a larger loaded window for these tiers; the quality audit verified a Full-tier 64K run with real compaction and restarts. A smaller Compact setup needs its own sizing check and offers fewer tools, including no native long-chat tool set. Automatically summarizing old history cannot shrink the fixed prompt or schemas, and the character-based estimate is not an exact model tokenizer.
 
-The agent reads `provider.contextWindow` (`providers/base.js`) to drive auto-compaction. When no value is configured, local providers default to **16k**; cloud/router defaults depend on the known model, with a category fallback of 128k. **Test connection** / **Load models** auto-detect for **llama.cpp**, **ODS**, **Ollama**, and **LM Studio** when reported (llama.cpp / ODS `GET /props` `n_ctx`, Ollama `GET /api/ps` live context then `/api/show` `num_ctx`, LM Studio `/api/v0/models` `loaded_context_length`). Detection refreshes the local fallback; it shrinks a larger manual override only from live/runtime context (not from Ollama `/api/show` alone). Jan / vLLM / SGLang / LocalAI / Unsloth Studio do not auto-detect yet. Set `config.contextWindow` to match the server's actual loaded window; increasing the setting alone does not enlarge the model server's context.
+The agent reads `provider.contextWindow` (`providers/base.js`) to drive auto-compaction. When no value is configured, local providers default to **16k** (the Local OpenAI-compatible Proxy to **64k**); cloud/router defaults depend on the known model, with a category fallback of 128k. **Test connection** / **Load models** auto-detect for **llama.cpp**, **ODS**, **Ollama**, **LM Studio**, **vLLM**, **SGLang**, **LocalAI** and the **Local OpenAI-compatible Proxy** when reported (llama.cpp / ODS `GET /props` `n_ctx`, Ollama `GET /api/ps` live context then `/api/show` `num_ctx`, LM Studio `/api/v0/models` `loaded_context_length`, vLLM / SGLang `/v1/models` `max_model_len`, LocalAI model config `context_size`, the proxy as described in the [subscription proxy guide](#subscription-proxy-guide-easycliproxyapi--cliproxyapi)). Detection refreshes the local fallback; it shrinks a larger manual override only from live/runtime context (not from Ollama `/api/show` alone). Jan / GPT4All / Unsloth Studio do not auto-detect yet. Set `config.contextWindow` to match the server's actual loaded window; increasing the setting alone does not enlarge the model server's context.
 
 ### Prompt/tool tiers and modes
 

@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>Pengubahan API diaktifkan</strong> untuk perbualan ini. Ejen kini boleh menggunakan POST/PUT/PATCH/DELETE melalui fetch_url dan execute_js apabila ia menilai API lebih boleh dipercayai berbanding UI untuk sesuatu langkah. UI tetap menjadi pilihan utama secara lalai. Bendera ini akan dikosongkan apabila anda menetapkan semula perbualan.',
   'sp.permissions.disabled_html': '⚠️ <strong>Gesaan kebenaran DIMATIKAN.</strong> WebBrain akan mengklik, menaip, menavigasi, menjalankan JavaScript, memuat naik, memuat turun, merakam, dan menjadualkan kerja masa hadapan tanpa bertanya terlebih dahulu. Dayakan semula ini dari Tetapan → Kebenaran → Tanya sebelum tindakan penting.',
+  'sp.permissions.button': 'Gesaan kebenaran: hidup',
+  'sp.permissions.button_off': 'Gesaan kebenaran: mati',
+  'sp.permissions.gate_desc': 'WebBrain bertanya kali pertama ia mengklik, menaip, memuat turun atau menjalankan kod di sesebuah tapak.',
+  'sp.permissions.gate_off': 'Mati: WebBrain bertindak di setiap tapak tanpa bertanya.',
+  'sp.permissions.manage': 'Urus kebenaran tapak',
+  'sp.permissions.enabled': 'Gesaan kebenaran dihidupkan semula.',
 
   'tool.read_page': 'Membaca halaman',
   'tool.gmail_count_results': 'Mengira hasil Gmail',
@@ -909,6 +915,7 @@ export default {
   'sp.plan.expired': 'Rancangan ini tidak lagi menunggu semakan — pelaksanaan dibatalkan.',
   'sp.plan.timed_out': 'Kelulusan tamat masa',
   'sp.plan.timed_out_hint': 'Tiada apa-apa dijalankan. Cuba lagi untuk menyemak rancangan baharu.',
+  'sp.plan.auto_run_in': 'Berjalan sendiri dalam {time}',
   'sp.plan.awaiting_review': 'Luluskan atau batalkan rancangan di atas sebelum menghantar mesej lain.',
   'sp.plan.intent_unavailable': "Perancangan gagal selepas dua percubaan. Proses diteruskan dalam mod Act dengan perlindungan biasa.",
   'sp.slash.busy_only_oob': 'Mesej dimasukkan ke giliran semasa WebBrain sibuk. Hanya /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, dan /verbose boleh berjalan serta-merta sebagai arahan slash.',

@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>Изменения через API включены</strong> для этого диалога. Агент теперь может использовать POST/PUT/PATCH/DELETE через fetch_url и execute_js, если посчитает API надёжнее интерфейса. По умолчанию используется интерфейс. Этот флаг сбрасывается при очистке диалога.',
   'sp.permissions.disabled_html': '⚠️ <strong>Запросы разрешений отключены.</strong> WebBrain будет нажимать, печатать, переходить, запускать JavaScript, загружать, скачивать, записывать и запланировывать будущие задачи без предварительного запроса. Включите снова в Настройки → Разрешения → Спрашивать перед важными действиями.',
+  'sp.permissions.button': 'Запросы разрешений: включены',
+  'sp.permissions.button_off': 'Запросы разрешений: отключены',
+  'sp.permissions.gate_desc': 'WebBrain спрашивает, когда впервые нажимает, вводит текст, скачивает файлы или запускает код на сайте.',
+  'sp.permissions.gate_off': 'Отключено: WebBrain действует на любом сайте, не спрашивая.',
+  'sp.permissions.manage': 'Управлять разрешениями сайтов',
+  'sp.permissions.enabled': 'Запросы разрешений снова включены.',
 
   'tool.read_page': 'Чтение страницы',
   'tool.gmail_count_results': 'Подсчёт результатов Gmail',
@@ -883,6 +889,7 @@ export default {
   'sp.plan.expired': 'Этот план больше не ожидает рассмотрения — запуск отменён.',
   'sp.plan.timed_out': 'Время ожидания одобрения истекло',
   'sp.plan.timed_out_hint': 'Ничего не было запущено. Повторите попытку, чтобы проверить новый план.',
+  'sp.plan.auto_run_in': 'Запустится сам через {time}',
   'sp.plan.awaiting_review': 'Одобрите или отмените план выше, прежде чем отправлять другое сообщение.',
   'sp.plan.intent_unavailable': "Планирование не удалось после двух попыток. Работа продолжится в режиме Act с обычными мерами защиты.",
   'sp.slash.busy_only_oob': 'Пока WebBrain занят, сообщения ставятся в очередь. Только /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces и /verbose могут запускаться сразу как slash-команды.',

@@ -431,6 +431,7 @@ export default {
   'sp.plan.expired': "Este plano não está mais aguardando revisão – a execução foi cancelada.",
   'sp.plan.timed_out': 'O tempo para aprovação expirou',
   'sp.plan.timed_out_hint': 'Nada foi executado. Tente novamente para revisar um novo plano.',
+  'sp.plan.auto_run_in': 'Executa sozinho em {time}',
   'sp.plan.awaiting_review': "Aprove ou cancele o plano acima antes de enviar outra mensagem.",
   'sp.plan.intent_unavailable': "O planejamento falhou após duas tentativas. Continuando no modo Act com as proteções normais.",
 
@@ -493,6 +494,12 @@ export default {
 
   'sp.api.enabled_html': "🔓 <strong>Mutações de API ativadas</strong> para esta conversa. O agente agora pode usar POST/PUT/PATCH/DELETE via fetch_url e execute_js quando julgar que a API é mais confiável do que a UI para uma etapa. UI-first continua sendo o padrão. Esse sinalizador é apagado quando você reinicia a conversa.",
   'sp.permissions.disabled_html': "⚠️ <strong>Os prompts de permissão estão DESATIVADOS.</strong> WebBrain clicará, digitará, navegará, executará JavaScript, fará upload, baixará, gravará e agendará trabalhos futuros sem perguntar primeiro. Reative isso em Configurações → Permissões → Perguntar antes de ações consequentes.",
+  'sp.permissions.button': 'Prompts de permissão: ativados',
+  'sp.permissions.button_off': 'Prompts de permissão: desativados',
+  'sp.permissions.gate_desc': 'O WebBrain pergunta na primeira vez que clica, digita, baixa arquivos ou executa código em um site.',
+  'sp.permissions.gate_off': 'Desativado: o WebBrain age em qualquer site sem perguntar.',
+  'sp.permissions.manage': 'Gerenciar permissões de sites',
+  'sp.permissions.enabled': 'Os prompts de permissão estão ativados novamente.',
   "sp.help.shortcuts_html": "<strong>Atalhos de teclado</strong><br><code>Ctrl/Cmd+/</code> - Concentre a entrada<br><code>Ctrl/Cmd+Shift+A</code> — Mudar para o modo Perguntar<br><code>Ctrl/Cmd+Shift+X</code> — Mudar para o modo Agir<br><code>Ctrl/Cmd+Shift+D</code> — Mudar para o modo Dev<br><code>Escape</code> — Pare a execução ativa<br><code>Escape</code> duas vezes — Interrompa uma gravação ativa",
   "sp.slash.record_transcribe": "Grave e salve uma transcrição do Whisper após parar",
   "sp.slash.unknown_command": "Comando de barra desconhecido {command}. Use /help para ver os comandos disponíveis.",

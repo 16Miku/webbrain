@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 이 대화에서 <strong>API 변경이 허용</strong>되었습니다. 에이전트는 이제 UI보다 API가 더 안정적이라고 판단할 때 fetch_url과 execute_js를 통해 POST/PUT/PATCH/DELETE를 사용할 수 있습니다. 기본적으로는 UI 우선 방침을 유지합니다. 이 플래그는 대화를 초기화하면 해제됩니다.',
   'sp.permissions.disabled_html': '⚠️ <strong>권한 확인이 꺼져 있습니다.</strong> WebBrain은 클릭, 입력, 이동, JavaScript 실행, 업로드, 다운로드, 녹화, 예약 작업을 미리 묻지 않고 수행합니다. 설정 → 권한 → 중요 작업 전에 확인에서 다시 활성화하세요.',
+  'sp.permissions.button': '권한 확인: 켜짐',
+  'sp.permissions.button_off': '권한 확인: 꺼짐',
+  'sp.permissions.gate_desc': 'WebBrain은 사이트에서 처음으로 클릭, 입력, 다운로드 또는 코드 실행을 할 때 확인을 요청합니다.',
+  'sp.permissions.gate_off': '꺼짐: WebBrain이 모든 사이트에서 묻지 않고 작업합니다.',
+  'sp.permissions.manage': '사이트 권한 관리',
+  'sp.permissions.enabled': '권한 확인이 다시 켜졌습니다.',
 
   'tool.read_page': '페이지 읽는 중',
   'tool.gmail_count_results': 'Gmail 결과 계산 중',
@@ -883,6 +889,7 @@ export default {
   'sp.plan.expired': '이 계획은 더 이상 검토 대기 중이 아닙니다 — 실행이 취소되었습니다.',
   'sp.plan.timed_out': '승인 시간이 초과되었습니다',
   'sp.plan.timed_out_hint': '아무 작업도 실행되지 않았습니다. 다시 시도하여 새 계획을 검토하세요.',
+  'sp.plan.auto_run_in': '{time} 후 자동으로 실행됩니다',
   'sp.plan.awaiting_review': '다른 메시지를 보내기 전에 위의 계획을 승인하거나 취소하세요.',
   'sp.plan.intent_unavailable': "두 번 시도했지만 계획에 실패했습니다. 일반 안전장치를 유지한 채 Act 모드로 계속합니다.",
   'sp.slash.busy_only_oob': 'WebBrain이 사용 중일 때 메시지는 대기열에 추가됩니다. /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, /verbose만 슬래시 명령으로 즉시 실행할 수 있습니다.',

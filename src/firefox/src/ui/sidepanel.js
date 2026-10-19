@@ -9,6 +9,7 @@ import { saveScreenshot } from './screenshot-download.js';
  */
 
 import { createQuotaController } from './compass-quota.js';
+import { createTimeoutRing, updateTimeoutRing } from './timeout-ring.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
@@ -662,6 +663,7 @@ uiScaleWriteQueue = loadUiScale(browser.storage.local)
   .catch(() => {});
 uiScaleBtn?.addEventListener('click', () => {
   const willOpen = uiScalePopover?.classList.contains('hidden');
+  if (willOpen) closePermissionGatePopover();
   uiScalePopover?.classList.toggle('hidden', !willOpen);
   uiScaleBtn.setAttribute('aria-expanded', String(willOpen));
 });
@@ -1938,6 +1940,7 @@ browser.storage.local.get([PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY]).then
   actWarningPreferenceLoaded = true;
   updateActWarning();
   updateInputPlaceholder();
+  renderPermissionGateControl();
 }).catch(() => {});
 browser.storage.onChanged.addListener((changes) => {
   if (changes[PERMISSION_EDUCATION_KEY]) {
@@ -1950,6 +1953,7 @@ browser.storage.onChanged.addListener((changes) => {
     askBeforeConsequential = changes[PERMISSION_GATE_KEY].newValue !== false;
     updateActWarning();
     updateInputPlaceholder();
+    renderPermissionGateControl();
   }
   if (changes[ACT_WARNING_DISMISSED_KEY]) {
     actWarningDismissed = changes[ACT_WARNING_DISMISSED_KEY].newValue === true;
@@ -1957,6 +1961,92 @@ browser.storage.onChanged.addListener((changes) => {
     updateActWarning();
   }
 });
+
+
+// Composer switch for the same storage-backed gate as Settings → Permissions and
+// /dangerously-skip-permissions. Turning prompts off posts the command's
+// persistent notice. A permission card already waiting is left for the user to
+// answer: a display switch must never approve a pending action on its own.
+const permissionGateMenu = document.getElementById('permission-gate-menu');
+const permissionGateBtn = document.getElementById('btn-permission-gate');
+const permissionGatePopover = document.getElementById('permission-gate-popover');
+const permissionGateToggle = document.getElementById('toggle-permission-gate-panel');
+const permissionGateOffNote = document.getElementById('permission-gate-off-note');
+const permissionGateSettingsBtn = document.getElementById('btn-permission-gate-settings');
+let permissionGateWriteQueue = Promise.resolve();
+
+function renderPermissionGateControl() {
+  const off = askBeforeConsequential === false;
+  if (permissionGateToggle) permissionGateToggle.checked = !off;
+  permissionGateOffNote?.classList.toggle('hidden', !off);
+  if (!permissionGateBtn) return;
+  permissionGateBtn.classList.toggle('is-gate-off', off);
+  // The generic i18n pass re-reads these keys after a locale change.
+  const key = off ? 'sp.permissions.button_off' : 'sp.permissions.button';
+  permissionGateBtn.dataset.i18nTitle = key;
+  permissionGateBtn.dataset.i18nAriaLabel = key;
+  permissionGateBtn.title = t(key);
+  permissionGateBtn.setAttribute('aria-label', t(key));
+}
+
+function setPermissionGateFromPanel(askBefore) {
+  const write = permissionGateWriteQueue.then(async () => {
+    const changed = askBeforeConsequential !== askBefore;
+    await browser.storage.local.set({ [PERMISSION_GATE_KEY]: askBefore });
+    askBeforeConsequential = askBefore;
+    updateActWarning();
+    updateInputPlaceholder();
+    renderPermissionGateControl();
+    if (!changed) return;
+    if (askBefore) showComposerToast(t('sp.permissions.enabled'));
+    else addPersistentSlashMessage(systemHtml(t('sp.permissions.disabled_html')));
+  });
+  // A failed write leaves the switch showing the stored state.
+  permissionGateWriteQueue = write.catch(() => renderPermissionGateControl());
+  return write;
+}
+
+function closePermissionGatePopover() {
+  if (!permissionGatePopover || permissionGatePopover.classList.contains('hidden')) return false;
+  permissionGatePopover.classList.add('hidden');
+  permissionGateBtn?.setAttribute('aria-expanded', 'false');
+  return true;
+}
+
+async function openPermissionsSettingsPage() {
+  const url = browser.runtime.getURL('src/ui/settings.html#permissions');
+  try {
+    await browser.tabs.create({ url });
+  } catch {
+    browser.runtime.openOptionsPage();
+  }
+}
+
+permissionGateBtn?.addEventListener('click', () => {
+  const willOpen = permissionGatePopover?.classList.contains('hidden');
+  if (willOpen) closeUiScalePopover();
+  permissionGatePopover?.classList.toggle('hidden', !willOpen);
+  permissionGateBtn.setAttribute('aria-expanded', String(willOpen));
+  if (willOpen) permissionGateToggle?.focus({ preventScroll: true });
+});
+permissionGateToggle?.addEventListener('change', () => {
+  setPermissionGateFromPanel(permissionGateToggle.checked).catch(() => {});
+});
+permissionGateSettingsBtn?.addEventListener('click', () => {
+  closePermissionGatePopover();
+  void openPermissionsSettingsPage();
+});
+permissionGatePopover?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  closePermissionGatePopover();
+  permissionGateBtn?.focus();
+});
+document.addEventListener('click', (event) => {
+  if (permissionGateMenu?.contains(event.target)) return;
+  closePermissionGatePopover();
+});
+renderPermissionGateControl();
 
 // An automatically routed run that is acting in the visible tab.
 function autoActionRunVisible() {
@@ -6980,10 +7070,45 @@ function planReviewViewNeedsHydration(view, savedText = '') {
     || String(savedText || '') !== '';
 }
 
+// The plan runs on its own when the review times out. A clock ring at the end of the action row
+// empties over that time; it is rebuilt on a restored card and removed once the review is settled.
+function stopPlanReviewTimeoutRing(card) {
+  if (!card) return;
+  if (card._planReviewRingTimer) {
+    try { clearInterval(card._planReviewRingTimer); } catch {}
+    card._planReviewRingTimer = null;
+  }
+  card.querySelectorAll('.plan-review-actions .timeout-ring').forEach((ring) => ring.remove());
+}
+
+function startPlanReviewTimeoutRing(card) {
+  stopPlanReviewTimeoutRing(card);
+  const deadlineTs = Number(card?.dataset?.deadlineTs);
+  const actions = card?.querySelector?.('.plan-review-actions');
+  if (!actions || !Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
+  const totalMs = Math.max((Number(card.dataset.timeoutSec) || 0) * 1000, deadlineTs - Date.now());
+  if (deadlineTs - Date.now() <= 0 || totalMs <= 0) return;
+  // The ring is the plan card's only countdown, so it is a named timer.
+  const ring = createTimeoutRing({ label: time => t('sp.plan.auto_run_in', { time }) });
+  actions.appendChild(ring);
+  const tick = () => {
+    const remainingMs = deadlineTs - Date.now();
+    if (!card.isConnected || card.classList.contains('plan-reviewed') || remainingMs <= 0) {
+      stopPlanReviewTimeoutRing(card);
+      return;
+    }
+    updateTimeoutRing(ring, remainingMs, totalMs);
+  };
+  // The card is not in the document yet when it is first built, so only the interval checks that.
+  updateTimeoutRing(ring, deadlineTs - Date.now(), totalMs);
+  card._planReviewRingTimer = setInterval(tick, 250);
+}
+
 function bindPlanReviewCard(card) {
   if (!card || card.classList.contains('plan-reviewed')) return;
   const planId = String(card.dataset.planId || '');
   if (!planId) return;
+  startPlanReviewTimeoutRing(card);
   const rawTabId = card.dataset.tabId;
   const tabId = rawTabId != null && rawTabId !== '' ? Number(rawTabId) : currentTabId;
   if (tabId == null || Number.isNaN(tabId)) return;
@@ -11158,9 +11283,18 @@ function startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption
   if (!card || !deadlineTs || deadlineTs <= 0) return;
   clearClarifyCountdown(card);
 
+  // The label says what the timeout does; the ring in the corner shows how much time is left.
   const timerEl = document.createElement('div');
   timerEl.className = 'clarify-timeout';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'clarify-timeout-label';
+  const ringEl = createTimeoutRing();
+  timerEl.append(labelEl, ringEl);
   card.appendChild(timerEl);
+  // The full period (typing renews the deadline to a whole period again); a restored card without
+  // it falls back to what was left when the countdown started.
+  const configuredTotalMs = (Number(card.dataset.timeoutSec) || 0) * 1000;
+  const totalMs = Math.max(configuredTotalMs, Math.max(0, (Number(card.dataset.deadlineTs) || deadlineTs) - Date.now()));
 
   const tick = () => {
     if (card.classList.contains('clarify-answered')) {
@@ -11178,7 +11312,8 @@ function startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption
     // localized label; the countdown names the label.
     const namedButton = continues ? null : Array.from(card.querySelectorAll('.clarify-option'))
       .find(button => button.textContent === timeoutAnswer || (!!button.dataset.value && button.dataset.value === timeoutAnswer));
-    timerEl.textContent = typeof t === 'function'
+    updateTimeoutRing(ringEl, remainingMs, totalMs);
+    labelEl.textContent = typeof t === 'function'
       ? (continues
         ? t('sp.clarify.auto_timeout_continue', { seconds: remainingSec })
         : namedButton
@@ -11483,6 +11618,12 @@ function renderPlanReviewCard(data) {
   if (data.requestId) card.dataset.runRequestId = String(data.requestId);
   if (data.runId) card.dataset.runId = String(data.runId);
   card.dataset.editing = 'false';
+  const planTimeoutSec = Number(data.timeoutSec);
+  const planDeadlineTs = Number(data.deadlineTs);
+  if (Number.isFinite(planTimeoutSec) && planTimeoutSec > 0 && Number.isFinite(planDeadlineTs) && planDeadlineTs > 0) {
+    card.dataset.timeoutSec = String(Math.floor(planTimeoutSec));
+    card.dataset.deadlineTs = String(Math.floor(planDeadlineTs));
+  }
 
   const header = document.createElement('div');
   header.className = 'plan-review-header';
@@ -11622,6 +11763,8 @@ function submitPlanReview(card, tabId, planId, action, editedText) {
         for (const el of card.querySelectorAll('button, textarea')) {
           el.disabled = false;
         }
+        // The submission stopped the ring; the review is still live.
+        startPlanReviewTimeoutRing(card);
         setPlanReviewAwaiting(tabId, true, activeAssistantEl || card.closest('.message.assistant'));
         scrollToBottom();
       }
@@ -14192,6 +14335,11 @@ async function handleGlobalKeydown(e) {
     if (closeUiScalePopover()) {
       e.preventDefault();
       uiScaleBtn?.focus();
+      return;
+    }
+    if (closePermissionGatePopover()) {
+      e.preventDefault();
+      permissionGateBtn?.focus();
       return;
     }
     const slashMenuOpen = !!slashCommandMenuEl && !slashCommandMenuEl.classList.contains('hidden');

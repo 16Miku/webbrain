@@ -328,6 +328,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 本次会话已<strong>启用 API 变更</strong>。当代理判断 API 比界面更可靠时，可以通过 fetch_url 和 execute_js 使用 POST/PUT/PATCH/DELETE。默认仍优先使用界面。重置会话后此标志会清除。',
   'sp.permissions.disabled_html': '⚠️ <strong>权限提示已关闭。</strong>WebBrain 将在不事先询问的情况下点击、输入、导航、运行 JavaScript、上传、下载、录制和安排后续任务。请在设置 → 权限 → 执行重要操作前询问中重新启用。',
+  'sp.permissions.button': '权限提示：开启',
+  'sp.permissions.button_off': '权限提示：关闭',
+  'sp.permissions.gate_desc': 'WebBrain 首次在某个网站上点击、输入、下载或运行代码前会先询问。',
+  'sp.permissions.gate_off': '已关闭：WebBrain 会在所有网站上直接操作，不再询问。',
+  'sp.permissions.manage': '管理网站权限',
+  'sp.permissions.enabled': '权限提示已重新开启。',
 
   'tool.read_page': '正在阅读页面',
   'tool.gmail_count_results': '正在统计 Gmail 结果',
@@ -909,6 +915,7 @@ export default {
   'sp.plan.expired': '该计划不再等待审查 — 运行已取消。',
   'sp.plan.timed_out': '审批已超时',
   'sp.plan.timed_out_hint': '未执行任何操作。请重试以查看新计划。',
+  'sp.plan.auto_run_in': '{time} 后自动运行',
   'sp.plan.awaiting_review': '发送另一条消息前，请先批准或取消上面的计划。',
   'sp.plan.intent_unavailable': "规划在两次尝试后仍失败。系统将保留常规安全措施并继续以 Act 模式运行。",
   'sp.slash.busy_only_oob': 'WebBrain 忙碌时，消息会排队。只有 /help、/progress、/btw、/scratchpad、/memory、/schedule --list、/watch、/dangerously-skip-permissions、/screenshot、/export、/export --traces 和 /verbose 可以作为斜杠命令立即运行。',

@@ -369,6 +369,12 @@ export default {
 
   'sp.api.enabled_html': '🔓 Bu konuşma için <strong>API mutasyonları etkin</strong>. Aracı artık bir adım için API\'nin arayüzden daha güvenilir olduğuna karar verirse fetch_url ve execute_js üzerinden POST/PUT/PATCH/DELETE kullanabilir. Varsayılan yine arayüz öncelikli kalır. Bu bayrak konuşmayı sıfırladığında temizlenir.',
   'sp.permissions.disabled_html': '⚠️ <strong>İzin istemleri KAPALI.</strong> WebBrain, sormadan tıklayacak, yazacak, gezinecek, JavaScript çalıştıracak, dosya yükleyecek, indirecek, kayıt yapacak ve gelecek işleri zamanlayacaktır. Bunu Ayarlar → İzinler → Önemli işlemlerden önce sor ayarlarından yeniden etkinleştirin.',
+  'sp.permissions.button': 'İzin istemleri: açık',
+  'sp.permissions.button_off': 'İzin istemleri: kapalı',
+  'sp.permissions.gate_desc': 'WebBrain bir sitede ilk kez tıklarken, yazarken, indirirken veya kod çalıştırırken izin ister.',
+  'sp.permissions.gate_off': 'Kapalı: WebBrain her sitede sormadan işlem yapar.',
+  'sp.permissions.manage': 'Site izinlerini yönet',
+  'sp.permissions.enabled': 'İzin istemleri yeniden açık.',
 
   'tool.read_page': 'Sayfa okunuyor',
   'tool.gmail_count_results': 'Gmail sonuçları sayılıyor',
@@ -918,6 +924,7 @@ export default {
   'sp.plan.expired': 'Bu plan artık inceleme beklenmiyor — çalıştırma iptal edildi.',
   'sp.plan.timed_out': 'Onay süresi doldu',
   'sp.plan.timed_out_hint': 'Hiçbir işlem yapılmadı. Yeni bir planı incelemek için yeniden deneyin.',
+  'sp.plan.auto_run_in': '{time} içinde kendiliğinden çalışır',
   'sp.plan.awaiting_review': 'Başka bir mesaj göndermeden önce yukarıdaki planı onaylayın veya iptal edin.',
   'sp.plan.intent_unavailable': 'Planlama iki denemeden sonra başarısız oldu. Normal güvenlik kontrolleriyle Act modunda devam ediliyor.',
   'sp.slash.busy_only_oob': 'WebBrain meşgulken mesajlar kuyruğa alınır. Yalnızca /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces ve /verbose slash komutları olarak hemen çalışabilir.',
