@@ -139,6 +139,13 @@ Mastodon post is one WebBrain cannot match after the fact (the home timeline
 shows it, not a page of its own), and "now delete it" used to be refused on
 every click there.
 
+A deletion stays bound to the item's text, with each `<time datetime>`
+element read as its datetime rather than as the relative time it shows.
+Mastodon's "8 min" turning into "9 min" while the user decides on the deletion
+card is the same post, but edited text or another datetime is not. Before
+this, the check after the card refused such a deletion as `resource_changed`,
+on every retry.
+
 The `permission_gate`, `host_check`, `budget`, `infra` and `user_control`
 entries in the registry document checks that are not guards; they are listed
 there so the registry covers every refusal.

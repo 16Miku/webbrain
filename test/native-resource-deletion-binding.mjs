@@ -301,6 +301,46 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await f.page.close(); }
       });
 
+      // QA M1c: the post's relative time ("8 min") ticked over while the
+      // user decided on WebBrain's deletion card, and the confirmation's
+      // fresh probe no longer matched, so the deletion was refused as
+      // resource_changed every time it was retried.
+      await t.test('a relative time ticking over while the deletion waits keeps the same post', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<time datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          assert.equal(detected.actionResource.url, resource);
+          const tick = text => f.page.evaluate(value => {
+            document.querySelector('#record-200 .status__relative-time time').textContent = value;
+          }, text);
+          let probes = 0;
+          agent._detectLikelySubmitAction = async () => { await tick(`${9 + probes++} dk`); return f.probe('#confirm'); };
+          installModelStub(agent);
+          const result = await agent._resourceMutationPreSubmitBlock(1, 'click', { selector: '#confirm' }, detected, provider);
+          assert.equal(result?.actionGuard?.reason || null, null, JSON.stringify(result?.actionGuard));
+          assert.ok(probes >= 1, 'The post was probed again after it ticked over');
+          assert.equal(await f.page.evaluate(() => qaDeletes), 0, 'Preflight never dispatches deletion.');
+          // What the post says, and the moment it was posted, still bind it.
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__content__text--visible p').textContent = 'Edited post'; });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'Edited text is another post');
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__content__text--visible p').textContent = 'Exact owned post 200';
+            document.querySelector('#record-200 .status__relative-time time').setAttribute('datetime', '2026-10-18T18:00:00.000Z');
+          });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'Another moment is another post');
+        } finally { await f.page.close(); }
+      });
+
       for (const variant of ['stable-confirmation', 'stable-direct', 'flip-before-authorization', 'flip-during-authorization']) {
         await t.test(`${variant} is revalidated by production mutation preflight`, async () => {
           const f = await fixture();

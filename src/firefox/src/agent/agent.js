@@ -6372,10 +6372,15 @@ export class Agent extends LoopDetector {
     if (!detected || !['click', 'click_ax', 'iframe_click'].includes(name)
         || Number.isFinite(args?.x) || Number.isFinite(args?.y)) return '';
     const record = detected.actionRecord;
+    // The resource's texts with its timestamps read as their datetime
+    // (stableTextValues), so a relative time ticking over while the user
+    // decides on WebBrain's card does not change the key.
+    const resource = detected.actionResource ? (({ textValues, stableTextValues, ...identity }) => ({ ...identity,
+      textValues: Array.isArray(stableTextValues) ? stableTextValues : textValues }))(detected.actionResource) : null;
     return this._sha256TextSync(JSON.stringify({ taskKey: this._progressTaskKeyHash(tabId), name,
       target: this._formValidationActionKey(name, args), kind: detected.mutationKind || (detected.publicationControl ? 'publish' : 'submit'),
       isSubmit: detected.isSubmit === true, preparatory: detected.resolvedPreparatoryTarget === true,
-      document: detected.frameDocumentIdentity, resource: detected.actionResource || null,
+      document: detected.frameDocumentIdentity, resource,
       snapshot: detected.publicationSnapshot || null,
       fields: this._publicMutationFields(detected.fields), destination: detected.actionUrl || '',
       // A changed row, stage or peer set changes the key, so neither a fresh
@@ -30784,6 +30789,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Other menus/dialogs still make this native transition ambiguous.
       return nodes.filter(node => node.matches(native) || (!node.closest(native) && !node.querySelector(native)));
     };
+    // A record's texts as its identity: a <time datetime> element reads as its
+    // datetime, not as the relative time it renders ("8 min" turns into
+    // "9 min" by itself while a deletion waits on WebBrain's card), so a
+    // ticking timestamp does not make the same post another one.
+    const stableText = node => {
+      let text = '';
+      const pending = [node];
+      while (pending.length) {
+        const current = pending.pop();
+        if (current.nodeType === 3) text += current.data;
+        else if (current.nodeType === 1 && current.matches('time[datetime]')) text += `\u0000${current.getAttribute('datetime')}\u0000`;
+        else if (current.nodeType === 1) for (let index = current.childNodes.length - 1; index >= 0; index -= 1) pending.push(current.childNodes[index]);
+      }
+      return text;
+    };
+    const stableTexts = nodes => [...new Set(nodes.map(stableText).filter(value => value.length <= 25000))];
     const nativeResourceProofs = () => {
       if (args.__wbNativeResourceAdapter !== 'mastodon') return [];
       const signedIn = nativeSignedInAccount();
@@ -30803,12 +30824,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!handle || permalink.origin !== location.origin || permalink.search || permalink.hash
             || account !== `${permalink.origin}/@${handle.toLowerCase()}` || account !== signedIn) continue;
         const nodes = [record, ...record.querySelectorAll('*')];
-        const textValues = [...new Set(nodes.slice(0, 400).filter(nativeIdentityVisible).flatMap(node => [node.innerText, node.textContent])
+        const shown = nodes.slice(0, 400).filter(nativeIdentityVisible);
+        const textValues = [...new Set(shown.flatMap(node => [node.innerText, node.textContent])
           .filter(value => typeof value === 'string' && value.length <= 25000))];
         proofs.push({ url: permalink.href, account, nativeAdapter: 'mastodon',
           taskKey: args.__wbResourceTaskKey, runToken: args.__wbResourceRunToken,
           complete: records.length <= 80 && nodes.length <= 400 && JSON.stringify(textValues).length <= 60000,
-          scopeToken: rememberResourceScope(record, permalink.href), textValues, _record: record });
+          scopeToken: rememberResourceScope(record, permalink.href), textValues, stableTextValues: stableTexts(shown), _record: record });
       }
       return proofs;
     };
@@ -30831,11 +30853,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return /^https?:$/.test(parsed.protocol) && parsed.origin === location.origin ? parsed.href : ''; } catch { return ''; } }).filter(Boolean))];
         if (urls.length !== 1) continue;
         const nodes = [record, ...record.querySelectorAll('*')];
-        const textValues = [...new Set(nodes.slice(0, 400).filter(isVisible).flatMap(node => [node.innerText, node.textContent])
+        const shown = nodes.slice(0, 400).filter(isVisible);
+        const textValues = [...new Set(shown.flatMap(node => [node.innerText, node.textContent])
           .filter(value => typeof value === 'string' && value.length <= 25000))];
         results.push({ url: urls[0], complete: nodes.length <= 400 && records.length <= 80 && JSON.stringify(textValues).length <= 60000,
           scopeToken: rememberResourceScope(record, urls[0]),
-          textValues, _record: record });
+          textValues, stableTextValues: stableTexts(shown), _record: record });
       }
       // Native evidence is authoritative for a native record, including its
       // active account fence; a generic wrapper cannot bypass that fence.
