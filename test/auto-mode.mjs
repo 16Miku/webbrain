@@ -727,16 +727,20 @@ for (const build of BUILDS) {
 
   test(`${build}: a routed turn keeps the one-click switch for the runtime's own Ask limitation`, async () => {
     // The runtime replaces the model's reply with a fixed "switch to Act" text
-    // (a Gmail thread it could not expand); the model cannot hand that off.
-    const limitation = 'I could not expand every message in this thread in Ask mode. Switch to Act mode to expand them.';
+    // when it could not expand a Gmail thread; the model cannot hand that off.
+    // The text comes from the runtime's own function, whichever branch (the
+    // done tool or a plain final answer) substitutes it.
     const settle = () => new Promise(resolve => setImmediate(resolve));
     const f = fixture(Agent, { replies: [done('Unused.')] });
     delete f.agent._maybeEmitAskModeHandoff;
     f.agent._jevClassify = async () => 'act';
-    f.agent._runtimeAskLimitations = new Map([[f.tab, limitation]]);
+    f.agent.readCompletenessStates.set(f.tab, { required: true, complete: false, requiresExpansionEvidence: true, treeCoverageComplete: true });
+    const limitation = f.agent._readCompletenessLimitation(f.tab);
+    assert.match(limitation, /Ask mode cannot expand them/);
+    const emit = (type, data) => f.updates.push({ type, data });
     const routed = { autoModeRouting: { previousMode: null } };
-    await f.agent._maybeEmitAskModeHandoff(f.tab, 'ask', 'Summarize this thread', limitation, f.onUpdate || ((type, data) => f.updates.push({ type, data })), routed);
-    await f.agent._maybeEmitAskModeHandoff(f.tab, 'ask', 'Summarize this thread', 'Would you like me to open it for you?', (type, data) => f.updates.push({ type, data }), routed);
+    await f.agent._maybeEmitAskModeHandoff(f.tab, 'ask', 'Summarize this thread', limitation, emit, routed);
+    await f.agent._maybeEmitAskModeHandoff(f.tab, 'ask', 'Summarize this thread', 'Would you like me to open it for you?', emit, routed);
     await settle();
     assert.deepEqual(f.updates.filter(update => update.type === 'ask_mode_handoff').map(update => update.data), [{ value: 'act' }],
       'only the runtime limitation is offered the switch');

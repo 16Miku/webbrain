@@ -1602,10 +1602,15 @@ export class Agent extends LoopDetector {
   }
 
   _readCompletenessLimitation(tabId) {
-    return readCompletenessLimitation(
+    const limitation = readCompletenessLimitation(
       this.readCompletenessStates.get(tabId),
       this._effectiveRunMode(tabId),
     );
+    // Every path that substitutes this fixed text for the model's answer (the
+    // done tool and the plain-final branches alike) asks here first, so it is
+    // remembered once, for _maybeEmitAskModeHandoff.
+    if (limitation) (this._runtimeAskLimitations ||= new Map()).set(tabId, limitation);
+    return limitation;
   }
 
   // The status texts an observation showed after a submit: the accessibility
@@ -24297,7 +24302,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // is not a conversational offer: the model cannot hand it off, and a retry
     // in Act is the recovery, so a routed turn keeps the one-click switch for it.
     const runtimeLimitation = typeof finalResponse === 'string' && finalResponse !== ''
-      && this._runtimeAskLimitations?.get(tabId) === finalResponse;
+      && finalResponse.includes(this._runtimeAskLimitations?.get(tabId) ?? '\0');
     if (mode !== 'ask'
         || (runOptions?.autoModeRouting && !runtimeLimitation)
         || runOptions?.cloudRun
@@ -47053,7 +47058,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const readFinalLimitation = this._readCompletenessLimitation(tabId);
       if (readFinalLimitation && !this._guardAdvises('read-coverage-ask-limitation', { tabId, decided: false })) {
         finalResponse = readFinalLimitation;
-        (this._runtimeAskLimitations ||= new Map()).set(tabId, readFinalLimitation);
         _traceStatus = 'read_scope_limited';
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('text', { content: finalResponse, replace: true });
@@ -48266,7 +48270,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         const readFinalLimitation = this._readCompletenessLimitation(tabId);
         if (readFinalLimitation && !this._guardAdvises('read-coverage-ask-limitation', { tabId, decided: false })) {
-          (this._runtimeAskLimitations ||= new Map()).set(tabId, readFinalLimitation);
           messages.push({ role: 'assistant', content: readFinalLimitation });
           onUpdate('text', { content: readFinalLimitation, replace: true });
           onUpdate('warning', { message: 'Ask mode could not verify that every Gmail message was expanded.' });
