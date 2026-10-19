@@ -179,8 +179,8 @@ export default {
   'install.chip.shot': 'Full-page na screenshot',
   'install.chip.dl': 'Maramihang pag-download',
   'install.local_model.intro': 'Puwede kang magsimula sa isang opsyonal na lokal na model. Kapag handa ka na, buksan ang WebBrain sa ibaba ng pahinang ito.',
-  'install.local_model.download': 'Mag-download ng lokal na model',
-  'install.local_model.note': 'Opsyonal · mga 1.45 GB · tumatakbo sa device na ito. Puwede mo itong laktawan.',
+  'install.local_model.download': 'Mag-download ng mga lokal na model',
+  'install.local_model.note': 'Opsyonal · mga 1.45 GB, dagdag ang 0.95 GB para sa D1, ang eksperimental na decision model ng WebBrain mula sa Hugging Face. Parehong tumatakbo sa device na ito at gumagamit ng GPU memory nito. Puwede mo itong laktawan.',
   'install.local_model.checking': 'Sinusuri ang browser na ito…',
   'install.local_model.downloading': 'Dina-download ang Ternary Bonsai 2 2B Vision · {progress}%',
   'install.local_model.pause': 'I-pause ang download',
@@ -194,6 +194,12 @@ export default {
   'install.local_model.unsupported': 'Kailangan ng mga lokal na model ang hardware WebGPU, na hindi iniaalok ng browser na ito ngayon.',
   'install.local_model.busy': 'May ibang lokal na model na dina-download. Puwedeng magsimula ito pagkatapos noon.',
   'install.local_model.progress_label': 'Download ng lokal na model',
+  'install.local_model.d1_downloading': 'Dina-download ang D1, ang decision model · {progress}%',
+  'install.local_model.d1_paused': 'Naka-pause ang D1 sa {progress}%.',
+  'install.local_model.d1_ready': 'Handa na ang D1 at sinasagot nito sa device na ito ang mabibilis na tanong ng WebBrain, gaya ng “Tapos na ba ang task na ito?”.',
+  'install.local_model.d1_saved': 'Naka-save ang D1 sa device na ito. Para gamitin ito, piliin ito sa Mga Setting, sa ilalim ng Mga decision model.',
+  'install.local_model.d1_unsupported': 'Hindi kayang patakbuhin ng GPU na ito ang D1, kaya nananatili ang WebBrain sa karaniwang mga check nito.',
+  'install.local_model.d1_error': 'Huminto ang D1: {error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} sa {total}',

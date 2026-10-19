@@ -45269,7 +45269,7 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     const chromeLocale = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales', filename)).href)).default;
     const firefoxLocale = (await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales', filename)).href)).default;
     const installKeys = Object.keys(chromeLocale).filter((key) => key.startsWith('install.'));
-    assert.equal(installKeys.length, 80, `${filename}: install guide should translate every user-facing string`);
+    assert.equal(installKeys.length, 86, `${filename}: install guide should translate every user-facing string`);
     assert.ok(chromeLocale['install.showcase.ask.title'], `${filename}: Ask showcase headline should be translated`);
     assert.ok(chromeLocale['install.showcase.apocalypse.body'], `${filename}: Apocalypse showcase body should be translated`);
     for (const key of [
@@ -45282,13 +45282,22 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       'install.mock.captcha_sent', 'install.mock.captcha_waiting', 'install.mock.captcha_note',
       'install.mock.show_image', 'install.mock.safesocial_note', 'install.mock.tab', 'install.mock.screen',
       ...['intro', 'download', 'note', 'checking', 'downloading', 'pause', 'resume', 'paused', 'working', 'ready',
-        'ready_detail', 'retry', 'error', 'unsupported', 'busy', 'progress_label'].map((key) => `install.local_model.${key}`),
+        'ready_detail', 'retry', 'error', 'unsupported', 'busy', 'progress_label', 'd1_downloading', 'd1_paused',
+        'd1_ready', 'd1_saved', 'd1_unsupported', 'd1_error'].map((key) => `install.local_model.${key}`),
     ]) {
       assert.ok(chromeLocale[key], `${filename}: ${key} should be translated`);
     }
     assert.ok(chromeLocale['install.local_model.downloading'].includes('{progress}'), `${filename}: download progress must keep its placeholder`);
     assert.ok(chromeLocale['install.local_model.paused'].includes('{progress}'), `${filename}: paused progress must keep its placeholder`);
     assert.ok(chromeLocale['install.local_model.error'].includes('{error}'), `${filename}: the download error must keep its placeholder`);
+    for (const key of ['d1_downloading', 'd1_paused']) {
+      assert.ok(chromeLocale[`install.local_model.${key}`].includes('{progress}'), `${filename}: ${key} must keep its placeholder`);
+    }
+    assert.ok(chromeLocale['install.local_model.d1_error'].includes('{error}'), `${filename}: the D1 error must keep its placeholder`);
+    // The note is the D1 consent the click gives: it names D1, says it is
+    // experimental and from Hugging Face, and states both sizes.
+    assert.ok(/D1/.test(chromeLocale['install.local_model.note']) && /Hugging Face/.test(chromeLocale['install.local_model.note']),
+      `${filename}: the note should name D1 and Hugging Face`);
     assert.ok(chromeLocale['install.shot.body_html'].includes('<code>/screenshot --full-page</code>'), `${filename}: the screenshot command must survive translation verbatim`);
     assert.ok(chromeLocale['install.record.body_html'].includes('<code>/record</code>'), `${filename}: the record command must survive translation verbatim`);
     assert.ok(chromeLocale['install.pin.confirm'], `${filename}: pin coachmark should translate its confirmation action`);
@@ -45330,6 +45339,13 @@ test('chrome install page offers the shipped in-browser model with progress inst
   assert.match(css, /\.local-model-note \{[\s\S]*?color: var\(--quiet\);[\s\S]*?font-size: 12px;/, 'the optional note should be small and gray');
   assert.match(english['install.local_model.note'], /^Optional\b/, 'the note should say up front that the download is optional');
   assert.match(english['install.local_model.note'], /1\.45 GB/, 'the note should state the download size of the preset');
+  assert.match(english['install.local_model.note'], /0\.95 GB for D1, WebBrain’s experimental decision model from Hugging Face/,
+    'the note is the D1 consent: its size, that it is experimental, and where it comes from');
+  assert.match(english['install.local_model.note'], /GPU memory/, 'the note states the memory D1 needs, like the Settings consent');
+  assert.match(hero, /id="local-model-button"[^>]*aria-describedby="local-model-status local-model-d1 local-model-note"/,
+    'the button is described by both download lines and the note');
+  assert.match(hero, /<p id="local-model-d1" class="local-model-status local-model-d1" aria-live="polite" hidden><\/p>/,
+    'D1 has its own announced status line, hidden until it starts');
   const preset = webgpu.WEBGPU_MODEL_PRESETS.find((entry) => entry.id === modelId);
   assert.equal(preset.size, '1.45 GB', 'the note quotes the preset size; update the copy if the preset changes');
 
@@ -45538,6 +45554,184 @@ test('chrome install page offers the shipped in-browser model with progress inst
     await settle();
     assert.equal(documentLike.nodes['local-model'].dataset.state, 'ready');
     assert.match(documentLike.nodes['local-model-status'].textContent, /^install\.local_model\.ready_detail\b/);
+    controller.dispose();
+  }
+});
+
+test('chrome install page downloads D1 next to the chat model and says what D1 does', async () => {
+  const install = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/install.js')).href);
+  const webgpu = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/providers/webgpu.js')).href);
+  const d1Config = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/providers/d1-config.js')).href);
+  const english = (await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/en.js')).href)).default;
+  assert.equal(fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/install.js'), 'utf8'),
+    fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/install.js'), 'utf8'), 'install.js stays identical in both builds');
+  const modelId = webgpu.WEBGPU_BONSAI2_VL_2B_MODEL_ID;
+
+  const normalize = install.normalizeD1Snapshot;
+  assert.deepEqual(normalize({ status: 'ready', loaded: true, usedForDecisions: true }), { status: 'ready', progress: 100, error: '', usedForDecisions: true });
+  assert.equal(normalize({ status: 'cached' }).status, 'saved');
+  assert.equal(normalize({ status: 'error', cached: true, error: 'WebGPU device lost' }).status, 'saved', 'a verified cache is still saved');
+  assert.deepEqual(normalize({ status: 'downloading', progress: 41.6 }), { status: 'downloading', progress: 42, error: '', usedForDecisions: false });
+  assert.equal(normalize({ status: 'loading', progress: 100 }).status, 'downloading');
+  assert.equal(normalize({ status: 'stopped', progress: 30 }).status, 'paused');
+  assert.deepEqual(normalize({ status: 'error', error: 'no bytes' }), { status: 'error', progress: 0, error: 'no bytes', usedForDecisions: false });
+  assert.equal(normalize({ status: 'idle' }).status, 'idle');
+  assert.equal(normalize(undefined).status, 'idle');
+  const view = install.d1View;
+  assert.equal(view({ status: 'idle' }).statusKey, '', 'D1 says nothing until it starts');
+  assert.equal(view({ status: 'ready', usedForDecisions: true }).statusKey, 'install.local_model.d1_ready');
+  assert.equal(view({ status: 'saved', usedForDecisions: true }).statusKey, 'install.local_model.d1_ready', 'a kept-loaded D1 loads for its next decision');
+  assert.equal(view({ status: 'ready', usedForDecisions: false }).statusKey, 'install.local_model.d1_saved', 'a profile with another decision model is told where D1 is');
+  assert.equal(view({ status: 'error' }).isError, true);
+  for (const status of ['checking', 'downloading', 'paused', 'ready', 'saved', 'unsupported', 'error']) {
+    const { statusKey } = view({ status, usedForDecisions: status === 'ready' });
+    assert.ok(english[statusKey], `${status}: ${statusKey} should be translated`);
+  }
+
+  function fakeRuntime(responses) {
+    const sent = [];
+    const listeners = [];
+    return {
+      sent, listeners,
+      onMessage: { addListener(fn) { listeners.push(fn); } },
+      async sendMessage(message) {
+        sent.push(message);
+        const key = message.action === 'd1_control' ? `d1_control:${message.command}` : message.action;
+        const reply = responses[key];
+        return typeof reply === 'function' ? reply(message) : reply;
+      },
+    };
+  }
+  function fakeDocument() {
+    const element = (id, extra = {}) => {
+      const attributes = new Map();
+      const classes = new Set();
+      const listeners = new Map();
+      return {
+        id, dataset: {}, hidden: false, disabled: true, textContent: '',
+        style: { setProperty() {} },
+        classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, contains: (name) => classes.has(name) },
+        setAttribute(name, value) { attributes.set(name, String(value)); },
+        removeAttribute(name) { attributes.delete(name); },
+        getAttribute(name) { return attributes.get(name) ?? null; },
+        addEventListener(type, fn) { listeners.set(type, fn); },
+        fire(type) { return listeners.get(type)?.(); },
+        ...extra,
+      };
+    };
+    const nodes = {
+      'local-model': element('local-model', { dataset: { model: modelId, state: 'checking' } }),
+      'local-model-button': element('local-model-button'),
+      'local-model-label': element('local-model-label'),
+      'local-model-progress': element('local-model-progress', { hidden: true }),
+      'local-model-status': element('local-model-status'),
+      'local-model-d1': element('local-model-d1', { hidden: true }),
+    };
+    return { nodes, getElementById: (id) => nodes[id] || null };
+  }
+  // Like the real translator, a string only shows the placeholders it has.
+  const translate = (key, params = {}) => [key,
+    ...['progress', 'error'].filter((name) => String(english[key] || '').includes(`{${name}}`)).map((name) => params[name])].join('|');
+  const settle = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setTimeout(resolve, 0)); };
+  const bonsai = (state) => ({
+    get_webgpu_download_status: (message) => (message.model === modelId ? state.bonsai : { status: 'not-downloaded' }),
+    test_provider: { ok: true },
+    get_providers: { providers: { webgpu: { model: modelId } }, active: 'webbrain_cloud' },
+    start_webgpu_download: () => { state.bonsai = { status: 'downloading', modelId, loaded: 100, total: 1000 }; return { ok: true }; },
+    pause_webgpu_download: () => { state.bonsai = { status: 'paused', modelId, progress: 10 }; return { ok: true }; },
+  });
+
+  {
+    // A new install: one click downloads both; Auto then uses D1 for its checks.
+    const state = { bonsai: { status: 'not-downloaded', modelId }, d1: { status: 'idle' } };
+    const runtime = fakeRuntime({
+      ...bonsai(state),
+      'd1_control:status': () => ({ success: true, result: { ...state.d1, usedForDecisions: state.d1.status === 'ready' } }),
+      'd1_control:probe': { success: true, result: { success: true } },
+      'd1_control:download': () => { state.d1 = { status: 'downloading', progress: 5 }; return { success: true, result: { started: true, ...state.d1 } }; },
+      'd1_control:stop': () => { state.d1 = { status: 'stopped', progress: 30 }; return { success: true, result: { stopped: true } }; },
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    const { nodes } = documentLike;
+    assert.equal(nodes['local-model-d1'].hidden, true, 'nothing about D1 before the click');
+    assert.ok(runtime.sent.some((message) => message.action === 'd1_control' && message.command === 'status'), 'a reopened guide reads D1');
+
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    const d1Messages = runtime.sent.filter((message) => message.action === 'd1_control' && message.command !== 'status');
+    assert.deepEqual(d1Messages.map((message) => message.command), ['probe', 'download'], 'D1 checks the GPU, then downloads');
+    assert.deepEqual(d1Messages[1], { target: 'background', action: 'd1_control', command: 'download', consent: true,
+      consentVersion: d1Config.D1_CONSENT_VERSION }, 'the click is the consent the note asks for, and nothing else');
+    assert.ok(runtime.sent.some((message) => message.action === 'start_webgpu_download'), 'the chat model downloads too');
+    assert.equal(nodes['local-model'].dataset.state, 'downloading');
+    assert.equal(nodes['local-model-d1'].hidden, false);
+    assert.equal(nodes['local-model-d1'].textContent, 'install.local_model.d1_downloading|5');
+
+    // Pause stops both; resume starts both again.
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.ok(runtime.sent.some((message) => message.action === 'd1_control' && message.command === 'stop'));
+    assert.ok(runtime.sent.some((message) => message.action === 'pause_webgpu_download'));
+    assert.equal(nodes['local-model-d1'].textContent, 'install.local_model.d1_paused|30');
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.equal(runtime.sent.filter((message) => message.action === 'd1_control' && message.command === 'download').length, 2,
+      'resume downloads what D1 still lacks');
+
+    state.d1 = { status: 'ready', loaded: true };
+    await controller.d1.refresh();
+    assert.equal(nodes['local-model-d1'].textContent, 'install.local_model.d1_ready');
+    controller.dispose();
+  }
+
+  {
+    // A GPU D1 cannot use: say so, and the chat model still downloads.
+    const state = { bonsai: { status: 'not-downloaded', modelId } };
+    const runtime = fakeRuntime({
+      ...bonsai(state),
+      'd1_control:status': { success: true, result: { status: 'idle', usedForDecisions: false } },
+      'd1_control:probe': { success: false, error: 'D1 requires hardware WebGPU, not a software adapter.' },
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    await documentLike.nodes['local-model-button'].fire('click');
+    await settle();
+    assert.ok(!runtime.sent.some((message) => message.action === 'd1_control' && message.command === 'download'), 'nothing downloads that cannot run');
+    assert.ok(runtime.sent.some((message) => message.action === 'start_webgpu_download'));
+    assert.equal(documentLike.nodes['local-model-d1'].textContent, 'install.local_model.d1_unsupported');
+    controller.dispose();
+  }
+
+  {
+    // No hardware WebGPU at all: D1 is not even checked.
+    const runtime = fakeRuntime({
+      get_webgpu_download_status: { status: 'not-downloaded', modelId },
+      test_provider: { ok: false, error: 'Hardware WebGPU is unavailable.' },
+      'd1_control:status': { success: true, result: { status: 'idle' } },
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    await documentLike.nodes['local-model-button'].fire('click');
+    await settle();
+    assert.ok(!runtime.sent.some((message) => message.action === 'd1_control' && message.command !== 'status'));
+    assert.equal(documentLike.nodes['local-model-d1'].hidden, true);
+    controller.dispose();
+  }
+
+  {
+    // Compass's managed model, or a saved choice, answers instead: D1 is saved, and the guide says where to choose it.
+    const runtime = fakeRuntime({
+      get_webgpu_download_status: { status: 'ready', ready: true, modelId },
+      'd1_control:status': { success: true, result: { status: 'ready', loaded: true, usedForDecisions: false } },
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    assert.equal(documentLike.nodes['local-model-d1'].textContent, 'install.local_model.d1_saved');
     controller.dispose();
   }
 });

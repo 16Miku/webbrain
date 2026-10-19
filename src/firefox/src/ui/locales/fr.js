@@ -179,8 +179,8 @@ export default {
   'install.chip.shot': 'Captures de page entière',
   'install.chip.dl': 'Téléchargements groupés',
   'install.local_model.intro': 'Commencez par un modèle local facultatif. Quand vous êtes prêt, ouvrez WebBrain en bas de cette page.',
-  'install.local_model.download': 'Télécharger un modèle local',
-  'install.local_model.note': 'Facultatif · environ 1,45 Go · s’exécute sur cet appareil. Vous pouvez passer cette étape.',
+  'install.local_model.download': 'Télécharger les modèles locaux',
+  'install.local_model.note': 'Facultatif · environ 1,45 Go, plus 0,95 Go pour D1, le modèle de décision expérimental de WebBrain, depuis Hugging Face. Les deux s’exécutent sur cet appareil et utilisent sa mémoire GPU. Vous pouvez passer cette étape.',
   'install.local_model.checking': 'Vérification de ce navigateur…',
   'install.local_model.downloading': 'Téléchargement de Ternary Bonsai 2 2B Vision · {progress} %',
   'install.local_model.pause': 'Mettre en pause',
@@ -194,6 +194,12 @@ export default {
   'install.local_model.unsupported': 'Les modèles locaux nécessitent WebGPU matériel, que ce navigateur ne propose pas pour le moment.',
   'install.local_model.busy': 'Un autre modèle local est en cours de téléchargement. Celui-ci pourra démarrer ensuite.',
   'install.local_model.progress_label': 'Téléchargement du modèle local',
+  'install.local_model.d1_downloading': 'Téléchargement de D1, le modèle de décision · {progress} %',
+  'install.local_model.d1_paused': 'D1 en pause à {progress} %.',
+  'install.local_model.d1_ready': 'D1 est prêt et répond sur cet appareil aux questions rapides de WebBrain, comme « Cette tâche est-elle terminée ? ».',
+  'install.local_model.d1_saved': 'D1 est enregistré sur cet appareil. Pour l’utiliser, choisissez-le dans les Paramètres, sous Modèles de décision.',
+  'install.local_model.d1_unsupported': 'Ce GPU ne peut pas exécuter D1 : WebBrain garde ses vérifications habituelles.',
+  'install.local_model.d1_error': 'D1 s’est arrêté : {error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} sur {total}',

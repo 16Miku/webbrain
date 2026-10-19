@@ -1,6 +1,7 @@
 import { DECISION_MODE_KEY, DECISION_SETTINGS_KEYS, materializeLegacyDecisionFeatures, DEFAULT_DECISION_MODEL, resolveDecisionConfig, resolveDecisionMode } from '../agent/decision-config.js';
 import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
-import { D1_MODEL_ID } from '../providers/d1-config.js';
+import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_MODEL_ID } from '../providers/d1-config.js';
+import { d1LocalAssistReady } from '../agent/decision-availability.js';
 import { initD1Settings } from './d1-settings.js';
 /**
  * WebBrain Settings pages — settings.html (preferences, budgets, memory,
@@ -245,43 +246,62 @@ if (globalThis.browser?.storage?.onChanged) {
   browser.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes.strictSecretMode) return;
     strictSecretModeOn = changes.strictSecretMode.newValue === true;
-    syncDecisionStatus();
+    void syncDecisionStatus();
   });
 }
-function syncDecisionStatus() {
+let decisionStatusSequence = 0;
+async function syncDecisionStatus() {
   if (!decisionModeInputs.length) return;
   const mode = selectedDecisionMode();
   for (const description of document.querySelectorAll('[data-decision-mode-desc]')) description.hidden = description.dataset.decisionModeDesc !== mode;
   const configured = document.getElementById('decision-configured');
   if (configured) configured.hidden = mode !== 'on';
   if (btnSaveSystemOne) btnSaveSystemOne.hidden = mode !== 'on';
-  // Test runs here, so only On has something it can check.
-  if (btnTestSystemOne) btnTestSystemOne.hidden = mode !== 'on';
   const status = document.getElementById('decision-auto-status');
-  if (!status) return;
-  status.hidden = mode !== 'auto';
-  if (mode !== 'auto') return;
+  const sequence = ++decisionStatusSequence;
+  if (mode !== 'auto') {
+    if (status) status.hidden = true;
+    // Test runs here, so On has something it can check.
+    if (btnTestSystemOne) btnTestSystemOne.hidden = mode !== 'on';
+    return;
+  }
   // Strict Secret Mode keeps page content away from every decision model, so Auto has nothing to use.
   const strict = strictSecretModeOn;
   const compass = !strict && activeProviderIsCompass();
-  const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : 'st.decision.status.none_firefox';
-  status.dataset.i18n = key;
-  status.dataset.state = compass ? 'active' : 'inactive';
-  status.textContent = t(key);
+  // Without Compass, Auto uses D1 once it is downloaded (decision-availability.js).
+  const local = !strict && !compass
+    && (await browser.storage.local.get(D1_CONSENT_KEY).catch(() => ({})))?.[D1_CONSENT_KEY] === D1_CONSENT_VERSION
+    && await d1LocalAssistReady();
+  if (sequence !== decisionStatusSequence || selectedDecisionMode() !== 'auto') return;
+  const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : local ? 'st.decision.status.local' : 'st.decision.status.none_firefox';
+  if (status) {
+    status.dataset.i18n = key;
+    status.dataset.state = compass || local ? 'active' : 'inactive';
+    status.textContent = t(key);
+    status.hidden = false;
+  }
+  // Test runs here in the browser, so it can check D1 but not Compass's
+  // managed model.
+  if (btnTestSystemOne) btnTestSystemOne.hidden = !local;
 }
 for (const input of decisionModeInputs) {
   input.addEventListener('change', async () => {
     if (!input.checked) return;
     const mode = input.value;
-    syncDecisionStatus();
+    void syncDecisionStatus();
     // The mode applies at once; On's provider fields still use Save.
     // A pre-mode On profile shows its stored switches; keep them when the explicit mode replaces that reading.
     const legacyFeatures = materializeLegacyDecisionFeatures(await browser.storage.local.get(DECISION_SETTINGS_KEYS));
     await browser.storage.local.set({ ...legacyFeatures, [DECISION_MODE_KEY]: mode, systemOneEnabled: mode === 'on' });
-    if (mode !== 'on') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    // Off ends D1's Download or Load; Auto keeps it, since Auto uses a
+    // downloaded D1 while Compass is not the chat provider.
+    if (mode === 'off') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     showSystemOneResult('ok', t('st.providers.saved'));
   });
 }
+// A download in another tab or Settings section changes what Auto uses.
+globalThis.addEventListener?.('focus', () => { void syncDecisionStatus(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void syncDecisionStatus(); });
 
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
 const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
@@ -693,7 +713,7 @@ async function init() {
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = decisionConfig.apiKey;
     if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
     if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
-    syncDecisionStatus();
+    void syncDecisionStatus();
     updateSystemOneThresholdLabels();
   }
 
@@ -744,7 +764,7 @@ async function init() {
     providersData = res.providers;
     activeProviderId = res.active;
     renderProviders();
-    syncDecisionStatus();
+    void syncDecisionStatus();
   }
   // Tooling (UI tests, docs screenshots) waits for this before reading the page.
   document.documentElement.dataset.settingsReady = 'true';
@@ -1466,7 +1486,7 @@ btnResetCostSpend?.addEventListener('click', async () => {
 
 strictSecretToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ strictSecretMode: strictSecretToggle.checked }).catch(() => {});
-  syncDecisionStatus();
+  void syncDecisionStatus();
 });
 
 strictGuardsToggle?.addEventListener('change', async () => {
@@ -1571,7 +1591,7 @@ if (btnClearSystemOne) {
     await refreshD1Settings();
     // D1's provider switch unchecks Verify completion; Reset restores On's default.
     decisionDoneToggle.checked = true;
-    syncDecisionStatus();
+    await syncDecisionStatus();
     showSystemOneResult('ok', t('st.decision.reset_done'));
   });
 }
@@ -2773,7 +2793,7 @@ async function refreshWebbrainPaymentNotice() {
 function renderProviders() {
   if (!providersContainer) return;
   providersContainer.innerHTML = '';
-  syncDecisionStatus();
+  void syncDecisionStatus();
 
   // Field definitions reference i18n keys (labelKey) so switching languages
   // re-renders with translated labels. Placeholders stay as raw values —
@@ -3941,7 +3961,7 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
 function refreshProviderCardStatus(id) {
   // Saving a provider marks it configured without rebuilding the list. Keep
   // the Active pill in sync even if the card disappeared during the request.
-  syncDecisionStatus();
+  void syncDecisionStatus();
   refreshActiveProviderFilterCount();
   const card = document.querySelector(`.provider-card[data-provider-id="${id}"]`);
   if (!card) return;

@@ -179,8 +179,8 @@ export default {
   'install.chip.shot': 'Знімки всієї сторінки',
   'install.chip.dl': 'Масове завантаження',
   'install.local_model.intro': 'Для початку можна завантажити локальну модель — це необов’язково. Коли будете готові, відкрийте WebBrain унизу цієї сторінки.',
-  'install.local_model.download': 'Завантажити локальну модель',
-  'install.local_model.note': 'Необов’язково · близько 1,45 ГБ · працює на цьому пристрої. Цей крок можна пропустити.',
+  'install.local_model.download': 'Завантажити локальні моделі',
+  'install.local_model.note': 'Необов’язково · близько 1,45 ГБ і ще 0,95 ГБ для D1 — експериментальної моделі рішень WebBrain з Hugging Face. Обидві працюють на цьому пристрої й використовують пам’ять його GPU. Цей крок можна пропустити.',
   'install.local_model.checking': 'Перевіряємо цей браузер…',
   'install.local_model.downloading': 'Завантаження Ternary Bonsai 2 2B Vision · {progress}%',
   'install.local_model.pause': 'Призупинити завантаження',
@@ -194,6 +194,12 @@ export default {
   'install.local_model.unsupported': 'Локальним моделям потрібен апаратний WebGPU, якого цей браузер зараз не надає.',
   'install.local_model.busy': 'Зараз завантажується інша локальна модель. Ця почнеться після неї.',
   'install.local_model.progress_label': 'Завантаження локальної моделі',
+  'install.local_model.d1_downloading': 'Завантаження D1, моделі рішень · {progress}%',
+  'install.local_model.d1_paused': 'D1 призупинено на {progress}%.',
+  'install.local_model.d1_ready': 'D1 готова й просто на цьому пристрої відповідає на короткі запитання WebBrain, як-от «Завдання виконано?».',
+  'install.local_model.d1_saved': 'D1 збережено на цьому пристрої. Щоб її використовувати, виберіть її в Налаштуваннях, у розділі «Моделі рішень».',
+  'install.local_model.d1_unsupported': 'Цей GPU не може запустити D1, тож WebBrain лишає свої звичайні перевірки.',
+  'install.local_model.d1_error': 'D1 зупинилася: {error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} з {total}',

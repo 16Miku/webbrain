@@ -26,9 +26,32 @@ function withBonsaiCache(downloaded, fn) {
   });
 }
 
+// D1 after a finished download: the experimental-model consent, the stored
+// Load request and the package's ready marker in its OPFS directory.
+async function withD1Download(pin, { consent = true, keepLoaded = true, marker = true } = {}, fn) {
+  const savedNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const savedGet = area.get;
+  const reads = [];
+  area.get = async keys => {
+    const wanted = keys == null ? [] : Array.isArray(keys) ? keys : [keys];
+    return Object.fromEntries(wanted.filter(key => key === pin.D1_KEEP_LOADED_KEY && keepLoaded).map(key => [key, true]));
+  };
+  const directory = { async getFileHandle(name) {
+    reads.push(name);
+    if (!marker) throw new Error('NotFoundError');
+    return { getFile: async () => ({ text: async () => JSON.stringify({ revision: pin.D1_RELEASE.revision, manifestSha256: pin.D1_RELEASE.manifestSha256 }) }) };
+  } };
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { storage: { getDirectory: async () => ({ getDirectoryHandle: async () => directory }) } } });
+  try { return await fn({ reads, consent: consent ? { [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION } : {} }); } finally {
+    area.get = savedGet;
+    if (savedNavigator) Object.defineProperty(globalThis, 'navigator', savedNavigator); else delete globalThis.navigator;
+  }
+}
+
 for (const build of ['chrome', 'firefox']) {
   const config = await import(`../src/${build}/src/agent/decision-config.js`);
   const availability = await import(`../src/${build}/src/agent/decision-availability.js`);
+  const pin = await import(`../src/${build}/src/providers/d1-config.js`);
   const transfer = await import(`../src/${build}/src/config-transfer.js`);
   const scheduler = await import(`../src/${build}/src/agent/scheduler.js`);
 
@@ -188,6 +211,84 @@ for (const build of ['chrome', 'firefox']) {
     await withBonsaiCache(false, async () => {
       assert.equal((await availability.resolveCurrentDecisionConfig({})).enabled, false);
     });
+  });
+
+  test(`${build}: Auto uses a downloaded D1 for completion and scheduled checks only, never over Compass or a saved choice`, async () => {
+    const consent = { [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION };
+    const local = config.resolveDecisionConfig({ ...consent, decisionVisionMode: 'off', decisionProvider: 'openrouter', systemOneFastBrowser: true }, null, { localAssistReady: true });
+    assert.equal(local.provider, 'webgpu_d1'); assert.equal(local.source, 'local_assist'); assert.equal(local.mode, 'auto');
+    assert.equal(local.model, pin.D1_MODEL_ID); assert.equal(local.enabled, true); assert.equal(local.local, true);
+    assert.equal(local.supportsVision, true, "another provider's image setting does not blind D1");
+    assert.equal(local.requiresIndependentSuccessConfirmation, true, 'a positive D1 completion still needs independent proof');
+    assert.deepEqual(local.features, { ...NO_FEATURES, done: true, watch: true, completion: true },
+      'fast classifications, fast browser actions and semantic decisions stay with On');
+    assert.equal(local.threshold, .9);
+    // The download alone, or consent alone, is not enough; Compass, Off and On keep their own answer.
+    assert.equal(config.resolveDecisionConfig(consent).source, 'none');
+    assert.equal(config.resolveDecisionConfig({}, null, { localAssistReady: true }).source, 'none', 'no consent, no D1');
+    assert.equal(config.resolveDecisionConfig(consent, COMPASS, { localAssistReady: true }).provider, 'compass');
+    assert.equal(config.resolveDecisionConfig({ ...consent, decisionMode: 'off' }, null, { localAssistReady: true }).enabled, false);
+    const on = config.resolveDecisionConfig({ ...consent, decisionMode: 'on', decisionProvider: 'typesafe', typesafeApiKey: 'ts-key' }, null, { localAssistReady: true });
+    assert.equal(on.provider, 'typesafe'); assert.equal(on.source, 'configured');
+    assert.equal(config.decisionNeedsLocalAssist(consent), true);
+    for (const [stored, compass] of [[{}, null], [consent, COMPASS], [{ ...consent, decisionMode: 'on' }, null], [{ ...consent, decisionMode: 'off' }, null], [{ ...consent, systemOneEnabled: true }, null]]) {
+      assert.equal(config.decisionNeedsLocalAssist(stored, compass), false, JSON.stringify([stored, compass]));
+    }
+  });
+
+  test(`${build}: the current configuration reads D1's download only when Auto could use it`, async () => {
+    await withD1Download(pin, {}, async ({ reads, consent }) => {
+      const auto = await availability.resolveCurrentDecisionConfig(consent);
+      assert.equal(auto.provider, 'webgpu_d1'); assert.equal(auto.source, 'local_assist');
+      assert.deepEqual(reads, ['ready.json'], 'one marker read, no Worker or GPU');
+      reads.length = 0;
+      assert.equal((await availability.resolveCurrentDecisionConfig(consent, COMPASS)).provider, 'compass');
+      await availability.resolveCurrentDecisionConfig({ ...consent, decisionMode: 'off' });
+      await availability.resolveCurrentDecisionConfig({ ...consent, decisionMode: 'on', decisionProvider: 'local' });
+      assert.equal((await availability.resolveCurrentDecisionConfig({})).source, 'none');
+      assert.deepEqual(reads, [], 'Compass, Off, On and a profile without consent never look');
+    });
+    await withD1Download(pin, { keepLoaded: false }, async ({ reads, consent }) => {
+      assert.equal((await availability.resolveCurrentDecisionConfig(consent)).source, 'none', 'Unload, Remove and Off end what Auto uses');
+      assert.deepEqual(reads, []);
+    });
+    await withD1Download(pin, { marker: false }, async ({ consent }) => {
+      assert.equal((await availability.resolveCurrentDecisionConfig(consent)).source, 'none', 'a download that never finished');
+    });
+    await withBonsaiCache(true, async lookups => {
+      await availability.resolveCurrentDecisionConfig({ [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION });
+      assert.equal(lookups.length, 0, 'the chat/vision model is never looked up');
+    });
+  });
+
+  test(`${build}: scheduled checks and agent decisions use Auto's D1 for its own checks only`, async () => {
+    let calls = 0;
+    const judge = { evaluate: async args => { calls++; assert.equal(args.config.provider, 'webgpu_d1'); return { model: pin.D1_MODEL_ID, answers: { condition_met: { noul: .95 }, task_complete: { noul: .95 }, task_completeness: { score: 2 } } }; } };
+    const h = makeSchedulerHarness(scheduler, { systemOneJudge: judge });
+    const evidence = { observations: [{ data: 'Status: done' }] };
+    await withD1Download(pin, {}, async ({ consent }) => {
+      const run = (source, runMeta = {}) => h.manager._evaluateSystemOne({ source, prompt: 'Watch status', tabId: 77 }, '', 'success', { settings: consent, evidence, ...runMeta });
+      assert.equal((await run('watch')).decision, 'keep', 'Auto checks a watch with the downloaded D1');
+      assert.equal((await run('scheduled')).decision, 'keep');
+      assert.equal((await run('watch', { compass: COMPASS })).reason, 'disabled', 'Compass keeps watches with the main model');
+      assert.equal(calls, 2);
+    });
+    const saved = globalThis.chrome;
+    const store = { [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION };
+    try {
+      await withD1Download(pin, {}, async () => {
+        const download = globalThis.chrome.storage.local.get;
+        const local = { get: async keys => ({ ...store, ...await download(keys) }), set: async values => Object.assign(store, values) };
+        globalThis.chrome = globalThis.browser = { ...saved, storage: { local, session: local } };
+        const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+        const agent = new Agent({ getActive: () => ({ config: {} }) });
+        assert.equal((await agent._jevSettings(1, { config: {} }, 'done'))?.decisionConfig.provider, 'webgpu_d1');
+        for (const feature of ['semantic', 'classifications', 'browser']) assert.equal(await agent._jevSettings(1, { config: {} }, feature), null, feature);
+        assert.equal(await agent._jevSettings(1, { config: { providerName: 'webbrain-cloud', baseUrl: COMPASS.baseUrl } }, 'watch'), null, 'Compass first');
+      });
+    } finally {
+      globalThis.chrome = globalThis.browser = saved;
+    }
   });
 
   test(`${build}: agent decision paths ask for their own decision`, async () => {

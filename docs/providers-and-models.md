@@ -65,15 +65,20 @@ finished, did a watch find what it waited for, what does a request say about an
 action) so the chat model does not have to. The Decision tab of the Providers
 page asks one question first:
 
-- **Auto** (default) needs no setup. In Chrome it uses Ternary Bonsai 2 2B
-  Vision once that preset is downloaded (Providers → WebGPU, the install page or
-  Apocalypse Mode), for completion checks and scheduled watch and completion
-  checks only. While Compass is the chat provider, Compass's managed decision
-  model answers instead, as before. Otherwise no decision model is used.
-  Readiness is the WebGPU worker's ready marker in Cache Storage
-  (`providers/webgpu-model-cache.js`), read without starting the offscreen
-  document. Firefox has no in-browser model, so Auto there means Compass or
-  nothing.
+- **Auto** (default) needs no setup. It uses D1 (below) once D1 is
+  downloaded on this device, for completion checks and scheduled watch and
+  completion checks only. The Chrome install guide's **Download local models**
+  button downloads it next to Ternary Bonsai 2 2B Vision; **Download and load**
+  under On → D1 does too, in both browsers. D1 serves Auto while that Download
+  or Load stands: **Unload**, **Remove cached model** and Off end it. While
+  Compass is the chat provider, Compass's managed decision model answers
+  instead, as before. Otherwise no decision model is used. Readiness
+  (`agent/decision-availability.js`) is D1's experimental-model consent, the
+  stored Load request and the package's ready marker in its OPFS directory
+  (`providers/d1-cache.js`), read without starting the offscreen document,
+  the Worker or the GPU. A downloaded chat or vision model, Ternary Bonsai 2 2B
+  Vision included, never enables decisions
+  ([`webgpu-models.md`](webgpu-models.md#decisions-on-webgpu)).
 - **On** uses the provider configured below for every decision: completion,
   scheduled watches and completions, fast classifications, fast browser
   actions and semantic decisions. The first five each have a switch in the collapsed
@@ -116,7 +121,12 @@ questions over bounded text/JSON state and inline screenshots. Selecting it
 does not download anything. Explicit consent and **Download and load** fetch
 about 0.95 GB of pinned model data and tokenizer/configuration files from
 the [Hugging Face model repository](https://huggingface.co/webbrain-one/d1-browser-decision-fp16)
-into OPFS. The package stores FP16 weights and computes in FP32; it is the
+into OPFS. In Chrome the first-install guide offers the same download: its
+optional **Download local models** button, whose note names D1 and its size,
+is that consent, and it downloads D1 in D1's own Worker while Ternary Bonsai 2
+2B Vision downloads, then loads it. The guide reads D1's status, checks the GPU
+and starts or stops the download (the only `d1_control` commands it may send);
+it writes no decision settings, so Auto then uses D1 as described above. The package stores FP16 weights and computes in FP32; it is the
 [FP32 release](https://huggingface.co/webbrain-one/d1-browser-decision-fp32)
 with its weights rounded once, and answers the same on its held-out test. A
 cached FP32 package from an earlier version is removed on the next download. The repository name is not a production-readiness claim; this provider
@@ -140,11 +150,13 @@ code is not evidence that every browser/GPU is supported. CPU/WASM control and
 shape operators are permitted and explicitly disclosed; it is not a pure-GPU
 claim. **Unload** or disabling outsourcing releases the Worker/GPU resources and
 retains the cache; **Remove cached model** requires the model to be unloaded.
-After **Download and load** or **Load**, D1 stays loaded until
-it is unloaded, removed or switched off on the Providers page: a decision that finds it
-unloaded (a browser restart, a discarded stalled session, a lost GPU device)
-starts one reload from the verified cache in the background and uses the
-fallback chain meanwhile. A reload never downloads. A decision whose caller
+After **Download and load**, **Load** or the install guide's download, D1
+stays loaded until it is unloaded, removed or switched off on the Providers
+page (decisions Off, or another provider saved under On; switching to Auto
+keeps it, since Auto uses it): a decision that finds it unloaded (a browser
+restart, a discarded stalled session, a lost GPU device, or a mode change that
+released the Worker) starts one reload from the verified cache in the
+background and uses the fallback chain meanwhile. A reload never downloads. A decision whose caller
 stops waiting (a judge timeout, Stop) is cancelled in the Worker, skipped if
 it was still queued, and the loaded model stays.
 Page state and screenshots remain untrusted evidence, never instructions.
@@ -193,6 +205,7 @@ existing checks. Strict Secret Mode disables these additional calls.
 | --- | --- | --- |
 | WebBrain Compass (default) | Managed decision model | Active LLM, then existing checks |
 | Explicitly enabled and consented D1, including with Compass | Experimental local D1; no sole success authority | Active LLM, then existing checks |
+| Auto, not Compass, D1 downloaded | Experimental local D1; no sole success authority | Active LLM, then existing checks |
 | Other provider, completion outsourcing enabled | Selected decision model | Active LLM, then existing checks |
 | Other provider, outsourcing disabled or unconfigured | Active LLM | Existing checks |
 

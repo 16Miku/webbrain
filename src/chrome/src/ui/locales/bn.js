@@ -107,8 +107,8 @@ export default {
   'install.chip.shot': 'ফুল-পেজ স্ক্রিনশট',
   'install.chip.dl': 'বাল্ক ডাউনলোড',
   'install.local_model.intro': 'চাইলে আগে একটি ঐচ্ছিক লোকাল মডেল ডাউনলোড করুন। প্রস্তুত হলে এই পেজের নিচ থেকে WebBrain খুলুন।',
-  'install.local_model.download': 'লোকাল মডেল ডাউনলোড করুন',
-  'install.local_model.note': 'ঐচ্ছিক · প্রায় 1.45 GB · এই ডিভাইসেই চলে। এই ধাপটি বাদ দিতে পারেন।',
+  'install.local_model.download': 'লোকাল মডেলগুলো ডাউনলোড করুন',
+  'install.local_model.note': 'ঐচ্ছিক · প্রায় 1.45 GB, সঙ্গে Hugging Face থেকে WebBrain-এর পরীক্ষামূলক ডিসিশন মডেল D1-এর জন্য 0.95 GB। দুটিই এই ডিভাইসে চলে এবং এর GPU মেমরি ব্যবহার করে। এই ধাপটি বাদ দিতে পারেন।',
   'install.local_model.checking': 'এই ব্রাউজার যাচাই করা হচ্ছে…',
   'install.local_model.downloading': 'Ternary Bonsai 2 2B Vision ডাউনলোড হচ্ছে · {progress}%',
   'install.local_model.pause': 'ডাউনলোড বিরতি দিন',
@@ -122,6 +122,12 @@ export default {
   'install.local_model.unsupported': 'লোকাল মডেলের জন্য হার্ডওয়্যার WebGPU দরকার, যা এই ব্রাউজার এখন দিচ্ছে না।',
   'install.local_model.busy': 'আরেকটি লোকাল মডেল ডাউনলোড হচ্ছে। সেটি শেষ হলে এটি শুরু হতে পারবে।',
   'install.local_model.progress_label': 'লোকাল মডেল ডাউনলোড',
+  'install.local_model.d1_downloading': 'ডিসিশন মডেল D1 ডাউনলোড হচ্ছে · {progress}%',
+  'install.local_model.d1_paused': 'D1 {progress}%-এ বিরতি দেওয়া হয়েছে।',
+  'install.local_model.d1_ready': 'D1 প্রস্তুত, এবং এই ডিভাইসেই WebBrain-এর দ্রুত প্রশ্নের উত্তর দেয়, যেমন “এই কাজটি কি শেষ?”।',
+  'install.local_model.d1_saved': 'D1 এই ডিভাইসে সংরক্ষিত আছে। ব্যবহার করতে সেটিংসে ডিসিশন মডেল অংশ থেকে এটি বেছে নিন।',
+  'install.local_model.d1_unsupported': 'এই GPU D1 চালাতে পারে না, তাই WebBrain তার সাধারণ চেকগুলোই রাখে।',
+  'install.local_model.d1_error': 'D1 থেমে গেছে: {error}',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "সংযোগ বিচ্ছিন্ন",

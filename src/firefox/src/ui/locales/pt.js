@@ -107,8 +107,8 @@ export default {
   'install.chip.shot': 'Capturas de página inteira',
   'install.chip.dl': 'Downloads em massa',
   'install.local_model.intro': 'Comece com um modelo local opcional. Quando estiver pronto, abra o WebBrain no fim desta página.',
-  'install.local_model.download': 'Baixar um modelo local',
-  'install.local_model.note': 'Opcional · cerca de 1,45 GB · roda neste dispositivo. Você pode pular esta etapa.',
+  'install.local_model.download': 'Baixar modelos locais',
+  'install.local_model.note': 'Opcional · cerca de 1,45 GB, mais 0,95 GB para o D1, o modelo de decisão experimental do WebBrain, do Hugging Face. Os dois rodam neste dispositivo e usam a memória da GPU. Você pode pular esta etapa.',
   'install.local_model.checking': 'Verificando este navegador…',
   'install.local_model.downloading': 'Baixando Ternary Bonsai 2 2B Vision · {progress}%',
   'install.local_model.pause': 'Pausar download',
@@ -122,6 +122,12 @@ export default {
   'install.local_model.unsupported': 'Modelos locais precisam de WebGPU por hardware, que este navegador não está oferecendo agora.',
   'install.local_model.busy': 'Outro modelo local está sendo baixado. Este pode começar quando ele terminar.',
   'install.local_model.progress_label': 'Download do modelo local',
+  'install.local_model.d1_downloading': 'Baixando o D1, o modelo de decisão · {progress}%',
+  'install.local_model.d1_paused': 'D1 pausado em {progress}%.',
+  'install.local_model.d1_ready': 'O D1 está pronto e responde neste dispositivo às perguntas rápidas do WebBrain, como “Esta tarefa terminou?”.',
+  'install.local_model.d1_saved': 'O D1 está salvo neste dispositivo. Para usá-lo, escolha-o em Configurações, em Modelos de decisão.',
+  'install.local_model.d1_unsupported': 'Esta GPU não consegue rodar o D1, então o WebBrain mantém suas verificações de sempre.',
+  'install.local_model.d1_error': 'O D1 parou: {error}',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "Desconectado",
