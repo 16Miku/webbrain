@@ -241,6 +241,20 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: an unanchored or loosely written page-1 object beside a read is a placeholder`, () => {
+    const agent = new Agent({ getActive: () => null });
+    // No ref_id: the tool never returns such a restart, so the top-level read stands.
+    const partial = agent._repairToolCallArgs('get_accessibility_tree', { filter: 'all', continuationArgs: { maxDepth: 1, page: 1 } });
+    assert.equal(partial.result, undefined);
+    assert.deepEqual(partial.args, { filter: 'all' });
+    for (const page of [' 1 ', '1.0', '01'.slice(1)]) {
+      const loose = agent._repairToolCallArgs('get_accessibility_tree', { filter: 'all', maxDepth: 8,
+        continuationArgs: { filter: 'visible', maxDepth: 15, page } });
+      assert.equal(loose.result, undefined, JSON.stringify(page));
+      assert.equal(loose.args.maxDepth, 8, JSON.stringify(page));
+    }
+  });
+
   test(`${browser}: oversized declared prose windows are bounded without losing the requested document position`, () => {
     const agent = new Agent({ getActive: () => null });
     const schema = getToolsForMode('act', { tier: 'full' })

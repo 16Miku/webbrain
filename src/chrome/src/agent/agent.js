@@ -11325,13 +11325,15 @@ export class Agent extends LoopDetector {
       const restart = continuation && typeof continuation === 'object' && !Array.isArray(continuation)
         && Object.keys(continuation).length > 0 && Object.keys(continuation).every(key => allowed.includes(key))
         && !String(continuation.tree_revision ?? '').trim() && !String(next.tree_revision ?? '').trim()
-        && [undefined, null, '', 1, '1'].includes(continuation.page)
-        // It is a placeholder only beside a read of the call's own that it
-        // disagrees with. A restart nested alone, or beside top-level fields
-        // that agree with it (a partial copy), is the restart the tool
-        // returned (page 1 of an anchored subtree after its revision changed),
-        // and it is the read.
-        && Object.entries(continuation).some(([key, value]) => String(next[key] ?? '').trim() !== '' && !agrees(key, value));
+        && [undefined, null, '', 1].includes(normalized(continuation.page))
+        // It is a placeholder only beside a read of the call's own. A restart
+        // the tool returns is always anchored (it names a ref_id), so one that
+        // names none cannot be genuine and is dropped beside any top-level read;
+        // an anchored one is a placeholder only where the call disagrees with it
+        // (a restart nested alone, or beside fields that agree, is the read).
+        && (String(continuation.ref_id ?? '').trim() === ''
+          ? allowed.some(key => key !== 'tree_revision' && String(next[key] ?? '').trim() !== '')
+          : Object.entries(continuation).some(([key, value]) => String(next[key] ?? '').trim() !== '' && !agrees(key, value)));
       if (restart) {
         delete next.continuationArgs;
         repaired = true;
