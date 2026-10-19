@@ -1,4 +1,5 @@
 const VISION_CONNECTION_TEST_IMAGE_PATH = 'assets/vision-connection-test.png';
+const VISION_COLOR_CONNECTION_TEST_IMAGE_PATH = 'assets/vision-color-connection-test.png';
 const TRANSCRIPTION_CONNECTION_TEST_AUDIO_PATH = 'assets/transcription-connection-test.wav';
 
 async function readPackagedAsset(runtime, relativePath) {
@@ -18,8 +19,9 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
-export async function loadVisionConnectionTestImage(runtime) {
-  const bytes = await readPackagedAsset(runtime, VISION_CONNECTION_TEST_IMAGE_PATH);
+export async function loadVisionConnectionTestImage(runtime, { colorPanels = false } = {}) {
+  const imagePath = colorPanels ? VISION_COLOR_CONNECTION_TEST_IMAGE_PATH : VISION_CONNECTION_TEST_IMAGE_PATH;
+  const bytes = await readPackagedAsset(runtime, imagePath);
   return `data:image/png;base64,${bytesToBase64(bytes)}`;
 }
 
