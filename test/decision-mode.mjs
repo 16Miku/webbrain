@@ -323,3 +323,50 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 }
+
+for (const build of ['chrome', 'firefox']) {
+  test(`${build}: a cached decision-model answer is not reused after the mode or model changes`, async () => {
+    const saved = globalThis.chrome;
+    const store = { decisionMode: 'on', decisionProvider: 'local', decisionModel: 'kev-latest', decisionBaseUrl: 'http://127.0.0.1:8009' };
+    const local = { get: async () => ({ ...store }), set: async values => Object.assign(store, values) };
+    globalThis.chrome = globalThis.browser = { ...saved, storage: { local, session: local } };
+    try {
+      const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+      const { SEMANTIC_QUESTIONS } = await import(`../src/${build}/src/agent/semantic-decisions.js`);
+      const kind = Object.keys(SEMANTIC_QUESTIONS)[0];
+      const choice = SEMANTIC_QUESTIONS[kind].authorizing?.[0] || Object.keys(SEMANTIC_QUESTIONS[kind].choices || {})[0] || 'yes';
+      const agent = new Agent({ getActive: () => ({ config: {} }) });
+      const provider = { config: {} }; // no chat model: whatever is not cached is "unavailable"
+      agent._sha256TextSync = () => 'fixed';
+      agent._semanticDecisionCache = new Map();
+      const ask = () => agent._semanticDecision(1, kind, { request: 'q', page: {} }, { provider });
+      const seed = async (answeredBy) => agent._semanticDecisionCache.set('fixed', {
+        choice, evidence: '', answeredBy,
+        decisionKey: answeredBy === 'decision_model' ? agent._semanticDecisionKey(await agent._jevSettings(1, provider)) : '',
+      });
+      await seed('decision_model');
+      assert.equal((await ask()).source, 'cache', 'still On with the same model');
+      store.decisionMode = 'off';
+      assert.equal((await ask()).source, 'unavailable', 'Off does not continue on the earlier model\'s answer');
+      store.decisionMode = 'on';
+      assert.equal((await ask()).source, 'cache', 'back On with the same model');
+      store.decisionModel = 'another-model';
+      assert.equal((await ask()).source, 'unavailable', 'another decision model asks again');
+      store.decisionModel = 'kev-latest';
+      // An answer the main model gave does not depend on the decision model.
+      await seed('main_model');
+      store.decisionMode = 'off';
+      assert.equal((await ask()).source, 'cache', 'a main-model answer survives Off');
+      // The batch form follows the same rule.
+      store.decisionMode = 'on';
+      await seed('decision_model');
+      agent._sha256TextSync = () => 'fixed';
+      const batch = () => agent._semanticDecisions(1, kind, { request: 'q', items: [{ a: 1 }] }, { provider });
+      assert.equal((await batch())[0].source, 'cache');
+      store.decisionMode = 'off';
+      assert.notEqual((await batch())[0].source, 'cache');
+    } finally {
+      globalThis.chrome = globalThis.browser = saved;
+    }
+  });
+}
