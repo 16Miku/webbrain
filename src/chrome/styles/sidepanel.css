@@ -3455,9 +3455,10 @@ html[dir="rtl"] .composer-toolbar .provider-picker-menu {
 }
 
 /* Narrow panel at a large UI scale (150%/175% leave ~160-200px inside the
-   composer): the model picker takes its own row, so the fixed-width controls
-   (attach, status, permissions, mic, send) can no longer squeeze it to a few
-   pixels. The second row keeps them right-aligned through the spacer. */
+   composer): the model picker fills the first row next to the attach button, so
+   the fixed-width controls (status, permissions, mic, send) wrap to a second row
+   instead of squeezing it to a few pixels. The DOM order is unchanged, so
+   keyboard focus follows the visual order. */
 html[data-ui-scale="150"] .composer-toolbar,
 html[data-ui-scale="175"] .composer-toolbar {
   flex-wrap: wrap;
@@ -3466,8 +3467,8 @@ html[data-ui-scale="175"] .composer-toolbar {
 
 html[data-ui-scale="150"] .composer-toolbar .provider-picker,
 html[data-ui-scale="175"] .composer-toolbar .provider-picker {
-  order: -1;
-  flex: 1 1 100%;
+  /* 100% minus the 28px attach button and the 6px gap */
+  flex: 1 1 calc(100% - 34px);
   max-width: none;
 }
 

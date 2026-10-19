@@ -209,6 +209,15 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         assert.ok(rects.permission.top >= rects.picker.bottom - 1, 'permission and mic controls sit below the picker, not on top of it');
         assert.ok(rects.mic.top >= rects.picker.bottom - 1);
         assert.ok(rects.permission.right <= rects.wrapper.right && rects.mic.right <= rects.wrapper.right, 'controls stay inside the composer');
+        // No visual reordering: tabbing through the toolbar reads top-to-bottom, left-to-right.
+        const order = await page.evaluate(() => [...document.querySelectorAll('.composer-toolbar button:not([hidden]), .composer-toolbar [tabindex]:not([tabindex="-1"])')]
+          .filter((el) => el.getBoundingClientRect().width > 0)
+          .map((el) => { const r = el.getBoundingClientRect(); return { id: el.id, top: Math.round((r.top + r.bottom) / 2), left: Math.round(r.left) }; }));
+        for (let i = 1; i < order.length; i++) {
+          const before = order[i - 1], after = order[i];
+          assert.ok(after.top > before.top + 8 || (Math.abs(after.top - before.top) <= 8 && after.left >= before.left),
+            `DOM order matches visual order (${before.id} then ${after.id})`);
+        }
       }, { width: 360 });
     });
   });
