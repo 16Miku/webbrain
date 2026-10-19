@@ -777,6 +777,21 @@ for (const build of BUILDS) {
     assert.ok(system.indexOf(AUTO_MODE_ASK_NOTE) > SYSTEM_PROMPT_ASK.length, 'the note follows the instructions it replaces');
   });
 
+  test(`${build}: the automatic note follows the WebMCP guidance it replaces`, async () => {
+    // The WebMCP Ask text tells the model to switch to Act/Dev; the note only
+    // supersedes what is above it, so it has to come last.
+    const { SYSTEM_PROMPT_WEBMCP_ASK } = await import(`../src/${build}/src/agent/tools.js`);
+    const { AUTO_MODE_ASK_NOTE } = await import(`../src/${build}/src/agent/auto-mode.js`);
+    const f = fixture(Agent, { replies: [done('Answer.')] });
+    f.agent.webMcpEnabled = true;
+    await f.run('What is on this page?');
+    const system = f.calls[0].messages[0].content;
+    if (SYSTEM_PROMPT_WEBMCP_ASK && system.includes(SYSTEM_PROMPT_WEBMCP_ASK)) {
+      assert.ok(system.indexOf(AUTO_MODE_ASK_NOTE) > system.indexOf(SYSTEM_PROMPT_WEBMCP_ASK), 'the note comes after the WebMCP text');
+    }
+    assert.ok(system.includes(AUTO_MODE_ASK_NOTE));
+  });
+
   test(`${build}: an automatic read-only answer is not offered a one-click switch to Act`, async () => {
     // "Would you like me to open it?" after a routed answer: the user's "yes"
     // is routed and hands the turn off, so the Ask-to-Act button is noise.

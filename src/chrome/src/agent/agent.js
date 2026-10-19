@@ -35017,12 +35017,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (mode === 'dev') {
       prompt += `\n\n${SYSTEM_PROMPT_DEV_APPENDIX.trim()}`;
     }
-    if (mode === 'ask' && tabId != null && this._autoModeEscalationTabs.has(tabId)) {
-      prompt += `\n\n${AUTO_MODE_ASK_NOTE}`;
-    }
     if (this.webMcpEnabled && !lean && (!this._isActionMode(mode) || tier !== 'compact')) {
       const webMcpPrompt = this._isActionMode(mode) ? SYSTEM_PROMPT_WEBMCP_ACT : SYSTEM_PROMPT_WEBMCP_ASK;
       prompt += `\n\n${webMcpPrompt}`;
+    }
+    // Last among the mode guidance, so it also overrides the WebMCP text above.
+    if (mode === 'ask' && tabId != null && this._autoModeEscalationTabs.has(tabId)) {
+      prompt += `\n\n${AUTO_MODE_ASK_NOTE}`;
     }
 
     // Universal cookie/paywall guidance. Always relevant for http(s)
