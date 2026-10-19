@@ -180,7 +180,7 @@ export default {
   'install.chip.dl': '批量下载',
   'install.local_model.intro': '可以先下载一个可选的本地模型。准备好后，在本页底部打开 WebBrain。',
   'install.local_model.download': '下载本地模型',
-  'install.local_model.note': '可选 · 约 1.45 GB · 在此设备上运行。可以跳过此步骤。',
+  'install.local_model.note': '可选 · 约 1.45 GB，另需约 0.95 GB 用于 D1——WebBrain 来自 Hugging Face 的实验性决策模型。两者都在此设备上运行并占用其 GPU 内存。可以跳过此步骤。',
   'install.local_model.checking': '正在检查此浏览器…',
   'install.local_model.downloading': '正在下载 Ternary Bonsai 2 2B Vision · {progress}%',
   'install.local_model.pause': '暂停下载',
@@ -194,6 +194,12 @@ export default {
   'install.local_model.unsupported': '本地模型需要硬件 WebGPU，而此浏览器目前未提供。',
   'install.local_model.busy': '另一个本地模型正在下载。它完成后才能开始此下载。',
   'install.local_model.progress_label': '本地模型下载',
+  'install.local_model.d1_downloading': '正在下载决策模型 D1 · {progress}%',
+  'install.local_model.d1_paused': 'D1 已在 {progress}% 处暂停。',
+  'install.local_model.d1_ready': 'D1 已就绪，会在此设备上回答 WebBrain 的快速问题，例如“这个任务完成了吗？”。',
+  'install.local_model.d1_saved': 'D1 已保存在此设备上。要使用它，请在设置的“决策模型”中选择。',
+  'install.local_model.d1_unsupported': '此 GPU 无法运行 D1，因此 WebBrain 继续使用常规检查。',
+  'install.local_model.d1_error': 'D1 已停止：{error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

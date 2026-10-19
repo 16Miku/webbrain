@@ -180,7 +180,7 @@ export default {
   'install.chip.dl': 'Unduhan massal',
   'install.local_model.intro': 'Mulailah dengan model lokal opsional. Jika sudah siap, buka WebBrain di bagian bawah halaman ini.',
   'install.local_model.download': 'Unduh model lokal',
-  'install.local_model.note': 'Opsional · sekitar 1,45 GB · berjalan di perangkat ini. Anda bisa melewatinya.',
+  'install.local_model.note': 'Opsional · sekitar 1,45 GB, ditambah 0,95 GB untuk D1, model keputusan eksperimental WebBrain dari Hugging Face. Keduanya berjalan di perangkat ini dan memakai memori GPU-nya. Anda bisa melewatinya.',
   'install.local_model.checking': 'Memeriksa browser ini…',
   'install.local_model.downloading': 'Mengunduh Ternary Bonsai 2 2B Vision · {progress}%',
   'install.local_model.pause': 'Jeda unduhan',
@@ -194,6 +194,12 @@ export default {
   'install.local_model.unsupported': 'Model lokal memerlukan WebGPU perangkat keras, yang saat ini tidak tersedia di browser ini.',
   'install.local_model.busy': 'Model lokal lain sedang diunduh. Unduhan ini bisa dimulai setelahnya.',
   'install.local_model.progress_label': 'Unduhan model lokal',
+  'install.local_model.d1_downloading': 'Mengunduh D1, model keputusan · {progress}%',
+  'install.local_model.d1_paused': 'D1 dijeda di {progress}%.',
+  'install.local_model.d1_ready': 'D1 siap dan menjawab pertanyaan cepat WebBrain, seperti “Apakah tugas ini sudah selesai?”, di perangkat ini.',
+  'install.local_model.d1_saved': 'D1 tersimpan di perangkat ini. Untuk memakainya, pilih di Pengaturan, bagian Model keputusan.',
+  'install.local_model.d1_unsupported': 'GPU ini tidak bisa menjalankan D1, jadi WebBrain tetap memakai pemeriksaan biasanya.',
+  'install.local_model.d1_error': 'D1 berhenti: {error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} dari {total}',

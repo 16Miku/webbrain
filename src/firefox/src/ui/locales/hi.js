@@ -107,8 +107,8 @@ export default {
   'install.chip.shot': 'फ़ुल-पेज स्क्रीनशॉट',
   'install.chip.dl': 'बल्क डाउनलोड',
   'install.local_model.intro': 'चाहें तो पहले एक वैकल्पिक लोकल मॉडल डाउनलोड करें। तैयार होने पर इस पेज के नीचे से WebBrain खोलें।',
-  'install.local_model.download': 'लोकल मॉडल डाउनलोड करें',
-  'install.local_model.note': 'वैकल्पिक · लगभग 1.45 GB · इसी डिवाइस पर चलता है। आप इसे छोड़ सकते हैं।',
+  'install.local_model.download': 'लोकल मॉडल्स डाउनलोड करें',
+  'install.local_model.note': 'वैकल्पिक · लगभग 1.45 GB, साथ में Hugging Face से WebBrain के प्रायोगिक निर्णय मॉडल D1 के लिए 0.95 GB। दोनों इसी डिवाइस पर चलते हैं और इसकी GPU मेमोरी इस्तेमाल करते हैं। आप इसे छोड़ सकते हैं।',
   'install.local_model.checking': 'इस ब्राउज़र की जाँच हो रही है…',
   'install.local_model.downloading': 'Ternary Bonsai 2 2B Vision डाउनलोड हो रहा है · {progress}%',
   'install.local_model.pause': 'डाउनलोड रोकें',
@@ -122,6 +122,12 @@ export default {
   'install.local_model.unsupported': 'लोकल मॉडल के लिए हार्डवेयर WebGPU चाहिए, जो यह ब्राउज़र अभी नहीं दे रहा है।',
   'install.local_model.busy': 'एक और लोकल मॉडल डाउनलोड हो रहा है। यह उसके पूरा होने के बाद शुरू हो सकता है।',
   'install.local_model.progress_label': 'लोकल मॉडल डाउनलोड',
+  'install.local_model.d1_downloading': 'निर्णय मॉडल D1 डाउनलोड हो रहा है · {progress}%',
+  'install.local_model.d1_paused': 'D1 को {progress}% पर रोका गया।',
+  'install.local_model.d1_ready': 'D1 तैयार है और इसी डिवाइस पर WebBrain के छोटे सवालों के जवाब देता है, जैसे “क्या यह काम पूरा हो गया?”।',
+  'install.local_model.d1_saved': 'D1 इस डिवाइस पर सहेजा गया है। इसे इस्तेमाल करने के लिए सेटिंग्स में निर्णय मॉडल के अंतर्गत चुनें।',
+  'install.local_model.d1_unsupported': 'यह GPU D1 नहीं चला सकता, इसलिए WebBrain अपनी सामान्य जाँचें जारी रखता है।',
+  'install.local_model.d1_error': 'D1 रुक गया: {error}',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "विच्छेदित",

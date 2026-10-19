@@ -99,3 +99,14 @@ export async function setD1Ready(directory, ready) {
   const writer = await (await directory.getFileHandle('ready.json', { create: true })).createWritable();
   await writer.write(encoder.encode(JSON.stringify({ revision: D1_RELEASE.revision, manifestSha256: D1_RELEASE.manifestSha256 }))); await writer.close();
 }
+
+// Whether the pinned package finished downloading and verifying, from its
+// ready marker alone: no Worker, no GPU, and nothing is created when the
+// directory is missing. Auto's decisions look here (decision-availability.js).
+export async function d1PackageReady(storageManager = globalThis.navigator?.storage) {
+  try {
+    const directory = await (await storageManager.getDirectory()).getDirectoryHandle(currentCacheName());
+    const marker = JSON.parse(await (await (await directory.getFileHandle('ready.json')).getFile()).text());
+    return marker?.revision === D1_RELEASE.revision && marker?.manifestSha256 === D1_RELEASE.manifestSha256;
+  } catch { return false; }
+}

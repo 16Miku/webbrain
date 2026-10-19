@@ -180,7 +180,7 @@ export default {
   'install.chip.dl': '一括ダウンロード',
   'install.local_model.intro': 'まずはオプションのローカルモデルをどうぞ。準備ができたら、このページの一番下から WebBrain を開いてください。',
   'install.local_model.download': 'ローカルモデルをダウンロード',
-  'install.local_model.note': 'オプション · 約 1.45 GB · このデバイス上で動作。スキップしてもかまいません。',
+  'install.local_model.note': 'オプション · 約 1.45 GB に加え、Hugging Face から WebBrain の実験的な判定モデル D1 として約 0.95 GB。どちらもこのデバイス上で動作し、GPU メモリを使います。スキップしてもかまいません。',
   'install.local_model.checking': 'このブラウザーを確認しています…',
   'install.local_model.downloading': 'Ternary Bonsai 2 2B Vision をダウンロード中 · {progress}%',
   'install.local_model.pause': 'ダウンロードを一時停止',
@@ -194,6 +194,12 @@ export default {
   'install.local_model.unsupported': 'ローカルモデルにはハードウェア WebGPU が必要ですが、このブラウザーでは現在利用できません。',
   'install.local_model.busy': '別のローカルモデルをダウンロード中です。完了後にこちらを開始できます。',
   'install.local_model.progress_label': 'ローカルモデルのダウンロード',
+  'install.local_model.d1_downloading': '判定モデル D1 をダウンロード中 · {progress}%',
+  'install.local_model.d1_paused': 'D1 を {progress}% で一時停止しました。',
+  'install.local_model.d1_ready': 'D1 の準備ができました。「このタスクは終わった?」のような WebBrain の簡単な質問に、このデバイス上で答えます。',
+  'install.local_model.d1_saved': 'D1 をこのデバイスに保存しました。使うには、設定の「判定モデル」で選んでください。',
+  'install.local_model.d1_unsupported': 'この GPU では D1 を実行できないため、WebBrain は通常のチェックを続けます。',
+  'install.local_model.d1_error': 'D1 が停止しました: {error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

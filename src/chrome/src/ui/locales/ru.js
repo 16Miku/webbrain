@@ -179,8 +179,8 @@ export default {
   'install.chip.shot': 'Скриншоты всей страницы',
   'install.chip.dl': 'Массовая загрузка',
   'install.local_model.intro': 'Для начала можно скачать локальную модель — это необязательно. Когда будете готовы, откройте WebBrain внизу этой страницы.',
-  'install.local_model.download': 'Скачать локальную модель',
-  'install.local_model.note': 'Необязательно · около 1,45 ГБ · работает на этом устройстве. Этот шаг можно пропустить.',
+  'install.local_model.download': 'Скачать локальные модели',
+  'install.local_model.note': 'Необязательно · около 1,45 ГБ и ещё 0,95 ГБ для D1 — экспериментальной модели решений WebBrain с Hugging Face. Обе работают на этом устройстве и используют память его GPU. Этот шаг можно пропустить.',
   'install.local_model.checking': 'Проверяем этот браузер…',
   'install.local_model.downloading': 'Загрузка Ternary Bonsai 2 2B Vision · {progress}%',
   'install.local_model.pause': 'Приостановить загрузку',
@@ -194,6 +194,12 @@ export default {
   'install.local_model.unsupported': 'Локальным моделям нужен аппаратный WebGPU, а этот браузер сейчас его не предоставляет.',
   'install.local_model.busy': 'Сейчас загружается другая локальная модель. Эта начнётся после неё.',
   'install.local_model.progress_label': 'Загрузка локальной модели',
+  'install.local_model.d1_downloading': 'Загрузка D1, модели решений · {progress}%',
+  'install.local_model.d1_paused': 'D1 приостановлена на {progress}%.',
+  'install.local_model.d1_ready': 'D1 готова и прямо на этом устройстве отвечает на короткие вопросы WebBrain, например «Задача выполнена?».',
+  'install.local_model.d1_saved': 'D1 сохранена на этом устройстве. Чтобы её использовать, выберите её в Настройках, в разделе «Модели решений».',
+  'install.local_model.d1_unsupported': 'Этот GPU не может запустить D1, поэтому WebBrain оставляет свои обычные проверки.',
+  'install.local_model.d1_error': 'D1 остановилась: {error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} из {total}',

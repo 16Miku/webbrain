@@ -215,8 +215,8 @@ export default {
   'install.chip.shot': 'Tam sayfa ekran görüntüleri',
   'install.chip.dl': 'Toplu indirme',
   'install.local_model.intro': 'İstersen önce yerel bir model indir. Hazır olduğunda WebBrain’i bu sayfanın en altından aç.',
-  'install.local_model.download': 'Yerel model indir',
-  'install.local_model.note': 'İsteğe bağlı · yaklaşık 1,45 GB · bu cihazda çalışır. Bu adımı atlayabilirsin.',
+  'install.local_model.download': 'Yerel modelleri indir',
+  'install.local_model.note': 'İsteğe bağlı · yaklaşık 1,45 GB, artı WebBrain’in Hugging Face’ten gelen deneysel karar modeli D1 için 0,95 GB. İkisi de bu cihazda çalışır ve GPU belleğini kullanır. Bu adımı atlayabilirsin.',
   'install.local_model.checking': 'Tarayıcı kontrol ediliyor…',
   'install.local_model.downloading': 'Ternary Bonsai 2 2B Vision indiriliyor · %{progress}',
   'install.local_model.pause': 'İndirmeyi duraklat',
@@ -230,6 +230,12 @@ export default {
   'install.local_model.unsupported': 'Yerel modeller donanım WebGPU desteği ister; bu tarayıcı şu anda bunu sunmuyor.',
   'install.local_model.busy': 'Başka bir yerel model indiriliyor. Bu indirme o bittikten sonra başlayabilir.',
   'install.local_model.progress_label': 'Yerel model indirmesi',
+  'install.local_model.d1_downloading': 'Karar modeli D1 indiriliyor · %{progress}',
+  'install.local_model.d1_paused': 'D1, %{progress} noktasında duraklatıldı.',
+  'install.local_model.d1_ready': 'D1 hazır; WebBrain’in “Bu görev bitti mi?” gibi hızlı sorularını bu cihazda yanıtlıyor.',
+  'install.local_model.d1_saved': 'D1 bu cihaza kaydedildi. Kullanmak için Ayarlar’da Karar modelleri bölümünden seç.',
+  'install.local_model.d1_unsupported': 'Bu GPU D1’i çalıştıramıyor; WebBrain her zamanki kontrollerini sürdürüyor.',
+  'install.local_model.d1_error': 'D1 durdu: {error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

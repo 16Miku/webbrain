@@ -1,4 +1,5 @@
 import { applyDOMTranslations, t } from './i18n.js';
+import { D1_CONSENT_VERSION } from '../providers/d1-config.js';
 import {
   initializeCardSpotlight,
   initializeScenePlayback,
@@ -222,6 +223,151 @@ export async function pointWebgpuProviderAtModel(modelId, { runtime = globalThis
   return true;
 }
 
+// ── D1, the on-device decision model ─────────────────────────────────────
+// The same button downloads D1, WebBrain's experimental decision model, next
+// to the chat model. D1 has its own worker, so both downloads run at once, and
+// D1 loads when its files are in. The click is the consent the note asks for.
+// The guide writes no decision settings: Auto uses a downloaded D1 for its
+// checks while Compass is not the chat provider (decision-availability.js).
+
+const D1_POLL_MS = 1500;
+const D1_POLLING_STATUSES = new Set(['checking', 'downloading']);
+
+export function normalizeD1Snapshot(snapshot = {}) {
+  const raw = String(snapshot?.status || '');
+  const progress = Math.max(0, Math.min(100, Math.round(Number(snapshot?.progress) || 0)));
+  const usedForDecisions = snapshot?.usedForDecisions === true;
+  if (snapshot?.loaded === true || raw === 'ready') return { status: 'ready', progress: 100, error: '', usedForDecisions };
+  // Downloaded and verified but not loaded: a decision loads it again.
+  if (raw === 'cached' || snapshot?.cached === true) return { status: 'saved', progress: 100, error: '', usedForDecisions };
+  if (raw === 'checking') return { status: 'checking', progress: 0, error: '', usedForDecisions };
+  if (['downloading', 'loading'].includes(raw)) return { status: 'downloading', progress, error: '', usedForDecisions };
+  if (raw === 'stopped') return { status: 'paused', progress, error: '', usedForDecisions };
+  if (raw === 'error') return { status: 'error', progress: 0, error: String(snapshot?.error || ''), usedForDecisions };
+  return { status: 'idle', progress: 0, error: '', usedForDecisions };
+}
+
+/** The D1 line for one normalized state; nothing while D1 was never started. */
+export function d1View(state = {}) {
+  switch (state.status) {
+    case 'checking': return { statusKey: 'install.local_model.checking' };
+    case 'downloading': return { statusKey: 'install.local_model.d1_downloading', progress: state.progress };
+    case 'paused': return { statusKey: 'install.local_model.d1_paused', progress: state.progress };
+    // Saved but not loaded yet, D1 loads for the next decision it answers.
+    case 'ready': case 'saved': return { statusKey: state.usedForDecisions ? 'install.local_model.d1_ready' : 'install.local_model.d1_saved' };
+    case 'unsupported': return { statusKey: 'install.local_model.d1_unsupported' };
+    case 'error': return { statusKey: 'install.local_model.d1_error', isError: true };
+    default: return { statusKey: '' };
+  }
+}
+
+/**
+ * The shared button: the chat model's, until that model is ready and needs
+ * nothing more. Then the same button finishes D1's download, so a D1 that is
+ * not downloaded yet, was paused or stopped with an error can still be
+ * started, resumed or retried from the guide.
+ */
+export function localModelButtonView(view, chatStatus, d1State) {
+  if (chatStatus !== 'ready' || !d1State) return view;
+  switch (d1State.status) {
+    case 'idle': return { ...view, labelKey: 'install.local_model.download', action: 'd1-start' };
+    case 'paused': return { ...view, labelKey: 'install.local_model.resume', action: 'd1-start' };
+    case 'error': return { ...view, labelKey: 'install.local_model.retry', action: 'd1-start' };
+    case 'downloading': return { ...view, labelKey: 'install.local_model.pause', action: 'd1-pause' };
+    case 'checking': return { ...view, labelKey: 'install.local_model.download', action: null };
+    default: return view;
+  }
+}
+
+export function initializeD1Download({
+  documentLike = globalThis.document,
+  runtime = globalThis.chrome?.runtime,
+  translate = t,
+  pollMs = D1_POLL_MS,
+  // Called after each state change, so the shared button can follow D1.
+  onChange = null,
+} = {}) {
+  const line = documentLike?.getElementById?.('local-model-d1');
+  if (!line || !runtime?.sendMessage) return null;
+  let state = { status: 'idle', progress: 0, error: '', usedForDecisions: false };
+  let timer = null;
+  let disposed = false;
+  let starting = false;
+  const command = (name, extra = {}) => backgroundCommand(runtime, 'd1_control', { command: name, ...extra });
+
+  const render = () => {
+    const view = d1View(state);
+    line.hidden = !view.statusKey;
+    line.textContent = view.statusKey ? translate(view.statusKey, { progress: view.progress ?? 0, error: state.error || '' }) : '';
+    line.classList?.toggle?.('is-error', view.isError === true);
+  };
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = null;
+    if (!disposed && D1_POLLING_STATUSES.has(state.status)) timer = setTimeout(() => { void refresh(); }, pollMs);
+  };
+  const setState = (next) => {
+    state = { progress: 0, error: '', usedForDecisions: false, ...next };
+    render();
+    schedule();
+    onChange?.();
+  };
+
+  async function refresh() {
+    try {
+      const response = await command('status');
+      // A guide reopened before D1 was ever started stays silent.
+      if (!starting && !disposed) setState(normalizeD1Snapshot(response?.result));
+    } catch {
+      schedule();
+    }
+  }
+
+  async function start() {
+    if (starting || ['checking', 'downloading', 'ready', 'saved'].includes(state.status)) return;
+    starting = true;
+    try {
+      setState({ status: 'checking' });
+      try {
+        await command('probe');
+      } catch (error) {
+        // No GPU D1 can run on: the chat model may still fit.
+        setState({ status: 'unsupported', error: error?.message || String(error) });
+        return;
+      }
+      try {
+        const response = await command('download', { consent: true, consentVersion: D1_CONSENT_VERSION });
+        setState(normalizeD1Snapshot({ status: 'checking', ...response?.result }));
+      } catch (error) {
+        setState({ status: 'error', error: error?.message || String(error) });
+        return;
+      }
+    } finally {
+      starting = false;
+    }
+    await refresh();
+  }
+
+  async function pause() {
+    if (!['checking', 'downloading'].includes(state.status)) return;
+    try { await command('stop'); } catch { /* the next status read tells */ }
+    await refresh();
+  }
+
+  render();
+  void refresh();
+  return {
+    start,
+    pause,
+    refresh,
+    getState: () => ({ ...state }),
+    dispose() {
+      disposed = true;
+      clearTimeout(timer);
+    },
+  };
+}
+
 export function initializeLocalModelDownload({
   documentLike = globalThis.document,
   runtime = globalThis.chrome?.runtime,
@@ -239,14 +385,20 @@ export function initializeLocalModelDownload({
   let inFlight = false;
   let pollTimer = null;
   let disposed = false;
+  let rendered = false;
+  // D1's own changes redraw the button once this controller has drawn it.
+  const d1 = initializeD1Download({ documentLike, runtime, translate, pollMs, onChange: () => { if (rendered) render(); } });
+  const buttonView = () => localModelButtonView(localModelView(state), state.status, d1?.getState());
 
   const render = () => {
-    const view = localModelView(state);
+    rendered = true;
+    const view = buttonView();
     root.dataset.state = state.status;
     if (label) label.textContent = translate(view.labelKey);
     if (button) {
       button.disabled = inFlight || !view.action;
-      if (inFlight || ['checking', 'downloading', 'stopping'].includes(state.status)) button.setAttribute('aria-busy', 'true');
+      const d1Busy = state.status === 'ready' && ['checking', 'downloading'].includes(d1?.getState().status);
+      if (inFlight || d1Busy || ['checking', 'downloading', 'stopping'].includes(state.status)) button.setAttribute('aria-busy', 'true');
       else button.removeAttribute('aria-busy');
     }
     if (bar) {
@@ -285,12 +437,24 @@ export function initializeLocalModelDownload({
   }
 
   button?.addEventListener('click', async () => {
-    const view = localModelView(state);
+    const view = buttonView();
     if (!view.action || inFlight) return;
     inFlight = true;
+    if (view.action === 'd1-start' || view.action === 'd1-pause') {
+      // The chat model is ready; only D1 is downloaded, paused or resumed.
+      render();
+      try {
+        await (view.action === 'd1-start' ? d1.start() : d1.pause());
+      } finally {
+        inFlight = false;
+        render();
+      }
+      return;
+    }
     try {
       if (view.action === 'pause') {
         render();
+        void d1?.pause();
         await backgroundCommand(runtime, 'pause_webgpu_download');
       } else {
         if (view.action === 'start') {
@@ -312,7 +476,13 @@ export function initializeLocalModelDownload({
         } else {
           render();
         }
-        await backgroundCommand(runtime, 'start_webgpu_download', { model: modelId });
+        // D1 downloads alongside, in its own worker; its line reports it. The
+        // button stays busy until both downloads have started, so a Pause
+        // always finds D1's transfer to stop.
+        await Promise.all([
+          d1?.start(),
+          backgroundCommand(runtime, 'start_webgpu_download', { model: modelId }),
+        ]);
       }
     } catch (error) {
       inFlight = false;
@@ -336,9 +506,11 @@ export function initializeLocalModelDownload({
   return {
     getState: () => ({ ...state }),
     refresh,
+    d1,
     dispose() {
       disposed = true;
       clearTimeout(pollTimer);
+      d1?.dispose();
     },
   };
 }

@@ -67,8 +67,15 @@ This is a feature (it makes the agent useful with zero setup) but also the most 
 ### Experimental Local D1 Decisions
 
 D1 is an optional finite-decision provider, not a chat generator or browser
-executor. Explicit consent on the Providers page controls download/load; the
-control handler accepts only that extension page as the sender. Chrome uses its shared offscreen
+executor. Explicit consent controls download/load: the checkbox on the
+Providers page, or the Chrome install guide's optional **Download local
+models** button, whose note names D1, its size and its source. The control
+handler accepts only the extension's own Providers page and, for status, the
+GPU check, download and stop only, its own install guide page; load, unload,
+removal and consent stay on the Providers page. The guide writes no decision
+settings. Auto uses D1 only after that consent, while the download is complete
+and its Load request stands, and never in place of Compass's managed route or a
+saved choice. Chrome uses its shared offscreen
 document and a separate Worker; Firefox attempts its background-page Worker only
 when hardware WebGPU and OPFS are available. Software adapters and inadequate
 buffer limits are rejected, but other capable devices are not declared validated.

@@ -2,9 +2,55 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import vm from 'node:vm';
+
+// One top-level function of a source file, by name.
+function topLevelFunction(source, name) {
+  const start = source.search(new RegExp(`^(?:async )?function ${name}\\(`, 'm'));
+  assert.ok(start >= 0, name);
+  const end = source.indexOf('\n}\n', start);
+  assert.ok(end > start, name);
+  return source.slice(start, end + 2);
+}
+
+// D1 as its Worker leaves a finished download: the stored Load request and the
+// package's ready marker in its OPFS directory. `marker`: 'current', another
+// marker object, 'missing' (no ready.json) or 'no-directory'.
+async function withD1Download(pin, { stored = {}, marker = 'current' } = {}, fn) {
+  const saved = { navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator'), chrome: globalThis.chrome, browser: globalThis.browser };
+  const reads = [];
+  const area = { ...stored };
+  const local = {
+    get: async keys => Object.fromEntries((keys == null ? Object.keys(area) : Array.isArray(keys) ? keys : [keys]).filter(key => key in area).map(key => [key, area[key]])),
+    set: async values => { Object.assign(area, values); },
+  };
+  const api = { storage: { local } };
+  const directory = {
+    async getFileHandle(name, options) {
+      reads.push(['file', name, options]);
+      if (marker === 'missing') throw Object.assign(new Error('missing'), { name: 'NotFoundError' });
+      const value = marker === 'current' ? { revision: pin.D1_RELEASE.revision, manifestSha256: pin.D1_RELEASE.manifestSha256 } : marker;
+      return { getFile: async () => ({ text: async () => JSON.stringify(value) }) };
+    },
+  };
+  const root = {
+    async getDirectoryHandle(name, options) {
+      reads.push(['directory', name, options]);
+      if (marker === 'no-directory') throw Object.assign(new Error('missing'), { name: 'NotFoundError' });
+      return directory;
+    },
+  };
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { storage: { getDirectory: async () => root } } });
+  globalThis.chrome = api; globalThis.browser = api;
+  try { return await fn({ api, area, reads }); } finally {
+    if (saved.navigator) Object.defineProperty(globalThis, 'navigator', saved.navigator); else delete globalThis.navigator;
+    globalThis.chrome = saved.chrome; globalThis.browser = saved.browser;
+  }
+}
 
 for (const build of ['chrome', 'firefox']) {
   const config = await import(`../src/${build}/src/agent/decision-config.js`);
+  const availability = await import(`../src/${build}/src/agent/decision-availability.js`);
   const pin = await import(`../src/${build}/src/providers/d1-config.js`);
   const runtime = await import(`../src/${build}/src/providers/d1-runtime.js`);
   const preprocess = await import(`../src/${build}/src/providers/d1-preprocess.js`);
@@ -219,6 +265,83 @@ for (const build of ['chrome', 'firefox']) {
     const branch = background.slice(background.indexOf("case 'd1_control':"), background.indexOf("case 'list_decision_models':"));
     assert.match(branch, /msg\.command === 'consent' \? \{\} : \{ \[D1_KEEP_LOADED_KEY\]: true \}/);
     assert.match(branch, /\['reset', 'dispose', 'clear'\]\.includes\(msg\.command\)\) \{[^}]*\[D1_KEEP_LOADED_KEY\]: false/);
+  });
+  test(`${build}: D1's ready marker says whether its package is downloaded, and reading it creates nothing`, async () => {
+    const directoryName = `${pin.D1_CACHE_NAME}-${pin.D1_RELEASE.revision}`;
+    await withD1Download(pin, {}, async ({ reads }) => {
+      assert.equal(await cache.d1PackageReady(), true);
+      assert.deepEqual(reads, [['directory', directoryName, undefined], ['file', 'ready.json', undefined]], 'no create option anywhere');
+    });
+    for (const marker of ['missing', 'no-directory', { revision: 'older', manifestSha256: pin.D1_RELEASE.manifestSha256 }, { revision: pin.D1_RELEASE.revision, manifestSha256: 'f'.repeat(64) }]) {
+      await withD1Download(pin, { marker }, async () => assert.equal(await cache.d1PackageReady(), false, JSON.stringify(marker)));
+    }
+    assert.equal(await cache.d1PackageReady({}), false, 'a browser without OPFS');
+  });
+  test(`${build}: the install guide may read, check, start and stop D1's download and leaves decision settings alone`, async () => {
+    const background = await readFile(new URL(`../src/${build}/src/background.js`, import.meta.url), 'utf8');
+    const branch = background.slice(background.indexOf("case 'd1_control':"), background.indexOf("case 'list_decision_models':"));
+    // From the guide: status, probe, download and stop only. Load, Unload,
+    // Remove and consent stay in Settings, and consent still gates a download.
+    assert.match(branch, /page === api\.runtime\.getURL\('src\/ui\/install\.html'\)\s*&& \['status', 'probe', 'download', 'stop'\]\.includes\(msg\.command\)/);
+    assert.match(branch, /const page = sender\.id === api\.runtime\.id \? String\(sender\.url \|\| ''\)\.split\(\/\[\?#\]\/\)\[0\] : '';/);
+    assert.match(branch, /if \(page !== api\.runtime\.getURL\('src\/ui\/providers\.html'\) && !fromInstall\) return \{ success: false/);
+    assert.match(branch, /if \(msg\.consent !== true \|\| msg\.consentVersion !== D1_CONSENT_VERSION\) throw/);
+    assert.match(branch, /result: fromInstall \? \{ \.\.\.result, usedForDecisions: await d1UsedForDecisions\(api\) \} : result/);
+    assert.doesNotMatch(background, /adoptForDecisions|adoptD1ForDecisions/, 'the guide never writes decision settings');
+    // The guide says whether D1 answers this profile's decisions now.
+    const source = topLevelFunction(background, 'd1UsedForDecisions');
+    const compassProvider = { config: { providerName: 'webbrain-cloud', baseUrl: 'https://api.webbrain.one/v1' } };
+    const otherProvider = { config: { providerName: 'openai' } };
+    const consent = { [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION };
+    const loaded = { [pin.D1_KEEP_LOADED_KEY]: true };
+    for (const [label, stored, options, expected] of [
+      ['Auto with D1 downloaded', { ...consent, ...loaded }, {}, true],
+      ['Auto while Compass chats', { ...consent, ...loaded }, { provider: compassProvider }, false],
+      ['Auto after Unload', { ...consent, [pin.D1_KEEP_LOADED_KEY]: false }, {}, false],
+      ['Auto before the download finished', { ...consent, ...loaded }, { marker: 'missing' }, false],
+      ['Strict Secret Mode', { ...consent, ...loaded }, { strict: true }, false],
+      ['On with D1', { ...consent, ...loaded, decisionMode: 'on', decisionProvider: 'webgpu_d1' }, { provider: compassProvider }, true],
+      ['On with another provider', { ...consent, ...loaded, decisionMode: 'on', decisionProvider: 'openrouter', decisionApiKey: 'owned-key' }, {}, false],
+      ['Off', { ...consent, ...loaded, decisionMode: 'off' }, {}, false],
+    ]) {
+      await withD1Download(pin, { stored, marker: options.marker }, async ({ api, area }) => {
+        const before = JSON.stringify(area);
+        const providerManager = { providers: new Map([['active', {}]]), load: async () => {}, getActive: () => options.provider || otherProvider };
+        const context = vm.createContext({ api, agent: { strictSecretMode: options.strict === true }, providerManager,
+          DECISION_SETTINGS_KEYS: config.DECISION_SETTINGS_KEYS, resolveCurrentDecisionConfig: availability.resolveCurrentDecisionConfig });
+        vm.runInContext(source, context);
+        assert.equal(await vm.runInContext('d1UsedForDecisions(api)', context), expected, label);
+        assert.equal(JSON.stringify(area), before, `${label}: nothing is written`);
+      });
+    }
+  });
+  test(`${build}: leaving On for Auto keeps D1 while its Download or Load stands; Off and other changes release it`, async () => {
+    const background = await readFile(new URL(`../src/${build}/src/background.js`, import.meta.url), 'utf8');
+    assert.match(background, new RegExp(`${build === 'chrome' ? 'chrome' : 'browser'}\\.storage\\.onChanged\\.addListener\\(releaseD1OnDecisionChange\\);`));
+    const source = topLevelFunction(background, 'releaseD1OnDecisionChange');
+    const consent = pin.D1_CONSENT_KEY;
+    // `loadRequested`: the user's Download or Load still stands (d1KeepLoaded).
+    for (const [label, changes, loadRequested, expected, area = 'local'] of [
+      ['decisions Off', { decisionMode: { newValue: 'off' }, systemOneEnabled: { newValue: false } }, true, 1],
+      ['another provider saved', { decisionProvider: { newValue: 'openrouter' } }, true, 1],
+      ['consent removed', { [consent]: { newValue: undefined } }, true, 1],
+      ['Strict Secret Mode', { strictSecretMode: { newValue: true } }, true, 1],
+      ['Auto, with D1 loaded or still downloading', { decisionMode: { newValue: 'auto' }, systemOneEnabled: { newValue: false } }, true, 0],
+      ['Auto, after Unload', { decisionMode: { newValue: 'auto' }, systemOneEnabled: { newValue: false } }, false, 1],
+      ['On', { decisionMode: { newValue: 'on' }, systemOneEnabled: { newValue: true } }, false, 0],
+      ['consent given', { [consent]: { newValue: pin.D1_CONSENT_VERSION } }, false, 0],
+      ['an unrelated setting', { theme: { newValue: 'dark' } }, false, 0],
+      ['another storage area', { decisionMode: { newValue: 'off' } }, false, 0, 'sync'],
+    ]) {
+      const resets = [];
+      const storage = { storage: { local: { get: async key => (key === pin.D1_KEEP_LOADED_KEY ? { [key]: loadRequested } : {}) } } };
+      const context = vm.createContext({ D1_CONSENT_KEY: consent, D1_CONSENT_VERSION: pin.D1_CONSENT_VERSION, D1_KEEP_LOADED_KEY: pin.D1_KEEP_LOADED_KEY,
+        chrome: storage, browser: storage, d1Request: async command => { resets.push(command); return {}; } });
+      vm.runInContext(source, context);
+      context.releaseD1OnDecisionChange(changes, area);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      assert.deepEqual(resets, expected ? ['reset'] : [], label);
+    }
   });
   test(`${build}: D1 is opt-in, endpoint/key-free, zero-cost and overrides Compass only with explicit local consent`, async () => {
     const stored = { decisionProvider: 'webgpu_d1', systemOneEnabled: true };
