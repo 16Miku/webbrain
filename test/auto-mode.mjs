@@ -58,6 +58,12 @@ test('a kept composer mode is per tab, survives a reopened panel and clears for 
   await racing.clear(5);
   assert.equal(await loading, null);
   assert.equal(racing.get(5), null);
+  // Each tab is read once; concurrent reads share one storage call.
+  let reads = 0;
+  const counting = createComposerModePins({ ...area, async get(key) { reads += 1; return area.get(key); } });
+  await Promise.all([counting.load(1), counting.load(1)]);
+  assert.equal(await counting.load(1), 'act');
+  assert.equal(reads, 1);
   // Without storage it still works in memory.
   const volatile = createComposerModePins(() => undefined);
   await volatile.set(9, 'ask');
@@ -860,6 +866,21 @@ for (const build of BUILDS) {
       assert.match(panel, /if \(previousMode === 'dev' && mode !== 'dev' && !pinned\) \{/);
       assert.match(panel, /if \(previous === 'dev' && mode !== 'dev'\) \{\s*sendToBackground\('disable_dev_diagnostics', \{ tabId: Number\(tabId\) \}\)/);
     }
+    // A send waits until a reopened panel has read the tab's kept mode.
+    assert.match(panel, /await waitForVisibleSidePanelStateRefresh\(\);\s*(?:\/\/[^\n]*\n\s*)+await restoreComposerModeBeforeSend\(composerSubmission\.tabId\);/);
+    // The Act warning follows the run on screen, else the mode the next message uses.
+    const warning = vm.createContext({ actWarning: { hidden: true, classList: { toggle(_name, hide) { warning.actWarning.hidden = hide; } } },
+      actWarningPreferenceLoaded: true, actWarningDismissed: false, askBeforeConsequential: false,
+      agentMode: 'ask', isProcessing: false, currentAssistantEl: null });
+    vm.runInContext(`${extract(panel, 'visibleRunMode')}\n${extract(panel, 'updateActWarning')}`, warning);
+    const shown = (state) => { Object.assign(warning, state); vm.runInContext('updateActWarning()', warning); return !warning.actWarning.hidden; };
+    assert.equal(shown({ agentMode: 'act' }), true, 'Act kept, idle');
+    assert.equal(shown({ agentMode: 'ask' }), false, 'Ask kept or Auto, idle');
+    assert.equal(shown({ agentMode: 'ask', isProcessing: true, currentAssistantEl: { dataset: { runMode: 'act' } } }), true, 'a one-message /act run under a kept Ask');
+    assert.equal(shown({ agentMode: 'act', isProcessing: true, currentAssistantEl: { dataset: { runMode: 'ask' } } }), false, 'a one-message Ask run under a kept Act');
+    assert.equal(shown({ agentMode: 'ask', isProcessing: true, currentAssistantEl: { dataset: { runMode: 'auto' } } }), false, 'an automatic run before it is routed');
+    assert.equal(shown({ agentMode: 'ask', isProcessing: true, currentAssistantEl: { dataset: { runMode: 'dev' } } }), true);
+    assert.equal(shown({ askBeforeConsequential: true }), false, 'only while permission prompts are off');
     // The menu checks Act and Dev like the shortcuts but never switches through them.
     assert.match(panel, /const allowed = pin === 'act' \? await ensureActMode\(\{ switchMode: false \}\)\s*: pin === 'dev' \? await ensureDevMode\(\{ switchMode: false \}\)\s*: true;/);
     const input = { value: '/act  book it', focus() {}, setSelectionRange() {} };

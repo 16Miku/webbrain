@@ -2080,6 +2080,13 @@ function restoreComposerModeForCurrentTab() {
   });
 }
 
+async function restoreComposerModeBeforeSend(tabId) {
+  if (isStandaloneWindow || tabId == null) return;
+  const before = composerModePins.get(tabId);
+  await composerModePins.load(tabId);
+  if (sameTabId(currentTabId, tabId) && composerModePins.get(tabId) !== before) syncComposerModeForCurrentTab();
+}
+
 function setComposerModePinForTab(tabId, mode) {
   if (isStandaloneWindow || tabId == null) return;
   // Any change (a pick, a new chat, a recovered record, a selection scope, a
@@ -2218,16 +2225,19 @@ renderPermissionGateControl();
 renderComposerModePicker();
 
 // An automatically routed run that is acting in the visible tab.
-function autoActionRunVisible() {
-  return autoModeSelection && isProcessing
-    && ['act', 'dev'].includes(currentAssistantEl?.dataset?.runMode);
+// The mode of the run on screen, while it is going. It can differ from the
+// mode the next message uses (Auto, or the one kept in the "!" menu): an
+// automatic route, a one-message slash command, Retry or Continue.
+function visibleRunMode() {
+  const mode = isProcessing ? currentAssistantEl?.dataset?.runMode : '';
+  return ['ask', 'act', 'dev'].includes(mode) ? mode : '';
 }
 
 function updateActWarning() {
   if (!actWarning) return;
   const show = actWarningPreferenceLoaded
     && !actWarningDismissed
-    && (agentMode !== 'ask' || autoActionRunVisible())
+    && (visibleRunMode() ? visibleRunMode() !== 'ask' : agentMode !== 'ask')
     && !askBeforeConsequential;
   actWarning.classList.toggle('hidden', !show);
 }
@@ -9670,6 +9680,9 @@ async function sendMessage(extraChatParams = {}) {
   if (selectionAction) chatExtraParams.selectionAction = selectionAction;
   await composerDeliveryModeReady;
   await waitForVisibleSidePanelStateRefresh();
+  // A reopened panel may still be reading the tab's kept mode: never send a
+  // message as Auto that the user kept in Ask, Act or Dev.
+  await restoreComposerModeBeforeSend(composerSubmission.tabId);
   if (!sameTabId(submissionRenderedTabId, composerSubmission.tabId)
       || !composerSubmissionIsCurrent(composerSubmission, { allowProcessing: submissionStartedDuringRun })) {
     await releaseOwnedContextMenuClaim();
