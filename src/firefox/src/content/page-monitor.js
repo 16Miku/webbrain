@@ -1671,8 +1671,14 @@
       // page names and lets take focus as one item (namedFocusableArticle).
       const feedItem = owner.matches('article[aria-posinset],[role="article"][aria-posinset]')
         && !!owner.parentElement?.closest('[role="feed"]');
+      // A page-named article is accepted only on its name when nothing else
+      // identifies it, and its name does not bind the post's own text: that
+      // text must be covered below, or a re-rendered article keeping the name
+      // and the controls could carry the earlier post's decision.
+      const namedArticleOnly = !meaningfulOwner && headings.length === 0 && identities.length === 0
+        && !owner.matches(modelEntityIdentitySelector) && !feedItem && !namedItemOwner && namedFocusableArticle(owner);
       meaningfulOwner ||= headings.length > 0 || identities.length > 0 || owner.matches(modelEntityIdentitySelector) || feedItem
-        || namedItemOwner || namedFocusableArticle(owner);
+        || namedItemOwner || namedArticleOnly;
       if (meaningfulOwner) {
         const images = [...owner.querySelectorAll('img')].filter(node => belongs(node, navigationOwner)
           && !node.closest('input,textarea,[contenteditable]:not([contenteditable="false"])')
@@ -1716,6 +1722,7 @@
         for (const link of inlinePostOwner.accountLinks) if (!addNode(link, { text: true, control: true })) return null;
       } else if (navigationOwner) meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, namedNavigationControls, visualImages) && !uncoveredLabel;
       else if (nativeFileSection) meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, null, visualImages) && !uncoveredLabel;
+      else if (namedArticleOnly) meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, null, visualImages) && !uncoveredLabel;
       else meaningfulOwner ||= (headingFreeDialog || headingFreeNamedScope)
         && dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, null, visualImages) && !uncoveredLabel;
     }

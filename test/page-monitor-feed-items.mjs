@@ -239,6 +239,21 @@ for (const build of ['chrome', 'firefox']) {
       } finally { await f.browser.close(); }
     });
 
+    test(`${build} on ${engineName}: an article named only by a generic label is not an owner of its post`, async () => {
+      // A generic aria-label ("Post") says nothing about which post this is,
+      // and the name does not bind the post's text, so a virtualized cell
+      // re-rendered with another post (same controls and links) could keep the
+      // earlier decision. Without the name tying it to the content, the
+      // article owns nothing; a label that points at the content does (X).
+      const timeline = xTimeline(xPost(1, { article: 'aria-label="Post" tabindex="0"' }) + xPost(2, { name: 'Ada', handle: 'ada' }));
+      const f = await open(engine, build, timeline, 'bookmark1');
+      try {
+        const result = await f.validate();
+        assert.equal(result.ready, false);
+        assert.equal(result.certificationFailure, 'owner_unresolved');
+      } finally { await f.browser.close(); }
+    });
+
     test(`${build} on ${engineName}: an article that is not offered as one named, focusable, linked item owns nothing new`, async () => {
       const cases = [
         ['unfocusable', xPost(1, { article: 'aria-labelledby="name{n} text{n} group{n}"' })],
