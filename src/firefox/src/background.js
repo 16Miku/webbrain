@@ -3501,15 +3501,18 @@ async function handleMessage(msg, sender) {
           // An automatically routed Ask turn may hand itself to Act or Dev; it
           // restarts here under the same request, so Stop still cancels it. A
           // correction that arrived after the hand-off was checked routes the
-          // restart again; the last restart runs in the mode it asked for.
+          // restart again. A third such restart runs read-only instead: it
+          // applies the corrections and answers, never in a mode chosen
+          // before the latest correction.
           let escalation = mode === 'auto' ? agent.takeModeEscalation(tabId) : null;
           for (let restarts = 0; escalation; restarts += 1) {
-            const reroute = escalation.reroute === true && restarts < 2;
+            const reroute = escalation.reroute === true;
+            const readOnly = reroute && restarts >= 2;
             result = await agent.processMessage(tabId, msg.text, publishUpdate, reroute ? 'auto' : escalation.mode, msg.attachments, {
               ...runOptions,
-              modeEscalation: { mode: escalation.mode, ...(reroute ? { reroute: true } : {}) },
+              modeEscalation: { mode: escalation.mode, ...(reroute ? { reroute: true } : {}), ...(readOnly ? { readOnly: true } : {}) },
             });
-            escalation = reroute ? agent.takeModeEscalation(tabId) : null;
+            escalation = reroute && !readOnly ? agent.takeModeEscalation(tabId) : null;
           }
         }
 

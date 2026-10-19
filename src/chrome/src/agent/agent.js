@@ -27012,6 +27012,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const previousMode = this.conversationModes.get(tabId) || null;
     let tier = '';
     try { tier = this._resolvePromptTier(this._activeProvider(tabId)); } catch {}
+    // A hand-off restart the user kept correcting ends read-only, without the
+    // hand-off tool: it applies the corrections and answers.
+    if (runOptions?.modeEscalation?.readOnly === true) {
+      onUpdate('run_mode', { mode: 'ask', source: 'reroute_limit' });
+      return { mode: 'ask', runOptions: { ...runOptions, modeRoute: { requested: AUTO_MODE, mode: 'ask', source: 'reroute_limit' } } };
+    }
     const hard = autoModeHardRoute({
       trustedContinuation: runOptions?.trustedContinuation === true,
       previousMode,

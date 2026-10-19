@@ -479,6 +479,20 @@ for (const build of BUILDS) {
     assert.deepEqual(f.agent.takeModeEscalation(f.tab), { mode: 'dev', evidence: 'first inspect the console errors' });
   });
 
+  test(`${build}: a restart rerouted too often ends read-only and still applies the corrections`, async () => {
+    const f = fixture(Agent, { decide: () => { throw new Error('a read-only restart asks no route'); } });
+    f.agent._modeEscalationSteering.set(f.tab, [{ id: 's11', text: 'instead inspect the console errors' }]);
+    fixtureReplies(f, [messages => {
+      assert.ok(messages.some(message => message.role === 'user' && String(message.content).startsWith('instead inspect the console errors')));
+      return done('The console shows two errors.');
+    }]);
+    assert.equal(await f.run('Fix the login button.', 'auto', [], { modeEscalation: { mode: 'act', reroute: true, readOnly: true } }), 'The console shows two errors.');
+    assert.deepEqual(runModes(f.updates), [{ mode: 'ask', source: 'reroute_limit' }]);
+    assert.ok(!f.calls[0].tools.includes('request_action_mode'), 'no further hand-off');
+    assert.ok(!f.calls[0].tools.includes('click_ax') && !f.calls[0].tools.includes('click'), 'and no browser actions');
+    assert.equal(f.agent.takeModeEscalation(f.tab), null);
+  });
+
   test(`${build}: corrections checked with the hand-off do not route the restart again`, async () => {
     const f = fixture(Agent, {
       decide: (_q, options) => (options.mainModel === false ? { choice: null, source: 'unavailable' } : { choice: 'act', source: 'main_model' }),
@@ -789,8 +803,8 @@ for (const build of BUILDS) {
   test(`${build}: the background restarts a hand-off under the same request and reports the routed mode`, () => {
     const background = source(build, 'background.js');
     const chat = background.slice(background.indexOf("    case 'chat': {"), background.indexOf("    case 'chat_stream': {"));
-    assert.match(chat, /let escalation = mode === 'auto' \? agent\.takeModeEscalation\(tabId\) : null;\s*for \(let restarts = 0; escalation; restarts \+= 1\) \{\s*const reroute = escalation\.reroute === true && restarts < 2;\s*result = await agent\.processMessage\(tabId, msg\.text, publishUpdate, reroute \? 'auto' : escalation\.mode, msg\.attachments, \{\s*\.\.\.runOptions,\s*modeEscalation: \{ mode: escalation\.mode, \.\.\.\(reroute \? \{ reroute: true \} : \{\}\) \},\s*\}\);\s*escalation = reroute \? agent\.takeModeEscalation\(tabId\) : null;\s*\}/,
-      'a late correction routes the restart again, and the last restart always runs in the mode it asked for');
+    assert.match(chat, /let escalation = mode === 'auto' \? agent\.takeModeEscalation\(tabId\) : null;\s*for \(let restarts = 0; escalation; restarts \+= 1\) \{\s*const reroute = escalation\.reroute === true;\s*const readOnly = reroute && restarts >= 2;\s*result = await agent\.processMessage\(tabId, msg\.text, publishUpdate, reroute \? 'auto' : escalation\.mode, msg\.attachments, \{\s*\.\.\.runOptions,\s*modeEscalation: \{ mode: escalation\.mode, \.\.\.\(reroute \? \{ reroute: true \} : \{\}\), \.\.\.\(readOnly \? \{ readOnly: true \} : \{\}\) \},\s*\}\);\s*escalation = reroute && !readOnly \? agent\.takeModeEscalation\(tabId\) : null;\s*\}/,
+      'a late correction routes the restart again; a third one ends read-only, never in a mode chosen before it');
     assert.match(chat, /if \(type === 'run_mode' && \['ask', 'act', 'dev'\]\.includes\(data\?\.mode\)\) effectiveMode = data\.mode;/);
     assert.match(chat, /mode: effectiveMode,/);
     assert.match(chat, /effectiveMode === 'ask' \? askCompletionSucceededForBadge/);
