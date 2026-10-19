@@ -2184,6 +2184,11 @@ export class Agent extends LoopDetector {
       };
     }
     this._completionSubmitStates.set(tabId, state);
+    // A later non-committing form (a GET search) replaces this receipt, so the
+    // guard remembers the kind of the last action that did commit.
+    if (state.dispatched && publicationGuard && state.nonCommitting !== true) {
+      publicationGuard.lastCommitKind = state.mutationKind;
+    }
     if (state.dispatched && publicationGuard?.resourceMutationAuthorization) {
       const record = state.actionRecord;
       (publicationGuard.resourceMutationDispatches ||= []).push({ key: publicationGuard.resourceMutationAuthorization.key,
@@ -5539,7 +5544,13 @@ export class Agent extends LoopDetector {
       add('plan-publication-evidence-missing', false, caveat);
       if (githubFile) add('github-committed-file-verification', false, caveat);
     } else if (flags.missingRequiredSubmission && !flags.missingSocialPublishTargets.length) {
-      add('plan-submission-evidence-missing', false, 'I couldn\'t confirm that the submission went through.');
+      // A deletion is not a "submission" to the user who asked for it. The
+      // caller sets missingDeletion only when the run's one dispatched action
+      // was a deletion, so a mixed task with an unverified form submission
+      // keeps the submission wording.
+      add('plan-submission-evidence-missing', false, flags.missingDeletion
+        ? 'I couldn\'t confirm that the deletion took effect.'
+        : 'I couldn\'t confirm that the submission went through.');
     }
     if (flags.missingEvidence && findings.every(finding => ['plan-plain-final-protocol', 'plan-done-summary-shape'].includes(finding.id))) {
       add('plan-execution-evidence-missing', false, state.requiresStateChange === false
@@ -6113,6 +6124,7 @@ export class Agent extends LoopDetector {
         socialPublication: structuredClone(previous?.socialPublication || null),
       } : null);
       guard.resourceMutationDispatches = structuredClone(previous?.resourceMutationDispatches || []);
+      guard.lastCommitKind = previous?.lastCommitKind || null;
       if (priorSubmission || attemptedPublication) guard.evidenceTaskKey = guard.taskKey;
       guard.socialPublicationSteering = previous?.socialPublicationSteering || null;
       guard.socialPublicationClarifications = previous?.socialPublicationClarifications || [];
@@ -7331,9 +7343,14 @@ export class Agent extends LoopDetector {
       if (!current() || this._completionDoneBlock(tabId, 'done', { outcome: 'success' })) return null;
       const pageUrl = await this._currentUrl(tabId);
       if (!current()) return null;
+      // WebBrain writes this answer, not the model, so it claims only what it
+      // checked: the one submission on this page, not that the whole request
+      // is done. It stays a success because the completion check above
+      // established the task's observable requirements; saying here that later
+      // steps were not attempted would contradict that outcome.
       const summary = /^https:\/\/addons\.mozilla\.org\//i.test(pageUrl)
         ? 'The AMO version was submitted for review and the submission confirmation was verified.'
-        : 'The requested submission completed and its result was verified.';
+        : 'The model stopped responding after the submission. WebBrain read the page and verified that submission.';
       const result = await runReadOnly('done', { outcome: 'success', summary });
       if (current() && result?.action === 'return' && !result.status
           && this._completionVerdicts.get(tabId)?.outcome === 'succeeded') {
@@ -36744,6 +36761,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       steeringPriorContext: carryMatches ? structuredClone(carried.steeringPriorContext || null) : null,
       steeringPriorSubmissionReconciliation: carryMatches ? structuredClone(carried.steeringPriorSubmissionReconciliation || null) : null,
       resourceMutationDispatches: carryMatches ? structuredClone(carried.resourceMutationDispatches || []) : [],
+      lastCommitKind: carryMatches ? carried.lastCommitKind || null : null,
       // The user's answers on WebBrain's deletion card hold for the same task.
       deletionDecisions: carryMatches && Array.isArray(carried.deletionDecisions)
         ? structuredClone(carried.deletionDecisions.slice(-32)) : [],
@@ -37291,6 +37309,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         steeringPriorContext: structuredClone(guard.steeringPriorContext || null),
         steeringPriorSubmissionReconciliation: structuredClone(guard.steeringPriorSubmissionReconciliation || null),
         resourceMutationDispatches: structuredClone(guard.resourceMutationDispatches || []),
+        lastCommitKind: guard.lastCommitKind || null,
         deletionDecisions: structuredClone((guard.deletionDecisions || []).slice(-32)),
         unverifiedStepDecisions: structuredClone(this._carriedUnverifiedStepDecisions(guard)),
         socialPublication: guard.socialPublication ? structuredClone(guard.socialPublication) : null,
@@ -37620,10 +37639,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // its note once per run, and the next completion is accepted with a
     // caveat. The one-nudge budget and run-ending statuses below are the
     // strict path.
+    // The unverified action is a deletion only when deletions are all that was
+    // dispatched and the last action that committed was a deletion. A form
+    // submitted after it (or before it, if a deletion came last) is told apart
+    // by the kind of the last commit, which a later non-committing form such as
+    // a GET search does not overwrite.
+    const missingDeletion = missingRequiredSubmission
+      && Array.isArray(state.resourceMutationDispatches) && state.resourceMutationDispatches.length > 0
+      && state.resourceMutationDispatches.every(attempt => attempt?.mutationKind === 'delete')
+      && (state.lastCommitKind == null || state.lastCommitKind === 'delete');
     const advisory = this._planGuardAdvisory(tabId, state, { viaDone, looksPlanOnly, runtimeModeContradiction,
       structuredPlan: structuredPlan
         || (state.allowsPlannerShapedResult !== true && this._isPlannerShapedJson(content)),
-      staleCancellation, missingRequiredSchedulingTool, missingRequiredDownload, missingRequiredSubmission,
+      staleCancellation, missingRequiredSchedulingTool, missingRequiredDownload, missingRequiredSubmission, missingDeletion,
       forbiddenSubmission, missingJobEvidence, missingDraftEvidence, missingRequiredLedger,
       missingSocialPublishTargets, missingEvidence });
     if (advisory === 'accept') return null;
@@ -46766,6 +46794,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           continue;
         }
         const escalation = handoff.accepted;
+        // The check above awaited a model decision. Input or a main-frame
+        // navigation that arrived meanwhile is queued, and a hand-off that did
+        // not see it is not accepted; page churn alone does not count.
+        if (escalation && this._pageFeedbackSupersedesHandoff?.(tabId)) {
+          onUpdate('text', { content: '', replace: true });
+          continue;
+        }
         if (escalation) {
           // The caller restarts this turn in the requested mode, from the
           // state the turn started with, so the request is recorded once.

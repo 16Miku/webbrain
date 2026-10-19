@@ -49,7 +49,9 @@ for (const build of ['chrome', 'firefox']) {
       await new Promise(resolve => setTimeout(resolve, 0));
       const result = messages.find(message => message.id === 2).result;
       assert.equal(result.status, 'error'); assert.equal(result.ready, false); assert.equal(result.loaded, false);
-      assert.match(result.error, /Hardware WebGPU/); assert.equal(cacheReads, 0);
+      assert.match(result.error, /Hardware WebGPU/);
+      // The error stays, but the verified cache is reported so Settings can retry with Load.
+      assert.equal(result.cached, true); assert.equal(cacheReads, 1);
     } finally {
       if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator); else delete globalThis.navigator;
       if (oldSelf) Object.defineProperty(globalThis, 'self', oldSelf); else delete globalThis.self;
