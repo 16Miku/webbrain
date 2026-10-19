@@ -298,6 +298,7 @@ for (const build of ['chrome', 'firefox']) {
       assert.match(branch, /msg\.command === 'status'\s*\? await chatModelAfterD1\.advance\(result\)/);
       assert.match(branch, /result: \{ \.\.\.result, usedForDecisions: await d1UsedForDecisions\(api\), chatModelQueued \}/);
       assert.match(background, /chrome\.alarms\.onAlarm\.addListener\(\(alarm\) => \{\s*if \(alarm\?\.name !== CHAT_AFTER_D1_ALARM\) return;\s*chatModelAfterD1\.advance\(\)/);
+      assert.match(background, /onStartError: \(error\) => \{\s*console\.warn\(/, 'a failed start is reported and retried');
     } else {
       // Firefox has no in-browser chat model to queue.
       assert.match(branch, /result: fromInstall \? \{ \.\.\.result, usedForDecisions: await d1UsedForDecisions\(api\) \} : result/);
@@ -618,6 +619,36 @@ test('chrome: the install guide queues its chat model behind D1, and the backgro
     env.chat = { status: 'not-downloaded' };
     assert.equal(await env.queue.advance(), false);
     assert.deepEqual(env.starts, [model]);
+  }
+  {
+    // A start that fails keeps the queue for the next check, until it starts.
+    const env = make();
+    const errors = [];
+    let failures = 1;
+    env.queue = queue.createChatModelAfterD1({
+      api: { storage: { local: {
+        get: async (key) => (key in env.area ? { [key]: structuredClone(env.area[key]) } : {}),
+        set: async (values) => { Object.assign(env.area, structuredClone(values)); },
+        remove: async (key) => { delete env.area[key]; },
+      } }, alarms: { create: async () => {}, clear: async (name) => { env.cleared.push(name); return true; } } },
+      d1Status: async () => env.d1,
+      chatStatus: async () => env.chat,
+      startChat: async (name) => {
+        if (failures-- > 0) throw new Error('Offscreen document is starting.');
+        env.starts.push(name); env.chat = { status: 'downloading' };
+      },
+      onStartError: (error) => errors.push(error.message),
+      now: () => env.now,
+    });
+    await env.queue.queue(model);
+    env.d1 = { status: 'ready', loaded: true };
+    assert.equal(await env.queue.advance(), true, 'still queued after a failed start');
+    assert.deepEqual(errors, ['Offscreen document is starting.']);
+    assert.equal(env.area[queue.CHAT_AFTER_D1_KEY].model, model);
+    assert.deepEqual(env.cleared, [], 'the alarm keeps checking');
+    assert.equal(await env.queue.advance(), false);
+    assert.deepEqual(env.starts, [model]);
+    assert.equal(env.area[queue.CHAT_AFTER_D1_KEY], undefined);
   }
   {
     // D1's status cannot be read: try again later.

@@ -17,9 +17,10 @@ const CHAT_TRANSFER_STATUSES = new Set(['checking', 'starting', 'queued', 'downl
 
 /**
  * `d1Status()` reads D1's status, `chatStatus(model)` the chat model's
- * download status and `startChat(model)` starts that download.
+ * download status and `startChat(model)` starts that download. A start that
+ * fails keeps the queue for the next check, and `onStartError` hears why.
  */
-export function createChatModelAfterD1({ api, d1Status, chatStatus, startChat, now = () => Date.now() }) {
+export function createChatModelAfterD1({ api, d1Status, chatStatus, startChat, onStartError = () => {}, now = () => Date.now() }) {
   const storage = api.storage.local;
   const read = async () => (await storage.get(CHAT_AFTER_D1_KEY))?.[CHAT_AFTER_D1_KEY] || null;
   const clearAlarm = async () => { try { await api.alarms?.clear?.(CHAT_AFTER_D1_ALARM); } catch { /* best effort */ } };
@@ -60,9 +61,17 @@ export function createChatModelAfterD1({ api, d1Status, chatStatus, startChat, n
       // Another model holds the WebGPU download slot: start when it is free.
       return true;
     }
+    if (chat?.ready !== true && !CHAT_TRANSFER_STATUSES.has(chatState)) {
+      try {
+        await startChat(queued.model);
+      } catch (error) {
+        // Kept for the next check (the alarm, or the guide's next read) until
+        // it starts or the queue is too old.
+        onStartError(error);
+        return true;
+      }
+    }
     await clear();
-    if (chat?.ready === true || CHAT_TRANSFER_STATUSES.has(chatState)) return false;
-    await startChat(queued.model);
     return false;
   }
 

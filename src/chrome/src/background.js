@@ -199,11 +199,14 @@ const chatModelAfterD1 = createChatModelAfterD1({
     if (providerManager.providers.size === 0) await providerManager.load();
     return providerManager.startWebgpuDownload({ model });
   },
+  onStartError: (error) => {
+    console.warn('[WebBrain] The queued local chat-model download could not start yet:', error);
+  },
 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm?.name !== CHAT_AFTER_D1_ALARM) return;
   chatModelAfterD1.advance().catch((error) => {
-    console.warn('[WebBrain] The queued local chat-model download could not start:', error);
+    console.warn('[WebBrain] The queued local chat-model download could not be checked:', error);
   });
 });
 const apocalypseController = createApocalypseController(chrome);
@@ -5041,7 +5044,7 @@ async function handleMessage(msg, sender) {
         else if (msg.command === 'stop') await chatModelAfterD1.pause();
         const chatModelQueued = msg.command === 'status'
           ? await chatModelAfterD1.advance(result).catch((error) => {
-            console.warn('[WebBrain] The queued local chat-model download could not start:', error);
+            console.warn('[WebBrain] The queued local chat-model download could not be checked:', error);
             return false;
           })
           : await chatModelAfterD1.queued();
