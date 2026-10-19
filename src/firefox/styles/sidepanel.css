@@ -4385,9 +4385,50 @@ html[data-ui-scale="175"] .composer-toolbar .provider-picker {
 }
 
 .clarify-timeout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+/* The clock ring that empties with an auto-timeout: bottom-right of the clarification and plan
+   review cards. */
+.timeout-ring {
+  flex: 0 0 auto;
+  display: inline-flex;
+  margin-inline-start: auto;
+  color: var(--accent);
+  cursor: default;
+}
+
+.timeout-ring svg { display: block; }
+
+.timeout-ring-track {
+  stroke: var(--border);
+}
+
+.timeout-ring-progress,
+.timeout-ring-hand {
+  stroke: currentColor;
+}
+
+.timeout-ring-progress {
+  transition: stroke-dashoffset 0.25s linear, stroke 0.2s;
+}
+
+.timeout-ring-low {
+  color: var(--warning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeout-ring-progress { transition: none; }
+}
+
+.plan-review-actions {
+  align-items: center;
 }
 
 /* ─── Planner gate (issue #165) ───────────────────────────────────── */

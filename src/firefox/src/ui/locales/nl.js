@@ -419,6 +419,7 @@ export default {
   'sp.plan.expired': 'Dit plan wacht niet meer op beoordeling — de uitvoering is geannuleerd.',
   'sp.plan.timed_out': 'De goedkeuring is verlopen',
   'sp.plan.timed_out_hint': 'Er is niets uitgevoerd. Probeer opnieuw om een nieuw plan te beoordelen.',
+  'sp.plan.auto_run_in': 'Start vanzelf over {time}',
   'sp.plan.awaiting_review': 'Keur het plan hierboven goed of annuleer het voordat u een volgend bericht stuurt.',
   'sp.plan.intent_unavailable': "De planning is na twee pogingen mislukt. De Act-modus gaat verder met de normale beveiligingen.",
   'sp.perm.question': 'WebBrain wil {verb} {host}. Toestaan?',

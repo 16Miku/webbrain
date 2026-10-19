@@ -915,6 +915,7 @@ export default {
   'sp.plan.expired': 'この計画はレビュー待ちではなくなりました — 実行はキャンセルされました。',
   'sp.plan.timed_out': '承認の待機時間が終了しました',
   'sp.plan.timed_out_hint': '何も実行されていません。再試行して新しい計画を確認してください。',
+  'sp.plan.auto_run_in': '{time} 後に自動で実行されます',
   'sp.plan.awaiting_review': '別のメッセージを送信する前に、上の計画を承認またはキャンセルしてください。',
   'sp.plan.intent_unavailable': "2回試行しても計画に失敗しました。通常の安全対策を維持したまま Act モードで続行します。",
   'sp.slash.busy_only_oob': 'WebBrain がビジーの間、メッセージはキューに入ります。/help、/progress、/btw、/scratchpad、/memory、/schedule --list、/watch、/dangerously-skip-permissions、/screenshot、/export、/export --traces、/verbose だけがスラッシュコマンドとしてすぐに実行できます。',

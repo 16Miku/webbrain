@@ -120543,7 +120543,7 @@ test('planner gate: background exposes pending plan state for restored sidepanel
     const bgSource = fs.readFileSync(path.join(ROOT, bgRel), 'utf8');
     assert.match(agentSource, /activeRunState\(tabId\)/, `${label}: agent should expose active run state`);
     assert.match(agentSource, /pendingPlan:[\s\S]*?null/, `${label}: active run state should include pendingPlan`);
-    assert.match(agentSource, /tabPending\.set\(planId, \{ resolve, ts: Date\.now\(\), plan, markdown, verboseMarkdown \}\)/, `${label}: pending plans should keep renderable metadata`);
+    assert.match(agentSource, /tabPending\.set\(planId, \{ resolve, ts: Date\.now\(\), plan, markdown, verboseMarkdown, timeoutSec, deadlineTs \}\)/, `${label}: pending plans should keep renderable metadata and the review deadline`);
     assert.match(bgSource, /case 'agent_run_state':[\s\S]*?agent\.activeRunState\(tabId\)/, `${label}: background should expose active run state to the sidepanel`);
   }
 });

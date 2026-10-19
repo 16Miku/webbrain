@@ -889,6 +889,7 @@ export default {
   'sp.plan.expired': '이 계획은 더 이상 검토 대기 중이 아닙니다 — 실행이 취소되었습니다.',
   'sp.plan.timed_out': '승인 시간이 초과되었습니다',
   'sp.plan.timed_out_hint': '아무 작업도 실행되지 않았습니다. 다시 시도하여 새 계획을 검토하세요.',
+  'sp.plan.auto_run_in': '{time} 후 자동으로 실행됩니다',
   'sp.plan.awaiting_review': '다른 메시지를 보내기 전에 위의 계획을 승인하거나 취소하세요.',
   'sp.plan.intent_unavailable': "두 번 시도했지만 계획에 실패했습니다. 일반 안전장치를 유지한 채 Act 모드로 계속합니다.",
   'sp.slash.busy_only_oob': 'WebBrain이 사용 중일 때 메시지는 대기열에 추가됩니다. /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, /verbose만 슬래시 명령으로 즉시 실행할 수 있습니다.',

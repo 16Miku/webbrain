@@ -431,6 +431,7 @@ export default {
   'sp.plan.expired': "Este plano não está mais aguardando revisão – a execução foi cancelada.",
   'sp.plan.timed_out': 'O tempo para aprovação expirou',
   'sp.plan.timed_out_hint': 'Nada foi executado. Tente novamente para revisar um novo plano.',
+  'sp.plan.auto_run_in': 'Executa sozinho em {time}',
   'sp.plan.awaiting_review': "Aprove ou cancele o plano acima antes de enviar outra mensagem.",
   'sp.plan.intent_unavailable': "O planejamento falhou após duas tentativas. Continuando no modo Act com as proteções normais.",
 

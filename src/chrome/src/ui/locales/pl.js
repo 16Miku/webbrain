@@ -907,6 +907,7 @@ export default {
   'sp.plan.expired': 'Ten plan nie oczekuje już na przegląd — uruchomienie zostało anulowane.',
   'sp.plan.timed_out': 'Upłynął czas na zatwierdzenie',
   'sp.plan.timed_out_hint': 'Nic nie zostało uruchomione. Spróbuj ponownie, aby przejrzeć nowy plan.',
+  'sp.plan.auto_run_in': 'Uruchomi się sam za {time}',
   'sp.plan.awaiting_review': 'Zatwierdź lub anuluj powyższy plan przed wysłaniem kolejnej wiadomości.',
   'sp.plan.intent_unavailable': "Planowanie nie powiodło się po dwóch próbach. Kontynuowanie w trybie Act ze standardowymi zabezpieczeniami.",
   'sp.slash.busy_only_oob': 'Wiadomości są kolejkowane, gdy WebBrain jest zajęty. Tylko /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces i /verbose mogą uruchamiać się od razu jako polecenia slash.',

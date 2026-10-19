@@ -434,6 +434,7 @@ export default {
   'sp.plan.expired': 'This plan is no longer awaiting review — the run was cancelled.',
   'sp.plan.timed_out': 'Approval timed out',
   'sp.plan.timed_out_hint': 'Nothing ran. Retry to review a fresh plan.',
+  'sp.plan.auto_run_in': 'Runs on its own in {time}',
   'sp.plan.awaiting_review': 'Approve or cancel the plan above before sending another message.',
   'sp.plan.intent_unavailable': 'Planning failed after two attempts. Continuing in Act mode with normal safeguards.',
 

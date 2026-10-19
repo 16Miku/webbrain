@@ -424,6 +424,7 @@ export default {
   "sp.plan.expired": "התוכנית הזו כבר לא ממתינה לבדיקה - הריצה בוטלה.",
   "sp.plan.timed_out": "תם הזמן לאישור",
   "sp.plan.timed_out_hint": "שום דבר לא הופעל. נסו שוב כדי לבדוק תוכנית חדשה.",
+  'sp.plan.auto_run_in': 'יופעל מעצמו בעוד {time}',
   "sp.plan.awaiting_review": "אשר או בטל את התוכנית שלמעלה לפני שליחת הודעה נוספת.",
   'sp.plan.intent_unavailable': "התכנון נכשל לאחר שני ניסיונות. ממשיכים במצב Act עם אמצעי ההגנה הרגילים.",
   "sp.perm.question": "WebBrain רוצה {verb} {host}. לאפשר את זה?",

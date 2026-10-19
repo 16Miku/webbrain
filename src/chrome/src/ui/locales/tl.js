@@ -915,6 +915,7 @@ export default {
   'sp.plan.expired': 'Ang planong ito ay hindi na naghihintay ng pagsusuri — ang pagtakbo ay kinansela.',
   'sp.plan.timed_out': 'Nag-time out ang pag-apruba',
   'sp.plan.timed_out_hint': 'Walang pinatakbo. Subukang muli para suriin ang bagong plano.',
+  'sp.plan.auto_run_in': 'Kusang tatakbo sa loob ng {time}',
   'sp.plan.awaiting_review': 'Aprubahan o kanselahin ang plano sa itaas bago magpadala ng isa pang mensahe.',
   'sp.plan.intent_unavailable': "Nabigo ang pagpaplano matapos ang dalawang pagsubok. Magpapatuloy sa Act mode na may karaniwang mga proteksiyon.",
   'sp.slash.busy_only_oob': 'Nakapila ang mga mensahe habang abala ang WebBrain. Tanging /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, at /verbose ang maaaring tumakbo agad bilang mga slash command.',

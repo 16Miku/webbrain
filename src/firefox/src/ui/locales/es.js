@@ -889,6 +889,7 @@ export default {
   'sp.plan.expired': 'Este plan ya no está en espera de revisión — la ejecución fue cancelada.',
   'sp.plan.timed_out': 'Se agotó el tiempo para aprobar',
   'sp.plan.timed_out_hint': 'No se ejecutó nada. Vuelve a intentarlo para revisar un plan nuevo.',
+  'sp.plan.auto_run_in': 'Se ejecuta solo en {time}',
   'sp.plan.awaiting_review': 'Aprueba o cancela el plan anterior antes de enviar otro mensaje.',
   'sp.plan.intent_unavailable': "La planificación falló tras dos intentos. Se continúa en modo Act con las protecciones habituales.",
   'sp.slash.busy_only_oob': 'Los mensajes se ponen en cola mientras WebBrain está ocupado. Solo /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces y /verbose pueden ejecutarse de inmediato como comandos slash.',
