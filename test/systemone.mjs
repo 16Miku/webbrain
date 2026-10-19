@@ -31,6 +31,22 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(mod.systemOneFailureReason(Object.assign(new Error(), { code: 'JEV_INVALID_DISTRIBUTION' })), 'invalid_distribution');
     assert.equal(mod.systemOneFailureReason(Object.assign(new Error(), { status: 429 })), 'rate_limit');
   });
+  test(`${build}: a model that clips long text never receives a state past its budget`, async () => {
+    const requests = [];
+    const reply = body => ({ ok: true, json: async () => ({ model: body.model, answers: { p: { type: 'noul', noul: .9 } }, usage: { input_tokens: 10, output_tokens: 0 } }) });
+    const judge = mod.createSystemOneJudge({ fetchImpl: async (_url, init) => { const body = JSON.parse(init.body); requests.push(body); return reply(body); } });
+    const one = { p: questions.p };
+    const config = { provider: 'openrouter', model: 'cloudflare/clef-flash', apiKey: 'test', url: 'https://example.test/v1/decisions' };
+    const short = { evidence: 'x'.repeat(1000) };
+    await judge.evaluate({ config, state: short, questions: one });
+    assert.equal(requests.length, 1, 'a state within the budget is sent');
+    const long = { evidence: 'x'.repeat(mod.SYSTEM_ONE_TEXT_BUDGETS['cloudflare/clef-flash'] + 1) };
+    await assert.rejects(judge.evaluate({ config, state: long, questions: one }),
+      error => error.code === 'JEV_STATE_EXCEEDS_MODEL_INPUT' && mod.systemOneFailureReason(error) === 'state_too_long');
+    assert.equal(requests.length, 1, 'a state past the budget is not sent');
+    await judge.evaluate({ config: { ...config, model: 'another/publisher' }, state: long, questions: one });
+    assert.equal(requests.length, 2, 'other models keep the full state');
+  });
   test(`${build}: singleton Choice requests fail locally before a service call`, async () => {
     let calls = 0;
     const judge = mod.createSystemOneJudge({ fetchImpl: async () => { calls++; throw new Error('must not call'); } });

@@ -88,6 +88,13 @@ all publishers. The default is `cloudflare/clef-flash`; existing
 TypeSafe keys, enabled features and scheduler thresholds stay on their original
 provider until changed. Provider keys are stored separately.
 
+`cloudflare/clef-flash` reads only the first ~2K tokens of a long text state
+(OpenRouter's model page says Workers AI truncates it), so
+`SYSTEM_ONE_TEXT_BUDGETS` in `systemone-judge.js` caps the state it is sent at
+6,000 characters. A longer state is not sent; the check takes the same fallback
+as for an unavailable decision model (failure reason `state_too_long`) instead
+of judging evidence it only partly read.
+
 Local [Kev](https://github.com/jaredpalmer/kev) defaults to
 `http://127.0.0.1:8009`, model `kev-latest`, using `/v1/systemone`. A key is optional
 and loopback requests work offline. Custom remote endpoints require HTTPS.
