@@ -47,7 +47,8 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.addScriptTag({ type: 'module', content: `
           import { t, applyDOMTranslations } from '/src/${build}/src/ui/i18n.js';
           import { createComposerModePins } from '/src/${build}/src/ui/composer-mode-pin.js';
-          const log = window.__log = { writes: [], notices: [], toasts: [], opened: [], actWarning: 0, placeholder: 0, scaleClosed: 0, setMode: [], ensure: [] };
+          const log = window.__log = { writes: [], notices: [], toasts: [], opened: [], actWarning: 0, placeholder: 0, scaleClosed: 0, setMode: [], ensure: [], background: [] };
+          const sendToBackground = async (action, params = {}) => { log.background.push({ action, params }); return {}; };
           // The mode picker's collaborators: the panel's mode state and checks.
           const session = window.__session = { ${storedPin ? `'composerModePin:7': ${JSON.stringify(storedPin)}` : ''} };
           const sessionArea = {
@@ -392,6 +393,23 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.evaluate(() => window.revalidateComposerModePin());
         await page.waitForTimeout(50);
         assert.equal((await picker(page)).state.pin, 'act');
+      });
+    });
+
+    test('a tab switch never drains Dev diagnostics; leaving a kept Dev drains only its tab', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.click('.composer-mode-option[data-composer-mode="dev"]');
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        // Tab 7 runs Dev; the user looks at tab 8 (Auto) and back.
+        await page.evaluate(() => { window.switchTab(8); window.switchTab(7); });
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        assert.deepEqual((await picker(page)).log.background, [], 'switching tabs drains nothing');
+        await page.click('.composer-mode-option[data-composer-mode="auto"]');
+        await page.waitForFunction(() => window.modeState().auto === true);
+        assert.deepEqual((await picker(page)).log.background,
+          build === 'chrome' ? [{ action: 'disable_dev_diagnostics', params: { tabId: 7 } }] : [],
+          'only the tab that left Dev is drained (Chrome has Dev diagnostics)');
       });
     });
 

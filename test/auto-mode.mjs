@@ -855,6 +855,11 @@ for (const build of BUILDS) {
     assert.match(panel, /isProcessing = effectiveProcessing;\s*renderComposerModePicker\(\);\s*if \(!effectiveProcessing && composerModePinCheckPending\) void revalidateComposerModePin\(\);/);
     assert.match(panel, /if \(changes\.providers \|\| changes\.activeProvider\) \{\s*void loadProviders\(\);[^}]*void revalidateComposerModePin\(\);\s*\}/);
     assert.match(panel, /if \(agentMode === 'dev' && switchMode\) return true;/);
+    if (build === 'chrome') {
+      // Following the visible tab's kept mode never drains another tab's Dev run.
+      assert.match(panel, /if \(previousMode === 'dev' && mode !== 'dev' && !pinned\) \{/);
+      assert.match(panel, /if \(previous === 'dev' && mode !== 'dev'\) \{\s*sendToBackground\('disable_dev_diagnostics', \{ tabId: Number\(tabId\) \}\)/);
+    }
     // The menu checks Act and Dev like the shortcuts but never switches through them.
     assert.match(panel, /const allowed = pin === 'act' \? await ensureActMode\(\{ switchMode: false \}\)\s*: pin === 'dev' \? await ensureDevMode\(\{ switchMode: false \}\)\s*: true;/);
     const input = { value: '/act  book it', focus() {}, setSelectionRange() {} };

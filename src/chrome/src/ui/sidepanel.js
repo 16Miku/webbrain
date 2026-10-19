@@ -1907,7 +1907,12 @@ function restoreComposerModeForCurrentTab() {
 
 function setComposerModePinForTab(tabId, mode) {
   if (isStandaloneWindow || tabId == null) return;
+  const previous = composerModePins.get(tabId);
   void composerModePins.set(tabId, mode);
+  // Leaving a kept Dev drains that tab's diagnostics, never another tab's.
+  if (previous === 'dev' && mode !== 'dev') {
+    sendToBackground('disable_dev_diagnostics', { tabId: Number(tabId) }).catch(() => {});
+  }
   if (sameTabId(currentTabId, tabId)) syncComposerModeForCurrentTab();
 }
 
@@ -14996,7 +15001,10 @@ function setMode(mode, { pinned = false } = {}) {
   else if (!pinned && composerModePinForCurrentTab()) return;
   const previousMode = agentMode;
   agentMode = mode;
-  if (previousMode === 'dev' && mode !== 'dev') {
+  // A kept mode follows the visible tab, so a tab switch must not drain a
+  // Dev run still going in another tab: leaving a kept Dev drains only its
+  // own tab (setComposerModePinForTab).
+  if (previousMode === 'dev' && mode !== 'dev' && !pinned) {
     // Dev mode is panel-wide, while diagnostics may be active on a tab the
     // user switched away from. Ask the background to drain its tracked set
     // instead of assuming currentTabId is the tab that started capture.
