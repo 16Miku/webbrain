@@ -184,6 +184,99 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: a page-1 continuation without a tree revision is dropped from a first read`, () => {
+    // QA B1, G1, X5: the model filled every field of the schema, including
+    // a continuationArgs for page 1 that differed from the read it asked for,
+    // and the read failed as invalid arguments.
+    const agent = new Agent({ getActive: () => null });
+    const schema = getToolsForMode('act', { tier: 'full' }).find(tool => tool.function.name === 'get_accessibility_tree').function.parameters;
+    const read = { filter: 'all', maxDepth: 8, maxChars: 5000, ref_id: '', page: 1, tree_revision: '' };
+    for (const placeholder of [
+      { filter: 'visible', maxDepth: 10, maxChars: 6000, ref_id: '', page: 1, tree_revision: '' },
+      { filter: 'all', maxDepth: 15, maxChars: 6000, ref_id: '', page: '1', tree_revision: '' },
+      { filter: 'interactive' },
+    ]) {
+      const args = { ...read, continuationArgs: placeholder };
+      const repaired = agent._repairToolCallArgs('get_accessibility_tree', args);
+      assert.equal(repaired.result, undefined, JSON.stringify(placeholder));
+      assert.equal(repaired.repaired, true);
+      assert.deepEqual(repaired.args, read, 'The read is the one the call asked for');
+      assert.equal(validateToolArguments('get_accessibility_tree', repaired.args, schema).ok, true);
+      assert.ok(Object.hasOwn(args, 'continuationArgs'), 'The provider call is not mutated');
+    }
+    // A real continuation still may not conflict with the call, and a
+    // placeholder may still not carry undeclared fields.
+    for (const args of [
+      { filter: 'visible', maxDepth: 10, page: 1, tree_revision: '',
+        continuationArgs: { filter: 'visible', maxDepth: 15, maxChars: 6000, ref_id: '', page: 2, tree_revision: 'fnv1a64:d0891b5ff4884d4a' } },
+      { ...read, continuationArgs: { page: 1, undeclared: true } }, { ...read, continuationArgs: {} },
+      { ...read, continuationArgs: { ...continuation, page: 1, filter: 'visible' } },
+    ]) {
+      assert.equal(agent._repairToolCallArgs('get_accessibility_tree', args).result?.errorCode, 'invalid_tool_arguments', JSON.stringify(args));
+    }
+  });
+
+  test(`${browser}: a returned page-1 restart nested alone is still the read`, () => {
+    // An anchored page-2 read whose revision changed returns a restart for page 1
+    // with the original scope and no revision; nested alone it is the whole call.
+    const agent = new Agent({ getActive: () => null });
+    const restart = { filter: 'interactive', maxDepth: 15, maxChars: 6000, ref_id: 'ref_12', page: 1 };
+    const repaired = agent._repairToolCallArgs('get_accessibility_tree', { continuationArgs: restart });
+    assert.equal(repaired.result, undefined);
+    assert.equal(repaired.args.ref_id, 'ref_12', 'The anchored subtree is kept');
+    assert.equal(repaired.args.filter, 'interactive');
+    assert.equal(repaired.args.maxChars, 6000);
+    const text = agent._repairToolCallArgs('get_accessibility_tree', { continuationArgs: JSON.stringify(restart) });
+    assert.equal(text.args.ref_id, 'ref_12');
+    // Beside top-level fields that only repeat part of it, it is still the read.
+    const partial = agent._repairToolCallArgs('get_accessibility_tree', { maxChars: 6000, continuationArgs: restart });
+    assert.equal(partial.result, undefined);
+    assert.equal(partial.args.ref_id, 'ref_12');
+    assert.equal(partial.args.filter, 'interactive');
+    // So it is beside values that only differ in type or a filter's case.
+    for (const top of [{ page: '1' }, { page: 0 }, { page: 1.5 }, { page: -2 }, { maxChars: '6000' }, { filter: 'INTERACTIVE' }, { maxDepth: ' 15 ' }]) {
+      const mixed = agent._repairToolCallArgs('get_accessibility_tree', { ...top, continuationArgs: restart });
+      assert.equal(mixed.result, undefined, JSON.stringify(top));
+      assert.equal(mixed.args.ref_id, 'ref_12', JSON.stringify(top));
+    }
+  });
+
+  test(`${browser}: a tree revision is trimmed but not case-folded`, () => {
+    const agent = new Agent({ getActive: () => null });
+    const page2 = { filter: 'interactive', maxDepth: 15, maxChars: 6000, ref_id: 'ref_12', page: 2, tree_revision: 'fnv1a64:d0891b5ff4884d4a' };
+    const altered = agent._repairToolCallArgs('get_accessibility_tree', { tree_revision: 'FNV1A64:D0891B5FF4884D4A', continuationArgs: page2 });
+    assert.equal(altered.result?.errorCode, 'invalid_tool_arguments');
+    const same = agent._repairToolCallArgs('get_accessibility_tree', { tree_revision: page2.tree_revision, continuationArgs: page2 });
+    assert.equal(same.result, undefined);
+    const padded = agent._repairToolCallArgs('get_accessibility_tree', { tree_revision: ` ${page2.tree_revision} `, continuationArgs: page2 });
+    assert.equal(padded.result, undefined, 'The read trims a revision before comparing it');
+  });
+
+  test(`${browser}: an explicit empty ref_id beside an unanchored page-1 object is a top-level read`, () => {
+    const agent = new Agent({ getActive: () => null });
+    const repaired = agent._repairToolCallArgs('get_accessibility_tree', { ref_id: '', continuationArgs: { filter: 'interactive', page: 1 } });
+    assert.equal(repaired.result, undefined);
+    assert.deepEqual(repaired.args, { ref_id: '' });
+    // An explicit document-root scope disagrees with an anchored page-1 object.
+    const anchored = agent._repairToolCallArgs('get_accessibility_tree', { ref_id: '', continuationArgs: { filter: 'interactive', ref_id: 'ref_12', page: 1 } });
+    assert.equal(anchored.result, undefined);
+    assert.deepEqual(anchored.args, { ref_id: '' });
+  });
+
+  test(`${browser}: an unanchored or loosely written page-1 object beside a read is a placeholder`, () => {
+    const agent = new Agent({ getActive: () => null });
+    // No ref_id: the tool never returns such a restart, so the top-level read stands.
+    const partial = agent._repairToolCallArgs('get_accessibility_tree', { filter: 'all', continuationArgs: { maxDepth: 1, page: 1 } });
+    assert.equal(partial.result, undefined);
+    assert.deepEqual(partial.args, { filter: 'all' });
+    for (const page of [' 1 ', '1.0', '01', 0, 1.5, '0', -2]) {
+      const loose = agent._repairToolCallArgs('get_accessibility_tree', { filter: 'all', maxDepth: 8,
+        continuationArgs: { filter: 'visible', maxDepth: 15, page } });
+      assert.equal(loose.result, undefined, JSON.stringify(page));
+      assert.equal(loose.args.maxDepth, 8, JSON.stringify(page));
+    }
+  });
+
   test(`${browser}: oversized declared prose windows are bounded without losing the requested document position`, () => {
     const agent = new Agent({ getActive: () => null });
     const schema = getToolsForMode('act', { tier: 'full' })
