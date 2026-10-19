@@ -11317,6 +11317,8 @@ export class Agent extends LoopDetector {
       const normalized = (value, key) => {
         // A page is repaired below from up to four digits ("01" is 1).
         if (key === 'page' && typeof value === 'string' && /^\s*\d{1,4}\s*$/.test(value)) return Number(value);
+        // The read trims a revision before comparing it; its case is kept.
+        if (key === 'tree_revision' && typeof value === 'string') return value.trim();
         const scalar = decimal(value);
         return typeof scalar === 'string' && key === 'filter' ? scalar.trim().toLowerCase() : scalar;
       };

@@ -241,7 +241,7 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
-  test(`${browser}: a tree revision is compared exactly, not case-folded`, () => {
+  test(`${browser}: a tree revision is trimmed but not case-folded`, () => {
     const agent = new Agent({ getActive: () => null });
     const page2 = { filter: 'interactive', maxDepth: 15, maxChars: 6000, ref_id: 'ref_12', page: 2, tree_revision: 'fnv1a64:d0891b5ff4884d4a' };
     const altered = agent._repairToolCallArgs('get_accessibility_tree', { tree_revision: 'FNV1A64:D0891B5FF4884D4A', continuationArgs: page2 });
@@ -249,7 +249,7 @@ for (const browser of ['chrome', 'firefox']) {
     const same = agent._repairToolCallArgs('get_accessibility_tree', { tree_revision: page2.tree_revision, continuationArgs: page2 });
     assert.equal(same.result, undefined);
     const padded = agent._repairToolCallArgs('get_accessibility_tree', { tree_revision: ` ${page2.tree_revision} `, continuationArgs: page2 });
-    assert.equal(padded.result?.errorCode, 'invalid_tool_arguments', 'An opaque revision is not trimmed');
+    assert.equal(padded.result, undefined, 'The read trims a revision before comparing it');
   });
 
   test(`${browser}: an explicit empty ref_id beside an unanchored page-1 object is a top-level read`, () => {
