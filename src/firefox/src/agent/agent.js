@@ -225,6 +225,9 @@ const COMPLETION_READING_TIMEOUT_MS = 6_000;
 // language, after a click in a run that has to prove a submission; the active
 // model gets this long when the decision model is not sure.
 const CONTROL_READING_TIMEOUT_MS = 4_000;
+// A messaging guard's reading that outlasts its click's wait goes on in the
+// background at most this long, so that the retried click can use it.
+const CONTROL_READING_LATE_TIMEOUT_MS = 20_000;
 // A dialog title or a wall text no model answered reads as nothing to stop
 // for; it is asked again only after this long, so page reads and actions do
 // not each wait for it.
@@ -26317,8 +26320,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // Reads, in any language, the texts of a messaging page its checks consulted
   // unread ([{ kind, text }]): the decision model first, the active model
-  // within four seconds. A text no model could read stays unread, and each
-  // check keeps taking it the cautious way. True when any of them was read.
+  // within four seconds (_readGuardPageTexts). A text no model could read in
+  // time stays unread, and each check keeps taking it the cautious way. True
+  // when any of them was read.
   async _readUnreadPageTexts(tabId, texts = []) {
     const byKind = new Map();
     for (const item of (Array.isArray(texts) ? texts : []).slice(0, 64)) {
@@ -26327,15 +26331,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!byKind.has(kind)) byKind.set(kind, new Set());
       byKind.get(kind).add(text);
     }
+    this._cancelOtherGuardPageTextReads(tabId, new Set([...byKind]
+      .flatMap(([kind, list]) => [...list].slice(0, 48).map(text => kind + '\u0000' + text))));
     let read = false;
     for (const [kind, list] of byKind) {
       const pending = [...list].slice(0, 48);
-      // Texts a background prefetch is reading now are joined first, so
+      // Texts a background read has in flight are joined first, so
       // _readPageTexts asks only what is still unread (and still makes a
       // held reading one of the most recent the page gets).
       await this._joinBackgroundPageTextReads(kind, pending);
       try {
-        await this._readPageTexts(tabId, kind, pending, {}, { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+        await this._readGuardPageTexts(tabId, kind, pending);
       } catch (error) {
         if (this._checkAbort(tabId)) throw error;
       }
@@ -26344,14 +26350,73 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return read;
   }
 
-  // Waits for the reads of these texts that a background publication
-  // prefetch has in flight (_socialPublicationPrefetchReadings), so a click
-  // joins them instead of asking a model the same question again. The wait
-  // is capped: a read that does not settle in time is read again here.
+  // The guard's click waits four seconds for its readings, but a slower model
+  // is not cut off there. Its read goes on in the background for the run
+  // (charged and traced to it, cancelled when the run stops or ends, given up
+  // after CONTROL_READING_LATE_TIMEOUT_MS), and the click's retry joins it
+  // (_joinBackgroundPageTextReads) instead of asking the same question again
+  // and timing out the same way. Only the latest check's reads are carried
+  // over: a check about other texts cancels them
+  // (_cancelOtherGuardPageTextReads). An in-browser model, whose requests
+  // cannot be cancelled, is still asked in the foreground and cut off at four
+  // seconds.
+  async _readGuardPageTexts(tabId, kind, texts) {
+    const inFlight = this._guardPageTextReads ||= new Map();
+    const ask = texts.filter(text => !inFlight.has(kind + '\u0000' + text));
+    const unread = ask.filter(text => this._pageTextReading(kind, text) === null);
+    // Held readings are still passed on, to keep them among the most recent.
+    if (!unread.length || !this._socialPublicationBackgroundProvider(this._activeProvider(tabId))) {
+      await this._readPageTexts(tabId, kind, ask, {}, { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+      return;
+    }
+    const runSignal = this._runAbortSignal(tabId);
+    const binding = { signal: runSignal, costState: this.currentCostState.get(tabId) || null,
+      runId: this.currentRunId.get(tabId) || null,
+      current: () => !this._checkAbort(tabId) && this._runAbortSignal(tabId) === runSignal && !runSignal?.aborted };
+    const abort = this._socialPublicationBackgroundAbort(binding, tabId);
+    const background = this._socialPublicationBackgroundCall(tabId, null, binding, abort);
+    const keys = unread.map(text => kind + '\u0000' + text);
+    const tabReads = (this._guardPageTextReadsByTab ||= new Map()).get(tabId)
+      || this._guardPageTextReadsByTab.set(tabId, new Set()).get(tabId);
+    const entry = { abort, keys };
+    tabReads.add(entry);
+    const work = this._readPageTexts(tabId, kind, ask, {},
+      { maxChars: 400, mainTimeoutMs: CONTROL_READING_LATE_TIMEOUT_MS, background }).catch(() => null);
+    const settled = this._trackSocialPublicationBackgroundRun(tabId,
+      this._socialPublicationBackgroundSettle(abort, work, null).finally(() => {
+        for (const key of keys) if (inFlight.get(key) === settled) inFlight.delete(key);
+        tabReads.delete(entry);
+        if (!tabReads.size && this._guardPageTextReadsByTab.get(tabId) === tabReads) this._guardPageTextReadsByTab.delete(tabId);
+      }));
+    for (const key of keys) inFlight.set(key, settled);
+    let timer = null;
+    await Promise.race([settled, new Promise(resolve => { timer = setTimeout(resolve, CONTROL_READING_TIMEOUT_MS); })]);
+    clearTimeout(timer);
+    // A Stop while waiting ends the check, as a foreground read would.
+    this._throwIfAborted(this._runAbortSignal(tabId));
+  }
+
+  // A guard check about other texts than an earlier check's reads still in
+  // flight cancels them: the model moved on to another control.
+  _cancelOtherGuardPageTextReads(tabId, requestedKeys) {
+    for (const entry of this._guardPageTextReadsByTab?.get(tabId) || []) {
+      if (entry.keys.some(key => requestedKeys.has(key)) || entry.abort.controller.signal.aborted) continue;
+      const reason = new Error('A later guard check reads other texts.');
+      reason.name = 'AbortError';
+      entry.abort.controller.abort(reason);
+    }
+  }
+
+  // Waits for the reads of these texts already in flight: a background
+  // publication prefetch's (_socialPublicationPrefetchReadings) or the
+  // guard's own that outlasted an earlier click (_readGuardPageTexts). A
+  // click joins them instead of asking a model the same question again. The
+  // wait is capped: a prefetch read that does not settle in time is read again
+  // here, while a guard read still going is not asked twice.
   async _joinBackgroundPageTextReads(kind, texts) {
-    const reading = this._socialPublicationPrefetchReading;
-    if (!reading?.size) return;
-    const pending = [...new Set(texts.map(text => reading.get(kind + '\u0000' + text)).filter(Boolean))];
+    const pending = [...new Set([this._socialPublicationPrefetchReading, this._guardPageTextReads]
+      .flatMap(reading => (reading?.size ? texts.map(text => reading.get(kind + '\u0000' + text)) : []))
+      .filter(Boolean))];
     if (!pending.length) return;
     let timer = null;
     await Promise.race([Promise.allSettled(pending),

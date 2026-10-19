@@ -1144,7 +1144,12 @@ to the page with each guard check and chat observation; texts the check
 consulted unread come back, are read (the decision model first, the active
 model within four seconds) and the check runs again, up to three times while
 it reaches texts nobody has read (a send control's name first, the recipient
-rows behind it next). The page monitor's capture reports only that texts were
+rows behind it next). The check waits four seconds, but a slower active model
+is not cut off: its read goes on in the background for the run (charged and
+traced to it, cancelled when the run stops or ends, given up after 20 seconds),
+and the retried click joins it instead of asking again. Only the latest check's
+reads are carried over; a check about other texts cancels them. An in-browser
+model, whose requests cannot be cancelled, is still cut off at four seconds. The page monitor's capture reports only that texts were
 consulted unread; page feedback then asks for them, reads them and captures
 again, so the conversation that owns a footer action is decided with the
 readings. While the active model decides on such a page, the decision model
