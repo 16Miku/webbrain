@@ -388,6 +388,25 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await f.page.close(); }
       });
 
+      await t.test('text that only renders like the relative time does not take the timestamp\'s place', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<span style="text-transform:uppercase">back in 8 dk</span> <time style="text-transform:uppercase" datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__relative-time time').textContent = '9 dk'; });
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Only the timestamp ticked');
+        } finally { await f.page.close(); }
+      });
+
       await t.test('hidden text equal to the relative time does not hide the timestamp from the key', async () => {
         const f = await fixture();
         try {

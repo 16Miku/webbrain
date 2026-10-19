@@ -33956,7 +33956,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               const owner = part.parentElement;
               if (owner && (typeof owner.checkVisibility !== 'function' || owner.checkVisibility({ visibilityProperty: true }))) between += part.data;
             }
-            for (let from = between.indexOf(shown); from >= 0; from = between.indexOf(shown, from + shown.length)) skip += 1;
+            // Compared as rendered: case and white-space as styled are folded on both sides.
+            const fold = value => value.replace(/\s+/g, ' ').toLowerCase();
+            const needle = fold(shown), haystack = fold(between);
+            for (let from = needle ? haystack.indexOf(needle) : -1; from >= 0; from = haystack.indexOf(needle, from + needle.length)) skip += 1;
           } catch { skip = 0; }
         }
         previous = time;
