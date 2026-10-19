@@ -1014,6 +1014,7 @@ export default {
   'sp.mode_picker.label': 'Mode',
   'sp.mode_picker.auto': 'Auto',
   'sp.mode_picker.desc': 'Pinipili ng Auto ang Tanong, Aksyon o Dev para sa bawat mensahe. Pumili ng isa para manatili ito sa chat na ito; nagsisimula sa Auto ang bagong chat.',
+  'sp.mode_picker.busy': 'Mapapalitan mo ang mode kapag natapos na ang kasalukuyang gawain.',
   'sp.mode_picker.button_pinned': '{mode} sa chat na ito · {permissions}',
   "sp.mode.dev.confirm": "Ang Dev mode ay nagdaragdag ng mga tool para sa page source, style inspection, DOM/frame inspection, at pag-debug sa ibabaw ng Aksyon mode.\n\nGamitin ito para sa HTML/CSS, pag-edit ng page, at pag-troubleshoot. Naka-block ito para sa mga Compact-tier provider.\n\nMagpatuloy?",
   "sp.mode.dev.compact_blocked": "Naka-block ang Dev mode para sa mga Compact-tier provider. Kasalukuyang Compact ang {provider}; lumipat sa Mid/Full-tier provider o baguhin ang prompt tier nito.",

@@ -1041,6 +1041,7 @@ export default {
   'sp.mode_picker.label': 'Mod',
   'sp.mode_picker.auto': 'Auto',
   'sp.mode_picker.desc': 'Auto memilih Tanya, Lakukan atau Dev untuk setiap mesej. Pilih satu untuk mengekalkannya dalam sembang ini; sembang baharu bermula dengan Auto.',
+  'sp.mode_picker.busy': 'Anda boleh menukar mod apabila tugas semasa selesai.',
   'sp.mode_picker.button_pinned': '{mode} untuk sembang ini · {permissions}',
   "sp.mode.dev.confirm": "Mod Dev menambahkan alat sumber halaman, pemeriksaan gaya, pemeriksaan DOM/bingkai dan penyahpepijatan di atas mod Lakukan.\n\nGunakannya untuk kerja HTML/CSS, penyuntingan halaman dan penyelesaian masalah. Mod ini disekat untuk pembekal peringkat Kompak.\n\nTeruskan?",
   "sp.mode.dev.compact_blocked": "Mod Dev disekat untuk pembekal peringkat Kompak. {provider} kini berada pada peringkat Kompak; tukar kepada pembekal peringkat Pertengahan/Penuh atau ubah peringkat prompt-nya.",

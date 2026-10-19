@@ -221,6 +221,7 @@ export default {
   'sp.mode_picker.label': 'Mode',
   'sp.mode_picker.auto': 'Auto',
   'sp.mode_picker.desc': 'Auto picks Ask, Act or Dev for each message. Choose one to keep it for this chat; a new chat starts in Auto.',
+  'sp.mode_picker.busy': 'You can change the mode when the current task finishes.',
   'sp.mode_picker.button_pinned': '{mode} for this chat · {permissions}',
   'sp.mode.dev.confirm': 'Dev mode adds page source, style inspection, DOM/frame inspection, and debugging tools on top of Act mode.\n\nUse it for HTML/CSS/page-editing and troubleshooting work. It is blocked for Compact-tier providers.\n\nContinue?',
   'sp.mode.dev.compact_blocked': 'Dev mode is blocked for Compact-tier providers. {provider} is currently Compact; switch to a Mid/Full-tier provider or change its prompt tier.',

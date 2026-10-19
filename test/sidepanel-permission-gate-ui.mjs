@@ -66,8 +66,19 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
             agentMode = autoModeSelection ? 'ask' : mode;
           };
           const blocked = window.__blocked = { act: false, dev: false };
-          const ensureActMode = async ({ switchMode = true } = {}) => { log.ensure.push({ mode: 'act', switchMode }); return !blocked.act; };
-          const ensureDevMode = async ({ switchMode = true } = {}) => { log.ensure.push({ mode: 'dev', switchMode }); return !blocked.dev; };
+          // A check can be held open to race it against a later pick.
+          const gates = window.__gates = { act: null, dev: null };
+          const check = async (mode, switchMode) => {
+            log.ensure.push({ mode, switchMode });
+            if (gates[mode]) await gates[mode];
+            return !blocked[mode];
+          };
+          const ensureActMode = ({ switchMode = true } = {}) => check('act', switchMode);
+          const ensureDevMode = ({ switchMode = true } = {}) => check('dev', switchMode);
+          let isProcessing = false;
+          let composerModePickerReady = false;
+          let composerModePickGeneration = 0;
+          let composerModePinCheckPending = false;
           let failNextWrite = false;
           window.__failNextWrite = () => { failNextWrite = true; };
           const ${api} = {
@@ -92,8 +103,16 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
           const closeUiScalePopover = () => { log.scaleClosed += 1; return false; };
           applyDOMTranslations(document);
           ${block}
+          renderComposerModePicker();
           Object.assign(window, {
-            restoreComposerModeForCurrentTab, setComposerModePinForTab,
+            restoreComposerModeForCurrentTab, setComposerModePinForTab, revalidateComposerModePin,
+            // What setTabProcessing does for the visible tab.
+            setProcessing(value) {
+              isProcessing = value;
+              renderComposerModePicker();
+              if (!value && composerModePinCheckPending) void revalidateComposerModePin();
+            },
+            pinCheckPending: () => composerModePinCheckPending,
             switchTab(id) { currentTabId = id; restoreComposerModeForCurrentTab(); },
             modeState: () => ({ auto: autoModeSelection, agentMode, pin: composerModePins.get(currentTabId) }),
           });
@@ -312,6 +331,68 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null });
         await page.waitForFunction(() => !('composerModePin:7' in window.__session));
       }, { storedPin: 'dev' });
+    });
+
+    test('the mode picker waits for a run to end', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.evaluate(() => window.setProcessing(true));
+        let state = await page.evaluate(() => ({
+          disabled: [...document.querySelectorAll('.composer-mode-option')].map(option => option.disabled),
+          desc: document.getElementById('composer-mode-desc').textContent,
+        }));
+        assert.deepEqual(state.disabled, [true, true, true, true]);
+        assert.equal(state.desc, 'You can change the mode when the current task finishes.');
+        await page.evaluate(() => document.querySelector('.composer-mode-option[data-composer-mode="dev"]').click());
+        assert.equal((await picker(page)).state.auto, true, 'no change during the run');
+        await page.evaluate(() => window.setProcessing(false));
+        state = await page.evaluate(() => ({
+          disabled: [...document.querySelectorAll('.composer-mode-option')].map(option => option.disabled),
+          desc: document.getElementById('composer-mode-desc').textContent,
+        }));
+        assert.deepEqual(state.disabled, [false, false, false, false]);
+        assert.match(state.desc, /^Auto picks Ask, Act or Dev/);
+      });
+    });
+
+    test('the latest pick wins over an older one still being checked', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.evaluate(() => { window.__release = null; window.__gates.dev = new Promise(resolve => { window.__release = resolve; }); });
+        await page.click('.composer-mode-option[data-composer-mode="dev"]');
+        await page.click('.composer-mode-option[data-composer-mode="ask"]');
+        await page.waitForFunction(() => window.modeState().pin === 'ask');
+        await page.evaluate(() => window.__release());
+        await page.waitForTimeout(50);
+        const p = await picker(page);
+        assert.deepEqual(p.state, { auto: false, agentMode: 'ask', pin: 'ask' }, 'the older Dev pick does not overwrite Ask');
+        assert.deepEqual(p.active, ['ask']);
+      });
+    });
+
+    test('a kept mode the new provider cannot run goes back to Auto, after the run', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.click('.composer-mode-option[data-composer-mode="dev"]');
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        // The user switches to a Compact provider while a Dev run is going.
+        await page.evaluate(() => { window.__blocked.dev = true; window.setProcessing(true); });
+        await page.evaluate(() => window.revalidateComposerModePin());
+        assert.equal((await picker(page)).state.pin, 'dev', 'the running Dev task keeps its mode');
+        assert.equal(await page.evaluate(() => window.pinCheckPending()), true);
+        await page.evaluate(() => window.setProcessing(false));
+        await page.waitForFunction(() => window.modeState().auto === true);
+        const p = await picker(page);
+        assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null });
+        assert.equal(p.badge, null);
+        assert.deepEqual(p.log.ensure.at(-1), { mode: 'dev', switchMode: false }, 'checked like the shortcut');
+        // A provider that can still run it keeps the mode.
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.waitForFunction(() => window.modeState().pin === 'act');
+        await page.evaluate(() => window.revalidateComposerModePin());
+        await page.waitForTimeout(50);
+        assert.equal((await picker(page)).state.pin, 'act');
+      });
     });
 
     test('a kept mode keeps the toolbar on one row in a narrow panel', async () => {

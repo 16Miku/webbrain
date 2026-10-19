@@ -231,6 +231,7 @@ export default {
   'sp.mode_picker.label': 'מצב',
   'sp.mode_picker.auto': 'אוטומטי',
   'sp.mode_picker.desc': 'אוטומטי בוחר שאל, פעולה או Dev לכל הודעה. בחרו אחד כדי לשמור אותו בצ׳אט הזה; צ׳אט חדש מתחיל באוטומטי.',
+  'sp.mode_picker.busy': 'אפשר לשנות את המצב כשהמשימה הנוכחית תסתיים.',
   'sp.mode_picker.button_pinned': '{mode} בצ׳אט הזה · {permissions}',
   "sp.mode.dev.confirm": "מצב Dev מוסיף למצב פעולה כלים להצגת מקור הדף, לבדיקת סגנונות, לבדיקת DOM ומסגרות ולניפוי שגיאות.\n\nהשתמש בו לעבודה עם HTML/CSS, לעריכת דפים ולפתרון תקלות. הוא אינו זמין לספקים ברמת Compact.\n\nלהמשיך?",
   "sp.mode.dev.compact_blocked": "מצב Dev אינו זמין לספקים ברמת Compact. ‏{provider} מוגדר כרגע כ-Compact; עבור לספק ברמת Mid/Full או שנה את רמת ההנחיה שלו.",

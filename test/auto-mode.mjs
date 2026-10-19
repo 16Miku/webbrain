@@ -849,6 +849,12 @@ for (const build of BUILDS) {
     for (const command of ['/ask', '/act', '/dev']) {
       assert.match(panel, new RegExp(`if \\(!isStandaloneWindow\\) prefixComposerModeCommand\\('${command}'\\);`), `${command}: one message, also with a kept mode`);
     }
+    // A run's end applies a provider check that waited for it, and every
+    // provider change checks the kept mode again (Dev runs its checks even when
+    // Dev is already the mode).
+    assert.match(panel, /isProcessing = effectiveProcessing;\s*renderComposerModePicker\(\);\s*if \(!effectiveProcessing && composerModePinCheckPending\) void revalidateComposerModePin\(\);/);
+    assert.match(panel, /if \(changes\.providers \|\| changes\.activeProvider\) \{\s*void loadProviders\(\);[^}]*void revalidateComposerModePin\(\);\s*\}/);
+    assert.match(panel, /if \(agentMode === 'dev' && switchMode\) return true;/);
     // The menu checks Act and Dev like the shortcuts but never switches through them.
     assert.match(panel, /const allowed = pin === 'act' \? await ensureActMode\(\{ switchMode: false \}\)\s*: pin === 'dev' \? await ensureDevMode\(\{ switchMode: false \}\)\s*: true;/);
     const input = { value: '/act  book it', focus() {}, setSelectionRange() {} };

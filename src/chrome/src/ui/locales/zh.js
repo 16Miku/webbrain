@@ -1041,6 +1041,7 @@ export default {
   'sp.mode_picker.label': '模式',
   'sp.mode_picker.auto': '自动',
   'sp.mode_picker.desc': '自动模式会为每条消息选择“问”“执行”或“开发”。选择一个即可在本次对话中保持；新对话从自动开始。',
+  'sp.mode_picker.busy': '当前任务完成后即可更改模式。',
   'sp.mode_picker.button_pinned': '本次对话：{mode} · {permissions}',
   "sp.mode.dev.confirm": "开发模式在操作模式的基础上增加页面源代码、样式检查、DOM/框架检查和调试工具。\n\n它适用于 HTML/CSS、页面编辑和故障排查。紧凑级别的提供商无法使用此模式。\n\n是否继续？",
   "sp.mode.dev.compact_blocked": "紧凑级别的提供商无法使用开发模式。{provider} 当前为紧凑级别；请切换到中等/完整级别的提供商，或更改其提示词级别。",

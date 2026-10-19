@@ -1014,6 +1014,7 @@ export default {
   'sp.mode_picker.label': 'Mode',
   'sp.mode_picker.auto': 'Auto',
   'sp.mode_picker.desc': 'Auto choisit Demander, Agir ou Dev pour chaque message. Choisissez-en un pour le garder dans ce chat ; un nouveau chat démarre en Auto.',
+  'sp.mode_picker.busy': 'Vous pourrez changer de mode une fois la tâche en cours terminée.',
   'sp.mode_picker.button_pinned': '{mode} pour ce chat · {permissions}',
   "sp.mode.dev.confirm": "Le mode Dev ajoute au mode Action des outils de code source, d’inspection des styles, d’inspection du DOM/des cadres et de débogage.\n\nUtilisez-le pour les travaux HTML/CSS, la modification de pages et le dépannage. Il est bloqué pour les fournisseurs de niveau Compact.\n\nContinuer ?",
   "sp.mode.dev.compact_blocked": "Le mode Dev est bloqué pour les fournisseurs de niveau Compact. {provider} est actuellement en mode Compact ; passez à un fournisseur de niveau Intermédiaire/Complet ou modifiez son niveau d’invite.",

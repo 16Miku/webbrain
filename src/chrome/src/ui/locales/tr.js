@@ -1045,6 +1045,7 @@ export default {
   'sp.mode_picker.label': 'Mod',
   'sp.mode_picker.auto': 'Otomatik',
   'sp.mode_picker.desc': 'Otomatik, her mesaj için Sor, Uygula veya Dev’i kendisi seçer. Birini seçersen bu sohbet boyunca o kullanılır; yeni sohbet Otomatik başlar.',
+  'sp.mode_picker.busy': 'Modu, mevcut görev bitince değiştirebilirsin.',
   'sp.mode_picker.button_pinned': 'Bu sohbette {mode} · {permissions}',
   "sp.mode.dev.confirm": "Dev modu, Uygula moduna ek olarak sayfa kaynağı, stil inceleme, DOM/çerçeve inceleme ve hata ayıklama araçları sunar.\n\nHTML/CSS, sayfa düzenleme ve sorun giderme işleri için kullanın. Kompakt düzey sağlayıcılarda kullanılamaz.\n\nDevam edilsin mi?",
   "sp.mode.dev.compact_blocked": "Dev modu Kompakt düzey sağlayıcılarda kullanılamaz. {provider} şu anda Kompakt düzeyinde; Orta/Tam düzeyinde bir sağlayıcıya geçin veya istem düzeyini değiştirin.",

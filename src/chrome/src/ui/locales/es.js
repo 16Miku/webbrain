@@ -1041,6 +1041,7 @@ export default {
   'sp.mode_picker.label': 'Modo',
   'sp.mode_picker.auto': 'Auto',
   'sp.mode_picker.desc': 'Auto elige Preguntar, Actuar o Dev para cada mensaje. Elige uno para mantenerlo en este chat; un chat nuevo empieza en Auto.',
+  'sp.mode_picker.busy': 'Podrás cambiar el modo cuando termine la tarea actual.',
   'sp.mode_picker.button_pinned': '{mode} en este chat · {permissions}',
   "sp.mode.dev.confirm": "El modo Dev añade herramientas de código fuente, inspección de estilos, inspección del DOM/marcos y depuración al modo Actuar.\n\nÚsalo para trabajar con HTML/CSS, editar páginas y solucionar problemas. Está bloqueado para proveedores de nivel Compacto.\n\n¿Continuar?",
   "sp.mode.dev.compact_blocked": "El modo Dev está bloqueado para proveedores de nivel Compacto. {provider} está actualmente en Compacto; cambia a un proveedor de nivel Medio/Completo o cambia su nivel de instrucciones.",

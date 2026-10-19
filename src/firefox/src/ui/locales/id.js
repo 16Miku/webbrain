@@ -1014,6 +1014,7 @@ export default {
   'sp.mode_picker.label': 'Mode',
   'sp.mode_picker.auto': 'Otomatis',
   'sp.mode_picker.desc': 'Otomatis memilih Tanya, Aksi, atau Dev untuk setiap pesan. Pilih salah satu agar tetap dipakai di chat ini; chat baru dimulai dengan Otomatis.',
+  'sp.mode_picker.busy': 'Anda dapat mengganti mode setelah tugas saat ini selesai.',
   'sp.mode_picker.button_pinned': '{mode} untuk chat ini · {permissions}',
   "sp.mode.dev.confirm": "Mode Dev menambahkan alat sumber halaman, pemeriksaan gaya, pemeriksaan DOM/frame, dan debug di atas mode Aksi.\n\nGunakan untuk pekerjaan HTML/CSS, pengeditan halaman, dan pemecahan masalah. Mode ini diblokir untuk penyedia tingkat Ringkas.\n\nLanjutkan?",
   "sp.mode.dev.compact_blocked": "Mode Dev diblokir untuk penyedia tingkat Ringkas. {provider} saat ini berada di tingkat Ringkas; beralihlah ke penyedia tingkat Menengah/Penuh atau ubah tingkat prompt-nya.",

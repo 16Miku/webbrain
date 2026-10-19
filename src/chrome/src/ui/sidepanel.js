@@ -1271,6 +1271,12 @@ let agentMode = 'ask'; // 'ask' | 'act' | 'dev'
 // Automatic off until a new chat. The standalone window always stays in Ask.
 let autoModeSelection = !isStandaloneWindow;
 const composerModePins = createComposerModePins(() => chrome.storage?.session);
+// Set once the "!" menu's controls exist; run-state changes may render it earlier.
+let composerModePickerReady = false;
+// The latest pick wins over an older one still waiting on its checks.
+let composerModePickGeneration = 0;
+// A provider change during a run is checked against the kept mode when it ends.
+let composerModePinCheckPending = false;
 let abortRequested = false;
 const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
@@ -1343,6 +1349,8 @@ function setTabProcessing(tabId, processing) {
   else processingTabs.delete(numericTabId);
   if (sameTabId(currentTabId, numericTabId)) {
     isProcessing = effectiveProcessing;
+    renderComposerModePicker();
+    if (!effectiveProcessing && composerModePinCheckPending) void revalidateComposerModePin();
     syncSelectionScopeRestoreAvailability();
     if (typeof syncFailureRecoveryButtons === 'function') syncFailureRecoveryButtons();
     if (typeof updateActWarning === 'function') updateActWarning();
@@ -1581,6 +1589,7 @@ function syncCurrentTabRunFlags() {
   const numericTabId = Number(currentTabId);
   isProcessing = Number.isFinite(numericTabId) && processingTabs.has(numericTabId);
   abortRequested = Number.isFinite(numericTabId) && abortRequestedTabs.has(numericTabId);
+  renderComposerModePicker();
 }
 
 function createRunRequestId(tabId) {
@@ -1837,19 +1846,29 @@ function renderPermissionGateControl() {
 // one-message slash commands and shortcuts still work on top of it.
 const composerModeOptions = [...document.querySelectorAll('.composer-mode-option')];
 const composerModeBadge = document.getElementById('composer-mode-badge');
+const composerModeDesc = document.getElementById('composer-mode-desc');
 
 function composerModePinForCurrentTab() {
   return isStandaloneWindow ? null : composerModePins.get(currentTabId);
 }
 
 function renderComposerModePicker() {
+  if (!composerModePickerReady) return;
   const pin = composerModePinForCurrentTab();
   const current = pin || 'auto';
+  // Like the mode shortcuts, the picker waits for the visible tab's run to
+  // end: leaving Dev mid-run would drain diagnostics the run still reads.
+  const busy = isProcessing;
   for (const option of composerModeOptions) {
     const on = option.dataset.composerMode === current;
     option.classList.toggle('active', on);
     option.setAttribute('aria-checked', String(on));
     option.tabIndex = on ? 0 : -1;
+    option.disabled = busy;
+  }
+  if (composerModeDesc) {
+    composerModeDesc.dataset.i18n = busy ? 'sp.mode_picker.busy' : 'sp.mode_picker.desc';
+    composerModeDesc.textContent = t(composerModeDesc.dataset.i18n);
   }
   if (composerModeBadge) {
     composerModeBadge.hidden = !pin;
@@ -1880,7 +1899,9 @@ function restoreComposerModeForCurrentTab() {
   const tabId = currentTabId;
   if (isStandaloneWindow || tabId == null) return;
   void composerModePins.load(tabId).then(() => {
-    if (sameTabId(currentTabId, tabId)) syncComposerModeForCurrentTab();
+    if (!sameTabId(currentTabId, tabId)) return;
+    syncComposerModeForCurrentTab();
+    void revalidateComposerModePin();
   });
 }
 
@@ -1891,21 +1912,51 @@ function setComposerModePinForTab(tabId, mode) {
 }
 
 async function pickComposerMode(choice) {
-  if (isStandaloneWindow) return;
+  if (isStandaloneWindow || isProcessing) return;
   const tabId = currentTabId;
   if (tabId == null) return;
   const pin = ['ask', 'act', 'dev'].includes(choice) ? choice : null;
+  const generation = ++composerModePickGeneration;
   if (pin === composerModePinForCurrentTab()) return;
   // The same checks as the mode shortcuts: a selection scope, an in-browser
   // model or a Compact provider (Dev) keep the choice where it was.
   const allowed = pin === 'act' ? await ensureActMode({ switchMode: false })
     : pin === 'dev' ? await ensureDevMode({ switchMode: false })
       : true;
-  if (!allowed || !sameTabId(currentTabId, tabId)) {
+  // A later pick, a tab switch or a run that started meanwhile wins.
+  if (generation !== composerModePickGeneration || !sameTabId(currentTabId, tabId) || isProcessing) return;
+  if (!allowed) {
     renderComposerModePicker();
     return;
   }
   setComposerModePinForTab(tabId, pin);
+}
+
+// A kept Act or Dev that the active provider cannot run (an in-browser model,
+// or a Compact provider for Dev) goes back to Auto, with the shortcut's notice.
+// During a run the check waits for the run to end.
+async function revalidateComposerModePin() {
+  const tabId = currentTabId;
+  const pin = composerModePinForCurrentTab();
+  if (pin !== 'act' && pin !== 'dev') {
+    composerModePinCheckPending = false;
+    return;
+  }
+  if (isProcessing) {
+    composerModePinCheckPending = true;
+    return;
+  }
+  composerModePinCheckPending = false;
+  const generation = composerModePickGeneration;
+  const allowed = pin === 'act' ? await ensureActMode({ switchMode: false }) : await ensureDevMode({ switchMode: false });
+  if (allowed || generation !== composerModePickGeneration || !sameTabId(currentTabId, tabId)
+      || composerModePinForCurrentTab() !== pin) return;
+  if (isProcessing) {
+    composerModePinCheckPending = true;
+    return;
+  }
+  composerModePickGeneration += 1;
+  setComposerModePinForTab(tabId, null);
 }
 
 for (const option of composerModeOptions) {
@@ -1915,6 +1966,7 @@ for (const option of composerModeOptions) {
 composerModeOptions[0]?.parentElement?.addEventListener('keydown', (event) => {
   if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
   event.preventDefault();
+  if (isProcessing) return;
   const count = composerModeOptions.length;
   const index = Math.max(0, composerModeOptions.indexOf(document.activeElement));
   const rtl = document.documentElement.dir === 'rtl';
@@ -1983,7 +2035,9 @@ document.addEventListener('click', (event) => {
   if (permissionGateMenu?.contains(event.target)) return;
   closePermissionGatePopover();
 });
+composerModePickerReady = true;
 renderPermissionGateControl();
+renderComposerModePicker();
 
 // An automatically routed run that is acting in the visible tab.
 function autoActionRunVisible() {
@@ -5429,6 +5483,7 @@ async function init() {
     if (changes.providers || changes.activeProvider) {
       void loadProviders();
       void refreshStandaloneWebgpuStatus();
+      void revalidateComposerModePin();
     }
   });
 
@@ -15005,7 +15060,7 @@ async function ensureDevMode({ switchMode = true } = {}) {
     showComposerToast(t('sp.selection_scope.description'), { duration: 5000 });
     return false;
   }
-  if (agentMode === 'dev') return true;
+  if (agentMode === 'dev' && switchMode) return true;
   if (await inBrowserProviderBlocksMode()) return false;
   try {
     const tierInfo = await sendToBackground('get_active_prompt_tier');

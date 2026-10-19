@@ -220,6 +220,7 @@ export default {
   'sp.mode_picker.label': 'Chế độ',
   'sp.mode_picker.auto': 'Tự động',
   'sp.mode_picker.desc': 'Tự động chọn Hỏi, Hành động hoặc Nhà phát triển cho từng tin nhắn. Chọn một chế độ để giữ trong cuộc trò chuyện này; cuộc trò chuyện mới bắt đầu ở Tự động.',
+  'sp.mode_picker.busy': 'Bạn có thể đổi chế độ khi tác vụ hiện tại hoàn tất.',
   'sp.mode_picker.button_pinned': '{mode} cho cuộc trò chuyện này · {permissions}',
   'sp.mode.dev.confirm': "Chế độ nhà phát triển bổ sung thêm nguồn trang, kiểm tra kiểu, kiểm tra DOM/khung và các công cụ gỡ lỗi bên trên chế độ Hành động.\n\nSử dụng nó cho công việc chỉnh sửa và khắc phục sự cố HTML/CSS/trang. Nó bị chặn đối với các nhà cung cấp cấp Compact.\n\nTiếp tục?",
   'sp.mode.dev.compact_blocked': "Chế độ nhà phát triển bị chặn đối với các nhà cung cấp cấp Nhỏ gọn. {provider} hiện ở dạng Nhỏ gọn; chuyển sang nhà cung cấp cấp trung/đầy đủ hoặc thay đổi cấp độ nhắc nhở của nhà cung cấp đó.",

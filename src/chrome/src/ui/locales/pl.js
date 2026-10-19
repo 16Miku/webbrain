@@ -1033,6 +1033,7 @@ export default {
   'sp.mode_picker.label': 'Tryb',
   'sp.mode_picker.auto': 'Auto',
   'sp.mode_picker.desc': 'Auto wybiera Pytaj, Działaj lub Dev dla każdej wiadomości. Wybierz jeden, aby zachować go w tym czacie; nowy czat zaczyna się w trybie Auto.',
+  'sp.mode_picker.busy': 'Tryb możesz zmienić po zakończeniu bieżącego zadania.',
   'sp.mode_picker.button_pinned': '{mode} w tym czacie · {permissions}',
   "sp.mode.dev.confirm": "Tryb Dev dodaje do trybu Działaj narzędzia kodu źródłowego strony, inspekcji stylów, inspekcji DOM/ramek i debugowania.\n\nUżywaj go do pracy z HTML/CSS, edycji stron i rozwiązywania problemów. Jest niedostępny dla dostawców na poziomie Kompaktowym.\n\nKontynuować?",
   "sp.mode.dev.compact_blocked": "Tryb Dev jest niedostępny dla dostawców na poziomie Kompaktowym. {provider} korzysta obecnie z poziomu Kompaktowego; przełącz się na dostawcę poziomu Średniego/Pełnego lub zmień jego poziom promptu.",

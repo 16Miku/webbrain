@@ -217,6 +217,7 @@ export default {
   'sp.mode_picker.label': 'Modus',
   'sp.mode_picker.auto': 'Auto',
   'sp.mode_picker.desc': 'Auto wählt für jede Nachricht Fragen, Handeln oder Dev. Wähle einen Modus, um ihn für diesen Chat zu behalten; ein neuer Chat beginnt in Auto.',
+  'sp.mode_picker.busy': 'Du kannst den Modus ändern, sobald die aktuelle Aufgabe fertig ist.',
   'sp.mode_picker.button_pinned': '{mode} für diesen Chat · {permissions}',
   'sp.mode.dev.confirm': 'Der Dev-Modus fügt dem Handeln-Modus Seitenquellcode-, Stilinspektion, DOM/Rahmen-Inspektion und Debugging-Werkzeuge hinzu.\n\nVerwenden Sie ihn für HTML/CSS-/Seitenbearbeitung und Fehlersuche. Er ist für Compact-Level-Anbieter gesperrt.\n\nFortfahren?',
   'sp.mode.dev.compact_blocked': 'Der Dev-Modus ist für Compact-Level-Anbieter gesperrt. {provider} ist derzeit Compact; wechseln Sie zu einem Mid/Full-Level-Anbieter oder ändern Sie dessen Prompt-Level.',
