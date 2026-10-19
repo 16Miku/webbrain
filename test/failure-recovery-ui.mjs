@@ -114,6 +114,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       'clearAssistantTextStreamState', 'renderAssistantTextUpdate', 'isStoppedByUserStatus',
       'handleAgentUpdateMessage', 'addMessageCopyButton', 'getMessageCopyText',
       'roleFromMessageElement', 'normalizeHistoryText', 'extractChatHistoryMessages', 'formatMarkdown',
+      'invalidateUnresolvedClarifyCards',
     ].map(name => extract(source, name)).join('\n');
     const send = extract(source, 'sendMessage');
     const responseStart = send.indexOf('    if (renderToCurrentTab && currentTabId === tabId && isTabAbortRequested(tabId))');

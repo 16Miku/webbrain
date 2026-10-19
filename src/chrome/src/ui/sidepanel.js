@@ -6056,9 +6056,10 @@ function clarificationSubmissionKey(tabId, requestId, clarifyId) {
   return JSON.stringify([Number(tabId), String(requestId || ''), String(clarifyId || '')]);
 }
 
-function invalidateUnresolvedClarifyCards(assistantEl, currentClarifyId = '') {
+function invalidateUnresolvedClarifyCards(assistantEl, currentClarifyId = '', { keepScheduled = false } = {}) {
   for (const card of assistantEl?.querySelectorAll('.clarify-card') || []) {
-    if (card.classList.contains('clarify-answered') || String(card.dataset.clarifyId || '') === currentClarifyId) continue;
+    if (card.classList.contains('clarify-answered') || String(card.dataset.clarifyId || '') === currentClarifyId
+        || (keepScheduled && card.dataset.scheduledJobId)) continue;
     clearClarifyCountdown(card);
     if (card.dataset.permission === '1') card.remove();
     else {
@@ -11361,6 +11362,10 @@ function handleAgentUpdateMessage(msg) {
         requestId: msg.requestId,
         runId: msg.runId,
       });
+      // A finished run accepts no more answers: a card it still showed (the
+      // permission card on screen when Stop was pressed, say) closes with it.
+      // A scheduled task's cards belong to that task.
+      invalidateUnresolvedClarifyCards(eventAssistantEl || currentAssistantEl, '', { keepScheduled: true });
       const suppressTimedOutPlanTerminal = !!(eventAssistantEl || currentAssistantEl)
         ?.querySelector('.plan-review-expired')
         && isPlanReviewTimeoutTerminal(data?.finalContent);
