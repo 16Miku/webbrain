@@ -7370,6 +7370,7 @@ export class Agent extends LoopDetector {
     // submission must still be the run's latest step. And when the plan names
     // several deliverables, one verified submission cannot finish the task.
     if (!this._completionSubmissionIsLatestAction(tabId)
+        || this._planExecutionGuards.get(tabId)?.multipleDeliverables === true
         || (this._planExecutionGuards.get(tabId)?.deliverables || []).length > 1) return null;
     const binding = this._failureRecoveryBinding(tabId);
     const actionSequence = invariant.lastAction.sequence;
@@ -23661,6 +23662,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requiresSubmission: typeof gate.requiresSubmission === 'boolean' ? gate.requiresSubmission : null,
       readScope: gate.readScope || null,
       deliverables: gate.deliverables || [],
+      multipleDeliverables: gate.multipleDeliverables === true || (gate.deliverables || []).length > 1,
       siteWorkflowUrl: gate.siteWorkflowUrl || '',
       messaging: normalizeMessageTarget(gate.messaging),
       // Who else the request named besides the open conversation, and that
@@ -24056,6 +24058,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && plan.deliverables.every(value => typeof value === 'string' && value.length <= 1000)
         ? [...plan.deliverables]
         : [],
+      // The list above is dropped past eight entries; whether the plan names
+      // several deliverables is kept regardless.
+      multipleDeliverables: Array.isArray(plan?.deliverables) && plan.deliverables.length > 1,
     };
   }
 
@@ -25486,6 +25491,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresSubmission: approvedRequiresSubmission,
         readScope: approvedReadScope,
         deliverables: this._plannerCompletionGateFields(plan).deliverables,
+        multipleDeliverables: this._plannerCompletionGateFields(plan).multipleDeliverables,
         siteWorkflowUrl: tabUrl,
         messaging: approvedPlanEdited ? null : plan.messaging,
         requestedMessaging: approvedPlanEdited ? null : plan.requested_messaging,
@@ -36825,6 +36831,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && gateOutcome.deliverables.every(value => typeof value === 'string' && value.length <= 1000)
         ? [...gateOutcome.deliverables]
         : [],
+      multipleDeliverables: gateOutcome?.multipleDeliverables === true
+        || (Array.isArray(gateOutcome?.deliverables) && gateOutcome.deliverables.length > 1),
       siteWorkflowUrl: String(gateOutcome?.siteWorkflowUrl || ''),
       messaging,
       messagingConversationScope,

@@ -151,6 +151,20 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(offer.retryMode, 'resume');
     assert.equal(f.updates.some(x => x.type === 'warning'), false, 'No post-submit inspection notice');
   });
+  test(`${browser}: a plan with more than eight deliverables is still several deliverables`, async () => {
+    const f = fixture();
+    const plan = { deliverables: Array.from({ length: 9 }, (_, index) => `Post number ${index + 1}.`) };
+    const gate = f.agent._plannerCompletionGateFields(plan);
+    assert.deepEqual(gate.deliverables, [], 'the list itself is bounded');
+    assert.equal(gate.multipleDeliverables, true);
+    assert.equal(f.agent._plannerCompletionGateFields({ deliverables: ['Post it.'] }).multipleDeliverables, false);
+    f.agent._planExecutionGuards.set(f.tab, { deliverables: gate.deliverables, multipleDeliverables: gate.multipleDeliverables });
+    f.agent._completionSubmitStates.set(f.tab, { dispatched: true, actionSequence: 3,
+      originatingUrl: 'https://mastoturk.org/home', currentUrl: 'https://mastoturk.org/home' });
+    assert.equal(await f.agent._recoverPostActionModelFailure(f.tab, f.messages, f.update, {}, 7), null);
+    assert.deepEqual(f.operations, [], 'one verified submission cannot finish nine');
+  });
+
   test(`${browser}: a later self-verifying action does not make the earlier submission the latest step`, async () => {
     // The submission left verification debt; scheduling a follow-up then
     // succeeded and proved itself. lastAction still names the submission, but
