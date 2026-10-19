@@ -1026,6 +1026,14 @@ for (const build of ['chrome', 'firefox']) {
       h.agent._completionSubmitStates.set(h.tab, { dispatched: true, mutationKind: 'delete', actionSequence: 3, taskKey: guard.taskKey });
     }), { summary: 'Deleted the post.', outcome: 'success' }, 'I couldn\'t confirm that the deletion took effect.', `${build} deletion`);
 
+    // A non-committing form after the deletion (a GET search that checks the item is gone)
+    // replaces the receipt but is not a second mutation: the deletion is still the unverified action.
+    await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, (guard, h) => {
+      guard.successfulConsequentialToolCalls = 1; guard.successfulTaskToolCalls = 1; guard.evidenceTaskKey = guard.taskKey;
+      guard.resourceMutationDispatches = [{ mutationKind: 'delete', resourceUrl: 'https://mastoturk.org/@owned/1', actionSequence: 3 }];
+      h.agent._completionSubmitStates.set(h.tab, { dispatched: true, nonCommitting: true, mutationKind: 'submit', actionSequence: 4, taskKey: guard.taskKey });
+    }), { summary: 'Deleted the post.', outcome: 'success' }, 'I couldn\'t confirm that the deletion took effect.', `${build} deletion then search`);
+
     // With an ordinary form submission also dispatched, the unverified action
     // may be that submission, so the deletion wording is not used.
     await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, (guard, h) => {

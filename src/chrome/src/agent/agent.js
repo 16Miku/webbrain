@@ -40892,12 +40892,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // dispatched. A dispatched deletion is also the current submit receipt
     // (_recordCompletionSubmitState keeps both), so that receipt is fine; a
     // later ordinary form submission replaces it with one that is not a
-    // deletion and leaves no resource-mutation record of its own.
+    // deletion and leaves no resource-mutation record of its own. A
+    // non-committing form (a GET search that checks the item is gone) also
+    // replaces the receipt but dispatches no second mutation, so it is ignored.
     const currentReceipt = missingRequiredSubmission ? this._currentCompletionSubmitState(tabId) : null;
     const missingDeletion = missingRequiredSubmission
       && Array.isArray(state.resourceMutationDispatches) && state.resourceMutationDispatches.length > 0
       && state.resourceMutationDispatches.every(attempt => attempt?.mutationKind === 'delete')
-      && (currentReceipt?.dispatched !== true || currentReceipt.mutationKind === 'delete');
+      && (currentReceipt?.dispatched !== true || currentReceipt.mutationKind === 'delete' || currentReceipt.nonCommitting === true);
     const advisory = this._planGuardAdvisory(tabId, state, { viaDone, looksPlanOnly, runtimeModeContradiction,
       structuredPlan: structuredPlan
         || (state.allowsPlannerShapedResult !== true && this._isPlannerShapedJson(content)),
