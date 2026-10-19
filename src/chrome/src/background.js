@@ -7,8 +7,10 @@ import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_KEEP_LOADED_KEY } from './provid
 
 // D1's Worker and GPU memory are released when decisions are switched Off,
 // another decision provider is saved, consent changes or Strict Secret Mode
-// starts. Leaving On (for Auto) keeps D1 loaded while Auto uses it: D1 is
-// downloaded and Compass is not the chat provider (decision-availability.js).
+// starts. Leaving On for Auto keeps D1, loaded or still downloading, while the
+// user's Download or Load request stands: Auto uses it once it is downloaded,
+// unless Compass is the chat provider (decision-availability.js), and Unload
+// on the Providers page releases it.
 function releaseD1OnDecisionChange(changes, area) {
   if (area !== 'local') return;
   const reset = () => { void d1Request('reset').catch(() => {}); };
@@ -20,7 +22,7 @@ function releaseD1OnDecisionChange(changes, area) {
     return;
   }
   if (changes.systemOneEnabled?.newValue === false || (changes.decisionMode && changes.decisionMode.newValue !== 'on')) {
-    void d1UsedForDecisions(chrome).then(used => { if (!used) reset(); }, reset);
+    void chrome.storage.local.get(D1_KEEP_LOADED_KEY).then(stored => { if (stored?.[D1_KEEP_LOADED_KEY] !== true) reset(); }, reset);
   }
 }
 chrome.storage.onChanged.addListener(releaseD1OnDecisionChange);

@@ -315,26 +315,28 @@ for (const build of ['chrome', 'firefox']) {
       });
     }
   });
-  test(`${build}: leaving On for Auto keeps D1 loaded while Auto uses it; Off and other changes release it`, async () => {
+  test(`${build}: leaving On for Auto keeps D1 while its Download or Load stands; Off and other changes release it`, async () => {
     const background = await readFile(new URL(`../src/${build}/src/background.js`, import.meta.url), 'utf8');
     assert.match(background, new RegExp(`${build === 'chrome' ? 'chrome' : 'browser'}\\.storage\\.onChanged\\.addListener\\(releaseD1OnDecisionChange\\);`));
     const source = topLevelFunction(background, 'releaseD1OnDecisionChange');
     const consent = pin.D1_CONSENT_KEY;
-    for (const [label, changes, used, expected, area = 'local'] of [
+    // `loadRequested`: the user's Download or Load still stands (d1KeepLoaded).
+    for (const [label, changes, loadRequested, expected, area = 'local'] of [
       ['decisions Off', { decisionMode: { newValue: 'off' }, systemOneEnabled: { newValue: false } }, true, 1],
       ['another provider saved', { decisionProvider: { newValue: 'openrouter' } }, true, 1],
       ['consent removed', { [consent]: { newValue: undefined } }, true, 1],
       ['Strict Secret Mode', { strictSecretMode: { newValue: true } }, true, 1],
-      ['Auto, which uses D1', { decisionMode: { newValue: 'auto' }, systemOneEnabled: { newValue: false } }, true, 0],
-      ['Auto while Compass chats', { decisionMode: { newValue: 'auto' }, systemOneEnabled: { newValue: false } }, false, 1],
+      ['Auto, with D1 loaded or still downloading', { decisionMode: { newValue: 'auto' }, systemOneEnabled: { newValue: false } }, true, 0],
+      ['Auto, after Unload', { decisionMode: { newValue: 'auto' }, systemOneEnabled: { newValue: false } }, false, 1],
       ['On', { decisionMode: { newValue: 'on' }, systemOneEnabled: { newValue: true } }, false, 0],
       ['consent given', { [consent]: { newValue: pin.D1_CONSENT_VERSION } }, false, 0],
       ['an unrelated setting', { theme: { newValue: 'dark' } }, false, 0],
       ['another storage area', { decisionMode: { newValue: 'off' } }, false, 0, 'sync'],
     ]) {
       const resets = [];
-      const context = vm.createContext({ D1_CONSENT_KEY: consent, D1_CONSENT_VERSION: pin.D1_CONSENT_VERSION, chrome: {}, browser: {},
-        d1Request: async command => { resets.push(command); return {}; }, d1UsedForDecisions: async () => used });
+      const storage = { storage: { local: { get: async key => (key === pin.D1_KEEP_LOADED_KEY ? { [key]: loadRequested } : {}) } } };
+      const context = vm.createContext({ D1_CONSENT_KEY: consent, D1_CONSENT_VERSION: pin.D1_CONSENT_VERSION, D1_KEEP_LOADED_KEY: pin.D1_KEEP_LOADED_KEY,
+        chrome: storage, browser: storage, d1Request: async command => { resets.push(command); return {}; } });
       vm.runInContext(source, context);
       context.releaseD1OnDecisionChange(changes, area);
       await new Promise(resolve => setTimeout(resolve, 0));

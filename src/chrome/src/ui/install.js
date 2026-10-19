@@ -261,11 +261,31 @@ export function d1View(state = {}) {
   }
 }
 
+/**
+ * The shared button: the chat model's, until that model is ready and needs
+ * nothing more. Then the same button finishes D1's download, so a D1 that is
+ * not downloaded yet, was paused or stopped with an error can still be
+ * started, resumed or retried from the guide.
+ */
+export function localModelButtonView(view, chatStatus, d1State) {
+  if (chatStatus !== 'ready' || !d1State) return view;
+  switch (d1State.status) {
+    case 'idle': return { ...view, labelKey: 'install.local_model.download', action: 'd1-start' };
+    case 'paused': return { ...view, labelKey: 'install.local_model.resume', action: 'd1-start' };
+    case 'error': return { ...view, labelKey: 'install.local_model.retry', action: 'd1-start' };
+    case 'downloading': return { ...view, labelKey: 'install.local_model.pause', action: 'd1-pause' };
+    case 'checking': return { ...view, labelKey: 'install.local_model.download', action: null };
+    default: return view;
+  }
+}
+
 export function initializeD1Download({
   documentLike = globalThis.document,
   runtime = globalThis.chrome?.runtime,
   translate = t,
   pollMs = D1_POLL_MS,
+  // Called after each state change, so the shared button can follow D1.
+  onChange = null,
 } = {}) {
   const line = documentLike?.getElementById?.('local-model-d1');
   if (!line || !runtime?.sendMessage) return null;
@@ -290,6 +310,7 @@ export function initializeD1Download({
     state = { progress: 0, error: '', usedForDecisions: false, ...next };
     render();
     schedule();
+    onChange?.();
   };
 
   async function refresh() {
@@ -360,19 +381,24 @@ export function initializeLocalModelDownload({
   const label = documentLike.getElementById('local-model-label');
   const bar = documentLike.getElementById('local-model-progress');
   const statusLine = documentLike.getElementById('local-model-status');
-  const d1 = initializeD1Download({ documentLike, runtime, translate, pollMs });
   let state = { status: 'checking', progress: 0, error: '' };
   let inFlight = false;
   let pollTimer = null;
   let disposed = false;
+  let rendered = false;
+  // D1's own changes redraw the button once this controller has drawn it.
+  const d1 = initializeD1Download({ documentLike, runtime, translate, pollMs, onChange: () => { if (rendered) render(); } });
+  const buttonView = () => localModelButtonView(localModelView(state), state.status, d1?.getState());
 
   const render = () => {
-    const view = localModelView(state);
+    rendered = true;
+    const view = buttonView();
     root.dataset.state = state.status;
     if (label) label.textContent = translate(view.labelKey);
     if (button) {
       button.disabled = inFlight || !view.action;
-      if (inFlight || ['checking', 'downloading', 'stopping'].includes(state.status)) button.setAttribute('aria-busy', 'true');
+      const d1Busy = state.status === 'ready' && ['checking', 'downloading'].includes(d1?.getState().status);
+      if (inFlight || d1Busy || ['checking', 'downloading', 'stopping'].includes(state.status)) button.setAttribute('aria-busy', 'true');
       else button.removeAttribute('aria-busy');
     }
     if (bar) {
@@ -411,9 +437,20 @@ export function initializeLocalModelDownload({
   }
 
   button?.addEventListener('click', async () => {
-    const view = localModelView(state);
+    const view = buttonView();
     if (!view.action || inFlight) return;
     inFlight = true;
+    if (view.action === 'd1-start' || view.action === 'd1-pause') {
+      // The chat model is ready; only D1 is downloaded, paused or resumed.
+      render();
+      try {
+        await (view.action === 'd1-start' ? d1.start() : d1.pause());
+      } finally {
+        inFlight = false;
+        render();
+      }
+      return;
+    }
     try {
       if (view.action === 'pause') {
         render();

@@ -45717,6 +45717,57 @@ test('chrome install page downloads D1 next to the chat model and says what D1 d
   }
 
   {
+    // The chat model is already downloaded: the same button then starts,
+    // pauses, resumes and retries D1, and never touches the chat model.
+    const buttonView = install.localModelButtonView;
+    const ready = install.localModelView({ status: 'ready' });
+    assert.equal(buttonView(ready, 'ready', { status: 'idle' }).action, 'd1-start');
+    assert.equal(buttonView(ready, 'ready', { status: 'paused' }).labelKey, 'install.local_model.resume');
+    assert.equal(buttonView(ready, 'ready', { status: 'error' }).labelKey, 'install.local_model.retry');
+    assert.equal(buttonView(ready, 'ready', { status: 'downloading' }).action, 'd1-pause');
+    assert.equal(buttonView(ready, 'ready', { status: 'checking' }).action, null);
+    for (const status of ['ready', 'saved', 'unsupported']) assert.deepEqual(buttonView(ready, 'ready', { status }), ready, `${status}: nothing left to do`);
+    const downloading = install.localModelView({ status: 'downloading', progress: 10 });
+    assert.deepEqual(buttonView(downloading, 'downloading', { status: 'error' }), downloading, 'the chat model keeps the button while it downloads');
+
+    const state = { d1: { status: 'idle' } };
+    const runtime = fakeRuntime({
+      get_webgpu_download_status: { status: 'ready', ready: true, modelId },
+      'd1_control:status': () => ({ success: true, result: { ...state.d1, usedForDecisions: true } }),
+      'd1_control:probe': { success: true, result: { success: true } },
+      'd1_control:download': () => { state.d1 = { status: 'downloading', progress: 20 }; return { success: true, result: { started: true, ...state.d1 } }; },
+      'd1_control:stop': () => { state.d1 = { status: 'stopped', progress: 40 }; return { success: true, result: { stopped: true } }; },
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    const { nodes } = documentLike;
+    assert.equal(nodes['local-model'].dataset.state, 'ready');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.download');
+    assert.equal(nodes['local-model-button'].disabled, false, 'D1 can still be downloaded');
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.deepEqual(runtime.sent.filter((message) => message.action === 'd1_control' && message.command !== 'status').map((message) => message.command), ['probe', 'download']);
+    assert.ok(!runtime.sent.some((message) => ['test_provider', 'start_webgpu_download'].includes(message.action)), 'the ready chat model is left alone');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.pause');
+    assert.equal(nodes['local-model-d1'].textContent, 'install.local_model.d1_downloading|20');
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.ok(runtime.sent.some((message) => message.action === 'd1_control' && message.command === 'stop'));
+    assert.ok(!runtime.sent.some((message) => message.action === 'pause_webgpu_download'));
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.resume');
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.equal(runtime.sent.filter((message) => message.action === 'd1_control' && message.command === 'download').length, 2);
+    state.d1 = { status: 'ready', loaded: true };
+    await controller.d1.refresh();
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.ready');
+    assert.equal(nodes['local-model-button'].disabled, true, 'both models are ready');
+    assert.equal(nodes['local-model-d1'].textContent, 'install.local_model.d1_ready');
+    controller.dispose();
+  }
+
+  {
     // A GPU D1 cannot use: say so, and the chat model still downloads.
     const state = { bonsai: { status: 'not-downloaded', modelId } };
     const runtime = fakeRuntime({

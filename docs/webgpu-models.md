@@ -257,7 +257,9 @@ Use the tools in `scripts/models/bonsai/`:
   Mode, and the first-install page (Chrome), which offers Ternary Bonsai 2 2B
   Vision and D1, the decision model, behind its optional "Download local
   models" button. The two download at once, each in its own worker, and the
-  page shows D1's progress on a line of its own. The install page checks for
+  page shows D1's progress on a line of its own; once the chat model is
+  ready, the same button starts, pauses, resumes or retries D1 alone. The
+  install page checks for
   hardware WebGPU before fetching anything (D1 runs its own adapter check, and
   a GPU it cannot use leaves the Bonsai download going), never changes the
   active provider or the decision settings, and only points an idle WebGPU
