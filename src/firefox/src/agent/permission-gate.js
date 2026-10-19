@@ -574,7 +574,9 @@ export function frameHostMatches(frameUrl, urlFilter) {
 // Whether a urlFilter starts with something that is a host ("stripe.com",
 // "127.0.0.1:8080/x", "localhost") rather than a path or a file name
 // ("iframe-inner.html", "/embed", "widget").
-const FILE_NAME_SUFFIX = /\.(?:html?|xhtml|php|aspx?|jsp|cgi|js|mjs|css|json|xml|txt|svg|png|jpe?g|gif|webp|pdf)$/i;
+// Extensions that serve pages or documents. A suffix that is also a country
+// domain people use as a host (.pl, .py, .sh, .cc) is left out on purpose.
+const FILE_NAME_SUFFIX = /\.(?:html?|xhtml|shtml?|php[345]?|phtml|aspx?|ashx|asmx|axd|jspx?|jsf|faces|cfml?|cgi|fcgi|do|action|esp|nsf|js|mjs|css|json|xml|txt|svg|png|jpe?g|gif|webp|pdf)$/i;
 function urlFilterNamesHost(filter) {
   const first = filter.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#]/)[0];
   const host = first.replace(/:\d+$/, '');
