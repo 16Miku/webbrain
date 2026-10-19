@@ -33946,10 +33946,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let skip = 0;
         if (shown) {
           try {
-            const range = node.ownerDocument.createRange();
-            if (previous) range.setStartAfter(previous); else range.setStart(node, 0);
-            range.setEndBefore(time);
-            const between = range.toString();
+            // Only the text that is rendered counts (4 = text nodes to show,
+            // and the position bit for "follows"; 16 = "contained by").
+            const walker = node.ownerDocument.createTreeWalker(node, 4);
+            let between = '';
+            for (let part = walker.nextNode(); part; part = walker.nextNode()) {
+              if (time.compareDocumentPosition(part) & 4) break;
+              if (previous && (!(previous.compareDocumentPosition(part) & 4) || previous.compareDocumentPosition(part) & 16)) continue;
+              const owner = part.parentElement;
+              if (owner && (typeof owner.checkVisibility !== 'function' || owner.checkVisibility({ visibilityProperty: true }))) between += part.data;
+            }
             for (let from = between.indexOf(shown); from >= 0; from = between.indexOf(shown, from + shown.length)) skip += 1;
           } catch { skip = 0; }
         }
