@@ -83,6 +83,19 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       assert.deepEqual(await page.evaluate(() => calls[2]), { type: 'retry', options: { failureRecoveryId: 'monitoring-offer', mode: 'act', foreground: false } });
       await page.evaluate(() => settleRetry(true));
       await page.waitForFunction(() => document.querySelector('[data-recovery-id="monitoring-offer"]').dataset.recoveryChosen === 'true');
+
+      // A run WebBrain routed to Ask says so, and its retry is routed again.
+      await page.evaluate(() => {
+        const routed = document.createElement('div');
+        routed.className = 'message assistant';
+        Object.assign(routed.dataset, { runMode: 'ask', autoRouted: 'true', runRequestId: 'routed-request' });
+        routed.innerHTML = '<div class="message-content"><div class="message-text"></div></div>';
+        messagesEl.appendChild(routed);
+        renderFailureRecoveryCard(routed, { recoveryId: 'routed-offer', stage: 'browser_interaction', retryMode: 'resume' }, { tabId: 7 });
+      });
+      await page.locator('[data-recovery-id="routed-offer"] [data-recovery-choice="retry"]').click();
+      assert.deepEqual(await page.evaluate(() => calls[3]), { type: 'retry', options: { failureRecoveryId: 'routed-offer', mode: 'ask', autoRouted: true, foreground: false } });
+      await page.evaluate(() => settleRetry(true));
     } finally { await browser.close(); }
   });
 
@@ -101,6 +114,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       'clearAssistantTextStreamState', 'renderAssistantTextUpdate', 'isStoppedByUserStatus',
       'handleAgentUpdateMessage', 'addMessageCopyButton', 'getMessageCopyText',
       'roleFromMessageElement', 'normalizeHistoryText', 'extractChatHistoryMessages', 'formatMarkdown',
+      'invalidateUnresolvedClarifyCards',
     ].map(name => extract(source, name)).join('\n');
     const send = extract(source, 'sendMessage');
     const responseStart = send.indexOf('    if (renderToCurrentTab && currentTabId === tabId && isTabAbortRequested(tabId))');
@@ -358,7 +372,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
 
   test(`${build}: retry preflight failure clears its busy state without granting or starting recovery`, async () => {
     const context = vm.createContext({
-      isStandaloneWindow: false, isProcessing: false, currentTabId: 7, renderedTabId: 7, agentMode: 'act',
+      isStandaloneWindow: false, autoModeSelection: false, isProcessing: false, currentTabId: 7, renderedTabId: 7, agentMode: 'act',
       localRunRequestIds: new Map(), cancelledRunRecoveryRequestIds: new Set(),
       conversationClearFollowerCancellationRequestIds: new Set(), currentAssistantEl: null,
       rejectSelectionScopedMode: () => false, createRunRequestId: () => 'retry-preflight',

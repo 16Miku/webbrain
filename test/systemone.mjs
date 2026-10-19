@@ -31,6 +31,41 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(mod.systemOneFailureReason(Object.assign(new Error(), { code: 'JEV_INVALID_DISTRIBUTION' })), 'invalid_distribution');
     assert.equal(mod.systemOneFailureReason(Object.assign(new Error(), { status: 429 })), 'rate_limit');
   });
+  test(`${build}: a model that clips long text never receives a state past its token budget`, async () => {
+    const requests = [];
+    const judge = mod.createSystemOneJudge({ fetchImpl: async (_url, init) => { const body = JSON.parse(init.body); requests.push(body);
+      return { ok: true, json: async () => ({ model: body.model, answers: { p: { type: 'noul', noul: .9 } }, usage: { input_tokens: 10, output_tokens: 0 } }) }; } });
+    const one = { p: questions.p };
+    const config = { provider: 'openrouter', model: 'cloudflare/clef-flash', apiKey: 'test', url: 'https://example.test/v1/decisions' };
+    const budget = mod.SYSTEM_ONE_TEXT_BYTE_BUDGETS['cloudflare/clef-flash'];
+    assert.ok(budget < 2000, 'the budget (bytes, an upper bound on byte-level tokens) stays under the 2K tokens the model reads');
+    await judge.evaluate({ config, state: { evidence: 'The post was published and its page shows it. '.repeat(20) }, questions: one });
+    assert.equal(requests.length, 1, 'ordinary text within the budget is sent');
+    // Each of these stays far below the old 6,000-character cap yet can exceed 2K real tokens.
+    const dense = {
+      cjk: { evidence: '投稿が公開されました。'.repeat(100) },
+      hashes: { evidence: ('a1b2c3d4e5f60718293a4b5c6d7e8f90 ').repeat(60) },
+      unbroken: { evidence: 'Zm9vYmFy'.repeat(250) },
+      emoji: { evidence: '\u{1F600}'.repeat(700) },
+      punctuation: { evidence: '\\"\\n{}[]<>|~^'.repeat(150) },
+    };
+    for (const [name, state] of Object.entries(dense)) {
+      assert.ok(JSON.stringify(state).length < 6000, `${name} is under the old character cap`);
+      await assert.rejects(judge.evaluate({ config, state, questions: one }),
+        error => error.code === 'JEV_STATE_EXCEEDS_MODEL_INPUT' && mod.systemOneFailureReason(error) === 'state_too_long', name);
+    }
+    assert.equal(requests.length, 1, 'a state past the budget is not sent');
+    // A screenshot inside the state is an image, not text, so it does not use up the budget.
+    await judge.evaluate({ config: { ...config, supportsVision: true }, state: [{ task: 'Is it done?' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(50000) } }], questions: one });
+    assert.equal(requests.length, 2, 'an image payload is excluded from the text budget');
+    // The same data URL as ordinary text is text: the model reads it as tokens.
+    await assert.rejects(judge.evaluate({ config: { ...config, supportsVision: true }, questions: one,
+      state: [{ observation: 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(400) }, { task: 'Is it done?' }] }),
+    error => error.code === 'JEV_STATE_EXCEEDS_MODEL_INPUT');
+    assert.equal(requests.length, 2, 'a data URL in text is not sent');
+    await judge.evaluate({ config: { ...config, model: 'another/publisher' }, state: dense.cjk, questions: one });
+    assert.equal(requests.length, 3, 'other models keep the full state');
+  });
   test(`${build}: singleton Choice requests fail locally before a service call`, async () => {
     let calls = 0;
     const judge = mod.createSystemOneJudge({ fetchImpl: async () => { calls++; throw new Error('must not call'); } });

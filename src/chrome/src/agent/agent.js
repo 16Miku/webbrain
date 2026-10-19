@@ -298,6 +298,9 @@ const COMPLETION_READING_TIMEOUT_MS = 6_000;
 // language, after a click in a run that has to prove a submission; the active
 // model gets this long when the decision model is not sure.
 const CONTROL_READING_TIMEOUT_MS = 4_000;
+// A messaging guard's reading that outlasts its click's wait goes on in the
+// background at most this long, so that the retried click can use it.
+const CONTROL_READING_LATE_TIMEOUT_MS = 20_000;
 // A dialog title or a wall text no model answered reads as nothing to stop
 // for; it is asked again only after this long, so page reads and actions do
 // not each wait for it.
@@ -1359,6 +1362,8 @@ export class Agent extends LoopDetector {
   }
 
   async _beginReadCompleteness(tabId, userMessage, runOptions = {}) {
+    // A limitation text remembered for an earlier run is not this run's.
+    this._runtimeAskLimitations?.delete(tabId);
     this._readCompletenessRunCounter += 1;
     const token = `read_${tabId}_${Date.now()}_${this._readCompletenessRunCounter}`;
     if (this._isStandaloneChatRun(runOptions)) {
@@ -1378,6 +1383,7 @@ export class Agent extends LoopDetector {
     if (!state) return;
     if (runToken && state.runToken !== runToken) return;
     this.readCompletenessStates.delete(tabId);
+    this._runtimeAskLimitations?.delete(tabId);
   }
 
 
@@ -2045,10 +2051,24 @@ export class Agent extends LoopDetector {
   }
 
   _readCompletenessLimitation(tabId) {
-    return readCompletenessLimitation(
+    const limitation = readCompletenessLimitation(
       this.readCompletenessStates.get(tabId),
       this._effectiveRunMode(tabId),
     );
+    // Every path that substitutes this fixed text for the model's answer (the
+    // done tool and the plain-final branches alike) asks here first, so it is
+    // remembered once, for _maybeEmitAskModeHandoff.
+    if (limitation) this._rememberRuntimeAskLimitation(tabId, limitation);
+    return limitation;
+  }
+
+  // The texts the runtime itself puts in an Ask answer for a limit only Act
+  // mode lifts, as a set: the fixed limitation and the advisory caveat.
+  _rememberRuntimeAskLimitation(tabId, text) {
+    if (!text) return;
+    const known = (this._runtimeAskLimitations ||= new Map());
+    if (!known.has(tabId)) known.set(tabId, new Set());
+    known.get(tabId).add(text);
   }
 
   // The status texts an observation showed after a submit: the accessibility
@@ -2627,6 +2647,11 @@ export class Agent extends LoopDetector {
       };
     }
     this._completionSubmitStates.set(tabId, state);
+    // A later non-committing form (a GET search) replaces this receipt, so the
+    // guard remembers the kind of the last action that did commit.
+    if (state.dispatched && publicationGuard && state.nonCommitting !== true) {
+      publicationGuard.lastCommitKind = state.mutationKind;
+    }
     if (state.dispatched && publicationGuard?.resourceMutationAuthorization) {
       const record = state.actionRecord;
       (publicationGuard.resourceMutationDispatches ||= []).push({ key: publicationGuard.resourceMutationAuthorization.key,
@@ -5859,12 +5884,16 @@ export class Agent extends LoopDetector {
     const state = this.readCompletenessStates.get(tabId);
     const expansionUnverified = state?.requiresExpansionEvidence === true
       && state.treeCoverageComplete === true && state.expansionConfirmed !== true;
+    const caveat = !expansionUnverified ? 'Not every part of the conversation was confirmed as read.'
+      : this._isActionMode(this._effectiveRunMode(tabId))
+        ? 'Some Gmail messages may have stayed collapsed, so the whole conversation was not confirmed as read.'
+        : 'Ask mode cannot expand collapsed Gmail messages, so some messages in the conversation may be missing.';
+    // Only Act mode expands the messages, so an automatic Ask turn that ends
+    // with this caveat is offered the switch (see _maybeEmitAskModeHandoff).
+    if (expansionUnverified && !this._isActionMode(this._effectiveRunMode(tabId))) this._rememberRuntimeAskLimitation(tabId, caveat);
     return this._guardRefusesOnce(tabId, 'read-coverage-incomplete', {
       decided: !expansionUnverified,
-      caveat: !expansionUnverified ? 'Not every part of the conversation was confirmed as read.'
-        : this._isActionMode(this._effectiveRunMode(tabId))
-          ? 'Some Gmail messages may have stayed collapsed, so the whole conversation was not confirmed as read.'
-          : 'Ask mode cannot expand collapsed Gmail messages, so some messages in the conversation may be missing.',
+      caveat,
     });
   }
 
@@ -5992,7 +6021,13 @@ export class Agent extends LoopDetector {
       add('plan-publication-evidence-missing', false, caveat);
       if (githubFile) add('github-committed-file-verification', false, caveat);
     } else if (flags.missingRequiredSubmission && !flags.missingSocialPublishTargets.length) {
-      add('plan-submission-evidence-missing', false, 'I couldn\'t confirm that the submission went through.');
+      // A deletion is not a "submission" to the user who asked for it. The
+      // caller sets missingDeletion only when the run's one dispatched action
+      // was a deletion, so a mixed task with an unverified form submission
+      // keeps the submission wording.
+      add('plan-submission-evidence-missing', false, flags.missingDeletion
+        ? 'I couldn\'t confirm that the deletion took effect.'
+        : 'I couldn\'t confirm that the submission went through.');
     }
     if (flags.missingEvidence && findings.every(finding => ['plan-plain-final-protocol', 'plan-done-summary-shape'].includes(finding.id))) {
       add('plan-execution-evidence-missing', false, state.requiresStateChange === false
@@ -6572,6 +6607,7 @@ export class Agent extends LoopDetector {
         socialPublication: structuredClone(previous?.socialPublication || null),
       } : null);
       guard.resourceMutationDispatches = structuredClone(previous?.resourceMutationDispatches || []);
+      guard.lastCommitKind = previous?.lastCommitKind || null;
       if (priorSubmission || attemptedPublication) guard.evidenceTaskKey = guard.taskKey;
       guard.socialPublicationSteering = previous?.socialPublicationSteering || null;
       guard.socialPublicationClarifications = previous?.socialPublicationClarifications || [];
@@ -7790,9 +7826,14 @@ export class Agent extends LoopDetector {
       if (!current() || this._completionDoneBlock(tabId, 'done', { outcome: 'success' })) return null;
       const pageUrl = await this._currentUrl(tabId);
       if (!current()) return null;
+      // WebBrain writes this answer, not the model, so it claims only what it
+      // checked: the one submission on this page, not that the whole request
+      // is done. It stays a success because the completion check above
+      // established the task's observable requirements; saying here that later
+      // steps were not attempted would contradict that outcome.
       const summary = /^https:\/\/addons\.mozilla\.org\//i.test(pageUrl)
         ? 'The AMO version was submitted for review and the submission confirmation was verified.'
-        : 'The requested submission completed and its result was verified.';
+        : 'The model stopped responding after the submission. WebBrain read the page and verified that submission.';
       const result = await runReadOnly('done', { outcome: 'success', summary });
       if (current() && result?.action === 'return' && !result.status
           && this._completionVerdicts.get(tabId)?.outcome === 'succeeded') {
@@ -21719,6 +21760,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!tabPending) return false;
     const entry = tabPending.get(clarifyId);
     if (!entry) return false;
+    // The time the user took to answer one of WebBrain's own cards does not
+    // age the page observation the pending action was decided on.
+    this._noteClarifyHeld(tabId, entry);
     this._settleClarification(entry, { answer, source });
     return true;
   }
@@ -22124,6 +22168,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!entry?.timer) return;
     try { clearTimeout(entry.timer); } catch {}
     entry.timer = null;
+  }
+
+  // The time a card waited, whether the user answered or its own timeout chose,
+  // does not age the page observation the pending action was decided on.
+  _noteClarifyHeld(tabId, entry) {
+    if (tabId != null && entry && !entry.settled && Number.isFinite(entry.ts)) {
+      this._notePageFeedbackUserDecision?.(tabId, Date.now() - entry.ts);
+    }
   }
 
   /**
@@ -27055,8 +27107,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       onUpdate('run_mode', { mode: 'ask', source: 'reroute_limit' });
       return { mode: 'ask', runOptions: { ...runOptions, modeRoute: { requested: AUTO_MODE, mode: 'ask', source: 'reroute_limit' } } };
     }
+    // A continuation of a read-only run is routed from the continued task's
+    // own words, never from WebBrain's continuation text.
+    const continuation = runOptions?.trustedContinuation === true;
+    const continuedTask = continuation && previousMode !== 'act' && previousMode !== 'dev'
+      ? this._autoModeContinuedTask(tabId) : '';
     const hard = autoModeHardRoute({
-      trustedContinuation: runOptions?.trustedContinuation === true,
+      trustedContinuation: continuation,
       previousMode,
       inBrowserModel: this._isTinyAskRun(runOptions),
       standaloneChat: this._isStandaloneChatRun(runOptions),
@@ -27064,30 +27121,44 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       cloudRun: runOptions?.cloudRun === true,
       attachments,
       tier,
-      text: this._messageText(userMessage),
+      text: continuation ? continuedTask : this._messageText(userMessage),
     });
-    if (hard) {
-      onUpdate('run_mode', { mode: hard.mode, source: hard.source });
-      return { mode: hard.mode, runOptions: { ...runOptions, modeRoute: { requested: AUTO_MODE, ...hard } } };
+    // Without words of its own to route, a continuation stays read-only.
+    const route = hard || (continuation && !continuedTask ? { mode: 'ask', source: 'continuation' } : null);
+    if (route) {
+      onUpdate('run_mode', { mode: route.mode, source: route.source });
+      return { mode: route.mode, runOptions: { ...runOptions, modeRoute: { requested: AUTO_MODE, ...route } } };
     }
     this._autoModeEscalationTabs.add(tabId);
     this._autoModeRoutePendingTabs.add(tabId);
-    return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode } } };
+    return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode, ...(continuation ? { continuedTask } : {}) } } };
+  }
+
+  // The user's own words of the task a continuation resumes: its request and
+  // the answers, updates and corrections bound to it.
+  _autoModeContinuedTask(tabId) {
+    const binding = this._activeTaskBinding(this.conversations.get(tabId) || []);
+    if (binding.index < 0) return '';
+    const bound = binding.updates || (binding.answers || []).map(text => ({ text }));
+    return [binding.requestText || binding.text, ...bound.map(item => item?.text)]
+      .map(text => String(text ?? '').trim()).filter(Boolean).join('\n');
   }
 
   // The `run_mode` question of a routed turn, read before the turn joins the
   // conversation: the user's words, the previous turn's mode and the earlier
   // task, never page content.
-  _autoModeQuestion(messages, userMessage, previousMode = null, corrections = []) {
+  _autoModeQuestion(messages, userMessage, previousMode = null, corrections = [], continuedTask = '') {
     const binding = this._activeTaskBinding(messages || []);
     const task = binding.index >= 0 ? String(binding.requestText || binding.text || '') : '';
     return {
-      // A rerouted hand-off restart also reads the corrections it carries.
-      request: [this._messageText(userMessage), ...(Array.isArray(corrections) ? corrections : [])].join('\n'),
+      // A rerouted hand-off restart also reads the corrections it carries; a
+      // continuation reads the words of the task it continues.
+      request: [continuedTask || this._messageText(userMessage), ...(Array.isArray(corrections) ? corrections : [])].join('\n'),
       page: {
         previous_mode: isRunMode(previousMode) ? previousMode : 'none',
-        // An earlier selection prompt with page context is not the user's own words.
-        current_task: carriesUntrustedText(task) ? '' : task,
+        // An earlier selection prompt with page context is not the user's own
+        // words; a continued task is the request itself.
+        current_task: (continuedTask || carriesUntrustedText(task)) ? '' : task,
       },
     };
   }
@@ -27190,11 +27261,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // { refusal: text }, or { superseded: true } when the user corrected the
   // request while the check ran: the call no longer covers the request, and
   // the model asks again (for Act or Dev) once it has read the correction.
-  async _autoModeEscalation(tabId, toolCalls, enriched, provider, question, messages, snapshot = null) {
+  async _autoModeEscalation(tabId, toolCalls, enriched, provider, question, messages, snapshot = null, continuedTask = '') {
     const call = (toolCalls || []).find(item => item?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME);
-    const request = typeof enriched?.webbrainUserAuthoredText === 'string'
+    // A continuation's request is the continued task's own words, never
+    // WebBrain's continuation text.
+    const request = continuedTask || (typeof enriched?.webbrainUserAuthoredText === 'string'
       ? enriched.webbrainUserAuthoredText
-      : this._plannerUserAuthoredText(enriched);
+      : this._plannerUserAuthoredText(enriched));
     const tier = this._resolvePromptTier(provider);
     const corrected = corrections => [request, ...corrections.map(item => item.text)].join('\n');
     let corrections = this._autoModeTurnCorrections(tabId, messages, snapshot);
@@ -27255,7 +27328,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _maybeEmitAskModeHandoff(tabId, mode, userMessage, finalResponse, onUpdate, runOptions = {}) {
+    // An automatically routed turn could hand itself to Act, and the user's
+    // next message is routed again ("yes" to an offer included), so it is
+    // not offered a one-click switch to a mode the user never picked.
+    // The runtime's own limitation text (a Gmail thread it could not expand)
+    // is not a conversational offer: the model cannot hand it off, and a retry
+    // in Act is the recovery, so a routed turn keeps the one-click switch for it.
+    const runtimeLimitation = typeof finalResponse === 'string' && finalResponse !== ''
+      && [...(this._runtimeAskLimitations?.get(tabId) || [])].some(text => finalResponse.includes(text));
     if (mode !== 'ask'
+        || (runOptions?.autoModeRouting && !runtimeLimitation)
         || runOptions?.cloudRun
         || this._isStandaloneChatRun(runOptions)
         || typeof finalResponse !== 'string'
@@ -27263,6 +27345,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || this._checkAbort(tabId)
         || isSelectionSourceGrounding(runOptions?.sourceGrounding)
         || this.selectionGroundingScopes.has(tabId)) {
+      return;
+    }
+    // Nothing the user asked is unfulfilled here, so the classifier would
+    // rightly answer "none" for a read-only request: the runtime itself says
+    // a retry in Act is the recovery, and offers it directly.
+    if (runOptions?.autoModeRouting && runtimeLimitation) {
+      onUpdate('ask_mode_handoff', { value: 'act' });
       return;
     }
     const handoffContext = this.systemOneContext(tabId);
@@ -29237,8 +29326,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // Reads, in any language, the texts of a messaging page its checks consulted
   // unread ([{ kind, text }]): the decision model first, the active model
-  // within four seconds. A text no model could read stays unread, and each
-  // check keeps taking it the cautious way. True when any of them was read.
+  // within four seconds (_readGuardPageTexts). A text no model could read in
+  // time stays unread, and each check keeps taking it the cautious way. True
+  // when any of them was read.
   async _readUnreadPageTexts(tabId, texts = []) {
     const byKind = new Map();
     for (const item of (Array.isArray(texts) ? texts : []).slice(0, 64)) {
@@ -29247,15 +29337,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!byKind.has(kind)) byKind.set(kind, new Set());
       byKind.get(kind).add(text);
     }
+    this._cancelOtherGuardPageTextReads(tabId, new Set([...byKind]
+      .flatMap(([kind, list]) => [...list].slice(0, 48).map(text => kind + '\u0000' + text))));
     let read = false;
     for (const [kind, list] of byKind) {
       const pending = [...list].slice(0, 48);
-      // Texts a background prefetch is reading now are joined first, so
+      // Texts a background read has in flight are joined first, so
       // _readPageTexts asks only what is still unread (and still makes a
       // held reading one of the most recent the page gets).
       await this._joinBackgroundPageTextReads(kind, pending);
       try {
-        await this._readPageTexts(tabId, kind, pending, {}, { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+        await this._readGuardPageTexts(tabId, kind, pending);
       } catch (error) {
         if (this._checkAbort(tabId)) throw error;
       }
@@ -29264,14 +29356,73 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return read;
   }
 
-  // Waits for the reads of these texts that a background publication
-  // prefetch has in flight (_socialPublicationPrefetchReadings), so a click
-  // joins them instead of asking a model the same question again. The wait
-  // is capped: a read that does not settle in time is read again here.
+  // The guard's click waits four seconds for its readings, but a slower model
+  // is not cut off there. Its read goes on in the background for the run
+  // (charged and traced to it, cancelled when the run stops or ends, given up
+  // after CONTROL_READING_LATE_TIMEOUT_MS), and the click's retry joins it
+  // (_joinBackgroundPageTextReads) instead of asking the same question again
+  // and timing out the same way. Only the latest check's reads are carried
+  // over: a check about other texts cancels them
+  // (_cancelOtherGuardPageTextReads). An in-browser model, whose requests
+  // cannot be cancelled, is still asked in the foreground and cut off at four
+  // seconds.
+  async _readGuardPageTexts(tabId, kind, texts) {
+    const inFlight = this._guardPageTextReads ||= new Map();
+    const ask = texts.filter(text => !inFlight.has(kind + '\u0000' + text));
+    const unread = ask.filter(text => this._pageTextReading(kind, text) === null);
+    // Held readings are still passed on, to keep them among the most recent.
+    if (!unread.length || !this._socialPublicationBackgroundProvider(this._activeProvider(tabId))) {
+      await this._readPageTexts(tabId, kind, ask, {}, { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+      return;
+    }
+    const runSignal = this._runAbortSignal(tabId);
+    const binding = { signal: runSignal, costState: this.currentCostState.get(tabId) || null,
+      runId: this.currentRunId.get(tabId) || null,
+      current: () => !this._checkAbort(tabId) && this._runAbortSignal(tabId) === runSignal && !runSignal?.aborted };
+    const abort = this._socialPublicationBackgroundAbort(binding, tabId);
+    const background = this._socialPublicationBackgroundCall(tabId, null, binding, abort);
+    const keys = unread.map(text => kind + '\u0000' + text);
+    const tabReads = (this._guardPageTextReadsByTab ||= new Map()).get(tabId)
+      || this._guardPageTextReadsByTab.set(tabId, new Set()).get(tabId);
+    const entry = { abort, keys };
+    tabReads.add(entry);
+    const work = this._readPageTexts(tabId, kind, ask, {},
+      { maxChars: 400, mainTimeoutMs: CONTROL_READING_LATE_TIMEOUT_MS, background }).catch(() => null);
+    const settled = this._trackSocialPublicationBackgroundRun(tabId,
+      this._socialPublicationBackgroundSettle(abort, work, null).finally(() => {
+        for (const key of keys) if (inFlight.get(key) === settled) inFlight.delete(key);
+        tabReads.delete(entry);
+        if (!tabReads.size && this._guardPageTextReadsByTab.get(tabId) === tabReads) this._guardPageTextReadsByTab.delete(tabId);
+      }));
+    for (const key of keys) inFlight.set(key, settled);
+    let timer = null;
+    await Promise.race([settled, new Promise(resolve => { timer = setTimeout(resolve, CONTROL_READING_TIMEOUT_MS); })]);
+    clearTimeout(timer);
+    // A Stop while waiting ends the check, as a foreground read would.
+    this._throwIfAborted(this._runAbortSignal(tabId));
+  }
+
+  // A guard check about other texts than an earlier check's reads still in
+  // flight cancels them: the model moved on to another control.
+  _cancelOtherGuardPageTextReads(tabId, requestedKeys) {
+    for (const entry of this._guardPageTextReadsByTab?.get(tabId) || []) {
+      if (entry.keys.some(key => requestedKeys.has(key)) || entry.abort.controller.signal.aborted) continue;
+      const reason = new Error('A later guard check reads other texts.');
+      reason.name = 'AbortError';
+      entry.abort.controller.abort(reason);
+    }
+  }
+
+  // Waits for the reads of these texts already in flight: a background
+  // publication prefetch's (_socialPublicationPrefetchReadings) or the
+  // guard's own that outlasted an earlier click (_readGuardPageTexts). A
+  // click joins them instead of asking a model the same question again. The
+  // wait is capped: a prefetch read that does not settle in time is read again
+  // here, while a guard read still going is not asked twice.
   async _joinBackgroundPageTextReads(kind, texts) {
-    const reading = this._socialPublicationPrefetchReading;
-    if (!reading?.size) return;
-    const pending = [...new Set(texts.map(text => reading.get(kind + '\u0000' + text)).filter(Boolean))];
+    const pending = [...new Set([this._socialPublicationPrefetchReading, this._guardPageTextReads]
+      .flatMap(reading => (reading?.size ? texts.map(text => reading.get(kind + '\u0000' + text)) : []))
+      .filter(Boolean))];
     if (!pending.length) return;
     let timer = null;
     await Promise.race([Promise.allSettled(pending),
@@ -31855,6 +32006,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           entry.timer = null;
           try { onUpdate('clarify_auto', { clarifyId, answer: timedAnswer, source, timeoutSec: waitSec }); }
           catch { /* UI emit must never break the run */ }
+          this._noteClarifyHeld(tabId, entry);
           this._settleClarification(entry, { answer: timedAnswer, source });
         };
         if (timeoutSec === 0) {
@@ -34965,12 +35117,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (mode === 'dev') {
       prompt += `\n\n${SYSTEM_PROMPT_DEV_APPENDIX.trim()}`;
     }
-    if (mode === 'ask' && tabId != null && this._autoModeEscalationTabs.has(tabId)) {
-      prompt += `\n\n${AUTO_MODE_ASK_NOTE}`;
-    }
     if (this.webMcpEnabled && !lean && (!this._isActionMode(mode) || tier !== 'compact')) {
       const webMcpPrompt = this._isActionMode(mode) ? SYSTEM_PROMPT_WEBMCP_ACT : SYSTEM_PROMPT_WEBMCP_ASK;
       prompt += `\n\n${webMcpPrompt}`;
+    }
+    // Last among the mode guidance, so it also overrides the WebMCP text above.
+    if (mode === 'ask' && tabId != null && this._autoModeEscalationTabs.has(tabId)) {
+      prompt += `\n\n${AUTO_MODE_ASK_NOTE}`;
     }
 
     // Universal cookie/paywall guidance. Always relevant for http(s)
@@ -40001,6 +40154,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       steeringPriorContext: carryMatches ? structuredClone(carried.steeringPriorContext || null) : null,
       steeringPriorSubmissionReconciliation: carryMatches ? structuredClone(carried.steeringPriorSubmissionReconciliation || null) : null,
       resourceMutationDispatches: carryMatches ? structuredClone(carried.resourceMutationDispatches || []) : [],
+      lastCommitKind: carryMatches ? carried.lastCommitKind || null : null,
       // The user's answers on WebBrain's deletion card hold for the same task.
       deletionDecisions: carryMatches && Array.isArray(carried.deletionDecisions)
         ? structuredClone(carried.deletionDecisions.slice(-32)) : [],
@@ -40548,6 +40702,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         steeringPriorContext: structuredClone(guard.steeringPriorContext || null),
         steeringPriorSubmissionReconciliation: structuredClone(guard.steeringPriorSubmissionReconciliation || null),
         resourceMutationDispatches: structuredClone(guard.resourceMutationDispatches || []),
+        lastCommitKind: guard.lastCommitKind || null,
         deletionDecisions: structuredClone((guard.deletionDecisions || []).slice(-32)),
         unverifiedStepDecisions: structuredClone(this._carriedUnverifiedStepDecisions(guard)),
         socialPublication: guard.socialPublication ? structuredClone(guard.socialPublication) : null,
@@ -40877,10 +41032,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // its note once per run, and the next completion is accepted with a
     // caveat. The one-nudge budget and run-ending statuses below are the
     // strict path.
+    // The unverified action is a deletion only when deletions are all that was
+    // dispatched and the last action that committed was a deletion. A form
+    // submitted after it (or before it, if a deletion came last) is told apart
+    // by the kind of the last commit, which a later non-committing form such as
+    // a GET search does not overwrite.
+    const missingDeletion = missingRequiredSubmission
+      && Array.isArray(state.resourceMutationDispatches) && state.resourceMutationDispatches.length > 0
+      && state.resourceMutationDispatches.every(attempt => attempt?.mutationKind === 'delete')
+      && (state.lastCommitKind == null || state.lastCommitKind === 'delete');
     const advisory = this._planGuardAdvisory(tabId, state, { viaDone, looksPlanOnly, runtimeModeContradiction,
       structuredPlan: structuredPlan
         || (state.allowsPlannerShapedResult !== true && this._isPlannerShapedJson(content)),
-      staleCancellation, missingRequiredSchedulingTool, missingRequiredDownload, missingRequiredSubmission,
+      staleCancellation, missingRequiredSchedulingTool, missingRequiredDownload, missingRequiredSubmission, missingDeletion,
       forbiddenSubmission, missingJobEvidence, missingDraftEvidence, missingRequiredLedger,
       missingSocialPublishTargets, missingEvidence });
     if (advisory === 'accept') return null;
@@ -45161,6 +45325,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 });
               }
             } catch { /* UI emit must never break the run */ }
+            this._noteClarifyHeld(tabId, entry);
             this._settleClarification(entry, { answer, source: autoSource });
           };
           entry.restartTimeout = () => {
@@ -54329,7 +54494,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // An automatically routed turn asks the decision model while its page
     // context is gathered below (see auto-mode.js).
     const autoModeQuestion = runOptions?.autoModeRouting
-      ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode, runOptions.autoModeRouting.corrections)
+      ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode, runOptions.autoModeRouting.corrections,
+        runOptions.autoModeRouting.continuedTask)
       : null;
     const autoModeRoute = autoModeQuestion ? this._routeAutoRunMode(tabId, autoModeQuestion) : null;
 
@@ -55241,6 +55407,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
+      // The model's thinking time does not age its page observation.
+      this._notePageFeedbackModelResponse(tabId);
       const feedbackCalls = result?.toolCalls?.length ? result.toolCalls
         : !this._containsProviderReplayState(result?.responseItems) ? this._tryParseToolCallsFromText(result?.content || '', allowedToolNames) : [];
       // A pending correction supersedes this response anyway; do not first
@@ -55349,7 +55517,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       if (mode === 'ask' && this._autoModeEscalationTabs.has(tabId)
           && result.toolCalls?.some(call => call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME)) {
-        const handoff = await this._autoModeEscalation(tabId, result.toolCalls, enriched, provider, autoModeQuestion, messages, autoModeTurnStart);
+        const handoff = await this._autoModeEscalation(tabId, result.toolCalls, enriched, provider, autoModeQuestion, messages, autoModeTurnStart,
+          runOptions?.autoModeRouting?.continuedTask);
         if (handoff.superseded) {
           // Like any response a pending correction supersedes: the next step
           // applies the correction and the model decides again, so a
@@ -55358,6 +55527,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           continue;
         }
         const escalation = handoff.accepted;
+        // The check above awaited a model decision. Input or a main-frame
+        // navigation that arrived meanwhile is queued, and a hand-off that did
+        // not see it is not accepted; page churn alone does not count.
+        if (escalation && this._pageFeedbackSupersedesHandoff?.(tabId)) {
+          onUpdate('text', { content: '', replace: true });
+          continue;
+        }
         if (escalation) {
           // The caller restarts this turn in the requested mode, from the
           // state the turn started with, so the request is recorded once.
@@ -56719,6 +56895,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           toolCalls: streamedToolCalls,
         }));
 
+        // The model's thinking time does not age its page observation.
+        this._notePageFeedbackModelResponse(tabId);
         const feedbackCalls = streamedToolCalls?.length ? streamedToolCalls
           : !this._containsProviderReplayState(responseItems) ? this._tryParseToolCallsFromText(fullText || '', allowedToolNames) : [];
         // A pending correction supersedes this response anyway; do not first

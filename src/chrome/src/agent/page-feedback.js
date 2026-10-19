@@ -319,6 +319,7 @@ export async function beforePageAgentDispatch(api, tabId, details = {}) {
   let acknowledgement;
   let preparationAcknowledgement;
   const expectedModelSnapshot = owner.expectedModelSnapshot?.();
+  const modelHeldMs = expectedModelSnapshot ? owner.modelHeldMs?.() : 0;
   const batchId = owner.batchId?.();
   const relaxedMonitorGrantToken = owner.relaxedMonitorGrantToken?.();
   try {
@@ -328,7 +329,8 @@ export async function beforePageAgentDispatch(api, tabId, details = {}) {
           allowPassiveRebase: owner.allowPassiveRebase?.() === true,
           ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}),
           ...(batchId ? { batchId } : {}),
-          ...(expectedModelSnapshot ? { expectedModelSnapshot } : {}) } }, { frameId: Number(details.frameId) || 0 });
+          ...(expectedModelSnapshot ? { expectedModelSnapshot } : {}),
+          ...(modelHeldMs > 0 ? { modelHeldMs } : {}) } }, { frameId: Number(details.frameId) || 0 });
     }
     acknowledgement = await api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_dispatch',
       params: monitorParams }, { frameId: Number(details.frameId) || 0 });
@@ -472,6 +474,7 @@ export const pageFeedbackMethods = {
       pending: () => this._pageFeedbackBlocksCall(tabId, run.dispatchCall?.name, run.dispatchCall?.args),
       allowPassiveRebase: () => run.dispatchCall?.allowPassiveRebase === true,
       expectedModelSnapshot: () => run.dispatchCall?.dispatchState?.started ? undefined : run.dispatchCall?.expectedModelSnapshot,
+      modelHeldMs: () => this._pageFeedbackModelHeldMs(run.dispatchCall?.modelState),
       batchId: () => run.dispatchCall?.batchId,
       relaxedMonitorGrantToken: () => this._monitoringRetryCurrent(tabId, run)?.grantToken,
       clearNavigation: () => { run.navigation = null; run.sameDocumentNavigation = null; },
@@ -915,6 +918,38 @@ export const pageFeedbackMethods = {
     return observation ? `${prompt}\n\n${observation}` : prompt;
   },
 
+  // A pre-inference observation's certificate lasts two minutes of WebBrain's
+  // own time (MODEL_SNAPSHOT_MS in page-monitor.js). The model's thinking and
+  // the user's answers to WebBrain's own cards (permission, submit and
+  // deletion confirmations, questions) do not count: a slow provider or a
+  // user who reads a card for a minute otherwise expired an unchanged target
+  // as "The browser changed during action preparation", and every retry
+  // showed the same card again. What changes on the page meanwhile is still
+  // reported by the monitor and judged by the binding checks.
+  _notePageFeedbackModelResponse(tabId) {
+    const binding = this._pageFeedbackRuns?.get(tabId)?.modelState?.actionBinding;
+    if (binding?.capturedAt && !binding.respondedAt) binding.respondedAt = Date.now();
+  },
+
+  _notePageFeedbackUserDecision(tabId, waitedMs) {
+    const binding = this._pageFeedbackRuns?.get(tabId)?.modelState?.actionBinding;
+    if (binding && Number.isFinite(waitedMs) && waitedMs > 0) binding.userDecisionMs = (binding.userDecisionMs || 0) + waitedMs;
+  },
+
+  _pageFeedbackModelHeldMs(state) {
+    const binding = state?.actionBinding;
+    if (!binding) return 0;
+    const thinking = binding.capturedAt && binding.respondedAt ? Math.max(0, binding.respondedAt - binding.capturedAt) : 0;
+    return Math.round(thinking + Math.max(0, binding.userDecisionMs || 0));
+  },
+
+  // Whether feedback queued since a hand-off's model check began is one the
+  // person caused or a navigation, not page churn the hand-off ignores.
+  _pageFeedbackSupersedesHandoff(tabId) {
+    const events = [...(this._pageFeedbackRuns?.get(tabId)?.events?.values() || [])];
+    return events.length > 0 && !isAutomaticPageFeedback(events);
+  },
+
   _hasPendingPageFeedback(tabId) {
     return !!this._pageFeedbackRuns?.get(tabId)?.events.size;
   },
@@ -1245,7 +1280,7 @@ export const pageFeedbackMethods = {
           if (monitoringRetry && capture.monitoringRelaxed === false) this._invalidateMonitoringRetry(tabId, 'grant_expired');
           actionTargetCount = Number.isSafeInteger(capture.targetCount) ? Math.max(0, Math.min(512, capture.targetCount)) : 0;
           state.actionBinding = { snapshotToken: capture.snapshotToken, runToken: run.token, documentToken: capture.documentToken,
-            focusedTargetAvailable: capture.focusedTargetAvailable === true,
+            focusedTargetAvailable: capture.focusedTargetAvailable === true, capturedAt: Date.now(),
             ...(monitoringRetry && this._monitoringRetryCurrent(tabId, run) === monitoringRetry
               ? { relaxedMonitorGrantToken: monitoringRetry.grantToken } : {}) };
           if (capture.observationScopeCaptured === false) run.actionObservationScope = null;
@@ -1328,6 +1363,7 @@ export const pageFeedbackMethods = {
       const relaxedMonitorGrantToken = retry && retry.grantToken === binding.relaxedMonitorGrantToken ? retry.grantToken : null;
       const response = await apiFor().tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_validate_model',
         params: { ...safeAction(name, args), runToken: run.token, snapshotToken: binding.snapshotToken,
+          ...(this._pageFeedbackModelHeldMs(state) > 0 ? { modelHeldMs: this._pageFeedbackModelHeldMs(state) } : {}),
           ...(batchId ? { batchId } : {}),
           ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}) } }, { frameId: 0 });
       const owned = response?.runToken === binding.runToken
@@ -1839,11 +1875,13 @@ export function installPageFeedback(Agent) {
       const revision = run.revision;
       let prepared;
       try {
+        const modelHeldMs = expectedModelSnapshot ? this._pageFeedbackModelHeldMs(modelState) : 0;
         prepared = await apiFor().tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_prepare',
           params: { ...safeAction(name, args), runToken: run.token, operationId, allowPassiveRebase: allowPassiveRebase === true,
             ...(batchId ? { batchId } : {}),
             ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}),
-            ...(expectedModelSnapshot ? { expectedModelSnapshot } : {}) } }, { frameId: 0 });
+            ...(expectedModelSnapshot ? { expectedModelSnapshot } : {}),
+            ...(modelHeldMs > 0 ? { modelHeldMs } : {}) } }, { frameId: 0 });
       } catch {}
       // Certified targets keep their pre-inference footprint across passive
       // updates during preparation; legacy preparation retains its revision fence.
