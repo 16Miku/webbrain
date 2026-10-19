@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': 'Konuşma geri yüklenemedi.',
   'sp.history.changed': 'Sayfanın URL’si değişti.',
   'sp.providers.more': 'Daha fazla…',
+  'sp.provider_picker.current': 'Model: {name}',
+  'sp.provider_picker.none': 'Model seç',
   "st.system_one.desc_html": "Zamanlanmış izlemeler ve görev tamamlanması için ek doğrulama.",
   "st.system_one.enabled.label": "Jev’i etkinleştir",
   "st.system_one.api_key.label": "TypeSafe API anahtarı",

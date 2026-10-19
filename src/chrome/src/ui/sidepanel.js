@@ -8063,7 +8063,11 @@ function syncProviderPickerButton() {
     || '';
   providerPickerLabel.textContent = shortLabel;
   if (providerPickerBtn) {
-    providerPickerBtn.title = providerSelect.selectedOptions?.[0]?.textContent || shortLabel;
+    // The button shows an icon only, so its name says which model is active.
+    const name = providerSelect.selectedOptions?.[0]?.textContent || shortLabel;
+    const label = name ? t('sp.provider_picker.current', { name }) : t('sp.provider_picker.none');
+    providerPickerBtn.title = label;
+    providerPickerBtn.setAttribute('aria-label', label);
   }
   if (providerPickerMenu) {
     providerPickerMenu.querySelectorAll('.provider-picker-option').forEach((btn) => {
@@ -16456,6 +16460,7 @@ if (languageSelect) {
     await setLocale(languageSelect.value);
     applyDOMTranslations(document);
     syncLanguagePicker();
+    syncProviderPickerButton();
     updateInputPlaceholder();
     syncSelectionScopeUi();
     scheduleChatNavigationUpdate();
@@ -16463,6 +16468,7 @@ if (languageSelect) {
   document.addEventListener('wb-locale-changed', () => {
     languageSelect.value = getLocale();
     syncLanguagePicker();
+    syncProviderPickerButton();
     updateInputPlaceholder();
     syncSelectionScopeUi();
     scheduleChatNavigationUpdate();

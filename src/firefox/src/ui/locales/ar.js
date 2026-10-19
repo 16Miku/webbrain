@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "تعذرت استعادة المحادثة.",
   'sp.history.changed': "تغيّر رابط الصفحة.",
   'sp.providers.more': 'المزيد…',
+  'sp.provider_picker.current': 'النموذج: {name}',
+  'sp.provider_picker.none': 'اختر نموذجًا',
   "st.system_one.desc_html": "تحقق إضافي من المراقبة المجدولة وإتمام المهام.",
   "st.system_one.enabled.label": "تفعيل Jev",
   "st.system_one.api_key.label": "مفتاح API لـ TypeSafe",

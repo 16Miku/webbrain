@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "ไม่สามารถกู้คืนการสนทนาได้",
   'sp.history.changed': "URL ของหน้าเปลี่ยนไปแล้ว",
   'sp.providers.more': 'เพิ่มเติม…',
+  'sp.provider_picker.current': 'โมเดล: {name}',
+  'sp.provider_picker.none': 'เลือกโมเดล',
   "st.system_one.desc_html": "ตรวจสอบเพิ่มเติมสำหรับการเฝ้าดูและการทำงานตามกำหนดเวลา",
   "st.system_one.enabled.label": "เปิดใช้ Jev",
   "st.system_one.api_key.label": "คีย์ API ของ TypeSafe",

@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "לא ניתן לשחזר את השיחה.",
   'sp.history.changed': "כתובת הדף השתנתה.",
   'sp.providers.more': 'עוד…',
+  'sp.provider_picker.current': 'מודל: {name}',
+  'sp.provider_picker.none': 'בחירת מודל',
   "st.system_one.desc_html": "אימות נוסף למעקבים מתוזמנים ולהשלמת משימות.",
   "st.system_one.enabled.label": "הפעלת Jev",
   "st.system_one.api_key.label": "מפתח API של TypeSafe",

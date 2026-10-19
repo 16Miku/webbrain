@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "Не удалось восстановить беседу.",
   'sp.history.changed': "URL страницы изменился.",
   'sp.providers.more': 'Ещё…',
+  'sp.provider_picker.current': 'Модель: {name}',
+  'sp.provider_picker.none': 'Выберите модель',
   "st.system_one.desc_html": "Дополнительная проверка запланированных наблюдений и завершения задач.",
   "st.system_one.enabled.label": "Включить Jev",
   "st.system_one.api_key.label": "Ключ API TypeSafe",

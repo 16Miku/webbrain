@@ -44,6 +44,8 @@ export default {
   'sp.history.failed': "Não foi possível recuperar a conversa.",
   'sp.history.changed': "O URL da página mudou.",
   'sp.providers.more': "Mais…",
+  'sp.provider_picker.current': 'Modelo: {name}',
+  'sp.provider_picker.none': 'Escolha um modelo',
   'st.providers.selected': "SELECIONADO",
   'st.providers.select_for_chat': "Selecione para bate-papo",
   // Brand name: kept in English across locales.

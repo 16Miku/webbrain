@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "无法恢复对话。",
   'sp.history.changed': "页面网址已更改。",
   'sp.providers.more': '更多…',
+  'sp.provider_picker.current': '模型：{name}',
+  'sp.provider_picker.none': '选择模型',
   "st.system_one.desc_html": "为定时监测和任务完成提供额外验证。",
   "st.system_one.enabled.label": "启用 Jev",
   "st.system_one.api_key.label": "TypeSafe API 密钥",

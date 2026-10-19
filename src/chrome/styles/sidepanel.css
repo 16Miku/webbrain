@@ -3434,7 +3434,18 @@ html[data-ui-scale="175"] .conversation-action-label {
   background: transparent;
   border-color: transparent;
   color: var(--text-secondary);
-  padding: 4px 6px;
+  gap: 2px;
+  padding: 4px 4px 4px 5px;
+}
+
+/* In the composer the picker is an engine icon: the model's name is its
+   tooltip and accessible name, so a long name never crowds the toolbar. */
+.provider-picker-icon {
+  flex: 0 0 auto;
+}
+
+.composer-toolbar .provider-picker-label {
+  display: none;
 }
 
 .composer-toolbar .provider-picker-btn:hover,
@@ -3455,21 +3466,13 @@ html[dir="rtl"] .composer-toolbar .provider-picker-menu {
 }
 
 /* Narrow panel at a large UI scale (150%/175% leave ~160-200px inside the
-   composer): the model picker fills the first row next to the attach button, so
-   the fixed-width controls (status, permissions, mic, send) wrap to a second row
-   instead of squeezing it to a few pixels. The DOM order is unchanged, so
-   keyboard focus follows the visual order. */
+   composer): if the controls do not fit on one row they wrap to a second one
+   instead of being squeezed. The DOM order is unchanged, so keyboard focus
+   follows the visual order. */
 html[data-ui-scale="150"] .composer-toolbar,
 html[data-ui-scale="175"] .composer-toolbar {
   flex-wrap: wrap;
   row-gap: 4px;
-}
-
-html[data-ui-scale="150"] .composer-toolbar .provider-picker,
-html[data-ui-scale="175"] .composer-toolbar .provider-picker {
-  /* 100% minus the 28px attach button and the 6px gap */
-  flex: 1 1 calc(100% - 34px);
-  max-width: none;
 }
 
 #input-wrapper:focus-within {

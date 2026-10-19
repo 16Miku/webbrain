@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "Perbualan tidak dapat dipulihkan.",
   'sp.history.changed': "URL halaman telah berubah.",
   'sp.providers.more': 'Lagi…',
+  'sp.provider_picker.current': 'Model: {name}',
+  'sp.provider_picker.none': 'Pilih model',
   "st.system_one.desc_html": "Pengesahan tambahan bagi pemantauan berjadual dan penyelesaian tugas.",
   "st.system_one.enabled.label": "Dayakan Jev",
   "st.system_one.api_key.label": "Kunci API TypeSafe",
