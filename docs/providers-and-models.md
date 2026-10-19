@@ -93,7 +93,7 @@ provider until changed. Provider keys are stored separately.
 `SYSTEM_ONE_TEXT_TOKEN_BUDGETS` in `systemone-judge.js` caps the state it is sent
 at 1,500 *estimated* tokens. The estimate is deliberately high (no tokenizer
 ships with the extension): ASCII counts half a token per character, other
-characters two, long unbroken letter/digit runs one each. A longer state is not
+characters three (the worst case for CJK and emoji), long unbroken letter/digit runs one each. A longer state is not
 sent; the check takes the same fallback as for an unavailable decision model
 (failure reason `state_too_long`) instead of judging evidence it only partly
 read. In practice Clef Flash answers short decisions, and long completion

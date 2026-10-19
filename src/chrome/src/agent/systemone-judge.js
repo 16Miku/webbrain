@@ -139,12 +139,13 @@ export const SYSTEM_ONE_TEXT_TOKEN_BUDGETS = Object.freeze({ 'cloudflare/clef-fl
 // A deliberately high token estimate, so a state it passes stays under the real
 // limit for ordinary text, CJK, and identifier-heavy input alike: ASCII counts
 // half a token per character (English and JSON run near a quarter), any other
-// character two (CJK and emoji take one to three), and long unbroken runs of
+// character three (CJK and emoji take one to three, so the worst case is
+// charged), and long unbroken runs of
 // letters and digits (hashes, base64, ids) one per character.
 export function estimateTextTokens(text) {
   let tokens = 0;
   const rest = String(text).replace(/[A-Za-z0-9+/=_-]{24,}/g, run => { tokens += run.length; return ' '; });
-  for (const character of rest) tokens += character.charCodeAt(0) < 128 ? .5 : 2;
+  for (const character of rest) tokens += character.charCodeAt(0) < 128 ? .5 : 3;
   return Math.ceil(tokens);
 }
 

@@ -46,6 +46,7 @@ for (const build of ['chrome', 'firefox']) {
       cjk: { evidence: '投稿が公開されました。'.repeat(100) },
       hashes: { evidence: ('a1b2c3d4e5f60718293a4b5c6d7e8f90 ').repeat(60) },
       unbroken: { evidence: 'Zm9vYmFy'.repeat(250) },
+      emoji: { evidence: '\u{1F600}'.repeat(700) },
     };
     for (const [name, state] of Object.entries(dense)) {
       assert.ok(JSON.stringify(state).length < 6000, `${name} is under the old character cap`);
@@ -63,7 +64,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(requests.length, 2, 'a data URL in text is not sent');
     await judge.evaluate({ config: { ...config, model: 'another/publisher' }, state: dense.cjk, questions: one });
     assert.equal(requests.length, 3, 'other models keep the full state');
-    assert.ok(mod.estimateTextTokens('x'.repeat(100)) >= 50 && mod.estimateTextTokens('日'.repeat(10)) >= 20);
+    assert.ok(mod.estimateTextTokens('x'.repeat(100)) >= 50 && mod.estimateTextTokens('日'.repeat(10)) >= 30);
   });
   test(`${build}: singleton Choice requests fail locally before a service call`, async () => {
     let calls = 0;
