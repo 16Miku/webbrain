@@ -73086,6 +73086,21 @@ test('Local OpenAI-compatible Proxy context window: model card, live props, mode
         assert.equal(config().contextWindow, 65536);
       }
 
+      // 5e''. A deliberate 16k (the generic local default) behind the proxy is a manual choice too.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: 'claude-sonnet-4-5', contextWindow: 65536,
+        });
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 16384, manualContextWindow: true });
+        assert.equal(config().contextWindow, 16384);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.contextWindow, undefined, `${label}: a saved manual 16k is not enlarged by the model name`);
+        assert.equal(config().contextWindow, 16384);
+        // Without the manual marker the same 16k is the old default and is still replaced.
+        const legacy = setup(async () => new Response('missing', { status: 404 }), { model: 'claude-sonnet-4-5', contextWindow: 16384 });
+        assert.equal((await legacy.mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5')).contextWindow, 128000);
+      }
+
       // 5f. Settings UI: edits made while detection is pending are preserved
       {
         const settingsSource = fs.readFileSync(path.join(ROOT, label === 'chrome' ? 'src/chrome/src/ui/settings.js' : 'src/firefox/src/ui/settings.js'), 'utf8');

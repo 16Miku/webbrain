@@ -82,7 +82,9 @@ export function shouldApplyDetectedContextWindow(current, detected, options = {}
   if (next == null) return false;
   const cur = Number(current);
   if (!Number.isFinite(cur) || cur <= 0) return true;
-  if (cur === DEFAULT_LOCAL_CONTEXT_WINDOW) return true;
+  // The generic 16k local default is not an override, unless the caller knows the user chose it
+  // on purpose (`explicitOverride`, e.g. a saved manual 16k for a small model behind the proxy).
+  if (cur === DEFAULT_LOCAL_CONTEXT_WINDOW && options.explicitOverride !== true) return true;
   // A provider's own shipped default, or a value WebBrain filled in itself,
   // is not a user override either.
   if (Array.isArray(options.replaceable) && options.replaceable.some((value) => Number(value) === cur)) return true;

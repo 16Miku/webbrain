@@ -2131,6 +2131,7 @@ export class ProviderManager {
     if (!shouldApplyDetectedContextWindow(current?.config?.contextWindow, detected.contextWindow, {
       shrinkOverride: detected.shrinkOverride === true,
       replaceable: this._replaceableContextWindows(id, current?.config),
+      explicitOverride: this._hasExplicitContextWindow(id, current?.config),
     })) {
       return { ok: true };
     }
@@ -2256,6 +2257,12 @@ export class ProviderManager {
     ];
   }
 
+  // A context window the user saved on purpose for the proxy. It protects even a value that equals
+  // the generic 16k local default, which detection otherwise treats as unset.
+  _hasExplicitContextWindow(id, config) {
+    return this._providerDefinitionId(id, config) === 'local_openai_proxy' && config?.manualContextWindow === true;
+  }
+
   _detectedContextWindowFields(id, config, contextWindow) {
     return this._providerDefinitionId(id, config) === 'local_openai_proxy'
       ? { autoContextWindow: contextWindow, manualContextWindow: false }
@@ -2275,6 +2282,7 @@ export class ProviderManager {
     if (!shouldApplyDetectedContextWindow(current?.config?.contextWindow, detected.contextWindow, {
       shrinkOverride: detected.shrinkOverride === true,
       replaceable: this._replaceableContextWindows(id, current?.config),
+      explicitOverride: this._hasExplicitContextWindow(id, current?.config),
     })) {
       return result;
     }
