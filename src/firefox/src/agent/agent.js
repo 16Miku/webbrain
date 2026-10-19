@@ -14828,13 +14828,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           } else {
             // The user already said no to this exact submission (same form,
             // same values) in this turn: refuse it again without a new card.
-            const declineKey = submitActionKey(submitConfirmation, submitConfirmation.url);
-            if (this.permissions?.isSubmissionDeclined?.(declineKey, tabId) === true) {
+            // Only a submission WebBrain resolved has an identity; a script or
+            // WebMCP callback, or a control with no form, asks every time.
+            const declineKey = this._declinableSubmissionKey(fnName, submitConfirmation);
+            if (declineKey && this.permissions?.isSubmissionDeclined?.(declineKey, tabId) === true) {
               choice = 'deny';
               alreadyDeclined = true;
             } else {
               choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
-              if (choice === 'deny') this.permissions?.declineSubmission?.(declineKey, tabId);
+              if (choice === 'deny' && declineKey) this.permissions?.declineSubmission?.(declineKey, tabId);
             }
           }
           if (this._hasPendingSteering(tabId) && !this._checkAbort(tabId)) return skipSteeredPermissionWait(toolIndex);
@@ -18915,10 +18917,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // The time the user took to answer one of WebBrain's own cards does not
     // age the page observation the pending action was decided on.
     this._noteClarifyHeld(tabId, entry);
-    // The user answering any card is the user speaking again: a submission
-    // declined earlier in the turn may be asked about once more. A timeout's
-    // or Instant's answer is WebBrain's, not the user's.
-    if (source === 'user') this.permissions?.clearDeclinedSubmissions?.(tabId);
+    // The user answering any card (an option, typed text, a slash command,
+    // a Cloud API answer) is the user speaking again: a submission declined
+    // earlier in the turn may be asked about once more. A timeout's or
+    // Instant's answer is WebBrain's, not the user's.
+    if (source !== 'timeout' && source !== 'auto') this.permissions?.clearDeclinedSubmissions?.(tabId);
     this._settleClarification(entry, { answer, source });
     return true;
   }
@@ -29429,6 +29432,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (next) return next;
     if (Array.isArray(advisories)) advisories.push(guardAdvisory(ask.guardId, this._unverifiedStepNote(ask.guardId, receipt.source)));
     return null;
+  }
+
+  // The identity a declined submission is remembered by in a turn, or ''
+  // when WebBrain did not resolve one: a script or WebMCP callback, or a
+  // control whose form, fields and action it could not read.
+  _declinableSubmissionKey(toolName, submitInfo) {
+    if (!submitInfo || toolName === 'execute_js' || toolName === 'execute_webmcp_tool') return '';
+    const resolved = (Array.isArray(submitInfo.changedFields) && submitInfo.changedFields.length > 0)
+      || (Array.isArray(submitInfo.fields) && submitInfo.fields.length > 0)
+      || !!(submitInfo.actionUrl || submitInfo.action);
+    return resolved ? submitActionKey(submitInfo, submitInfo.url) : '';
   }
 
   _fallbackSubmitConfirmationInfo(host, tool, reason, summary = '') {

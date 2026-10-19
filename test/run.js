@@ -82652,7 +82652,9 @@ test('a declined submission is not asked again in the same turn', async () => {
     email = 'you@example.com';
     const userEntry = { resolve: () => { }, ts: Date.now() };
     agent._pendingClarifications.set(tabId, new Map([['asked', userEntry]]));
-    agent.submitClarifyResponse(tabId, 'asked', 'Yes, submit it', 'user');
+    // The side panel sends the source of the user's answer: an option, text,
+    // a slash command or a Cloud API answer.
+    agent.submitClarifyResponse(tabId, 'asked', 'Yes, submit it', 'option');
     await submit('after-user-answer');
     assert.equal(prompts, 3, `${AgentClass.name}: the user's own answer on a later card asks again`);
 
@@ -82660,6 +82662,28 @@ test('a declined submission is not asked again in the same turn', async () => {
     await submit('new-turn');
     assert.equal(prompts, 4, `${AgentClass.name}: a new turn asks again`);
     assert.equal(executed, 0, `${AgentClass.name}: nothing declined was submitted`);
+
+    // A script has no form identity: each run of one asks on its own card.
+    agent._detectLikelySubmitAction = async () => agent._fallbackSubmitConfirmationInfo('host.com', 'execute_js', 'execute_js can run page JavaScript');
+    const script = async (id, code) => {
+      const messages = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{ id, function: { name: 'execute_js', arguments: JSON.stringify({ code }) } }],
+        messages,
+        () => { },
+        { supportsVision: false },
+        '',
+        new Set(['execute_js']),
+        1,
+      );
+      return messages;
+    };
+    agent.conversationModes.set(tabId, 'dev');
+    const before = prompts;
+    await script('script-1', 'document.forms[0].submit()');
+    await script('script-2', 'document.forms[1].submit()');
+    assert.equal(prompts, before + 2, `${AgentClass.name}: a declined script made a different script skip its card`);
   }
 });
 
