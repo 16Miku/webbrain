@@ -1,4 +1,4 @@
-import { frameHostMatches } from './permission-gate.js';
+import { frameHostMatches, urlFilterHostHint } from './permission-gate.js';
 import { richTextToolbarUsesFocusedTarget } from './rich-text-toolbar-guard.js';
 import { secureRandomBase36Token } from './random-token.js';
 
@@ -233,7 +233,8 @@ export class RichTextToolbarProbe {
         candidates: candidates.map(frame => ({ frameId: frame.frameId, url: frame.url, elementCount: frame.matchCount })).slice(0, 10),
         error: targetCount > 1
           ? `The iframe selector matched ${targetCount} elements, so nothing was typed. Call iframe_read with this selector and retry with the intended matchIndex.`
-          : 'Input not found in any matching iframe',
+          : urlFilterHostHint(urlFilter, (navigationFrames || []).filter(frame => frame?.frameId !== 0).map(frame => frame?.url))
+            || 'Input not found in any matching iframe',
       };
     }
     const selected = candidates[0];
