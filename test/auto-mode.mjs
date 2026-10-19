@@ -684,6 +684,47 @@ for (const build of BUILDS) {
     assert.equal(f.agent.takeModeEscalation(f.tab), null);
   });
 
+  test(`${build}: the read-only prompt hands an action off instead of sending the user to Act mode`, async () => {
+    // The base Ask prompt is shared by chosen and automatic Ask turns; where
+    // it would send the user to Act mode, it defers to the automatic note.
+    const { SYSTEM_PROMPT_ASK } = await import(`../src/${build}/src/agent/tools.js`);
+    assert.match(SYSTEM_PROMPT_ASK, /requires clicking or typing: when an AUTOMATIC MODE section follows, call `request_action_mode` as it says; otherwise let them know they need to switch to Act mode\./);
+    assert.match(SYSTEM_PROMPT_ASK, /\(c\) the task needs browser actions that this read-only Ask turn cannot do\. When an AUTOMATIC MODE section follows, hand the request off as it says instead of declining\./);
+    const { AUTO_MODE_ASK_NOTE } = await import(`../src/${build}/src/agent/auto-mode.js`);
+    assert.match(AUTO_MODE_ASK_NOTE, /This section replaces every instruction above that tells the user to switch to Act or Dev mode: never ask the user to switch modes\./);
+    const f = fixture(Agent, { replies: [done('Answer.')] });
+    await f.run('What is on this page?');
+    const system = f.calls[0].messages[0].content;
+    assert.ok(system.startsWith(SYSTEM_PROMPT_ASK), 'the cache-stable base prompt comes first');
+    assert.ok(system.indexOf(AUTO_MODE_ASK_NOTE) > SYSTEM_PROMPT_ASK.length, 'the note follows the instructions it replaces');
+  });
+
+  test(`${build}: an automatic read-only answer is not offered a one-click switch to Act`, async () => {
+    // "Would you like me to open it?" after a routed answer: the user's "yes"
+    // is routed and hands the turn off, so the Ask-to-Act button is noise.
+    const offer = 'There is a "Learn more" link. Would you like me to open it for you?';
+    const settle = () => new Promise(resolve => setImmediate(resolve));
+    const classifierCalls = f => {
+      const calls = [];
+      delete f.agent._maybeEmitAskModeHandoff;
+      f.agent._jevClassify = async (...args) => { calls.push(args[0]); return 'act'; };
+      return calls;
+    };
+    const routed = fixture(Agent, { decide: () => ({ choice: 'answer', evidence: '', source: 'decision_model' }), replies: [done(offer)] });
+    const routedCalls = classifierCalls(routed);
+    assert.equal(await routed.run('Is there anything here I could read more about? Offer to open it for me.'), offer);
+    await settle();
+    assert.deepEqual(routedCalls, [], 'no Act suggestion is classified for a routed turn');
+    assert.equal(routed.updates.some(update => update.type === 'ask_mode_handoff'), false);
+    // A chosen Ask turn still gets the offer.
+    const chosen = fixture(Agent, { replies: [done(offer)] });
+    const chosenCalls = classifierCalls(chosen);
+    assert.equal(await chosen.run('Is there anything here I could read more about? Offer to open it for me.', 'ask'), offer);
+    await settle();
+    assert.equal(chosenCalls.length, 1);
+    assert.deepEqual(chosen.updates.filter(update => update.type === 'ask_mode_handoff').map(update => update.data), [{ value: 'act' }]);
+  });
+
   test(`${build}: a slow decision model leaves the turn read-only after the grace period`, async () => {
     // The decision never answers; the turn goes on without it.
     const f = fixture(Agent, { decide: () => new Promise(() => {}), replies: [done('Read-only answer.')] });

@@ -27255,7 +27255,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _maybeEmitAskModeHandoff(tabId, mode, userMessage, finalResponse, onUpdate, runOptions = {}) {
+    // An automatically routed turn could hand itself to Act, and the user's
+    // next message is routed again ("yes" to an offer included), so it is
+    // not offered a one-click switch to a mode the user never picked.
     if (mode !== 'ask'
+        || runOptions?.autoModeRouting
         || runOptions?.cloudRun
         || this._isStandaloneChatRun(runOptions)
         || typeof finalResponse !== 'string'

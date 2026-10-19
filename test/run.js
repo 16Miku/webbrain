@@ -12103,6 +12103,8 @@ test('Ask mode handoff classification is strict, silent, and mode guarded', asyn
       { cloudRun: true },
       { standaloneChat: true },
       { sourceGrounding: selectionGrounding },
+      // An automatically routed turn hands itself off; its follow-up is routed again.
+      { autoModeRouting: { previousMode: null } },
     ]) {
       const skipped = createAgent();
       await skipped.agent._maybeEmitAskModeHandoff(53002, 'ask', 'Click the button', finalResponse, () => { }, runOptions);
