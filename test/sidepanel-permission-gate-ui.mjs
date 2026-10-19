@@ -25,7 +25,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
     });
     after(async () => { await browser?.close(); });
 
-    async function fixture(run, { askBefore = true, width = 420 } = {}) {
+    async function fixture(run, { askBefore = true, width = 420, storedPin = null } = {}) {
       const context = await browser.newContext({ viewport: { width, height: 640 } });
       const errors = [];
       try {
@@ -46,7 +46,40 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.addStyleTag({ content: await read(build, 'styles/sidepanel.css') });
         await page.addScriptTag({ type: 'module', content: `
           import { t, applyDOMTranslations } from '/src/${build}/src/ui/i18n.js';
-          const log = window.__log = { writes: [], notices: [], toasts: [], opened: [], actWarning: 0, placeholder: 0, scaleClosed: 0 };
+          import { createComposerModePins } from '/src/${build}/src/ui/composer-mode-pin.js';
+          const log = window.__log = { writes: [], notices: [], toasts: [], opened: [], actWarning: 0, placeholder: 0, scaleClosed: 0, setMode: [], ensure: [], background: [] };
+          const sendToBackground = async (action, params = {}) => { log.background.push({ action, params }); return {}; };
+          // The mode picker's collaborators: the panel's mode state and checks.
+          const session = window.__session = { ${storedPin ? `'composerModePin:7': ${JSON.stringify(storedPin)}` : ''} };
+          const sessionArea = {
+            async get(key) { return key in session ? { [key]: session[key] } : {}; },
+            async set(values) { Object.assign(session, values); },
+            async remove(key) { delete session[key]; },
+          };
+          const isStandaloneWindow = false;
+          let autoModeSelection = true;
+          let agentMode = 'ask';
+          let currentTabId = 7;
+          const sameTabId = (a, b) => a != null && b != null && String(a) === String(b);
+          const composerModePins = createComposerModePins(sessionArea);
+          const setMode = (mode, { pinned = false } = {}) => {
+            log.setMode.push({ mode, pinned, auto: autoModeSelection });
+            agentMode = autoModeSelection ? 'ask' : mode;
+          };
+          const blocked = window.__blocked = { act: false, dev: false };
+          // A check can be held open to race it against a later pick.
+          const gates = window.__gates = { act: null, dev: null };
+          const check = async (mode, switchMode) => {
+            log.ensure.push({ mode, switchMode });
+            if (gates[mode]) await gates[mode];
+            return !blocked[mode];
+          };
+          const ensureActMode = ({ switchMode = true } = {}) => check('act', switchMode);
+          const ensureDevMode = ({ switchMode = true } = {}) => check('dev', switchMode);
+          let isProcessing = false;
+          let composerModePickerReady = false;
+          let composerModePickGeneration = 0;
+          let composerModePinCheckPending = false;
           let failNextWrite = false;
           window.__failNextWrite = () => { failNextWrite = true; };
           const ${api} = {
@@ -71,6 +104,19 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
           const closeUiScalePopover = () => { log.scaleClosed += 1; return false; };
           applyDOMTranslations(document);
           ${block}
+          renderComposerModePicker();
+          Object.assign(window, {
+            restoreComposerModeForCurrentTab, setComposerModePinForTab, revalidateComposerModePin, restoreComposerModeBeforeSend,
+            // What setTabProcessing does for the visible tab.
+            setProcessing(value) {
+              isProcessing = value;
+              renderComposerModePicker();
+              if (!value && composerModePinCheckPending) void revalidateComposerModePin();
+            },
+            pinCheckPending: () => composerModePinCheckPending,
+            switchTab(id) { currentTabId = id; restoreComposerModeForCurrentTab(); },
+            modeState: () => ({ auto: autoModeSelection, agentMode, pin: composerModePins.get(currentTabId) }),
+          });
           window.__ready = true;
         ` });
         await page.waitForFunction(() => window.__ready === true);
@@ -152,7 +198,8 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         assert.equal(s.log.notices.length, 0);
         assert.equal(s.off, false);
         assert.equal(s.noteShown, false);
-        await page.mouse.click(200, 400);
+        // Left of the popover, which is anchored to the toolbar's end.
+        await page.mouse.click(20, 300);
         assert.equal((await state()).open, false);
       }, { askBefore: false });
     });
@@ -185,6 +232,283 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         const s = await state();
         assert.deepEqual(s.log.opened, ['ext://webbrain/src/ui/settings.html#permissions']);
         assert.equal(s.open, false);
+      }, { width: 360 });
+    });
+
+    const picker = (page) => page.evaluate(() => {
+      const btn = document.getElementById('btn-permission-gate');
+      const badge = document.getElementById('composer-mode-badge');
+      return {
+        active: [...document.querySelectorAll('.composer-mode-option.active')].map(option => option.dataset.composerMode),
+        checked: [...document.querySelectorAll('.composer-mode-option')].map(option => option.getAttribute('aria-checked')),
+        tabbable: [...document.querySelectorAll('.composer-mode-option')].map(option => option.tabIndex),
+        badge: badge.hidden ? null : badge.textContent,
+        pinned: btn.classList.contains('has-mode-pin'),
+        title: btn.title,
+        label: btn.getAttribute('aria-label'),
+        state: window.modeState(),
+        session: { ...window.__session },
+        log: structuredClone(window.__log),
+      };
+    });
+
+    test('the mode picker starts in Auto and keeps Act for the chat', async () => {
+      await fixture(async ({ page }) => {
+        let p = await picker(page);
+        assert.deepEqual(p.active, ['auto']);
+        assert.deepEqual(p.checked, ['true', 'false', 'false', 'false']);
+        assert.deepEqual(p.tabbable, [0, -1, -1, -1], 'one tab stop, on the chosen mode');
+        assert.equal(p.badge, null);
+        assert.equal(p.pinned, false);
+        assert.equal(p.state.auto, true);
+        await page.click('#btn-permission-gate');
+        assert.match(await page.textContent('.composer-mode-picker'), /Mode[\s\S]*Auto[\s\S]*Ask[\s\S]*Act[\s\S]*Dev[\s\S]*a new chat starts in Auto/);
+
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.waitForFunction(() => window.modeState().pin === 'act');
+        p = await picker(page);
+        assert.deepEqual(p.log.ensure, [{ mode: 'act', switchMode: false }], 'Act is checked like the shortcut, without switching on its own');
+        assert.deepEqual(p.active, ['act']);
+        assert.deepEqual(p.state, { auto: false, agentMode: 'act', pin: 'act' }, 'Automatic is off and the composer sends Act');
+        assert.deepEqual(p.log.setMode.at(-1), { mode: 'act', pinned: true, auto: false });
+        assert.equal(p.badge, 'Act', 'the trigger shows the kept mode');
+        assert.equal(p.pinned, true);
+        assert.equal(p.title, 'Act for this chat · Permission prompts: on');
+        assert.equal(p.label, p.title);
+        await page.waitForFunction(() => window.__session['composerModePin:7'] === 'act');
+        await page.waitForFunction(() => getComputedStyle(document.getElementById('btn-permission-gate')).color
+          === getComputedStyle(document.getElementById('permission-gate-off-note')).color);
+
+        await page.click('.composer-mode-option[data-composer-mode="auto"]');
+        await page.waitForFunction(() => window.modeState().auto === true);
+        p = await picker(page);
+        assert.deepEqual(p.active, ['auto']);
+        assert.equal(p.badge, null);
+        assert.equal(p.title, 'Permission prompts: on');
+        assert.equal(p.state.agentMode, 'ask');
+        await page.waitForFunction(() => !('composerModePin:7' in window.__session));
+      });
+    });
+
+    test('the mode picker moves with the arrow keys and refuses a blocked mode', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.focus('.composer-mode-option[data-composer-mode="auto"]');
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(() => window.modeState().pin === 'ask');
+        assert.equal(await page.evaluate(() => document.activeElement.dataset.composerMode), 'ask');
+        await page.keyboard.press('End');
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        let p = await picker(page);
+        assert.equal(p.badge, 'Dev');
+        await page.keyboard.press('Home');
+        await page.waitForFunction(() => window.modeState().auto === true);
+
+        await page.evaluate(() => { window.__blocked.act = true; });
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.waitForFunction(() => window.__log.ensure.length === 2);
+        p = await picker(page);
+        assert.deepEqual(p.active, ['auto'], 'a mode the checks refuse is not kept');
+        assert.equal(p.state.auto, true);
+      });
+    });
+
+    test('each tab keeps its own mode, and a reopened panel finds it', async () => {
+      await fixture(async ({ page }) => {
+        await page.evaluate(() => window.restoreComposerModeForCurrentTab());
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        let p = await picker(page);
+        assert.deepEqual(p.active, ['dev'], 'the stored choice comes back');
+        assert.equal(p.badge, 'Dev');
+        await page.evaluate(() => window.switchTab(8));
+        p = await picker(page);
+        assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null }, 'another tab stays in Auto');
+        assert.equal(p.badge, null);
+        await page.evaluate(() => window.switchTab(7));
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        // A new chat on the tab clears it.
+        await page.evaluate(() => window.setComposerModePinForTab(7, null));
+        p = await picker(page);
+        assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null });
+        await page.waitForFunction(() => !('composerModePin:7' in window.__session));
+      }, { storedPin: 'dev' });
+    });
+
+    test('the mode picker waits for a run to end', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.evaluate(() => window.setProcessing(true));
+        let state = await page.evaluate(() => ({
+          disabled: [...document.querySelectorAll('.composer-mode-option')].map(option => option.disabled),
+          desc: document.getElementById('composer-mode-desc').textContent,
+        }));
+        assert.deepEqual(state.disabled, [true, true, true, true]);
+        assert.equal(state.desc, 'You can change the mode when the current task finishes.');
+        await page.evaluate(() => document.querySelector('.composer-mode-option[data-composer-mode="dev"]').click());
+        assert.equal((await picker(page)).state.auto, true, 'no change during the run');
+        await page.evaluate(() => window.setProcessing(false));
+        state = await page.evaluate(() => ({
+          disabled: [...document.querySelectorAll('.composer-mode-option')].map(option => option.disabled),
+          desc: document.getElementById('composer-mode-desc').textContent,
+        }));
+        assert.deepEqual(state.disabled, [false, false, false, false]);
+        assert.match(state.desc, /^Auto picks Ask, Act or Dev/);
+      });
+    });
+
+    test('the latest pick wins over an older one still being checked', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.evaluate(() => { window.__release = null; window.__gates.dev = new Promise(resolve => { window.__release = resolve; }); });
+        await page.click('.composer-mode-option[data-composer-mode="dev"]');
+        await page.click('.composer-mode-option[data-composer-mode="ask"]');
+        await page.waitForFunction(() => window.modeState().pin === 'ask');
+        await page.evaluate(() => window.__release());
+        await page.waitForTimeout(50);
+        const p = await picker(page);
+        assert.deepEqual(p.state, { auto: false, agentMode: 'ask', pin: 'ask' }, 'the older Dev pick does not overwrite Ask');
+        assert.deepEqual(p.active, ['ask']);
+      });
+    });
+
+    test('a new chat cancels a pick still being checked', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.evaluate(() => { window.__release = null; window.__gates.act = new Promise(resolve => { window.__release = resolve; }); });
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        // New chat (renderClearedConversationForTab) while the Act check waits.
+        await page.evaluate(() => window.setComposerModePinForTab(7, null));
+        await page.evaluate(() => window.__release());
+        await page.waitForTimeout(50);
+        const p = await picker(page);
+        assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null }, 'the new chat starts in Auto');
+        assert.equal('composerModePin:7' in p.session, false);
+      });
+    });
+
+    test('a tab switch cancels a pick still being checked, even back to the same tab', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.evaluate(() => { window.__release = null; window.__gates.act = new Promise(resolve => { window.__release = resolve; }); });
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.evaluate(() => { window.switchTab(8); window.switchTab(7); });
+        await page.evaluate(() => window.__release());
+        await page.waitForTimeout(50);
+        const p = await picker(page);
+        assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null });
+        assert.equal('composerModePin:7' in p.session, false);
+      });
+    });
+
+    test('a send waits for a mode pick still being checked', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.evaluate(() => { window.__release = null; window.__gates.act = new Promise(resolve => { window.__release = resolve; }); });
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.evaluate(() => { window.__sent = null; window.restoreComposerModeBeforeSend(7).then(() => { window.__sent = window.modeState(); }); });
+        await page.waitForTimeout(80);
+        assert.equal(await page.evaluate(() => window.__sent), null, 'the send is held while Act is checked');
+        await page.evaluate(() => window.__release());
+        await page.waitForFunction(() => window.__sent !== null);
+        assert.deepEqual(await page.evaluate(() => window.__sent), { auto: false, agentMode: 'act', pin: 'act' }, 'it then goes out in Act');
+      });
+    });
+
+    test('a send waits for a restored mode to be checked against the provider', async () => {
+      await fixture(async ({ page }) => {
+        // Dev was kept, then the provider became Compact while the panel was closed.
+        await page.evaluate(() => {
+          window.__blocked.dev = true;
+          window.__release = null;
+          window.__gates.dev = new Promise(resolve => { window.__release = resolve; });
+          window.restoreComposerModeForCurrentTab();
+          window.__sent = null;
+          window.restoreComposerModeBeforeSend(7).then(() => { window.__sent = window.modeState(); });
+        });
+        await page.waitForTimeout(80);
+        assert.equal(await page.evaluate(() => window.__sent), null, 'the send is held while the restored Dev is checked');
+        await page.evaluate(() => window.__release());
+        await page.waitForFunction(() => window.__sent !== null);
+        assert.deepEqual(await page.evaluate(() => window.__sent), { auto: true, agentMode: 'ask', pin: null }, 'it goes out in Auto, never in a Dev the provider cannot run');
+      }, { storedPin: 'dev' });
+    });
+
+    test('a kept mode the new provider cannot run goes back to Auto, after the run', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.click('.composer-mode-option[data-composer-mode="dev"]');
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        // The user switches to a Compact provider while a Dev run is going.
+        await page.evaluate(() => { window.__blocked.dev = true; window.setProcessing(true); });
+        await page.evaluate(() => window.revalidateComposerModePin());
+        assert.equal((await picker(page)).state.pin, 'dev', 'the running Dev task keeps its mode');
+        assert.equal(await page.evaluate(() => window.pinCheckPending()), true);
+        await page.evaluate(() => window.setProcessing(false));
+        await page.waitForFunction(() => window.modeState().auto === true);
+        const p = await picker(page);
+        assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null });
+        assert.equal(p.badge, null);
+        assert.deepEqual(p.log.ensure.at(-1), { mode: 'dev', switchMode: false }, 'checked like the shortcut');
+        // A provider that can still run it keeps the mode.
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.waitForFunction(() => window.modeState().pin === 'act');
+        await page.evaluate(() => window.revalidateComposerModePin());
+        await page.waitForTimeout(50);
+        assert.equal((await picker(page)).state.pin, 'act');
+      });
+    });
+
+    test('a tab switch never drains Dev diagnostics; leaving a kept Dev drains only its tab', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.click('.composer-mode-option[data-composer-mode="dev"]');
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        // Tab 7 runs Dev; the user looks at tab 8 (Auto) and back.
+        await page.evaluate(() => { window.switchTab(8); window.switchTab(7); });
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        assert.deepEqual((await picker(page)).log.background, [], 'switching tabs drains nothing');
+        await page.click('.composer-mode-option[data-composer-mode="auto"]');
+        await page.waitForFunction(() => window.modeState().auto === true);
+        assert.deepEqual((await picker(page)).log.background,
+          build === 'chrome' ? [{ action: 'disable_dev_diagnostics', params: { tabId: 7 } }] : [],
+          'only the tab that left Dev is drained (Chrome has Dev diagnostics)');
+      });
+    });
+
+    test('a kept mode keeps the toolbar on one row in a narrow panel', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.waitForFunction(() => window.modeState().pin === 'act');
+        const toolbar = await page.locator('.composer-toolbar').boundingBox();
+        assert.ok(toolbar.height <= 36, `the composer toolbar stays on one row (${toolbar.height})`);
+        const box = await page.locator('#permission-gate-popover').boundingBox();
+        assert.ok(box.x >= 0 && box.x + box.width <= 360, 'the popover with the picker fits a 360px panel');
+        const options = await page.evaluate(() => [...document.querySelectorAll('.composer-mode-option')]
+          .map(option => option.scrollWidth <= option.clientWidth + 1));
+        assert.deepEqual(options, [true, true, true, true], 'no mode name is cut off');
+      }, { width: 360 });
+    });
+
+    test('mode names in every language fit, wrapping rather than being cut off', async () => {
+      const codes = ['en', 'tr', 'es', 'fr', 'de', 'nl', 'pt', 'pl', 'ru', 'uk', 'zh', 'ja', 'ko', 'ar', 'he', 'fa', 'hi', 'bn', 'id', 'ms', 'tl', 'th', 'vi'];
+      const dicts = {};
+      for (const code of codes) dicts[code] = (await import(`../src/${build}/src/ui/locales/${code}.js`)).default;
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        const problems = await page.evaluate((all) => {
+          const found = [];
+          const popover = document.getElementById('permission-gate-popover');
+          for (const [code, dict] of Object.entries(all)) {
+            for (const el of popover.querySelectorAll('.composer-mode-picker [data-i18n]')) el.textContent = dict[el.dataset.i18n] || el.textContent;
+            for (const option of popover.querySelectorAll('.composer-mode-option')) {
+              if (option.scrollWidth > option.clientWidth + 1) found.push(`${code}: ${option.textContent} is cut off`);
+            }
+            if (popover.scrollWidth > popover.clientWidth + 1) found.push(`${code}: the popover overflows`);
+          }
+          return found;
+        }, dicts);
+        assert.deepEqual(problems, []);
       }, { width: 360 });
     });
 
