@@ -426,6 +426,51 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await f.page.close(); }
       });
 
+      await t.test('a timestamp without a usable datetime keeps its rendered text in the key, and a hidden one is not the visible one', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<time datetime="">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__relative-time time').textContent = '9 dk'; });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'Without a datetime the shown time is part of the post');
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<time datetime="2026-10-18T10:00:00.000Z" style="display:none">8 dk</time><time datetime="2026-10-18T19:22:00.000Z">8 dk</time>';
+          });
+          const hidden = await f.probe('#confirm');
+          await f.page.evaluate(() => { document.querySelectorAll('#record-200 .status__relative-time time')[1].textContent = '9 dk'; });
+          assert.equal(key(await f.probe('#confirm')), key(hidden), 'The visible timestamp stands for its own datetime');
+        } finally { await f.page.close(); }
+      });
+
+      await t.test('text that layout separates into lines like the relative time does not take the timestamp\'s place', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<div>8</div><div>dk</div><time datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__relative-time time').textContent = '9 dk'; });
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Only the timestamp ticked');
+        } finally { await f.page.close(); }
+      });
+
       await t.test('hidden text equal to the relative time does not hide the timestamp from the key', async () => {
         const f = await fixture();
         try {

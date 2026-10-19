@@ -30798,14 +30798,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // white-space as styled), with each <time datetime> in it standing for its
     // datetime, so an edit that only changes the presentation of the same text
     // is still another version of the post.
+    // A timestamp stands for its datetime only when it has a usable one: not
+    // empty and short, or the rendered text stays what binds the post.
+    const stampOf = element => element?.matches?.('time[datetime]')
+      && (() => { const value = String(element.getAttribute('datetime') || '').trim(); return value.length > 0 && value.length <= 64; })();
+    const inStamp = node => { for (let up = node.parentElement; up; up = up.parentElement) if (stampOf(up)) return true; return false; };
     const stableText = node => {
-      const marker = time => `\u0000${time.getAttribute('datetime')}\u0000`;
-      if (node.matches?.('time[datetime]')) return marker(node);
+      const marker = time => `\u0000${time.getAttribute('datetime').trim()}\u0000`;
       const rendered = element => (typeof element.innerText === 'string' ? element.innerText : element.textContent) || '';
+      if (stampOf(node)) return marker(node);
       let text = rendered(node);
       let cursor = 0;
+      // Only a timestamp the page renders: a hidden one is not in the text.
       const times = [...node.querySelectorAll?.('time[datetime]') || []]
-        .filter(time => !time.parentElement?.closest('time[datetime]'));
+        .filter(time => stampOf(time) && !inStamp(time)
+          && (typeof time.checkVisibility !== 'function' || time.checkVisibility({ visibilityProperty: true })));
       // Beyond this many timestamps the text is left as it is rendered: it
       // still binds the post, and a ticking clock only makes it refuse.
       if (times.length > 16) return text;
@@ -30828,7 +30835,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               if (time.compareDocumentPosition(part) & 4) break;
               if (previous && (!(previous.compareDocumentPosition(part) & 4) || previous.compareDocumentPosition(part) & 16)) continue;
               const owner = part.parentElement;
-              if (owner && (typeof owner.checkVisibility !== 'function' || owner.checkVisibility({ visibilityProperty: true }))) between += part.data;
+              if (owner && (typeof owner.checkVisibility !== 'function' || owner.checkVisibility({ visibilityProperty: true }))) {
+                // A block box separates its text from the text around it.
+                const display = node.ownerDocument.defaultView.getComputedStyle(owner).display;
+                const separator = display === 'inline' || display === 'contents' ? '' : ' ';
+                between += separator + part.data + separator;
+              }
             }
             skip = (between.match(pattern()) || []).length;
           } catch { skip = 0; }
@@ -30850,7 +30862,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // A node inside a <time datetime> is part of the timestamp that node already
     // stands for, so it adds no text of its own (<time><span>8 min</span></time>).
     const stableTexts = nodes => [...new Set(nodes
-      .filter(node => !node.parentElement?.closest('time[datetime]'))
+      .filter(node => !inStamp(node))
       .map(stableText).filter(value => value.length <= 25000))];
     const nativeResourceProofs = () => {
       if (args.__wbNativeResourceAdapter !== 'mastodon') return [];
