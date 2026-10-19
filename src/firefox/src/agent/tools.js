@@ -1814,7 +1814,8 @@ export function getToolsForMode(mode, opts = {}) {
     // A Compact provider keeps its upload_file schema: its permission gate
     // accepts only an attachment and a target from upload_file's own discovery.
     base = AGENT_TOOLS
-      .filter(t => LEAN_TOOL_NAMES.has(t.function.name))
+      .filter(t => LEAN_TOOL_NAMES.has(t.function.name)
+        || (opts.nativeChatTools === true && LEAN_NATIVE_CHAT_TOOL_NAMES.has(t.function.name)))
       .map(t => (tier === 'compact' && t.function.name === 'upload_file' ? compactUploadFileTool(t) : t));
   } else if (tier === 'compact') {
     base = AGENT_TOOLS
@@ -2470,6 +2471,16 @@ export const LEAN_TOOL_NAMES = new Set([
   'calculate', 'clarify', 'done',
   'generate_image', 'carousel_navigate', 'gmail_count_results',
 ]);
+
+/**
+ * Chat tools a lean run is also offered on a native chat client (WhatsApp
+ * Web, Telegram Web; `nativeChatTools`, from isNativeChatClientUrl). Lean mode
+ * keeps the recipient guard, which confirms a contact and reads the latest
+ * messages there through chat_observe and sends through chat_send. Without
+ * them its repairs pointed at tools the run did not have, and the planner's
+ * chat_observe/chat_send steps could not run.
+ */
+export const LEAN_NATIVE_CHAT_TOOL_NAMES = new Set(['chat_observe', 'chat_send']);
 
 /**
  * Lean Act prompt: short, with the hard limits and the prompt-injection

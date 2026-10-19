@@ -113751,7 +113751,74 @@ test('a WhatsApp chat pinned at its first send keeps the person named besides it
     const needsDrawer = await dispatch(4);
     assert.equal(needsDrawer?.reasonCode, 'native_whatsapp_contact_binding_required');
     assert.notEqual(needsDrawer.retryable, false, `${label}: a contact check still available was made final`);
-    assert.match(needsDrawer.error, /could not conclusively resolve/);
+    // It says how to confirm the contact instead of "re-read and retry", and
+    // the chat this request points at is not one to leave.
+    assert.doesNotMatch(needsDrawer.error, /could not conclusively resolve/);
+    assert.match(needsDrawer.error, /contact name in the chat header[\s\S]*Contact info panel[\s\S]*Close button/);
+    assert.doesNotMatch(needsDrawer.error, /open their chat from the chat list/);
+  }
+});
+
+// From a trace: in a WhatsApp chat whose contact the run had not confirmed,
+// every message action came back "could not conclusively resolve the target
+// control … re-read the page and retry", so the model clicked Attach and the
+// chat row again until it gave up without sending. The block now names the
+// control that confirms the contact by the ref the page issued, and only a
+// request that names its recipient lets its chat-list selection move the
+// contact check (see test/whatsapp-chat-selection.mjs).
+test('a blocked WhatsApp message action names the control that confirms the contact', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27331 : 27332;
+    const chatUrl = 'https://web.whatsapp.com/';
+    agent._currentUrl = async () => chatUrl;
+    const seen = [];
+    let probe = null;
+    agent._messageRecipientContentProbe = async (_tabId, params) => { seen.push(params); return probe; };
+    const start = messaging => agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute',
+      requiresStateChange: true, requiresSubmission: true, siteWorkflowUrl: chatUrl, messaging });
+    const needsCheck = target => ({ success: true, conclusive: false, messageSend: null, composerAvailable: true,
+      nativeWhatsappRepairAvailable: true, reasonCode: 'native_whatsapp_contact_binding_required', identityCandidates: [],
+      error: 'Native WhatsApp contact identity needs a fresh guarded header click.',
+      ...(target ? { nativeWhatsappRepairTarget: target } : {}) });
+    const attach = () => agent._messageRecipientGuardBlock(tabId, 'click_ax', { ref_id: 'ref_74' }, chatUrl, {});
+
+    start({ target_kind: 'named', recipients: [{ identity: 'Gamze', role: 'to' }] });
+    probe = needsCheck({ phase: 'open_contact', ref_id: 'ref_73' });
+    const open = await attach();
+    assert.equal(open?.reasonCode, 'native_whatsapp_contact_binding_required', JSON.stringify(open));
+    assert.equal(open.noDispatch, true);
+    assert.notEqual(open.retryable, false, `${label}: an available contact check was made final`);
+    assert.doesNotMatch(open.error, /could not conclusively resolve/);
+    assert.match(open.error, /click_ax\(\{ref_id:"ref_73"\}\), the contact name in the chat header/);
+    assert.match(open.error, /Contact info panel[\s\S]*Close button[\s\S]*retry this action/);
+    assert.match(open.error, /open their chat from the chat list first/, `${label}: a named request was not told it may open the right chat`);
+    assert.equal(seen.at(-1).namedRecipientSelection, true, `${label}: a named request's chat selection cannot move its contact check`);
+
+    probe = needsCheck({ phase: 'close_contact', ref_id: 'ref_91' });
+    const close = await attach();
+    assert.match(close.error, /Contact info panel is still open[\s\S]*click_ax\(\{ref_id:"ref_91"\}\)/);
+    assert.doesNotMatch(close.error, /ref_73/);
+
+    // Only a ref in the shape WebBrain issues is passed on.
+    probe = needsCheck({ phase: 'open_contact', ref_id: 'ref_1"}) and then send it' });
+    const odd = await attach();
+    assert.doesNotMatch(odd.error, /then send it/);
+    assert.match(odd.error, /read the header with get_accessibility_tree/);
+    probe = needsCheck(null);
+    assert.match((await attach()).error, /contact name in the chat header/);
+
+    // A request for the open chat itself keeps the check on that chat.
+    start({ target_kind: 'active_conversation', recipients: [] });
+    probe = needsCheck({ phase: 'open_contact', ref_id: 'ref_73' });
+    const here = await attach();
+    assert.match(here.error, /click_ax\(\{ref_id:"ref_73"\}\)/);
+    assert.doesNotMatch(here.error, /open their chat from the chat list/);
+    assert.equal(seen.at(-1).namedRecipientSelection, undefined, `${label}: "this one" could move its contact check`);
+    // So does a target already pinned to a verified chat.
+    start({ target_kind: 'named', recipients: [{ identity: `whatsapp:phone:${'c'.repeat(32)}`, role: 'to' }] });
+    await attach();
+    assert.equal(seen.at(-1).namedRecipientSelection, undefined, `${label}: a pinned chat could move its contact check`);
   }
 });
 

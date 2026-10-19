@@ -7042,6 +7042,19 @@
       }
       const nativeWhatsappComposer = location.hostname === 'web.whatsapp.com'
         && layoutCandidate?.matches?.('[data-testid="conversation-compose-box-input"][contenteditable="true"][role="textbox"]');
+      // A row of WhatsApp's own chat list (the rows the native contact check
+      // reads), clicked on the row itself and not on its menu, link or
+      // another control nested in it.
+      const nativeWhatsappChatListRow = clicked => {
+        if (!clicked || editable(clicked)) return false;
+        const row = clicked.closest?.('[role="row"]');
+        if (!row || !row.closest?.('[data-testid="chat-list"]') || !visible(row)
+            || row.querySelectorAll('[data-testid="cell-frame-title"]').length !== 1) return false;
+        const nested = clicked.closest?.('a[href],button,input,select,textarea,summary,[contenteditable="true"],'
+          + '[contenteditable=""],[role="button"],[role="link"],[role="menuitem"],[role="checkbox"],[role="radio"],'
+          + '[role="switch"],[role="combobox"],[role="textbox"],[aria-haspopup],[onclick],[data-action]');
+        return !nested || !row.contains(nested);
+      };
       if (nativeWhatsappComposer && nativeLayoutContext?.service !== 'whatsapp-self') {
         const repair = window.__wb_get_native_whatsapp_repair?.();
         if (!observationOnly && tool === 'click_ax' && targetResolved
@@ -7049,16 +7062,35 @@
           return { success: true, messageSend: false, conclusive: true, composerAvailable: true,
             nativeWhatsappRepair: true, identityCandidates: [] };
         }
+        // Opening another chat from the chat list sends nothing, and a request
+        // for a named person may have to leave the chat that was open when it
+        // started. Blocking it until the open chat's contact was confirmed
+        // left the agent no way to reach the right chat. The contact check
+        // then belongs to the chat that ends up open (see
+        // __wb_native_whatsapp_follow_selection).
+        if (!observationOnly && ['click', 'click_ax'].includes(tool) && targetResolved
+            && nativeWhatsappChatListRow(target)) {
+          if (params.bindDispatch === true && params.namedRecipientSelection === true) {
+            window.__wb_native_whatsapp_follow_selection?.();
+          }
+          return { success: true, messageSend: false, conclusive: true, conversationSelection: true,
+            identityCandidates: [] };
+        }
         if (nativeLayoutContext?.service !== 'whatsapp') {
           // No check left in this run: say so, rather than send the agent
           // after a header click that cannot help.
           const spent = !repair && window.__wb_native_whatsapp_repair_spent?.() === true;
+          // Otherwise name the exact control that confirms this chat's
+          // contact, so the agent can pass it on instead of "re-read and
+          // retry", which kept a model clicking Attach and the chat row.
+          const repairTarget = !spent && repair ? window.__wb_native_whatsapp_repair_guidance?.() || null : null;
           return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
             composerAvailable: true, nativeWhatsappRepairAvailable: !!repair,
             ...(spent ? { nativeWhatsappRepairSpent: true } : {}),
+            ...(repairTarget ? { nativeWhatsappRepairTarget: repairTarget } : {}),
             reasonCode: spent ? 'native_whatsapp_contact_check_spent' : 'native_whatsapp_contact_binding_required', identityCandidates: [],
             error: spent
-              ? 'This run can no longer confirm a WhatsApp contact: its contact check belongs to the first chat it looked at, and WhatsApp\'s chat selection or that chat\'s header changed since. Nothing was sent. Report what was sent and that a message to this chat needs a new request; do not retry it in this run.'
+              ? 'This run can no longer confirm a WhatsApp contact: its one contact check belongs to the chat it first looked at or started checking, and WhatsApp\'s chat selection or that chat\'s header changed since. Nothing was sent. Report what was sent and that a message to this chat needs a new request; do not retry it in this run.'
               : 'Native WhatsApp contact identity needs a fresh guarded header click, its contact drawer phone, and closing that same drawer. No message or editor write was authorized.' };
         }
       }

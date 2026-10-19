@@ -87,9 +87,16 @@ const stubFirefoxBrowser = `
   };
 `;
 
-async function setup(page, fixture) {
+async function setup(page, fixture, { asHost = '' } = {}) {
   await page.addInitScript(stubChrome);
-  await page.goto(fixtureUrl(fixture));
+  if (asHost) {
+    // Serve the fixture as if from another host, without touching the network.
+    const body = await readFile(path.join(__dirname, fixture), 'utf-8');
+    await page.route(`${asHost}/**`, route => route.fulfill({ contentType: 'text/html', body }));
+    await page.goto(`${asHost}/fixture`);
+  } else {
+    await page.goto(fixtureUrl(fixture));
+  }
   const axSrc = await readFile(accessibilityTreeJsPath, 'utf-8');
   await page.addScriptTag({ content: axSrc });
   await page.addScriptTag({ content: await readFile(toolbarHeuristicJsPath, 'utf-8') });
@@ -5886,6 +5893,103 @@ test('click_ax: Agent.executeTool keeps synthetic-first behavior and uses truste
     }
     if (dispatched.length !== dispatchCountBeforeDisclosure) {
       throw new Error('native disclosure unexpectedly received a trusted second click');
+    }
+  } finally {
+    cdpClient.attach = originals.attach;
+    cdpClient.evaluate = originals.evaluate;
+    cdpClient.dispatchMouseEvent = originals.dispatch;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    await session.detach();
+  }
+});
+
+// From a trace: WhatsApp's chat list rows are grid cells that a
+// script-dispatched click does not open, and the trusted retry skipped every
+// role but generic, listitem and row, so the agent could not open the chat.
+// Other grids (spreadsheets, calendars) keep their cells synthetic-only: a
+// second, trusted click there can turn a selection into an edit.
+test('click_ax: a grid cell outside WhatsApp\'s chat list is never retried with a trusted click', async (page) => {
+  await setup(page, 'trusted-click-fallback.html');
+  const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 30000 });
+  const cellMatch = String(tree?.pageContent || '').match(/gridcell "Grid chat row" \[(ref_\d+)\]/);
+  if (!cellMatch) throw new Error('expected the grid cell in the AX tree');
+  const result = await call(page, 'ax_resolve_rect', { ref_id: cellMatch[1], forClickFallback: true });
+  if (result?.fallbackEligible !== false || !/role "gridcell" is not eligible/.test(result.fallbackBlockedReason || '')) {
+    throw new Error(`a grid cell on another site must stay synthetic-only: ${JSON.stringify(result)}`);
+  }
+});
+
+test('click_ax: a grid cell row that ignores the synthetic click gets the trusted CDP retry', async (page) => {
+  await setup(page, 'trusted-click-fallback.html', { asHost: 'https://web.whatsapp.com' });
+  const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 30000 });
+  const content = String(tree?.pageContent || '');
+  const cellMatch = content.match(/gridcell "Grid chat row" \[(ref_\d+)\]/);
+  const selectedMatch = content.match(/gridcell "Selected grid chat row" \[(ref_\d+)\]/);
+  if (!cellMatch || !selectedMatch) throw new Error(`expected the grid chat rows in the AX tree: ${content}`);
+  const eligible = await call(page, 'ax_resolve_rect', { ref_id: cellMatch[1], forClickFallback: true });
+  if (!eligible?.success || eligible.fallbackEligible !== true || eligible.fallbackBlockedReason) {
+    throw new Error(`a grid cell row should be eligible for the trusted retry: ${JSON.stringify(eligible)}`);
+  }
+  const selected = await call(page, 'ax_resolve_rect', { ref_id: selectedMatch[1], forClickFallback: true });
+  if (selected?.fallbackEligible !== false || !/toggle\/selection/.test(selected.fallbackBlockedReason || '')) {
+    throw new Error(`a selected grid cell must stay synthetic-only: ${JSON.stringify(selected)}`);
+  }
+
+  const originalChrome = globalThis.chrome;
+  const originals = { attach: cdpClient.attach, evaluate: cdpClient.evaluate, dispatch: cdpClient.dispatchMouseEvent };
+  const session = await page.context().newCDPSession(page);
+  const dispatched = [];
+  const listener = { addListener() {}, removeListener() {} };
+  globalThis.chrome = {
+    runtime: {},
+    tabs: {
+      async get(tabId) { return { id: tabId, url: page.url(), title: 'Grid chat fixture' }; },
+      async query() { return [{ id: 42, url: page.url() }]; },
+      async sendMessage(_tabId, message) { return call(page, message.action, message.params || {}); },
+    },
+    downloads: { onCreated: listener },
+    webRequest: { onBeforeRequest: listener },
+    scripting: { async executeScript() {} },
+  };
+  try {
+    cdpClient.attach = async () => ({ tabId: 42, attached: true });
+    cdpClient.evaluate = async (_tabId, expression) => ({ result: { value: await page.evaluate(expression) } });
+    cdpClient.dispatchMouseEvent = async (_tabId, type, x, y) => {
+      dispatched.push({ type, x, y });
+      return session.send('Input.dispatchMouseEvent', {
+        type,
+        x,
+        y,
+        button: type === 'mouseMoved' ? 'none' : 'left',
+        buttons: type === 'mousePressed' ? 1 : 0,
+        clickCount: type === 'mouseMoved' ? 0 : 1,
+      });
+    };
+    const agent = new Agent({});
+    agent._isPdfTab = async () => false;
+    agent._currentUrl = async () => page.url();
+    agent._clickAxFinalSettleMs = () => 60;
+    const result = await agent.executeTool(42, 'click_ax', { ref_id: cellMatch[1] });
+    const after = await page.evaluate(() => ({
+      status: document.getElementById('status').textContent,
+      opened: document.getElementById('grid-chat-cell').classList.contains('grid-opened'),
+      events: window.__gridChatEvents,
+    }));
+    if (result?.success !== true || result.fallback !== 'cdp_after_synthetic_no_progress'
+        || result.trusted !== true || result.verified !== true) {
+      throw new Error(`the grid cell row did not get the trusted retry: ${JSON.stringify(result)}`);
+    }
+    if (after.status !== 'grid-opened' || !after.opened) {
+      throw new Error(`the trusted retry did not open the grid chat row: ${JSON.stringify(after)}`);
+    }
+    // One script-dispatched click first, then one real press and click.
+    const sequence = after.events.map(event => `${event.trusted ? 'trusted' : 'synthetic'}:${event.type}`).join(',');
+    if (sequence !== 'synthetic:click,trusted:mousedown,trusted:click') {
+      throw new Error(`unexpected grid row event sequence: ${sequence}`);
+    }
+    if (dispatched.map(event => event.type).join(',') !== 'mouseMoved,mousePressed,mouseReleased') {
+      throw new Error(`unexpected trusted input sequence: ${JSON.stringify(dispatched)}`);
     }
   } finally {
     cdpClient.attach = originals.attach;
