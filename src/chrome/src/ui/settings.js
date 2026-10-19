@@ -1,5 +1,4 @@
 import { DECISION_MODE_KEY, DECISION_SETTINGS_KEYS, materializeLegacyDecisionFeatures, DEFAULT_DECISION_MODEL, WEBGPU_CHAT_DECISION_MODEL, resolveDecisionConfig, resolveDecisionMode } from '../agent/decision-config.js';
-import { isLocalAssistModelReady } from '../providers/webgpu-model-cache.js';
 import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
 import { D1_MODEL_ID } from '../providers/d1-config.js';
 import { initD1Settings } from './d1-settings.js';
@@ -273,8 +272,7 @@ function syncWebgpuDecisionProvider() {
   if (systemOneApiKeyInput) systemOneApiKeyInput.disabled = fixed;
 }
 
-// Auto, On or Off. Auto needs nothing set up: it uses Ternary Bonsai 2 2B
-// Vision once it is downloaded, or Compass's managed model while Compass is
+// Auto, On or Off. Auto uses Compass's managed model while Compass is
 // the chat provider. Only On shows the provider fields and the per-decision
 // switches, so the card asks nothing until someone wants to configure it.
 const decisionModeInputs = [...document.querySelectorAll('input[name="decision-mode"]')];
@@ -299,24 +297,22 @@ async function syncDecisionStatus() {
   const sequence = ++decisionStatusSequence;
   if (mode !== 'auto') {
     if (status) status.hidden = true;
-    if (btnTestSystemOne) btnTestSystemOne.hidden = mode === 'off';
+    if (btnTestSystemOne) btnTestSystemOne.hidden = mode === 'off' || decisionProviderInput?.value === 'webgpu_chat';
     return;
   }
   // Strict Secret Mode keeps page content away from every decision model, so Auto has nothing to use.
   const strict = strictSecretToggle?.checked === true;
   const compass = !strict && activeProviderIsCompass();
-  const ready = !strict && !compass && await isLocalAssistModelReady().catch(() => false);
   if (sequence !== decisionStatusSequence || selectedDecisionMode() !== 'auto') return;
-  const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : ready ? 'st.decision.status.local' : 'st.decision.status.none';
+  const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : 'st.decision.status.none';
   if (status) {
     status.dataset.i18n = key;
-    status.dataset.state = compass || ready ? 'active' : 'inactive';
+    status.dataset.state = compass ? 'active' : 'inactive';
     status.textContent = t(key);
     status.hidden = false;
   }
-  // Test runs here in the browser, so it can check the in-browser model but
-  // not Compass's managed one.
-  if (btnTestSystemOne) btnTestSystemOne.hidden = !ready;
+  // Compass's managed model is not tested by the browser's Settings probe.
+  if (btnTestSystemOne) btnTestSystemOne.hidden = true;
 }
 for (const input of decisionModeInputs) {
   input.addEventListener('change', async () => {

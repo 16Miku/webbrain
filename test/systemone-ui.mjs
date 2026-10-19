@@ -100,9 +100,7 @@ try {
         assert.equal(await page.locator('#decision-configured').isVisible(), false);
         assert.equal(await page.locator('#btn-save-system-one').isVisible(), false);
         await page.waitForFunction(() => !document.querySelector('#decision-auto-status').hidden);
-        assert.match(await statusText(), build === 'firefox'
-          ? (tr ? /Açık’ı seçin/ : /Choose On to set up/)
-          : (tr ? /WebGPU altından/ : /Providers → WebGPU/));
+        assert.match(await statusText(), tr ? /Açık’ı seçin/ : /Choose On to set up/);
         assert.equal(await page.locator('#btn-test-system-one').isVisible(), false, 'nothing to test while Auto uses nothing');
         await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-auto.png` });
         if (build === 'chrome') {
@@ -112,16 +110,13 @@ try {
             await (await caches.open('transformers-cache')).put(webgpuTextReadyMarkerUrl(WEBGPU_LOCAL_ASSIST_MODEL_ID), new Response('{}'));
             dispatchEvent(new Event('focus'));
           });
-          await page.waitForFunction(() => document.querySelector('#decision-auto-status').dataset.state === 'active');
-          assert.match(await statusText(), /Ternary Bonsai 2 2B Vision/);
-          assert.equal(await page.locator('#btn-test-system-one').isVisible(), true);
-          await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-auto-ready.png` });
-          await page.locator('#btn-test-system-one').click();
-          await page.waitForFunction(() => testRequests.filter(r => r.action === 'test_system_one').length === 1);
-          assert.equal(await page.evaluate(() => testRequests.at(-1).settings.decisionMode), 'auto');
+          await page.waitForFunction(() => document.querySelector('#decision-auto-status').dataset.state === 'inactive');
+          assert.doesNotMatch(await statusText(), /Ternary Bonsai/);
+          assert.equal(await page.locator('#btn-test-system-one').isVisible(), false);
+          assert.equal(await page.evaluate(() => testRequests.filter(r => r.action === 'test_system_one').length), 0);
           await page.evaluate(async () => { await caches.delete('transformers-cache'); });
         }
-        const tests = build === 'chrome' ? 1 : 0;
+        const tests = 0;
         // On applies at once and shows the provider fields; switches stay folded.
         await page.locator('input[name="decision-mode"][value="on"]').locator('..').click();
         await page.waitForFunction(() => testStore.decisionMode === 'on' && testStore.systemOneEnabled === true);

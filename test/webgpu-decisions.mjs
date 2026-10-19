@@ -129,21 +129,22 @@ test('decisions default to the probe and refuse a decoder without decision_hidde
     'the 2B decoder pin is the graph that exposes decision_hidden');
 });
 
-test('the in-browser chat model is an explicit, key-free, local decision provider that needs independent success proof', async () => {
+test('saved Ternary decision selections stay local and disabled', async () => {
   for (const build of ['chrome']) {
     const config = await import(`../src/${build}/src/agent/decision-config.js`);
     const transfer = await import(`../src/${build}/src/config-transfer.js`);
     const selected = config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
     assert.equal(selected.provider, 'webgpu_chat');
     assert.equal(selected.model, config.WEBGPU_CHAT_DECISION_MODEL);
-    assert.equal(selected.local, true); assert.equal(selected.apiKey, ''); assert.equal(selected.enabled, true);
+    assert.equal(selected.local, true); assert.equal(selected.apiKey, ''); assert.equal(selected.enabled, false);
+    assert.equal(selected.unavailable, 'decision_validation_failed');
     assert.equal(selected.doneEnabled, false, 'completion outsourcing stays opt-in');
     assert.equal(selected.requiresIndependentSuccessConfirmation, true);
     assert.equal(selected.config.inputCostPerMillionUsd, 0);
     assert.equal(config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true }, { baseUrl: 'https://api.webbrain.one/v1' }).provider, 'webgpu_chat',
       'an explicit local choice overrides Compass, as D1 does');
     assert.equal(config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat' }).enabled, false);
-    assert.equal((await config.listDecisionModels(selected, () => { throw new Error('no network'); })).length, 1);
+    assert.equal((await config.listDecisionModels(selected, () => { throw new Error('no network'); })).length, 0);
     const imported = transfer.parseConfigImport(JSON.stringify({ schema: transfer.CONFIG_SCHEMA, settings: { decisionProvider: 'webgpu_chat' } })).settings;
     assert.equal(imported.decisionProvider, 'webgpu_chat');
   }
@@ -171,7 +172,7 @@ test('Firefox never enables the Chrome-only chat-model provider and imports it w
   assert.equal(chrome.parseConfigImport(JSON.stringify(chromeExport)).settings.decisionProvider, 'webgpu_chat', 'Chrome round-trips it');
 });
 
-test('the judge answers webgpu_chat decisions through the offscreen worker in Chrome and refuses them in Firefox', async () => {
+test('diagnostic Ternary readout stays available but the agent judge refuses it', async () => {
   const saved = { chrome: globalThis.chrome };
   const sent = [];
   const decideMessages = [];
@@ -197,14 +198,18 @@ test('the judge answers webgpu_chat decisions through the offscreen worker in Ch
     const { createSystemOneJudge } = await import('../src/chrome/src/agent/systemone-judge.js');
     const config = resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
     const screenshot = 'data:image/png;base64,YQ==';
-    const result = await createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0 })
-      .evaluate({ state: [{ task: 'Save' }, { type: 'image_url', image_url: { url: screenshot } }], questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config });
+    const args = { state: [{ task: 'Save' }, { type: 'image_url', image_url: { url: screenshot } }], questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config };
+    await assert.rejects(createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0 }).evaluate(args),
+      error => error.code === 'JEV_MODEL_UNAVAILABLE');
+    assert.deepEqual(sent, [], 'disabled decisions never dispatch or allocate a model request');
+    const { evaluateWebgpuDecision } = await import('../src/chrome/src/providers/webgpu-decision.js');
+    const result = await evaluateWebgpuDecision(args);
     assert.deepEqual(result.answers, answers);
     const decide = decideMessages.at(-1);
     assert.deepEqual(decide.images, [screenshot], 'screenshots in the state reach the model as images');
     assert.doesNotMatch(JSON.stringify(decide.state), /base64/, 'no screenshot is left in the prompt text');
     assert.equal(result.usage.output_tokens, 0);
-    assert.equal(result.estimatedCostUsd, 0);
+    assert.equal(result.provider, 'webgpu_chat');
     assert.ok(sent.includes('webgpu-decide'));
     const firefox = await import('../src/firefox/src/agent/systemone-judge.js');
     const firefoxConfig = (await import('../src/firefox/src/agent/decision-config.js')).resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
@@ -215,11 +220,11 @@ test('the judge answers webgpu_chat decisions through the offscreen worker in Ch
   }
 });
 
-test('Settings offers the chat-model decision provider in Chrome only', async () => {
+test('Settings retains the disabled Ternary selection in Chrome only', async () => {
   const chromeHtml = await readFile(new URL('../src/chrome/src/ui/settings.html', import.meta.url), 'utf8');
   const firefoxHtml = await readFile(new URL('../src/firefox/src/ui/settings.html', import.meta.url), 'utf8');
-  assert.match(chromeHtml, /<option value="webgpu_chat" data-i18n="st\.decision\.webgpu_chat"><\/option>/);
-  assert.match(chromeHtml, /id="webgpu-decision-note" hidden data-i18n="st\.decision\.webgpu_chat_note"/);
+  assert.match(chromeHtml, /<option value="webgpu_chat" disabled data-i18n="st\.decision\.webgpu_chat"><\/option>/);
+  assert.match(chromeHtml, /id="webgpu-decision-note" hidden data-i18n="st\.decision\.mode\.off_desc"/);
   assert.doesNotMatch(firefoxHtml, /webgpu_chat/);
   const { decisionEnglish, decisionTranslations } = await import('../src/chrome/src/ui/locales/decision-copy.mjs');
   assert.ok(decisionEnglish['st.decision.webgpu_chat'] && decisionEnglish['st.decision.webgpu_chat_note']);
@@ -251,7 +256,7 @@ test('a cancelled decision stops in the worker before using the model', async ()
     'every continuation checks for a cancel');
 });
 
-test('an aborted judge request cancels the in-browser decision in the offscreen worker', async () => {
+test('an aborted diagnostic request cancels the in-browser decision in the offscreen worker', async () => {
   const saved = { chrome: globalThis.chrome };
   const sent = [];
   let finishDecide;
@@ -270,20 +275,19 @@ test('an aborted judge request cancels the in-browser decision in the offscreen 
   };
   try {
     const { resolveDecisionConfig } = await import('../src/chrome/src/agent/decision-config.js');
-    const { createSystemOneJudge } = await import('../src/chrome/src/agent/systemone-judge.js');
+    const { evaluateWebgpuDecision } = await import('../src/chrome/src/providers/webgpu-decision.js');
     const config = resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
     const controller = new AbortController();
-    const pending = createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0 })
-      .evaluate({ state: 'Page', questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config, signal: controller.signal });
+    const pending = evaluateWebgpuDecision({ state: 'Page', questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config, signal: controller.signal });
     for (let i = 0; i < 50 && !finishDecide; i++) await new Promise(resolve => setTimeout(resolve, 1));
     const decide = sent.find(message => message.type === 'webgpu-decide');
     assert.ok(decide?.decisionId, 'each decision carries an id');
     controller.abort(new Error('Stopped'));
-    await assert.rejects(pending);
     for (let i = 0; i < 50 && !sent.some(message => message.type === 'webgpu-decide-cancel'); i++) await new Promise(resolve => setTimeout(resolve, 1));
     const cancel = sent.find(message => message.type === 'webgpu-decide-cancel');
     assert.equal(cancel?.decisionId, decide.decisionId, 'the abort cancels that decision');
     finishDecide();
+    await assert.rejects(pending);
     const host = await readFile(new URL('../src/chrome/src/offscreen/vision-inference-host.js', import.meta.url), 'utf8');
     assert.match(host, /'webgpu-decide-cancel',/);
     assert.match(host, /cancelledWebgpuDecisions\.delete\(decisionId\)/, 'a cancel before dispatch skips the decision');
@@ -293,39 +297,17 @@ test('an aborted judge request cancels the in-browser decision in the offscreen 
   }
 });
 
-test('in-browser decisions get their own timeout unless a caller sets a shorter one', async () => {
-  const saved = { chrome: globalThis.chrome, setTimeout: globalThis.setTimeout };
-  const delays = [];
-  // Record request deadlines without arming them.
-  globalThis.setTimeout = (fn, ms, ...rest) => { if (ms >= 1000) { delays.push(ms); return saved.setTimeout(() => {}, 0); } return saved.setTimeout(fn, ms, ...rest); };
-  globalThis.chrome = {
-    offscreen: { hasDocument: async () => true, createDocument: async () => {} },
-    runtime: {
-      lastError: null,
-      getURL: path => `chrome-extension://test/${path}`,
-      sendMessage(message, callback) {
-        callback(message.type === 'webgpu-download-status' ? { ready: true }
-          : message.type === 'webgpu-decide' ? { ok: true, model: message.model, answers: { q: { type: 'noul', noul: 0.8 } }, usage: { input_tokens: 900, output_tokens: 0 } } : { ok: true });
-      },
-    },
-    storage: { local: { get: async () => ({}) } },
-  };
-  try {
-    const { resolveDecisionConfig } = await import('../src/chrome/src/agent/decision-config.js');
-    const { createSystemOneJudge, SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS } = await import('../src/chrome/src/agent/systemone-judge.js');
-    const config = resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
-    const ask = options => createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0, ...options })
-      .evaluate({ state: 'Page', questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config });
-    for (const [options, expected] of [[{}, SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS], [{ timeoutMs: 1000 }, 1000], [{ timeoutMs: 60_000 }, SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS]]) {
-      delays.length = 0;
-      await ask(options);
-      assert.ok(delays.includes(expected), `${JSON.stringify(options)} -> ${expected}, got ${delays}`);
-    }
-    assert.equal(SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS, 15000);
-  } finally {
-    globalThis.setTimeout = saved.setTimeout;
-    if (saved.chrome === undefined) delete globalThis.chrome; else globalThis.chrome = saved.chrome;
-  }
+test('disabled Ternary decisions reject before arming the old 15-second timer', async () => {
+  const { createSystemOneJudge } = await import('../src/chrome/src/agent/systemone-judge.js');
+  const { resolveDecisionConfig } = await import('../src/chrome/src/agent/decision-config.js');
+  let requests = 0;
+  const client = createSystemOneJudge({ fetchImpl: async () => { requests++; throw new Error('unexpected fetch'); } });
+  const started = performance.now();
+  await assert.rejects(client.evaluate({ config: resolveDecisionConfig({ decisionMode: 'on', decisionProvider: 'webgpu_chat' }),
+    state: 'Page', questions: { q: { type: 'noul', instructions: 'Is it done?' } },
+    beforeRequest: () => { requests++; throw new Error('unexpected request'); } }), error => error.code === 'JEV_MODEL_UNAVAILABLE');
+  assert.equal(requests, 0);
+  assert.ok(performance.now() - started < 1000, 'the disabled model must not wait for its old deadline');
 });
 
 test('Settings locks the model and key fields for both fixed in-browser providers and restores them otherwise', async () => {
@@ -383,7 +365,7 @@ test('Settings asks one Auto / On / Off question and shows provider fields and s
   const settings = await readFile(new URL('../src/chrome/src/ui/settings.js', import.meta.url), 'utf8');
   const status = settings.slice(settings.indexOf('async function syncDecisionStatus'), settings.indexOf('\nfor (const input of decisionModeInputs) {'));
   assert.match(status, /activeProviderIsCompass\(\)/, 'Auto names Compass while it is the chat provider');
-  assert.match(status, /isLocalAssistModelReady\(\)/, 'and otherwise whether Bonsai is downloaded');
+  assert.doesNotMatch(status, /isLocalAssistModelReady\(\)/, 'a downloaded vision model must not enable decisions');
   assert.match(settings, /function renderProviders\(\) \{\n\s*providersContainer\.innerHTML = '';\n\s*void syncDecisionStatus\(\);/, 'follows chat-provider changes');
   // Strict Secret Mode turns every decision model off, so Auto must say so and follow the toggle.
   for (const build of ['chrome', 'firefox']) {

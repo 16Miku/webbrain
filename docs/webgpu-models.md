@@ -311,17 +311,17 @@ The labelled set is d1's balanced-V3 held-out test (72 synthetic screenshots,
     chosen on validation. The 2B decoder graph exposes that state as
     `decision_hidden` (`scripts/models/bonsai/add_decision_hidden.py`);
     logits and caches are unchanged.
-  - Settings → Decision models offers it in Chrome as an explicit, key-free,
-    local provider (`webgpu_chat`), and Auto, the default, uses it on its own
-    once it is downloaded, for completion and scheduled checks only. Auto reads
-    the worker's ready marker from Cache Storage
-    (`providers/webgpu-model-cache.js`) instead of starting the offscreen
-    document. Like D1, a positive completion still needs
-    independent confirmation, and the judge allows it 15 s instead of 5 s for
-    the first load after a browser restart. An aborted or timed-out decision
-    is cancelled in the worker (between prefill slices and continuations),
-    so it does not hold the model queue: on the 5090 a decision cancelled
-    300 ms in ended at 0.44 s and the next one ran in its usual 1.9 s.
+  - Ternary is currently disabled as an agent decision provider, including
+    saved explicit selections and Auto with downloaded weights. Real trace
+    replays produced confident false failures; simplifying the question or
+    using the raw token readout also produced confident false completions on
+    wrong destinations and unsubmitted drafts. The synthetic results below
+    do not establish reliability on real browser tasks.
+  - Completion checks now stay with the active chat model without starting
+    Ternary's former 15-second decision request. Ternary chat and screenshot
+    reading remain available. The diagnostic fixture/readout path is retained
+    for evaluating a future replacement; its results do not authorize actions.
+
 
 Results on the held-out test, RTX 5090, through the extension:
 

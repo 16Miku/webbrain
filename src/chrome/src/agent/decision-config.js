@@ -23,19 +23,14 @@ export const DECISION_SETTINGS_KEYS = [
   D1_CONSENT_KEY,
 ];
 
-// The in-browser chat model answers decisions through its trained probe
-// (Chrome; src/chrome/src/offscreen/bonsai-decision-probe.js). Kept in sync
-// with WEBGPU_DECISION_MODEL_ID in providers/webgpu.js.
+// Model identifier retained for saved profiles and diagnostic probe runs.
+// Agent decisions are disabled; chat and vision use separate routing.
 export const WEBGPU_CHAT_DECISION_MODEL = 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision';
 
 const NO_DECISION_FEATURES = Object.freeze(Object.fromEntries(DECISION_FEATURES.map(feature => [feature, false])));
 // Auto with Compass keeps what Compass did before modes existed: completion
 // checks and semantic decisions on its managed model.
 const AUTO_COMPASS_FEATURES = Object.freeze({ ...NO_DECISION_FEATURES, done: true, semantic: true });
-// Auto with the downloaded in-browser model: the checks its probe was trained
-// for. Fast classifications, fast browser actions and semantic decisions need
-// an explicit On, so the experimental and guard-facing paths stay opt-in.
-const AUTO_LOCAL_FEATURES = Object.freeze({ ...NO_DECISION_FEATURES, done: true, watch: true, completion: true });
 
 // A saved mode wins. Profiles saved before modes existed map an enabled
 // System One switch to On and everything else to the Auto default, without
@@ -43,12 +38,6 @@ const AUTO_LOCAL_FEATURES = Object.freeze({ ...NO_DECISION_FEATURES, done: true,
 export function resolveDecisionMode(stored = {}) {
   if (DECISION_MODES.includes(stored?.[DECISION_MODE_KEY])) return stored[DECISION_MODE_KEY];
   return stored?.systemOneEnabled === true ? 'on' : 'auto';
-}
-
-// Only Auto without Compass looks for the in-browser model, so callers can skip
-// the cache lookup otherwise.
-export function decisionNeedsLocalAssist(stored = {}, compass = null) {
-  return resolveDecisionMode(stored) === 'auto' && !compass;
 }
 
 // Whether the resolved configuration answers this decision. Every caller asks
@@ -81,19 +70,15 @@ function onDecisionFeatures(stored, config, legacy) {
 // Resolve settings without rewriting credentials or opted-in features. The
 // result keeps the selected provider's fields even when no decision is
 // answered, so Settings and model discovery see the same configuration.
-// `localAssistReady` says whether Ternary Bonsai 2 2B Vision is downloaded
-// (providers/webgpu-model-cache.js); only Auto without Compass reads it.
-export function resolveDecisionConfig(stored = {}, compass = null, { localAssistReady = false } = {}) {
+// Downloaded chat/vision weights do not establish reliable decision behavior.
+// Keep accepting the old options argument without activating that model.
+export function resolveDecisionConfig(stored = {}, compass = null, _options = {}) {
   stored = stored || {};
   const mode = resolveDecisionMode(stored);
   const legacy = mode === 'on' && !DECISION_MODES.includes(stored[DECISION_MODE_KEY]);
-  if (mode === 'auto' && !compass && localAssistReady === true) {
-    const config = selectedDecisionConfig({ ...stored, decisionProvider: 'webgpu_chat', decisionVisionMode: 'auto' }, null, true);
-    return { ...config, doneEnabled: true, mode, source: 'local_assist', features: { ...AUTO_LOCAL_FEATURES } };
-  }
   const on = mode === 'on';
   const config = selectedDecisionConfig(stored, mode === 'off' ? null : compass, on);
-  const features = mode === 'off' ? { ...NO_DECISION_FEATURES }
+  const features = mode === 'off' || config.provider === 'webgpu_chat' ? { ...NO_DECISION_FEATURES }
     : on ? onDecisionFeatures(stored, config, legacy)
       : config.provider === 'compass' ? { ...AUTO_COMPASS_FEATURES } : { ...NO_DECISION_FEATURES };
   const source = mode === 'off' ? 'off' : config.provider === 'compass' ? 'compass' : on ? 'configured' : 'none';
@@ -131,12 +116,13 @@ function selectedDecisionConfig(stored, compass, on) {
     requiresIndependentSuccessConfirmation: true,
     config: { category: 'local', providerName: provider, inputCostPerMillionUsd: 0, outputCostPerMillionUsd: 0 },
   };
-  // Explicitly selected, like D1: an on-device decision provider that never
-  // leaves the browser. A positive completion still needs independent proof.
+  // Retain saved selections without silently choosing another sidecar. Real
+  // trace replays exposed confident false failures and false completions.
+  // The active chat model handles checks; Ternary chat and vision stay usable.
   if (provider === 'webgpu_chat') return {
     provider, model: WEBGPU_CHAT_DECISION_MODEL, apiKey: '', baseUrl: '', url: '', local: true,
-    enabled: on,
-    doneEnabled: stored.systemOneDoneEnabled === true,
+    enabled: false, unavailable: 'decision_validation_failed',
+    doneEnabled: false,
     threshold: doneThreshold(stored),
     supportsVision: stored.decisionVisionMode !== 'off', experimental: true,
     requiresIndependentSuccessConfirmation: true,
@@ -171,7 +157,7 @@ function selectedDecisionConfig(stored, compass, on) {
 }
 
 export async function listDecisionModels(config, fetchImpl = globalThis.fetch, signal) {
-  if (config.provider === 'webgpu_chat') return [{ id: WEBGPU_CHAT_DECISION_MODEL, name: 'Ternary Bonsai 2 2B Vision (in-browser, experimental)', supportsVision: true, inputRate: 0, outputRate: 0 }];
+  if (config.provider === 'webgpu_chat') return [];
   if (config.provider === 'webgpu_d1') return [{ id: D1_MODEL_ID, name: 'D1 FP16 (experimental, on-device)', supportsVision: true, inputRate: 0, outputRate: 0 }];
   return withCompletionTimeout(requestSignal => discoverDecisionModels(config, fetchImpl, requestSignal), signal, 5000);
 }
