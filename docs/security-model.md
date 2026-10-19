@@ -78,8 +78,11 @@ are accepted; page-selected remote image URLs cannot turn D1 into a fetch proxy.
 
 Page text/pixels stay untrusted and existing redaction/wrapping remains in place.
 Disabling outsourcing or Strict Secret Mode discards the Worker and its GPU
-sessions; cached weights remain until explicitly removed. Timeouts discard a
-stalled inference session rather than inventing an answer. CPU/WASM control/shape
+sessions; cached weights remain until explicitly removed. A caller that stops
+waiting cancels only its own request; the Worker's deadline discards a stalled
+inference session. Neither invents an answer. While the user's Settings Load
+stands, a reload after a restart reads only the verified cache and never
+downloads. CPU/WASM control/shape
 fallback is disclosed, not represented as pure GPU. A positive experimental D1
 judgment alone cannot establish completion: independent LLM or existing checks
 still apply, including deterministic recipient/payment/download/authorization
