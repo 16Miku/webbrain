@@ -27258,8 +27258,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // An automatically routed turn could hand itself to Act, and the user's
     // next message is routed again ("yes" to an offer included), so it is
     // not offered a one-click switch to a mode the user never picked.
+    // The runtime's own limitation text (a Gmail thread it could not expand)
+    // is not a conversational offer: the model cannot hand it off, and a retry
+    // in Act is the recovery, so a routed turn keeps the one-click switch for it.
+    const runtimeLimitation = typeof finalResponse === 'string' && finalResponse !== ''
+      && this._runtimeAskLimitations?.get(tabId) === finalResponse;
     if (mode !== 'ask'
-        || runOptions?.autoModeRouting
+        || (runOptions?.autoModeRouting && !runtimeLimitation)
         || runOptions?.cloudRun
         || this._isStandaloneChatRun(runOptions)
         || typeof finalResponse !== 'string'
@@ -55648,6 +55653,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const readFinalLimitation = this._readCompletenessLimitation(tabId);
       if (readFinalLimitation && !this._guardAdvises('read-coverage-ask-limitation', { tabId, decided: false })) {
         finalResponse = readFinalLimitation;
+        (this._runtimeAskLimitations ||= new Map()).set(tabId, readFinalLimitation);
         _traceStatus = 'read_scope_limited';
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('text', { content: finalResponse, replace: true });
@@ -57021,6 +57027,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         const readFinalLimitation = this._readCompletenessLimitation(tabId);
         if (readFinalLimitation && !this._guardAdvises('read-coverage-ask-limitation', { tabId, decided: false })) {
+          (this._runtimeAskLimitations ||= new Map()).set(tabId, readFinalLimitation);
           messages.push({ role: 'assistant', content: readFinalLimitation });
           onUpdate('text', { content: readFinalLimitation, replace: true });
           onUpdate('warning', { message: 'Ask mode could not verify that every Gmail message was expanded.' });

@@ -725,6 +725,23 @@ for (const build of BUILDS) {
     assert.deepEqual(chosen.updates.filter(update => update.type === 'ask_mode_handoff').map(update => update.data), [{ value: 'act' }]);
   });
 
+  test(`${build}: a routed turn keeps the one-click switch for the runtime's own Ask limitation`, async () => {
+    // The runtime replaces the model's reply with a fixed "switch to Act" text
+    // (a Gmail thread it could not expand); the model cannot hand that off.
+    const limitation = 'I could not expand every message in this thread in Ask mode. Switch to Act mode to expand them.';
+    const settle = () => new Promise(resolve => setImmediate(resolve));
+    const f = fixture(Agent, { replies: [done('Unused.')] });
+    delete f.agent._maybeEmitAskModeHandoff;
+    f.agent._jevClassify = async () => 'act';
+    f.agent._runtimeAskLimitations = new Map([[f.tab, limitation]]);
+    const routed = { autoModeRouting: { previousMode: null } };
+    await f.agent._maybeEmitAskModeHandoff(f.tab, 'ask', 'Summarize this thread', limitation, f.onUpdate || ((type, data) => f.updates.push({ type, data })), routed);
+    await f.agent._maybeEmitAskModeHandoff(f.tab, 'ask', 'Summarize this thread', 'Would you like me to open it for you?', (type, data) => f.updates.push({ type, data }), routed);
+    await settle();
+    assert.deepEqual(f.updates.filter(update => update.type === 'ask_mode_handoff').map(update => update.data), [{ value: 'act' }],
+      'only the runtime limitation is offered the switch');
+  });
+
   test(`${build}: a slow decision model leaves the turn read-only after the grace period`, async () => {
     // The decision never answers; the turn goes on without it.
     const f = fixture(Agent, { decide: () => new Promise(() => {}), replies: [done('Read-only answer.')] });
