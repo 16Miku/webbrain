@@ -365,7 +365,7 @@ test('Settings asks one Auto / On / Off question and shows provider fields and s
   }
   const keys = ['st.decision.intro', 'st.decision.mode.label', 'st.decision.mode.auto', 'st.decision.mode.on', 'st.decision.mode.off',
     'st.decision.mode.auto_desc', 'st.decision.mode.auto_desc_firefox', 'st.decision.mode.on_desc', 'st.decision.mode.off_desc',
-    'st.decision.status.local', 'st.decision.status.compass', 'st.decision.status.none', 'st.decision.status.none_firefox',
+    'st.decision.status.local', 'st.decision.status.compass', 'st.decision.status.none', 'st.decision.status.none_firefox', 'st.decision.status.strict',
     'st.decision.features', 'st.decision.features_desc', 'st.decision.reset', 'st.decision.reset_done'];
   assert.equal(Object.keys(decisionTranslations).length, 22, 'every interface locale');
   for (const key of keys) assert.ok(decisionEnglish[key], key);
@@ -385,6 +385,16 @@ test('Settings asks one Auto / On / Off question and shows provider fields and s
   assert.match(status, /activeProviderIsCompass\(\)/, 'Auto names Compass while it is the chat provider');
   assert.match(status, /isLocalAssistModelReady\(\)/, 'and otherwise whether Bonsai is downloaded');
   assert.match(settings, /function renderProviders\(\) \{\n\s*providersContainer\.innerHTML = '';\n\s*void syncDecisionStatus\(\);/, 'follows chat-provider changes');
+  // Strict Secret Mode turns every decision model off, so Auto must say so and follow the toggle.
+  for (const build of ['chrome', 'firefox']) {
+    const source = await readFile(new URL(`../src/${build}/src/ui/settings.js`, import.meta.url), 'utf8');
+    const start = source.indexOf('function syncDecisionStatus');
+    const fn = source.slice(start, source.indexOf('\nfor (const input of decisionModeInputs) {', start));
+    assert.match(fn, /strictSecretToggle\?\.checked === true/, `${build} reads the strict-secret toggle`);
+    assert.match(fn, /strict \? 'st\.decision\.status\.strict'/, `${build} shows the strict status first`);
+    assert.match(fn, /compass = !strict && activeProviderIsCompass\(\)/, `${build} does not call Compass active while strict`);
+    assert.match(source, /strictSecretToggle(\?\.|\.)addEventListener\('change', async \(\) => \{\n\s*await (chrome|browser)\.storage\.local\.set\(\{ strictSecretMode: strictSecretToggle\.checked \}\)\.catch\(\(\) => \{\}\);\n\s*(void )?syncDecisionStatus\(\);/, `${build} refreshes the status when the toggle changes`);
+  }
 });
 
 test('the screenshot gate probe never falls back to the untrained readout', async () => {

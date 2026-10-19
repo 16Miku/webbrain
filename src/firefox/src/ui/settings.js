@@ -256,8 +256,10 @@ function syncDecisionStatus() {
   if (!status) return;
   status.hidden = mode !== 'auto';
   if (mode !== 'auto') return;
-  const compass = activeProviderIsCompass();
-  const key = compass ? 'st.decision.status.compass' : 'st.decision.status.none_firefox';
+  // Strict Secret Mode keeps page content away from every decision model, so Auto has nothing to use.
+  const strict = strictSecretToggle?.checked === true;
+  const compass = !strict && activeProviderIsCompass();
+  const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : 'st.decision.status.none_firefox';
   status.dataset.i18n = key;
   status.dataset.state = compass ? 'active' : 'inactive';
   status.textContent = t(key);
@@ -1545,6 +1547,7 @@ btnResetCostSpend?.addEventListener('click', async () => {
 
 strictSecretToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ strictSecretMode: strictSecretToggle.checked }).catch(() => {});
+  syncDecisionStatus();
 });
 
 strictGuardsToggle?.addEventListener('change', async () => {

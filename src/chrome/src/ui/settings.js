@@ -292,10 +292,12 @@ async function syncDecisionStatus() {
     if (btnTestSystemOne) btnTestSystemOne.hidden = mode === 'off';
     return;
   }
-  const compass = activeProviderIsCompass();
-  const ready = !compass && await isLocalAssistModelReady().catch(() => false);
+  // Strict Secret Mode keeps page content away from every decision model, so Auto has nothing to use.
+  const strict = strictSecretToggle?.checked === true;
+  const compass = !strict && activeProviderIsCompass();
+  const ready = !strict && !compass && await isLocalAssistModelReady().catch(() => false);
   if (sequence !== decisionStatusSequence || selectedDecisionMode() !== 'auto') return;
-  const key = compass ? 'st.decision.status.compass' : ready ? 'st.decision.status.local' : 'st.decision.status.none';
+  const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : ready ? 'st.decision.status.local' : 'st.decision.status.none';
   if (status) {
     status.dataset.i18n = key;
     status.dataset.state = compass || ready ? 'active' : 'inactive';
@@ -1637,6 +1639,7 @@ btnResetCostSpend?.addEventListener('click', async () => {
 if (strictSecretToggle) {
   strictSecretToggle.addEventListener('change', async () => {
     await chrome.storage.local.set({ strictSecretMode: strictSecretToggle.checked }).catch(() => {});
+    void syncDecisionStatus();
   });
 }
 
