@@ -4373,6 +4373,33 @@ function isHttpScheduleUrl(value) {
   }
 }
 
+// Drops the sentence punctuation and unmatched closing brackets a URL picked
+// up from the prose around it, but keeps a bracket that closes one inside the
+// address (https://en.wikipedia.org/wiki/Function_(mathematics)).
+function trimScheduleUrlProse(raw) {
+  let url = raw;
+  for (;;) {
+    const last = url.slice(-1);
+    const opener = last === ')' ? '(' : last === ']' ? '[' : '';
+    if (/[.,;:!?]/.test(last) || (opener && url.split(last).length > url.split(opener).length)) {
+      url = url.slice(0, -1);
+    } else {
+      return url;
+    }
+  }
+}
+
+// The one http(s) address a task's prompt names, so "check https://example.com/
+// every day" targets that page rather than whatever tab is open.
+function scheduleUrlFromPrompt(prompt) {
+  const urls = new Set();
+  for (const match of String(prompt || '').matchAll(/https?:\/\/[^\s<>"'`]+/gi)) {
+    const url = trimScheduleUrlProse(match[0]);
+    if (isHttpScheduleUrl(url)) urls.add(url);
+  }
+  return urls.size === 1 ? [...urls][0] : '';
+}
+
 async function getCurrentScheduleUrl(tabId = currentTabId) {
   if (tabId == null) return '';
   try {
@@ -4528,13 +4555,53 @@ async function submitScheduleComposer(e, form) {
   }
 }
 
+// Live control values are not part of the markup a cached chat is rebuilt
+// from, so the target the form shows is also written to attributes.
+function syncScheduleTargetAttributes(form) {
+  const { targetType, urlInput } = getScheduleComposerControls(form);
+  if (!targetType || !urlInput) return;
+  urlInput.setAttribute('value', urlInput.value);
+  for (const option of targetType.options || []) {
+    if (option.value === targetType.value) option.setAttribute('selected', '');
+    else option.removeAttribute('selected');
+  }
+}
+
+// The target follows the URL the prompt names until the person picks a target
+// themselves; both live on the form so a restored composer keeps them.
+function applyScheduleTarget(form, prompt) {
+  const { targetType, urlInput } = getScheduleComposerControls(form);
+  if (!targetType || !urlInput) return;
+  const targetUrl = scheduleUrlFromPrompt(prompt) || form.dataset.initialUrl || '';
+  if (isHttpScheduleUrl(targetUrl)) {
+    urlInput.value = targetUrl;
+    targetType.value = 'url';
+  } else {
+    urlInput.value = '';
+    targetType.value = 'current_tab';
+  }
+  updateScheduleComposerVisibility(form);
+  syncScheduleTargetAttributes(form);
+}
+
 function bindScheduleComposer(form) {
   if (!form || form.dataset.bound) return;
-  const { scheduleType, timeMode, targetType, cancel } = getScheduleComposerControls(form);
+  const { scheduleType, timeMode, targetType, urlInput, promptInput, cancel } = getScheduleComposerControls(form);
   form.dataset.bound = 'true';
   scheduleType?.addEventListener('change', () => updateScheduleComposerVisibility(form));
   timeMode?.addEventListener('change', () => updateScheduleComposerVisibility(form));
-  targetType?.addEventListener('change', () => updateScheduleComposerVisibility(form));
+  targetType?.addEventListener('change', () => {
+    form.dataset.targetChosen = 'true';
+    updateScheduleComposerVisibility(form);
+    syncScheduleTargetAttributes(form);
+  });
+  urlInput?.addEventListener('input', () => {
+    form.dataset.targetChosen = 'true';
+    syncScheduleTargetAttributes(form);
+  });
+  promptInput?.addEventListener('input', () => {
+    if (form.dataset.targetChosen !== 'true') applyScheduleTarget(form, promptInput.value);
+  });
   updateScheduleComposerVisibility(form);
   cancel?.addEventListener('click', () => form.closest('.message')?.remove());
   form.addEventListener('submit', (e) => submitScheduleComposer(e, form));
@@ -4573,7 +4640,7 @@ async function renderScheduleComposer(prefillPrompt = '', tabId = currentTabId) 
   const initialScheduleUrl = await getCurrentScheduleUrl(tabId);
   if (currentTabId !== tabId) return;
 
-  const msgEl = addMessage('system', t('sp.schedule_form.opened'));
+  const msgEl = addMessage('system', systemHtml(t('sp.schedule_form.opened')));
   const content = msgEl.querySelector('.message-content');
   const form = document.createElement('form');
   form.className = 'schedule-composer';
@@ -4643,10 +4710,8 @@ async function renderScheduleComposer(prefillPrompt = '', tabId = currentTabId) 
   urlInput.className = 'schedule-url';
   urlInput.placeholder = 'https://example.com/';
   addScheduleField(form, t('sp.schedule_form.target_url'), urlInput);
-  if (isHttpScheduleUrl(initialScheduleUrl)) {
-    urlInput.value = initialScheduleUrl;
-    targetType.value = 'url';
-  }
+  form.dataset.initialUrl = isHttpScheduleUrl(initialScheduleUrl) ? initialScheduleUrl : '';
+  applyScheduleTarget(form, prefillPrompt);
 
   const modeInput = document.createElement('select');
   modeInput.className = 'schedule-mode';
@@ -6056,9 +6121,10 @@ function clarificationSubmissionKey(tabId, requestId, clarifyId) {
   return JSON.stringify([Number(tabId), String(requestId || ''), String(clarifyId || '')]);
 }
 
-function invalidateUnresolvedClarifyCards(assistantEl, currentClarifyId = '') {
+function invalidateUnresolvedClarifyCards(assistantEl, currentClarifyId = '', { keepScheduled = false } = {}) {
   for (const card of assistantEl?.querySelectorAll('.clarify-card') || []) {
-    if (card.classList.contains('clarify-answered') || String(card.dataset.clarifyId || '') === currentClarifyId) continue;
+    if (card.classList.contains('clarify-answered') || String(card.dataset.clarifyId || '') === currentClarifyId
+        || (keepScheduled && card.dataset.scheduledJobId)) continue;
     clearClarifyCountdown(card);
     if (card.dataset.permission === '1') card.remove();
     else {
@@ -7643,6 +7709,7 @@ function resumeAfterSubscription(btn) {
   setMode(mode);
   void continueAgent({
     mode,
+    autoRouted: btn?.closest?.('.message.assistant')?.dataset?.autoRouted === 'true',
     foreground: btn?.dataset?.resumeForeground === 'true',
   });
 }
@@ -8069,6 +8136,7 @@ function bindFailureRecoveryCard(card) {
           const accepted = await continueAgent({
             failureRecoveryId: recoveryId,
             mode: card.dataset.runMode,
+            ...(card.dataset.autoRouted === 'true' ? { autoRouted: true } : {}),
             foreground: card.dataset.foreground === 'true',
             onFailureRecoveryAccepted: () => {
               card.dataset.recoveryChosen = 'true';
@@ -8112,6 +8180,7 @@ function renderFailureRecoveryCard(assistantEl, data, { tabId = currentTabId, re
   card.dataset.tabId = String(tabId);
   card.dataset.runRequestId = String(requestId);
   card.dataset.runMode = assistantEl.dataset.runMode || agentMode;
+  card.dataset.autoRouted = assistantEl.dataset.autoRouted === 'true' ? 'true' : 'false';
   card.dataset.foreground = assistantEl.dataset.retryForeground || 'false';
   card.dataset.recoveryCurrent = 'true';
   assistantEl.querySelector('.message-content')?.appendChild(card);
@@ -11238,6 +11307,9 @@ function handleAgentUpdateMessage(msg) {
       // its Retry, Continue and recovery controls then reuse.
       if (['ask', 'act', 'dev'].includes(data?.mode) && (eventAssistantEl || currentAssistantEl)) {
         (eventAssistantEl || currentAssistantEl).dataset.runMode = data.mode;
+        // Only an automatic run reports its mode. Continuing one that went
+        // read-only routes it again (continueAgent).
+        (eventAssistantEl || currentAssistantEl).dataset.autoRouted = 'true';
         updateActWarning();
       }
       break;
@@ -11355,6 +11427,10 @@ function handleAgentUpdateMessage(msg) {
         requestId: msg.requestId,
         runId: msg.runId,
       });
+      // A finished run accepts no more answers: a card it still showed (the
+      // permission card on screen when Stop was pressed, say) closes with it.
+      // A scheduled task's cards belong to that task.
+      invalidateUnresolvedClarifyCards(eventAssistantEl || currentAssistantEl, '', { keepScheduled: true });
       const suppressTimedOutPlanTerminal = !!(eventAssistantEl || currentAssistantEl)
         ?.querySelector('.plan-review-expired')
         && isPlanReviewTimeoutTerminal(data?.finalContent);
@@ -14000,15 +14076,19 @@ function showContinueButton(options = {}) {
 // In Automatic mode a continuation keeps the routed mode of the latest run.
 function automaticContinuationMode() {
   if (!autoModeSelection) return {};
-  const mode = [...messagesEl.querySelectorAll('.message.assistant')].at(-1)?.dataset?.runMode;
-  return ['ask', 'act', 'dev'].includes(mode) ? { mode } : {};
+  const latest = [...messagesEl.querySelectorAll('.message.assistant')].at(-1)?.dataset;
+  const mode = latest?.runMode;
+  return ['ask', 'act', 'dev'].includes(mode) ? { mode, ...(latest.autoRouted === 'true' ? { autoRouted: true } : {}) } : {};
 }
 
 async function continueAgent(options = {}) {
   if (isStandaloneWindow) options = { ...options, mode: 'ask' };
   if (isProcessing) return false;
   const tabId = currentTabId;
-  const modeForSend = ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
+  // A run WebBrain routed to Ask is routed again when continued, so it can
+  // still hand itself to Act; any other run keeps its mode.
+  const modeForSend = autoModeSelection && options?.autoRouted === true && options?.mode === 'ask' ? 'auto'
+    : ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
   if (rejectSelectionScopedMode(modeForSend, tabId)) return false;
   const requestId = createRunRequestId(tabId);
   const foregroundForSend = options?.foreground === true;

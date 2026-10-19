@@ -71,7 +71,13 @@ async function readyMarker() {
 const currentPackage = marker => marker?.revision === D1_RELEASE.revision && marker?.manifestSha256 === D1_RELEASE.manifestSha256;
 
 async function status() {
-  if (transfer || runtime || loading || ['error', 'stopped'].includes(state.status)) return { ...state, ready: !!runtime };
+  if (transfer || runtime || loading || ['error', 'stopped'].includes(state.status)) {
+    // An error or a stop leaves the verified cache in place (a lost GPU device
+    // after a good download, say); report it so the Providers page can retry with Load
+    // instead of falling back to a full download pass.
+    const cached = !transfer && !runtime && !loading && currentPackage(await readyMarker());
+    return { ...state, ready: !!runtime, cached };
+  }
   const marker = await readyMarker();
   return marker ? { ...state, status: currentPackage(marker) ? 'cached' : 'idle', ready: false, loaded: false } : { ...state, ready: false };
 }

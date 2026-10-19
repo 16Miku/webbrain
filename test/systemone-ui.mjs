@@ -77,7 +77,7 @@ function installStub({ lang, build, version, seed = {} }) {
       window.testRequests.push(msg);
       const result = msg.action === 'get_providers' ? { providers: { llamacpp: { label: 'llama.cpp', category: 'local', baseUrl: 'http://localhost:8080/v1', model: 'local-model', configured: true }, openai: { label: 'OpenAI', category: 'cloud', apiKey: '', model: 'gpt-4o-mini' } }, active: 'llamacpp' }
         : msg.action === 'test_system_one' ? { success: true, model: msg.settings?.decisionModel || 'jev-1.13.0', visionVerified: msg.settings?.decisionProvider === 'openrouter' }
-          : msg.action === 'list_decision_models' ? { success: true, models: [{ id: 'perplexity/pplx-decider-v1.1-27b', name: 'Decider', supportsVision: true, inputRate: .02, outputRate: 0 }, { id: 'another/publisher', name: 'Another decision model', supportsVision: false, inputRate: .1, outputRate: 0 }] }
+          : msg.action === 'list_decision_models' ? { success: true, models: [{ id: 'cloudflare/clef-flash', name: 'Decider', supportsVision: true, inputRate: .02, outputRate: 0 }, { id: 'another/publisher', name: 'Another decision model', supportsVision: false, inputRate: .1, outputRate: 0 }] }
             : msg.action === 'get_user_memory' ? { ok: true, enabled: true, records: [] } : {};
       callback?.(result); return Promise.resolve(result);
     } },
@@ -174,7 +174,7 @@ try {
         await page.waitForFunction(count => testRequests.filter(r => r.action === 'test_system_one').length === count, tests + 1);
         assert.equal(await page.evaluate(() => testRequests.at(-1).settings.decisionMode), 'on');
         await page.locator('#decision-provider').selectOption('openrouter');
-        assert.equal(await page.locator('#decision-model').inputValue(), 'perplexity/pplx-decider-v1.1-27b');
+        assert.equal(await page.locator('#decision-model').inputValue(), 'cloudflare/clef-flash');
         assert.equal(await page.locator('#system-one-api-key').inputValue(), '', 'TypeSafe key must not be copied into OpenRouter');
         assert.equal(await page.locator('#toggle-decision-done').isChecked(), true);
         await page.locator('#system-one-api-key').fill('synthetic-openrouter-key');

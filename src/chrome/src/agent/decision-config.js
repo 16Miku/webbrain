@@ -1,5 +1,5 @@
 import { D1_MODEL_ID, D1_CONSENT_KEY, D1_CONSENT_VERSION } from '../providers/d1-config.js';
-export const DEFAULT_DECISION_MODEL = 'perplexity/pplx-decider-v1.1-27b';
+export const DEFAULT_DECISION_MODEL = 'cloudflare/clef-flash';
 // Auto (the default) uses a decision model only when one is already on hand,
 // On uses the configured one for every decision, Off never uses one.
 export const DECISION_MODE_KEY = 'decisionMode';

@@ -87,9 +87,20 @@ page asks one question first:
 `decision-config.js` resolves it, and `decisionFeatureEnabled()` is the single
 check every caller makes. For On, select OpenRouter (the default), TypeSafe directly, or a local/custom System One
 endpoint. OpenRouter's model list comes from its decision-model catalog and includes
-all publishers. The new default is `perplexity/pplx-decider-v1-27b`; existing
+all publishers. The default is `cloudflare/clef-flash`; existing
 TypeSafe keys, enabled features and scheduler thresholds stay on their original
 provider until changed. Provider keys are stored separately.
+
+`cloudflare/clef-flash` reads only the first ~2K tokens of a long text state
+(OpenRouter's model page says Workers AI truncates it), so
+`SYSTEM_ONE_TEXT_BYTE_BUDGETS` in `systemone-judge.js` caps the state it is sent
+at 1,500 UTF-8 bytes. A byte-level BPE tokenizer never produces more tokens than
+bytes, so this holds for any text without shipping a tokenizer; image blocks are
+left out because the provider counts them separately. A longer state is not
+sent; the check takes the same fallback as for an unavailable decision model
+(failure reason `state_too_long`) instead of judging evidence it only partly
+read. In practice Clef Flash answers short decisions, and long completion
+evidence goes to the main model.
 
 Local [Kev](https://github.com/jaredpalmer/kev) defaults to
 `http://127.0.0.1:8009`, model `kev-latest`, using `/v1/systemone`. A key is optional
@@ -110,8 +121,9 @@ into OPFS. The package stores FP16 weights and computes in FP32; it is the
 with its weights rounded once, and answers the same on its held-out test. A
 cached FP32 package from an earlier version is removed on the next download. The repository name is not a production-readiness claim; this provider
 remains experimental. Executable JS/WASM is packaged in the extension, not
-downloaded from the model repository. **Load cached model** verifies the files
-again; inference cannot trigger a model download.
+downloaded from the model repository. Once the package is in the cache the
+same button reads **Load**: it verifies the files again and loads them without
+the download pass; inference cannot trigger a model download.
 
 This experimental path needs hardware WebGPU, OPFS and substantial GPU/host
 memory. Software adapters are rejected. The encoder's attention is dense, so
@@ -126,9 +138,9 @@ document with a dedicated decision Worker; Firefox uses its background-page
 Worker when the corresponding browser capabilities are available. Mirrored
 code is not evidence that every browser/GPU is supported. CPU/WASM control and
 shape operators are permitted and explicitly disclosed; it is not a pure-GPU
-claim. Unload or disabling outsourcing releases the Worker/GPU resources and
+claim. **Unload** or disabling outsourcing releases the Worker/GPU resources and
 retains the cache; **Remove cached model** requires the model to be unloaded.
-After **Download and load** or **Load cached model**, D1 stays loaded until
+After **Download and load** or **Load**, D1 stays loaded until
 it is unloaded, removed or switched off on the Providers page: a decision that finds it
 unloaded (a browser restart, a discarded stalled session, a lost GPU device)
 starts one reload from the verified cache in the background and uses the

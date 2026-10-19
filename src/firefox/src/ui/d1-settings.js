@@ -14,12 +14,22 @@ export function initD1Settings(send) {
     if (!selected) { clearInterval(timer); timer = null; return; }
     await refresh(); if (!timer) timer = setInterval(refresh, 2000);
   };
+  // One button downloads what is missing and loads; once the model is in the
+  // cache it only loads, which skips the download pass's second verification.
+  const loadButton = document.getElementById('d1-load');
+  const showLoadButton = snapshot => {
+    const cached = snapshot?.loaded === true || snapshot?.cached === true || ['cached', 'ready'].includes(snapshot?.status);
+    loadButton.dataset.d1Command = cached ? 'load' : 'download';
+    loadButton.dataset.i18n = cached ? 'st.d1.load' : 'st.d1.download';
+    loadButton.textContent = t(loadButton.dataset.i18n);
+  };
   async function refresh() {
     if (provider.value !== 'webgpu_d1') return;
     try {
       const result = await send('d1_control', { command: 'status' });
       if (!result.success) throw new Error(result.error);
       const snapshot = result.result;
+      showLoadButton(snapshot);
       line.textContent = `${snapshot.status || 'idle'}${snapshot.progress ? ` (${Math.round(snapshot.progress)}%)` : ''}${snapshot.error ? ': ' + snapshot.error : ''}${snapshot.adapter ? ' | ' + [snapshot.adapter.vendor, snapshot.adapter.device, snapshot.adapter.description].filter(Boolean).join(' / ') : ''}`;
     } catch (error) { line.textContent = error.message; }
   }

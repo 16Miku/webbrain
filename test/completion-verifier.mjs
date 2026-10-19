@@ -33,7 +33,7 @@ for (const build of ['chrome', 'firefox']) {
   });
   test(`${build}: new defaults and legacy/local configuration`, () => {
     assert.equal(config.resolveDecisionConfig().model, config.DEFAULT_DECISION_MODEL);
-    assert.equal(config.DEFAULT_DECISION_MODEL, 'perplexity/pplx-decider-v1.1-27b');
+    assert.equal(config.DEFAULT_DECISION_MODEL, 'cloudflare/clef-flash');
     assert.equal(config.resolveDecisionConfig().config.inputCostPerMillionUsd, .02);
     const legacy = config.resolveDecisionConfig({ typesafeApiKey: 'legacy', systemOneEnabled: true, systemOneWatchEnabled: true });
     assert.equal(legacy.provider, 'typesafe'); assert.equal(legacy.url, 'https://api.typesafe.ai/v1/systemone');

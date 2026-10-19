@@ -1017,6 +1017,50 @@ for (const build of ['chrome', 'firefox']) {
       guard.successfulConsequentialToolCalls = 1; guard.successfulTaskToolCalls = 1; guard.evidenceTaskKey = guard.taskKey;
     }), { summary: 'Sent the form.', outcome: 'success' }, 'I couldn\'t confirm that the submission went through.', `${build} submission`);
 
+    // A deletion is described as one, so the caveat never speaks of a
+    // "submission" the user did not make.
+    // As in a real run, the dispatched deletion is also the current submit receipt.
+    await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, (guard, h) => {
+      guard.successfulConsequentialToolCalls = 1; guard.successfulTaskToolCalls = 1; guard.evidenceTaskKey = guard.taskKey;
+      guard.resourceMutationDispatches = [{ mutationKind: 'delete', resourceUrl: 'https://mastoturk.org/@owned/1', actionSequence: 3 }];
+      guard.lastCommitKind = 'delete';
+      h.agent._completionSubmitStates.set(h.tab, { dispatched: true, mutationKind: 'delete', actionSequence: 3, taskKey: guard.taskKey });
+    }), { summary: 'Deleted the post.', outcome: 'success' }, 'I couldn\'t confirm that the deletion took effect.', `${build} deletion`);
+
+    // A non-committing form after the deletion (a GET search that checks the item is gone)
+    // replaces the receipt but is not a second mutation: the deletion is still the unverified action.
+    await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, (guard, h) => {
+      guard.successfulConsequentialToolCalls = 1; guard.successfulTaskToolCalls = 1; guard.evidenceTaskKey = guard.taskKey;
+      guard.resourceMutationDispatches = [{ mutationKind: 'delete', resourceUrl: 'https://mastoturk.org/@owned/1', actionSequence: 3 }];
+      h.agent._completionSubmitStates.set(h.tab, { dispatched: true, nonCommitting: true, mutationKind: 'submit', actionSequence: 4, taskKey: guard.taskKey });
+    }), { summary: 'Deleted the post.', outcome: 'success' }, 'I couldn\'t confirm that the deletion took effect.', `${build} deletion then search`);
+
+    // Deletion, then an ordinary form submission, then a GET search that overwrites its receipt:
+    // the form submission is still the unverified mutation.
+    await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, (guard, h) => {
+      guard.successfulConsequentialToolCalls = 2; guard.successfulTaskToolCalls = 2; guard.evidenceTaskKey = guard.taskKey;
+      guard.resourceMutationDispatches = [{ mutationKind: 'delete', resourceUrl: 'https://mastoturk.org/@owned/1', actionSequence: 3 }];
+      guard.lastCommitKind = 'submit';
+      h.agent._completionSubmitStates.set(h.tab, { dispatched: true, nonCommitting: true, mutationKind: 'submit', actionSequence: 5, taskKey: guard.taskKey });
+    }), { summary: 'Deleted the post and sent the form.', outcome: 'success' }, 'I couldn\'t confirm that the submission went through.', `${build} deletion, form, then search`);
+
+    // An ordinary form, then a deletion: the deletion is the last commit and the unverified action.
+    await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, (guard, h) => {
+      guard.successfulConsequentialToolCalls = 2; guard.successfulTaskToolCalls = 2; guard.evidenceTaskKey = guard.taskKey;
+      guard.resourceMutationDispatches = [{ mutationKind: 'delete', resourceUrl: 'https://mastoturk.org/@owned/1', actionSequence: 5 }];
+      guard.lastCommitKind = 'delete';
+      h.agent._completionSubmitStates.set(h.tab, { dispatched: true, mutationKind: 'delete', actionSequence: 5, taskKey: guard.taskKey });
+    }), { summary: 'Sent the form and deleted the post.', outcome: 'success' }, 'I couldn\'t confirm that the deletion took effect.', `${build} form, then deletion`);
+
+    // With an ordinary form submission also dispatched, the unverified action
+    // may be that submission, so the deletion wording is not used.
+    await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, (guard, h) => {
+      guard.successfulConsequentialToolCalls = 2; guard.successfulTaskToolCalls = 2; guard.evidenceTaskKey = guard.taskKey;
+      guard.resourceMutationDispatches = [{ mutationKind: 'delete', resourceUrl: 'https://mastoturk.org/@owned/1' }];
+      guard.lastCommitKind = 'submit';
+      h.agent._completionSubmitStates.set(h.tab, { dispatched: true, taskKey: guard.taskKey });
+    }), { summary: 'Deleted the post and sent the form.', outcome: 'success' }, 'I couldn\'t confirm that the submission went through.', `${build} deletion plus form`);
+
     await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, guard => {
       guard.siteWorkflow = { adapterName: 'github', job: { id: 'edit-file-and-commit', template: 'publish', requiresSubmission: true } };
       guard.successfulConsequentialToolCalls = 1; guard.successfulTaskToolCalls = 1; guard.evidenceTaskKey = guard.taskKey;

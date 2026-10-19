@@ -14,7 +14,7 @@ for its available flags.
 | `/act` | Switch to Act mode before sending |
 | `/dev` | Switch to Dev mode before sending |
 | `/plan` | Switch to Ask mode with planning intent |
-| `/schedule [prompt]` | Create a scheduled task, optionally prefilling its prompt |
+| `/schedule [prompt]` | Create a scheduled task, optionally prefilling its prompt; a prompt that names one http(s) address targets that page instead of the open tab |
 | `/schedule --list` | Show scheduled tasks |
 | `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition and action> [/beep]` | Poll the current page for a condition; stop after the first match unless `--keep` is set, and optionally play a background alert |
 | `/progress` | Show the current progress ledger |

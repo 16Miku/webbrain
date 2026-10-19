@@ -17,6 +17,11 @@
   const modelSnapshots = new Map();
   let ownedPreparationBindings = new WeakMap();
   const MODEL_SNAPSHOT_MS = 120000;
+  // Time the background waited for the model's decision, or for the user's
+  // answer to one of WebBrain's own cards, does not age an observation: what
+  // changes on the page meanwhile is what the monitor reports and the binding
+  // checks judge. The background reports that time (modelHeldMs), bounded.
+  const MODEL_SNAPSHOT_HOLD_LIMIT_MS = 30 * 60 * 1000;
   const MODEL_TARGET_LIMIT = 512;
   const MODEL_SCAN_LIMIT = 2048;
   const MODEL_PUBLIC_MAX = 12000;
@@ -1771,10 +1776,17 @@
           && (!item.files || (item.files.length === current.files?.length && item.files.every((file, fileIndex) => file === current.files[fileIndex])));
       }));
   }
+  function holdModelSnapshot(snapshot, heldMs) {
+    const held = Math.min(MODEL_SNAPSHOT_HOLD_LIMIT_MS, Math.max(0, Math.floor(Number(heldMs) || 0)));
+    if (snapshot && held > (snapshot.heldMs || 0)) snapshot.heldMs = held;
+  }
+  function modelSnapshotLive(snapshot) {
+    return !!snapshot && snapshot.until + (snapshot.heldMs || 0) >= Date.now();
+  }
   function sealBrowserBatchInput(owner, params) {
     const op = owner?.batchInputOperation || owner;
     const snapshot = modelSnapshots.get(op?.expectedModelSnapshot);
-    if (!op?.batchId || !snapshot || snapshot.until < Date.now() || snapshot.runToken !== runToken
+    if (!op?.batchId || !modelSnapshotLive(snapshot) || snapshot.runToken !== runToken
         || op.batchId !== owner.batchId || op.modelBindingInvalid || op.preparedBinding?.relaxed || authorityChanged(op)
         || typeof params.batchInputText !== 'string') return false;
     const current = operationBinding(op);
@@ -1953,7 +1965,8 @@
   function modelBindingResult(params = {}) {
     const snapshot = modelSnapshots.get(params.snapshotToken || params.expectedModelSnapshot);
     if (!active || params.runToken !== runToken || snapshot?.runToken !== runToken) return { reason: 'model_snapshot_invalid' };
-    if (!snapshot || snapshot.until < Date.now()) return { reason: 'model_snapshot_expired' };
+    holdModelSnapshot(snapshot, params.modelHeldMs);
+    if (!modelSnapshotLive(snapshot)) return { reason: 'model_snapshot_expired' };
     const relaxed = snapshot.relaxedGrantToken && snapshot.relaxedGrantToken === params.relaxedMonitorGrantToken
       && currentRelaxedGrant(params.relaxedMonitorGrantToken);
     if (snapshot.relaxedGrantToken && !relaxed) return { reason: 'relaxed_grant_expired' };
@@ -2332,7 +2345,7 @@
     modelSnapshots.set(snapshotToken, { runToken, until: Date.now() + MODEL_SNAPSHOT_MS, targets, uncertified, refs,
       relaxedGrantToken, relaxedTargets, relaxedInvalidated, captureFailures,
       hasRefs: !!page || !!window.__wbElementMap, focusTarget, userAt: lastUserAt, interventionRevision });
-    for (const [key, snapshot] of modelSnapshots) if (snapshot.until < Date.now()) modelSnapshots.delete(key);
+    for (const [key, snapshot] of modelSnapshots) if (!modelSnapshotLive(snapshot)) modelSnapshots.delete(key);
     while (modelSnapshots.size > 2) modelSnapshots.delete(modelSnapshots.keys().next().value);
     return { ready: true, runToken, documentToken, snapshotToken, targetCount: targets.size, focusedTargetAvailable,
       monitoringRelaxed: !!relaxedGrantToken && currentRelaxedGrant(relaxedGrantToken),
