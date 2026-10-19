@@ -626,6 +626,22 @@ async function loadAutoScreenshot() {
 }
 loadAutoScreenshot();
 
+// Settings has one Record traces switch for both trace tiers: full request
+// details are recorded whenever traces are. A profile from before the merge
+// can have the two set apart; line them up once so the switch shows what is
+// recorded. Harnesses that set the tiers apart afterwards keep their choice.
+const TRACE_TIERS_MERGED_KEY = 'traceTiersMergedV1';
+async function mergeTraceTiers() {
+  const stored = await chrome.storage.local.get(['tracingEnabled', 'losslessTrace', TRACE_TIERS_MERGED_KEY]);
+  if (stored[TRACE_TIERS_MERGED_KEY] === true) return;
+  const updates = { [TRACE_TIERS_MERGED_KEY]: true };
+  if ((stored.tracingEnabled === true) !== (stored.losslessTrace === true)) {
+    updates.losslessTrace = stored.tracingEnabled === true;
+  }
+  await chrome.storage.local.set(updates);
+}
+mergeTraceTiers().catch(() => {});
+
 async function loadSiteAdapters() {
   const stored = await chrome.storage.local.get('useSiteAdapters');
   if (stored.useSiteAdapters != null) agent.useSiteAdapters = stored.useSiteAdapters;
@@ -2677,7 +2693,7 @@ async function standaloneRunProviderId(msg) {
   const config = providerManager.getAll().webgpu;
   const download = await providerManager.getWebgpuDownloadStatus().catch(() => null);
   if (!isShippedWebgpuPreset(config?.model) || download?.ready !== true) {
-    throw new Error(`Download ${webgpuModelDisplayName(config?.model || WEBGPU_COMPASS_TINY_V2_MODEL_ID)} in Settings > Providers > WebGPU or Apocalypse Mode > WebGPU before using WebGPU in standalone chat.`);
+    throw new Error(`Download ${webgpuModelDisplayName(config?.model || WEBGPU_COMPASS_TINY_V2_MODEL_ID)} in Providers > WebGPU or Apocalypse Mode > WebGPU before using WebGPU in standalone chat.`);
   }
   return providerId;
 }
@@ -4472,7 +4488,11 @@ async function handleMessage(msg, sender) {
           imported.settings,
         )
         : imported.settings;
-      await chrome.storage.local.set(settings);
+      // A restored export carries Record traces only; full request details follow
+      // it, as they do in Settings. Provisioning patches keep their own tiers.
+      await chrome.storage.local.set(msg.action === 'import_config' && Object.hasOwn(settings, 'tracingEnabled')
+        ? { ...settings, losslessTrace: settings.tracingEnabled === true }
+        : settings);
       await providerManager.load();
       await Promise.all([
         loadMaxSteps(),
@@ -4823,9 +4843,10 @@ async function handleMessage(msg, sender) {
       return await providerManager.testVisionProvider();
     }
     case 'enable_webgpu_vision': {
-      const settingsUrl = chrome.runtime.getURL('src/ui/settings.html');
-      if (String(sender?.url || '').split('#')[0] !== settingsUrl) {
-        return { ok: false, code: 'vision_consent_required', error: 'Local vision can only be enabled from Settings.' };
+      // Consent is recorded only from the Vision tab of the Providers page.
+      const providersUrl = chrome.runtime.getURL('src/ui/providers.html');
+      if (String(sender?.url || '').split(/[?#]/)[0] !== providersUrl) {
+        return { ok: false, code: 'vision_consent_required', error: 'Local vision can only be enabled from Providers → Vision.' };
       }
       return await startExplicitVisionModelDownload();
     }
@@ -4840,9 +4861,9 @@ async function handleMessage(msg, sender) {
       // Choosing WebBrain VL 2 450M can re-enable it under consent already
       // given, so only the two pages that show the choice may change it.
       const senderPage = String(sender?.url || '').split(/[?#]/)[0];
-      const allowedPages = ['src/ui/settings.html', 'src/ui/apocalypse-mode.html'].map(page => chrome.runtime.getURL(page));
+      const allowedPages = ['src/ui/providers.html', 'src/ui/apocalypse-mode.html'].map(page => chrome.runtime.getURL(page));
       if (!allowedPages.includes(senderPage)) {
-        return { ok: false, code: 'vision_choice_page', error: 'The in-browser vision model can only be chosen in Settings or Apocalypse Mode.' };
+        return { ok: false, code: 'vision_choice_page', error: 'The in-browser vision model can only be chosen in Providers → Vision or Apocalypse Mode.' };
       }
       return await providerManager.setWebgpuVisionChoice(msg.choice);
     }
@@ -4883,11 +4904,12 @@ async function handleMessage(msg, sender) {
     }
 
     // Diagnostic decision readout on the in-browser chat model, for the
-    // hardware eval (scripts/check-webgpu-decisions.mjs). Settings page only.
+    // hardware eval (scripts/check-webgpu-decisions.mjs). Providers page only,
+    // where the decision models are configured.
     case 'webgpu_decide_fixture': {
       const api = globalThis.browser || globalThis.chrome;
-      const settingsUrl = api.runtime.getURL('src/ui/settings.html');
-      if (sender.id !== api.runtime.id || String(sender.url || '').split('#')[0] !== settingsUrl) return { success: false, error: 'Decision fixtures are available only from extension Settings.' };
+      const providersUrl = api.runtime.getURL('src/ui/providers.html');
+      if (sender.id !== api.runtime.id || String(sender.url || '').split(/[?#]/)[0] !== providersUrl) return { success: false, error: 'Decision fixtures are available only from the extension Providers page.' };
       try {
         await strictSecretModeReady;
         if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
@@ -4900,9 +4922,10 @@ async function handleMessage(msg, sender) {
     }
 
     case 'd1_control': {
+      // The D1 controls are on the Decision tab of the Providers page.
       const api = globalThis.browser || globalThis.chrome;
-      const settingsUrl = api.runtime.getURL('src/ui/settings.html');
-      if (sender.id !== api.runtime.id || String(sender.url || '').split('#')[0] !== settingsUrl) return { success: false, error: 'D1 model controls are available only from extension Settings.' };
+      const providersUrl = api.runtime.getURL('src/ui/providers.html');
+      if (sender.id !== api.runtime.id || String(sender.url || '').split(/[?#]/)[0] !== providersUrl) return { success: false, error: 'D1 model controls are available only from the extension Providers page.' };
       try {
         await strictSecretModeReady;
         if (agent.strictSecretMode && !['dispose', 'reset', 'stop', 'clear', 'status'].includes(msg.command)) throw new Error('D1 is disabled in Strict Secret Mode.');

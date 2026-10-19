@@ -13,17 +13,35 @@ const server = createServer(async (req, res) => {
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const output = process.env.JEV_UI_OUTPUT || '/tmp/jev-ui-review'; await mkdir(output, { recursive: true });
-async function captureDocScreenshots(page, directory) {
+// Settings is split across settings.html, providers.html and permissions.html.
+// JEV_DOC_SCREENSHOTS=<dir> refreshes the screenshots the docs use, from the
+// synthetic profile below (no real keys).
+async function captureDocScreenshots(browser, build, directory) {
   await mkdir(directory, { recursive: true });
-  await page.locator('#system-one-card details').evaluate(el => { el.open = false; });
-  await page.locator('#test-system-one').evaluate(el => { el.textContent = ''; el.className = 'test-result'; });
-  for (const [tab, name] of [['providers', 'providers'], ['display', 'general'], ['memory', 'memory'], ['permissions', 'permissions'], ['multimodal', 'assistive-models']]) {
-    await page.locator(`[data-tab="${tab}"]`).click();
-    if (tab === 'providers') await page.locator('#input-provider-search').fill('');
+  const open = async (target) => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+    await page.addInitScript(installStub, { lang: 'en', build, version, seed: DOC_SEED });
+    await page.goto(`${origin}/src/${build}/src/ui/${target}`);
+    await page.waitForFunction(() => document.documentElement.dataset.settingsReady === 'true');
     await page.evaluate(() => { document.activeElement?.blur(); scrollTo(0, 0); });
     await page.mouse.move(0, 0);
-    await page.screenshot({ animations: 'disabled', caret: 'hide', path: resolve(directory, `settings-${name}.jpg`), type: 'jpeg', quality: 85 });
+    return page;
+  };
+  for (const [target, name] of [
+    ['settings.html#display', 'settings-general'],
+    ['settings.html#budgets', 'settings-budgets'],
+    ['settings.html#memory', 'settings-memory'],
+    ['settings.html#captcha', 'settings-captcha'],
+    ['settings.html#advanced', 'settings-advanced'],
+    ['providers.html#llm', 'settings-providers'],
+    ['providers.html#vision', 'providers-vision'],
+    ['permissions.html', 'settings-permissions'],
+  ]) {
+    const page = await open(target);
+    await page.screenshot({ animations: 'disabled', caret: 'hide', path: resolve(directory, `${name}.jpg`), type: 'jpeg', quality: 85 });
+    await page.close();
   }
+  const page = await open('providers.html#decision');
   await page.locator('#system-one-heading').scrollIntoViewIfNeeded();
   const clip = await page.evaluate(() => {
     const heading = document.querySelector('#system-one-heading').getBoundingClientRect();
@@ -31,12 +49,40 @@ async function captureDocScreenshots(page, directory) {
     return { x: card.x + scrollX, y: heading.y + scrollY, width: card.width, height: card.bottom - heading.y };
   });
   await page.screenshot({ animations: 'disabled', caret: 'hide', path: resolve(directory, 'settings-decision-models.jpg'), type: 'jpeg', quality: 85, fullPage: true, clip });
-  await page.locator('[data-tab="display"]').click();
-  await page.locator('#input-general-search').fill('Strict secret');
-  await page.evaluate(() => { document.activeElement?.blur(); scrollTo(0, 0); });
-  await page.mouse.move(0, 0);
-  await page.screenshot({ animations: 'disabled', caret: 'hide', path: resolve(directory, 'settings-advanced.jpg'), type: 'jpeg', quality: 85 });
-  await page.locator('#input-general-search').fill('');
+  await page.close();
+}
+
+// Made-up permission choices for the docs screenshot of the Permissions page.
+const DOC_SEED = {
+  wb_permissions: [
+    { host: 'docs.example.com', capability: 'click', action: 'allow' },
+    { host: 'mail.example.com', capability: 'type', action: 'deny' },
+  ],
+};
+
+function installStub({ lang, build, version, seed = {} }) {
+  localStorage.setItem('wbLocale', lang);
+  const data = { wbLocale: lang, typesafeApiKey: '', systemOneEnabled: false, systemOneWatchEnabled: true, systemOneCompletionEnabled: true,
+    ...seed, ...JSON.parse(sessionStorage.getItem('decision-profile') || '{}') };
+  window.testStore = data; window.testRequests = [];
+  const listeners = [];
+  const storage = {
+    async get(keys) { return keys == null ? { ...data } : Object.fromEntries((Array.isArray(keys) ? keys : typeof keys === 'string' ? [keys] : Object.keys(keys)).map(k => [k, data[k]])); },
+    async set(values) { Object.assign(data, values); listeners.forEach(fn => fn(Object.fromEntries(Object.entries(values).map(([k, v]) => [k, { newValue: v }])), 'local')); },
+    async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key]; },
+  };
+  window.chrome = window.browser = {
+    storage: { local: storage, onChanged: { addListener: fn => listeners.push(fn) } },
+    runtime: { getURL: path => `${location.origin}/src/${build}/${path}`, getManifest: () => ({ version }), onMessage: { addListener() {} }, sendMessage(msg, callback) {
+      window.testRequests.push(msg);
+      const result = msg.action === 'get_providers' ? { providers: { llamacpp: { label: 'llama.cpp', category: 'local', baseUrl: 'http://localhost:8080/v1', model: 'local-model', configured: true }, openai: { label: 'OpenAI', category: 'cloud', apiKey: '', model: 'gpt-4o-mini' } }, active: 'llamacpp' }
+        : msg.action === 'test_system_one' ? { success: true, model: msg.settings?.decisionModel || 'jev-1.13.0', visionVerified: msg.settings?.decisionProvider === 'openrouter' }
+          : msg.action === 'list_decision_models' ? { success: true, models: [{ id: 'perplexity/pplx-decider-v1.1-27b', name: 'Decider', supportsVision: true, inputRate: .02, outputRate: 0 }, { id: 'another/publisher', name: 'Another decision model', supportsVision: false, inputRate: .1, outputRate: 0 }] }
+            : msg.action === 'get_user_memory' ? { ok: true, enabled: true, records: [] } : {};
+      callback?.(result); return Promise.resolve(result);
+    } },
+    commands: { getAll: async () => [] }, tabs: { create: async () => ({}) },
+  };
 }
 try {
   for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
@@ -45,33 +91,11 @@ try {
       for (const lang of ['en', 'tr']) for (const width of [390, 1280]) {
         const page = await browser.newPage({ viewport: { width, height: 1000 } });
         const errors = []; page.on('pageerror', error => errors.push(error.message));
-        await page.addInitScript(({ lang, build, version }) => {
-          localStorage.setItem('wbLocale', lang);
-          const data = { wbLocale: lang, typesafeApiKey: '', systemOneEnabled: false, systemOneWatchEnabled: true, systemOneCompletionEnabled: true,
-            ...JSON.parse(sessionStorage.getItem('decision-profile') || '{}') };
-          window.testStore = data; window.testRequests = [];
-          const listeners = [];
-          const storage = {
-            async get(keys) { return keys == null ? { ...data } : Object.fromEntries((Array.isArray(keys) ? keys : typeof keys === 'string' ? [keys] : Object.keys(keys)).map(k => [k, data[k]])); },
-            async set(values) { Object.assign(data, values); listeners.forEach(fn => fn(Object.fromEntries(Object.entries(values).map(([k, v]) => [k, { newValue: v }])), 'local')); },
-            async remove(keys) { for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key]; },
-          };
-          window.chrome = window.browser = {
-            storage: { local: storage, onChanged: { addListener: fn => listeners.push(fn) } },
-            runtime: { getURL: path => `${location.origin}/src/${build}/${path}`, getManifest: () => ({ version }), onMessage: { addListener() {} }, sendMessage(msg, callback) {
-              window.testRequests.push(msg);
-              const result = msg.action === 'get_providers' ? { providers: { llamacpp: { label: 'llama.cpp', category: 'local', baseUrl: 'http://localhost:8080/v1', model: 'local-model', configured: true }, openai: { label: 'OpenAI', category: 'cloud', apiKey: '', model: 'gpt-4o-mini' } }, active: 'llamacpp' }
-                : msg.action === 'test_system_one' ? { success: true, model: msg.settings?.decisionModel || 'jev-1.13.0', visionVerified: msg.settings?.decisionProvider === 'openrouter' }
-                  : msg.action === 'list_decision_models' ? { success: true, models: [{ id: 'perplexity/pplx-decider-v1.1-27b', name: 'Decider', supportsVision: true, inputRate: .02, outputRate: 0 }, { id: 'another/publisher', name: 'Another decision model', supportsVision: false, inputRate: .1, outputRate: 0 }] } : {};
-              callback?.(result); return Promise.resolve(result);
-            } },
-            commands: { getAll: async () => [] }, tabs: { create: async () => ({}) },
-          };
-        }, { lang, build, version });
-        await page.goto(`${origin}/src/${build}/src/ui/settings.html#multimodal`);
+        await page.addInitScript(installStub, { lang, build, version });
+        await page.goto(`${origin}/src/${build}/src/ui/providers.html#decision`);
         await page.waitForFunction(() => document.querySelector('#system-one-heading')?.textContent.trim() === (localStorage.getItem('wbLocale') === 'tr' ? 'Karar modelleri' : 'Decision models'));
-        assert.equal(await page.locator('[data-tab="multimodal"]').textContent(), lang === 'tr' ? 'Yardımcı Modeller' : 'Assistive Models');
-        assert.equal(await page.locator('[data-panel="multimodal"]').isVisible(), true, 'existing deep link opens Assistive Models');
+        assert.equal(await page.locator('[data-tab="decision"]').textContent(), lang === 'tr' ? 'Karar' : 'Decision');
+        assert.equal(await page.locator('[data-panel="decision"]').isVisible(), true, 'providers.html#decision opens the Decision tab');
         assert.equal(await page.locator('.tab-btn').evaluateAll(buttons => buttons.every(button => {
           const range = document.createRange();
           range.selectNodeContents(button);
@@ -80,19 +104,18 @@ try {
             && button.scrollWidth <= button.clientWidth + 1;
         })), true, 'every tab label fits on one line without clipping');
         await page.screenshot({ animations: 'disabled', path: `${output}/${build}-${lang}-${width}-tabs.png` });
-        assert.equal(await page.locator('[data-panel="providers"] #system-one-card').count(), 0);
-        assert.deepEqual(await page.locator('[data-panel="multimodal"] > .provider-card').evaluateAll(cards => cards.map(card => card.id)), [
-          'vision-card', 'image-budget-card', 'redaction-card', 'transcription-card', 'image-gen-card', 'system-one-card', 'safesocial-card',
-        ]);
-        // A label change must retain saved tab selection as well as old deep links.
+        assert.deepEqual(await page.locator('.tab-panel > .provider-card').evaluateAll(cards => cards.map(card => [card.closest('.tab-panel').dataset.panel, card.id])), [
+          ['vision', 'vision-card'], ['speech', 'transcription-card'], ['generative', 'image-gen-card'], ['decision', 'system-one-card'], ['safesocial', 'safesocial-card'],
+        ], 'each assistive model has its own Providers tab');
+        // Providers remembers its last tab across reloads.
         await page.evaluate(() => history.replaceState(null, '', location.pathname));
-        await page.locator('[data-tab="providers"]').click();
+        await page.locator('[data-tab="llm"]').click();
         await page.reload();
-        assert.equal(await page.locator('[data-panel="providers"]').isVisible(), true);
-        await page.locator('[data-tab="multimodal"]').click();
+        assert.equal(await page.locator('[data-panel="llm"]').isVisible(), true);
+        await page.locator('[data-tab="decision"]').click();
         await page.reload();
         await page.waitForFunction(() => document.querySelector('#system-one-heading')?.textContent.trim() === (localStorage.getItem('wbLocale') === 'tr' ? 'Karar modelleri' : 'Decision models'));
-        assert.equal(await page.locator('[data-panel="multimodal"]').isVisible(), true);
+        assert.equal(await page.locator('[data-panel="decision"]').isVisible(), true);
         assert.equal(await page.evaluate(() => testRequests.filter(r => r.action === 'test_system_one').length), 0);
         const statusText = () => page.locator('#decision-auto-status').textContent();
         const tr = lang === 'tr';
@@ -133,11 +156,11 @@ try {
         await page.locator('#toggle-system-one-classifications').locator('..').click();
         await page.locator('#decision-provider').selectOption('typesafe');
         await page.locator('#system-one-api-key').fill('synthetic-test-key');
-        await page.locator('[data-tab="providers"]').click();
+        await page.locator('[data-tab="llm"]').click();
         const search = page.locator('#providers .provider-search input');
         if (await search.count()) await search.fill('No matching provider');
         assert.equal(await page.locator('#providers .provider-filter-bar').count(), 1);
-        await page.locator('[data-tab="multimodal"]').click();
+        await page.locator('[data-tab="decision"]').click();
         assert.equal(await page.locator('#system-one-api-key').inputValue(), 'synthetic-test-key');
         await page.locator('#btn-save-system-one').click();
         await page.waitForFunction(() => testStore.typesafeApiKey === 'synthetic-test-key');
@@ -197,7 +220,7 @@ try {
         }
         assert.equal(await page.locator('#decision-configured').isVisible(), false);
         if (build === 'chrome' && lang === 'en' && width === 1280 && process.env.JEV_DOC_SCREENSHOTS) {
-          await captureDocScreenshots(page, process.env.JEV_DOC_SCREENSHOTS);
+          await captureDocScreenshots(browser, build, process.env.JEV_DOC_SCREENSHOTS);
         }
         if (build === 'chrome') {
           const switches = { systemOneDoneEnabled: true, systemOneWatchEnabled: false, systemOneCompletionEnabled: true,

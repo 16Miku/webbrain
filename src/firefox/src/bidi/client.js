@@ -152,7 +152,7 @@ export class FirefoxBidiClient {
   async captureFullPage(tabId, beforeCapture = async () => {}) {
     const epoch = this.connectionEpoch;
     const settings = await this.api.storage.local.get('firefoxBidiEnabled');
-    if (!settings.firefoxBidiEnabled) throw new Error('Full-page screenshots require Firefox trusted automation. Install the local companion and enable it in Settings → General → Advanced.');
+    if (!settings.firefoxBidiEnabled) throw new Error('Full-page screenshots require Firefox trusted automation. Install the local companion and enable it in Settings → Advanced.');
     if (this.captures.has(tabId)) throw new Error('A full-page screenshot is already in progress for this tab');
     const owner = {};
     this.captures.set(tabId, owner);

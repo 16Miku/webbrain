@@ -2879,10 +2879,11 @@ test('research escalation is opt-in, tier-complete when enabled, and absent othe
     const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
     const backgroundJs = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const toggleIndex = settingsHtml.indexOf('id="toggle-research-escalation"');
-    const advancedIndex = settingsHtml.indexOf('<details class="advanced-settings">');
+    const general = settingsPanelHtml(settingsHtml, 'display');
+    const generalIndex = general.indexOf('id="toggle-research-escalation"');
     const toggleTag = settingsHtml.slice(settingsHtml.lastIndexOf('<input', toggleIndex), settingsHtml.indexOf('>', toggleIndex) + 1);
-    assert.ok(toggleIndex >= 0 && toggleIndex < advancedIndex, `${label}: research escalation should be the final non-Advanced General setting`);
-    assert.doesNotMatch(settingsHtml.slice(toggleIndex, advancedIndex), /class="setting-row"/, `${label}: another General setting appears after research escalation`);
+    assert.ok(generalIndex >= 0, `${label}: research escalation should be a General setting`);
+    assert.doesNotMatch(general.slice(generalIndex), /class="setting-row"/, `${label}: another General setting appears after research escalation`);
     assert.doesNotMatch(toggleTag, /\bchecked\b/, `${label}: research escalation toggle should render off by default`);
     assert.match(settingsJs, /researchEscalationToggle\.checked = stored\.researchEscalationEnabled === true/, `${label}: missing opt-in settings hydration`);
     assert.match(backgroundJs, /researchEscalationEnabled = stored\.researchEscalationEnabled === true/, `${label}: missing opt-in runtime hydration`);
@@ -14851,18 +14852,48 @@ test('trace UTF-8 budget helpers keep multibyte truncation inside byte limits', 
   }
 });
 
-test('trace lossless tier: settings UI wires the toggle and the disclosure', () => {
+test('trace tiers: one Record traces switch sets both tiers and discloses full request details', () => {
   for (const browser of ['chrome', 'firefox']) {
     const settingsHtml = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/settings.html`), 'utf8');
     const settingsJs = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/settings.js`), 'utf8');
     const enLocale = fs.readFileSync(path.join(ROOT, `src/${browser}/src/ui/locales/en.js`), 'utf8');
-    assert.match(settingsHtml, /id="toggle-lossless-tracing"/, `${browser}: settings HTML toggle missing`);
-    assert.match(settingsHtml, /st\.display\.lossless_tracing\.label/, `${browser}: settings HTML label key missing`);
-    assert.match(settingsJs, /losslessTracingToggle\.checked = stored\.losslessTrace === true/, `${browser}: settings JS does not load the key`);
-    assert.match(settingsJs, /storage\.local\.set\(\{ losslessTrace: losslessTracingToggle\.checked \}\)/, `${browser}: settings JS does not persist the key`);
-    assert.match(settingsJs, /losslessTracingToggle\.disabled = tracingToggle\.checked !== true/, `${browser}: lossless toggle is not gated on tracing`);
-    assert.match(enLocale, /st\.display\.lossless_tracing\.label/, `${browser}: en locale label missing`);
+    assert.doesNotMatch(settingsHtml, /toggle-lossless-tracing|st\.display\.lossless_tracing/, `${browser}: full request details should not have a switch of their own`);
+    assert.match(settingsHtml, /<section class="tab-panel" data-panel="advanced"[\s\S]*?id="toggle-tracing"/, `${browser}: Record traces should live in Advanced`);
+    assert.match(settingsJs, /tracingToggle\.checked = stored\.tracingEnabled === true/, `${browser}: settings JS does not load the switch`);
+    assert.match(settingsJs, /storage\.local\.set\(\{ tracingEnabled: enabled, losslessTrace: enabled \}\)/, `${browser}: the switch should turn both trace tiers on or off together`);
+    assert.doesNotMatch(settingsJs, /losslessTracingToggle/, `${browser}: settings JS still wires a separate full-details switch`);
+    assert.doesNotMatch(enLocale, /st\.display\.lossless_tracing/, `${browser}: en locale keeps the removed switch strings`);
+    assert.match(enLocale, /including the full prompts, messages and tool schemas of each LLM request/, `${browser}: en locale should disclose full request details`);
     assert.match(enLocale, /writes your conversation content locally/, `${browser}: en locale disclosure missing`);
+  }
+});
+
+test('trace tiers: a profile with the tiers set apart is lined up once, then left alone', async () => {
+  for (const [label, prefix, apiName] of [['chrome', 'src/chrome', 'chrome'], ['firefox', 'src/firefox', 'browser']]) {
+    const bg = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
+    const start = bg.indexOf("const TRACE_TIERS_MERGED_KEY = 'traceTiersMergedV1';");
+    const end = bg.indexOf('mergeTraceTiers().catch(() => {});', start);
+    assert.ok(start > -1 && end > start, `${label}: trace tier migration not found`);
+    const migrate = async (stored) => {
+      const api = {
+        storage: {
+          local: {
+            get: async (keys) => Object.fromEntries(keys.filter(key => key in stored).map(key => [key, stored[key]])),
+            set: async (values) => { Object.assign(stored, values); },
+          },
+        },
+      };
+      await vm.runInNewContext(`(async () => { ${bg.slice(start, end)} await mergeTraceTiers(); })()`, { [apiName]: api });
+      return stored;
+    };
+    assert.deepEqual(await migrate({ tracingEnabled: true }), { tracingEnabled: true, losslessTrace: true, traceTiersMergedV1: true },
+      `${label}: traces without full details should start recording full details`);
+    assert.deepEqual(await migrate({ tracingEnabled: false, losslessTrace: true }), { tracingEnabled: false, losslessTrace: false, traceTiersMergedV1: true },
+      `${label}: full details without traces should be turned off`);
+    assert.deepEqual(await migrate({}), { traceTiersMergedV1: true },
+      `${label}: a profile that never recorded traces should be left as it is`);
+    assert.deepEqual(await migrate({ tracingEnabled: true, losslessTrace: false, traceTiersMergedV1: true }), { tracingEnabled: true, losslessTrace: false, traceTiersMergedV1: true },
+      `${label}: tiers set apart after the one-time merge should keep that choice`);
   }
 });
 
@@ -15811,7 +15842,7 @@ test('trace recording remains opt-in by default', () => {
     const locale = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/locales/en.js'), 'utf8');
     assert.match(settings, /tracingToggle\.checked = stored\.tracingEnabled === true/, `${label}: unset tracing preference should render disabled`);
     assert.match(recorder, /return tracingEnabled === true;/, `${label}: recorder should require an explicit opt-in`);
-    assert.match(locale, /Off by default because it adds disk writes per step/i, `${label}: tracing disclosure does not match the opt-in default`);
+    assert.match(locale, /Off by default because it writes your conversation content locally/i, `${label}: tracing disclosure does not match the opt-in default`);
   }
 });
 
@@ -15927,6 +15958,18 @@ test('import_config_patch background handler merges against live provider storag
     assert.equal(fullResponse.settingCount, configTransfer.CONFIG_STORAGE_KEYS.length, `${label}: full import should still write every setting`);
     assert.equal(stored.themeMode, 'system', `${label}: full import should still restore omitted settings to defaults`);
     assert.equal(stored.providers.webbrain_cloud.baseUrl, 'https://stale-export.example/v1', `${label}: full import intentionally keeps its replace-everything semantics`);
+
+    // Exports carry Record traces only; full request details follow it on a
+    // restore, as they do in Settings, while a provisioning patch sets its own.
+    const traced = JSON.stringify({ schema: 'webbrain-config/1', settings: { tracingEnabled: true } });
+    stored.losslessTrace = false;
+    const tracedResponse = await handler({ action: 'import_config', json: traced }, api, helpers);
+    assert.equal(tracedResponse.settingCount, configTransfer.CONFIG_STORAGE_KEYS.length, `${label}: the derived trace tier is not an imported setting`);
+    assert.equal(stored.tracingEnabled, true, `${label}: a restored export should restore Record traces`);
+    assert.equal(stored.losslessTrace, true, `${label}: full request details should follow a restored Record traces`);
+    stored.losslessTrace = false;
+    await handler({ action: 'import_config_patch', json: traced }, api, helpers);
+    assert.equal(stored.losslessTrace, false, `${label}: a provisioning patch keeps its own trace tiers`);
   }
   assert.deepEqual(
     { response: results[1].response, stored: results[1].stored },
@@ -16196,7 +16239,7 @@ test('/export --config and /import JSON or --file are wired in both browsers', (
     assert.match(panel, /command\.value === '\/import' && action === 'file'[\s\S]*?requestConfigurationFile\(tabId\)/, `${label}: file config import handler missing`);
     assert.match(panel, /input\.accept = '\.json,application\/json'[\s\S]*?file\.text\(\)/, `${label}: file picker should read JSON files`);
     assert.match(bg, /case 'export_config':[\s\S]*?createConfigExport\(stored/, `${label}: background config export missing`);
-    assert.match(bg, /case 'import_config':[\s\S]*?parseConfigImport\(msg\.json\)[\s\S]*?storage\.local\.set\(settings\)[\s\S]*?providerManager\.load\(\)/, `${label}: background config import and live provider reload missing`);
+    assert.match(bg, /case 'import_config':[\s\S]*?parseConfigImport\(msg\.json\)[\s\S]*?storage\.local\.set\(msg\.action === 'import_config' && Object\.hasOwn\(settings, 'tracingEnabled'\)[\s\S]*?: settings\);[\s\S]*?providerManager\.load\(\)/, `${label}: background config import and live provider reload missing`);
     assert.match(bg, /case 'import_config_patch':[\s\S]*?parseConfigPatchImport\(msg\.json\)[\s\S]*?mergeConfigPatchSettings/, `${label}: background sparse config import and provider merge missing`);
   }
 });
@@ -22055,10 +22098,10 @@ test('skill preview and history render pipe tables with parity and preserve form
 
 test('settings and history HTML define table styling in Chrome and Firefox', () => {
   for (const prefix of ['src/chrome', 'src/firefox']) {
-    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settingsCss = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.css'), 'utf8');
     const historyHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/history.html'), 'utf8');
-    assert.match(settingsHtml, /\.skill-preview-rendered \.markdown-table-wrapper\s*\{/, `${prefix}: settings missing .markdown-table-wrapper`);
-    assert.match(settingsHtml, /\.skill-preview-rendered table\s*\{/, `${prefix}: settings missing table styles`);
+    assert.match(settingsCss, /\.skill-preview-rendered \.markdown-table-wrapper\s*\{/, `${prefix}: settings missing .markdown-table-wrapper`);
+    assert.match(settingsCss, /\.skill-preview-rendered table\s*\{/, `${prefix}: settings missing table styles`);
     assert.match(historyHtml, /\.message-text \.markdown-table-wrapper\s*\{/, `${prefix}: history missing .markdown-table-wrapper`);
     assert.match(historyHtml, /\.message-text table\s*\{/, `${prefix}: history missing table styles`);
   }
@@ -22093,10 +22136,10 @@ test('skill preview and history render pipe tables with parity and preserve form
 
 test('settings and history HTML define table styling in Chrome and Firefox', () => {
   for (const prefix of ['src/chrome', 'src/firefox']) {
-    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settingsCss = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.css'), 'utf8');
     const historyHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/history.html'), 'utf8');
-    assert.match(settingsHtml, /\.skill-preview-rendered \.markdown-table-wrapper\s*\{/, `${prefix}: settings missing .markdown-table-wrapper`);
-    assert.match(settingsHtml, /\.skill-preview-rendered table\s*\{/, `${prefix}: settings missing table styles`);
+    assert.match(settingsCss, /\.skill-preview-rendered \.markdown-table-wrapper\s*\{/, `${prefix}: settings missing .markdown-table-wrapper`);
+    assert.match(settingsCss, /\.skill-preview-rendered table\s*\{/, `${prefix}: settings missing table styles`);
     assert.match(historyHtml, /\.message-text \.markdown-table-wrapper\s*\{/, `${prefix}: history missing .markdown-table-wrapper`);
     assert.match(historyHtml, /\.message-text table\s*\{/, `${prefix}: history missing table styles`);
   }
@@ -35010,13 +35053,17 @@ test('every WebBrain page signs its header with the extension logo', () => {
       assert.match(html, new RegExp(`<h1><img class="brand-mark" src="\\.\\./\\.\\./icons/icon128\\.png"[^>]*><span data-i18n="${key.replace('.', '\\.')}"></span></h1>`),
         `${browser}: ${page} does not show the WebBrain logo beside a separately translated title`);
     }
-    const settings = fs.readFileSync(path.join(uiDir, 'settings.html'), 'utf8');
-    assert.match(settings, /<h1><img class="brand-mark" src="\.\.\/\.\.\/icons\/icon128\.png"[^>]*><a id="settings-title-link"[^>]*data-i18n="st\.title"><\/a><\/h1>/,
-      `${browser}: Settings does not show the WebBrain logo beside its title link`);
-    for (const page of ['settings.html', 'history.html', 'traces.html']) {
+    // Settings, Providers and Permissions share settings.css and one header.
+    for (const [page, key] of [['settings.html', 'st.title'], ['providers.html', 'st.providers_page.title'], ['permissions.html', 'st.permissions_page.title']]) {
       const html = fs.readFileSync(path.join(uiDir, page), 'utf8');
-      assert.match(html, /\.brand-mark \{[\s\S]*?width: \d+px;/,
-        `${browser}: ${page} ships the title logo without sizing it`);
+      assert.match(html, new RegExp(`<h1><img class="brand-mark" src="\\.\\./\\.\\./icons/icon128\\.png"[^>]*><a id="settings-title-link"[^>]*data-i18n="${key.replaceAll('.', '\\.')}"></a></h1>`),
+        `${browser}: ${page} does not show the WebBrain logo beside its title link`);
+      assert.match(html, /<link rel="stylesheet" href="settings\.css">/, `${browser}: ${page} does not load the shared settings styles`);
+    }
+    for (const file of ['settings.css', 'history.html', 'traces.html']) {
+      const source = fs.readFileSync(path.join(uiDir, file), 'utf8');
+      assert.match(source, /\.brand-mark \{[\s\S]*?width: \d+px;/,
+        `${browser}: ${file} ships the title logo without sizing it`);
     }
   }
 });
@@ -35030,6 +35077,7 @@ test('Apocalypse download tracker follows every offline transfer from its pages 
     'emergency-pdf.html',
     'emergency-communication.html',
     'settings.html',
+    'providers.html',
   ];
   for (const browser of ['chrome', 'firefox']) {
     const uiDir = path.join(ROOT, `src/${browser}/src/ui`);
@@ -38041,9 +38089,7 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
     assert.match(pageHtml, /\.apocalypse-icon \{[^}]*font-size:48px/,
       `${prefix}: Apocalypse Mode page icon is too small for the page header`);
     assert.match(settingsHtml, /id="apocalypse-mode-status"[^>]*class="visually-hidden"/, `${prefix}: header gateway status is not accessible`);
-    const advancedStart = settingsHtml.indexOf('<details class="advanced-settings">');
-    const advancedEnd = settingsHtml.indexOf('</details>', advancedStart);
-    assert.doesNotMatch(settingsHtml.slice(advancedStart, advancedEnd), /apocalypse-mode/, `${prefix}: Apocalypse Mode is still listed under General > Advanced`);
+    assert.doesNotMatch(settingsPanelHtml(settingsHtml, 'advanced'), /apocalypse-mode/, `${prefix}: Apocalypse Mode is still listed under Advanced`);
     assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8'), /apocalypseModeLink\.dataset\.enabled/, `${prefix}: header gateway does not reflect the enabled state`);
     assert.match(pageScript, /elements\['installed-count'\]\.textContent[\s\S]*?elements\['archive-bytes'\]\.textContent[\s\S]*?elements\['storage-usage'\]\.textContent/,
       `${prefix}: header stats are not populated from the current archive snapshot`);
@@ -47183,6 +47229,12 @@ test('sidepanel cloud cost allowance stop offers a persisted one-click $10 bump'
       },
       `${label}: total allowance error should expose its active limit without the Settings-only instruction`,
     );
+    // The agent now names the Budgets tab; restored chats keep the older wording.
+    assert.deepEqual(
+      parseCostAllowanceError(totalError.replace('in Settings.', 'in Settings → Budgets.')),
+      parseCostAllowanceError(totalError),
+      `${label}: the Budgets instruction is stripped like the older Settings one`,
+    );
     assert.equal(parseCostAllowanceError(sessionError)?.scope, 'session', `${label}: session allowance errors should target the session guard`);
     assert.equal(parseCostAllowanceError(sessionError)?.limitUsd, 4, `${label}: session allowance limit should parse as a number`);
     assert.equal(parseCostAllowanceError('ordinary provider failure'), null, `${label}: unrelated failures should keep normal rendering`);
@@ -47439,7 +47491,38 @@ test('verbose terminal rendering does not append a normalized streamed answer tw
   }
 });
 
-function runSettingsTabsScript(script, { saved = null, hash = '' } = {}) {
+// One tab panel of a settings page, from its <section> to the next panel.
+function settingsPanelHtml(html, name) {
+  const start = html.search(new RegExp(`<section class="tab-panel(?: active)?" data-panel="${name}"`));
+  if (start === -1) return '';
+  const next = html.indexOf('<section class="tab-panel', start + 1);
+  return html.slice(start, next === -1 ? html.indexOf('<script', start) : next);
+}
+
+// The tab bar of settings.html or providers.html as settings-tabs.js sees it:
+// its data attributes, its tabs, and which panels the settings search covers.
+function settingsTabsFixture(html) {
+  const nav = html.match(/<nav class="tabs"([^>]*)>/)?.[1] || '';
+  const attr = (name) => {
+    const match = nav.match(new RegExp(`\\s${name}=(?:'([^']*)'|"([^"]*)")`));
+    return match ? (match[1] ?? match[2]) : undefined;
+  };
+  const dataset = {};
+  for (const [key, name] of [['defaultTab', 'data-default-tab'], ['storageKey', 'data-storage-key'], ['movedTabs', 'data-moved-tabs'], ['tabAliases', 'data-tab-aliases']]) {
+    const value = attr(name);
+    if (value !== undefined) dataset[key] = value;
+  }
+  return {
+    dataset,
+    tabs: [...html.matchAll(/<button class="tab-btn[^"]*"[^>]*\sdata-tab="([^"]+)"/g)].map((match) => match[1]),
+    panels: [...html.matchAll(/<section class="tab-panel[^"]*" data-panel="([^"]+)"([^>]*)>/g)]
+      .map((match) => ({ name: match[1], search: /\sdata-search(?=[\s>]|$)/.test(match[2]) })),
+    hasSearch: html.includes('id="settings-search"'),
+  };
+}
+
+function runSettingsTabsScript(script, html, { saved = null, hash = '', searchValue = '' } = {}) {
+  const fixture = settingsTabsFixture(html);
   function makeClassList() {
     return {
       active: false,
@@ -47448,18 +47531,27 @@ function runSettingsTabsScript(script, { saved = null, hash = '' } = {}) {
       },
     };
   }
-  const buttons = ['display', 'providers', 'multimodal', 'memory', 'skills', 'permissions'].map((name) => ({
+  const buttons = fixture.tabs.map((name) => ({
     dataset: { tab: name },
     classList: makeClassList(),
     addEventListener(type, handler) {
       if (type === 'click') this.clickHandler = handler;
     },
   }));
-  const panels = ['display', 'providers', 'multimodal', 'memory', 'skills', 'permissions'].map((name) => ({
+  const panels = fixture.panels.map(({ name, search }) => ({
     dataset: { panel: name },
     classList: makeClassList(),
+    hasAttribute: (attribute) => attribute === 'data-search' && search,
   }));
+  const searchBox = { hidden: false };
+  const searchInput = {
+    value: searchValue,
+    events: [],
+    dispatchEvent(event) { this.events.push(event.type); },
+  };
   const selectorCalls = [];
+  const replaced = [];
+  const href = `chrome-extension://webbrain/src/ui/page.html${hash}`;
   const context = {
     document: {
       querySelectorAll(selector) {
@@ -47473,112 +47565,153 @@ function runSettingsTabsScript(script, { saved = null, hash = '' } = {}) {
         if (selector.includes('[data-tab="')) {
           throw new Error(`unsafe tab selector: ${selector}`);
         }
+        if (selector === 'nav.tabs') return { dataset: fixture.dataset };
+        return null;
+      },
+      getElementById(id) {
+        if (!fixture.hasSearch) return null;
+        if (id === 'settings-search') return searchBox;
+        if (id === 'input-general-search') return searchInput;
         return null;
       },
     },
     localStorage: {
+      key: null,
       value: saved,
       getItem() {
         return this.value;
       },
-      setItem(_key, value) {
+      setItem(key, value) {
+        this.key = key;
         this.value = value;
       },
     },
-    location: { hash },
+    location: { hash, href, replace(url) { replaced.push(url); } },
+    URL,
+    Event: class { constructor(type) { this.type = type; } },
   };
   vm.runInNewContext(script, context, { timeout: 1000 });
-  return {
+  const state = () => ({
     activeButton: buttons.find((button) => button.classList.active)?.dataset.tab,
     activePanel: panels.find((panel) => panel.classList.active)?.dataset.panel,
+    storageKey: context.localStorage.key,
     stored: context.localStorage.value,
-    selectorCalls,
+    searchHidden: searchBox.hidden,
+    searchValue: searchInput.value,
+    searchEvents: [...searchInput.events],
+    selectorCalls: [...selectorCalls],
+    replaced: [...replaced],
+  });
+  return {
+    ...state(),
+    click(name) {
+      buttons.find((button) => button.dataset.tab === name).clickHandler();
+      return state();
+    },
   };
 }
 
 test('settings tabs validate saved and hash tab names without selector interpolation', () => {
-  for (const [label, tabsRel] of [
-    ['chrome', 'src/chrome/src/ui/settings-tabs.js'],
-    ['firefox', 'src/firefox/src/ui/settings-tabs.js'],
-  ]) {
-    const script = fs.readFileSync(path.join(ROOT, tabsRel), 'utf8');
-    const malformed = runSettingsTabsScript(script, { saved: 'display"] .boom', hash: '#bad"]' });
-    assert.equal(malformed.activeButton, 'providers', `${label}: malformed tab values should fall back to providers`);
-    assert.equal(malformed.activePanel, 'providers', `${label}: malformed tab values should activate provider panel`);
-    assert.deepEqual(malformed.selectorCalls, ['.tab-btn', '.tab-panel'], `${label}: dynamic tab values must not be interpolated into selectors`);
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const script = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings-tabs.js'), 'utf8');
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const providersHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/providers.html'), 'utf8');
 
-    const valid = runSettingsTabsScript(script, { saved: 'display', hash: '#multimodal' });
-    assert.equal(valid.activeButton, 'multimodal', `${label}: valid hash should override saved tab`);
-    assert.equal(valid.activePanel, 'multimodal', `${label}: valid hash should activate its panel`);
-    assert.equal(valid.stored, 'multimodal', `${label}: activated hash tab should persist`);
+    const malformed = runSettingsTabsScript(script, settingsHtml, { saved: 'display"] .boom', hash: '#bad"]' });
+    assert.equal(malformed.activeButton, 'display', `${label}: malformed tab values should fall back to General`);
+    assert.equal(malformed.activePanel, 'display', `${label}: malformed tab values should activate the General panel`);
+    assert.deepEqual(malformed.selectorCalls, ['nav.tabs', '.tab-btn', '.tab-panel'], `${label}: dynamic tab values must not be interpolated into selectors`);
+    assert.equal(malformed.storageKey, 'webbrainSettingsTab', `${label}: Settings remembers its own last tab`);
 
-    const memory = runSettingsTabsScript(script, { saved: 'display', hash: '#memory' });
+    for (const tab of ['budgets', 'captcha', 'advanced']) {
+      const opened = runSettingsTabsScript(script, settingsHtml, { saved: 'display', hash: `#${tab}` });
+      assert.equal(opened.activeButton, tab, `${label}: #${tab} should override the saved tab`);
+      assert.equal(opened.activePanel, tab, `${label}: #${tab} should activate its panel`);
+      assert.equal(opened.stored, tab, `${label}: the #${tab} tab should persist`);
+      assert.equal(opened.searchHidden, false, `${label}: the search box covers ${tab}`);
+    }
+
+    const memory = runSettingsTabsScript(script, settingsHtml, { saved: 'display', hash: '#memory' });
     assert.equal(memory.activeButton, 'memory', `${label}: memory hash should activate Memory tab`);
     assert.equal(memory.activePanel, 'memory', `${label}: memory hash should activate Memory panel`);
     assert.equal(memory.stored, 'memory', `${label}: activated Memory tab should persist`);
+    assert.equal(memory.searchHidden, true, `${label}: the search box is hidden on Memory`);
 
-    const removed = runSettingsTabsScript(script, { saved: 'profile', hash: '#captcha' });
-    assert.equal(removed.activeButton, 'providers', `${label}: removed profile/captcha tabs should fall back to providers`);
-    assert.equal(removed.activePanel, 'providers', `${label}: removed profile/captcha panels should not activate`);
+    const removed = runSettingsTabsScript(script, settingsHtml, { saved: 'profile', hash: '#profile' });
+    assert.equal(removed.activeButton, 'display', `${label}: a removed Profile tab should fall back to General`);
+    assert.equal(removed.activePanel, 'display', `${label}: a removed Profile panel should not activate`);
+
+    for (const [hash, target] of [['providers', 'providers.html#llm'], ['multimodal', 'providers.html#vision'], ['vision', 'providers.html#vision'], ['permissions', 'permissions.html']]) {
+      const moved = runSettingsTabsScript(script, settingsHtml, { saved: 'display', hash: `#${hash}` });
+      assert.deepEqual(moved.replaced, [`chrome-extension://webbrain/src/ui/${target}`], `${label}: settings.html#${hash} should open ${target}`);
+      assert.equal(moved.activeButton, undefined, `${label}: a moved tab should not activate a Settings tab`);
+    }
+
+    const searching = runSettingsTabsScript(script, settingsHtml, { saved: 'display', searchValue: 'timeout' });
+    const picked = searching.click('skills');
+    assert.equal(picked.searchValue, '', `${label}: picking a tab ends the search`);
+    assert.deepEqual(picked.searchEvents, ['input'], `${label}: ending the search refilters the rows`);
+    assert.equal(picked.activeButton, 'skills', `${label}: the picked tab opens`);
+
+    const providers = runSettingsTabsScript(script, providersHtml);
+    assert.equal(providers.activeButton, 'llm', `${label}: Providers opens on LLM`);
+    assert.equal(providers.storageKey, 'webbrainProvidersTab', `${label}: Providers remembers its own last tab`);
+    for (const [hash, tab] of [['multimodal', 'vision'], ['providers', 'llm'], ['decision', 'decision'], ['safesocial', 'safesocial']]) {
+      const linked = runSettingsTabsScript(script, providersHtml, { saved: 'speech', hash: `#${hash}` });
+      assert.equal(linked.activeButton, tab, `${label}: providers.html#${hash} should open ${tab}`);
+      assert.deepEqual(linked.replaced, [], `${label}: providers.html#${hash} stays on Providers`);
+    }
+    assert.equal(runSettingsTabsScript(script, providersHtml, { saved: 'speech' }).activeButton, 'speech', `${label}: Providers restores its last tab`);
+    assert.equal(runSettingsTabsScript(script, providersHtml, { saved: 'advanced' }).activeButton, 'llm', `${label}: a Settings tab name does not open on Providers`);
   }
 });
 
-test('settings organizes General Basic and Advanced controls while keeping profile and memory controls in Memory', () => {
-  for (const [label, htmlRel] of [
-    ['chrome', 'src/chrome/src/ui/settings.html'],
-    ['firefox', 'src/firefox/src/ui/settings.html'],
-  ]) {
-    const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
-    assert.doesNotMatch(html, /data-tab="profile"/, `${label}: Profile should not be a top-level tab`);
-    assert.doesNotMatch(html, /data-tab="captcha"/, `${label}: CAPTCHA should not be a top-level tab`);
-    assert.doesNotMatch(html, /data-panel="profile"/, `${label}: Profile should not be a top-level panel`);
-    assert.doesNotMatch(html, /data-panel="captcha"/, `${label}: CAPTCHA should not be a top-level panel`);
+test('settings organizes General, Budgets, CAPTCHA and Advanced tabs while keeping profile and memory controls in Memory', () => {
+  for (const [label, prefix] of [['chrome', 'src/chrome'], ['firefox', 'src/firefox']]) {
+    const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const css = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.css'), 'utf8');
+    const { tabs, panels } = settingsTabsFixture(html);
+    assert.deepEqual(tabs, ['display', 'budgets', 'memory', 'skills', 'captcha', 'cloudbridge', 'advanced'], `${label}: Settings tabs`);
+    assert.deepEqual(panels.map((panel) => panel.name), tabs, `${label}: one panel per tab, in tab order`);
+    assert.deepEqual(panels.filter((panel) => panel.search).map((panel) => panel.name), ['display', 'budgets', 'captcha', 'advanced'], `${label}: the search covers General, Budgets, CAPTCHA and Advanced`);
+    assert.doesNotMatch(html, /data-(?:tab|panel)="(?:profile|providers|multimodal|permissions)"/, `${label}: Profile, Providers, Assistive Models and Permissions are not Settings tabs`);
+    assert.doesNotMatch(html, /<details class="advanced-settings">/, `${label}: Advanced is a tab, not a drawer inside General`);
 
-    const displayStart = html.indexOf('<section class="tab-panel" data-panel="display"');
-    assert.notEqual(displayStart, -1, `${label}: General panel missing`);
-    const providersStart = html.indexOf('<section class="tab-panel active" data-panel="providers"', displayStart);
-    assert.notEqual(providersStart, -1, `${label}: providers panel should follow General panel`);
-    const displayPanel = html.slice(displayStart, providersStart);
-    const memoryStart = html.indexOf('<section class="tab-panel" data-panel="memory"', providersStart);
-    assert.notEqual(memoryStart, -1, `${label}: Memory panel missing`);
-    const skillsStart = html.indexOf('<section class="tab-panel" data-panel="skills"', memoryStart);
-    assert.notEqual(skillsStart, -1, `${label}: Skills panel should follow Memory panel`);
-    const memoryPanel = html.slice(memoryStart, skillsStart);
-    const advancedStart = displayPanel.indexOf('<details class="advanced-settings">');
-    assert.notEqual(advancedStart, -1, `${label}: General panel should include collapsed Advanced settings`);
+    const general = settingsPanelHtml(html, 'display');
+    const budgets = settingsPanelHtml(html, 'budgets');
+    const memory = settingsPanelHtml(html, 'memory');
+    const captcha = settingsPanelHtml(html, 'captcha');
+    const advanced = settingsPanelHtml(html, 'advanced');
+    for (const [name, panel] of [['General', general], ['Budgets', budgets], ['CAPTCHA', captcha], ['Advanced', advanced]]) {
+      assert.match(panel, /<h2 class="search-panel-heading" data-i18n="st\.tab\.[a-z]+"><\/h2>\s*<div id="[a-z-]+" data-search-scope>/, `${label}: ${name} rows sit in one search scope under the tab name`);
+    }
 
-    const searchStart = displayPanel.indexOf('id="input-general-search"');
-    assert.notEqual(searchStart, -1, `${label}: General panel should include a search input`);
-    assert.ok(searchStart < advancedStart, `${label}: General search should stay above settings and Advanced`);
-    assert.match(html, /\.settings-search::before \{[\s\S]*?-webkit-mask: url\("data:image\/svg\+xml,[\s\S]*?\}/, `${label}: settings search fields should show a magnifier icon`);
-    assert.match(html, /\.settings-search input \{[\s\S]*?padding: 10px 12px 10px 36px;/, `${label}: General search text should clear the magnifier icon`);
-    assert.match(html, /\.provider-search input \{[\s\S]*?padding: 8px 10px 8px 34px;/, `${label}: provider search text should clear the magnifier icon`);
-    assert.match(displayPanel, /id="general-search-empty" hidden/, `${label}: General search should include an empty-result state`);
-    assert.match(html, /\.general-search-hidden \{ display: none !important; \}/, `${label}: General search should force-hide filtered rows/cards`);
+    const searchStart = html.indexOf('id="input-general-search"');
+    assert.ok(searchStart > html.indexOf('<nav class="tabs"') && searchStart < html.indexOf('<section class="tab-panel'), `${label}: the search box sits between the tabs and the panels`);
+    assert.match(html, /id="general-search-empty" hidden/, `${label}: search should include an empty-result state`);
+    assert.match(css, /\.settings-search::before \{[\s\S]*?-webkit-mask: url\("data:image\/svg\+xml,[\s\S]*?\}/, `${label}: settings search fields should show a magnifier icon`);
+    assert.match(css, /\.settings-search input \{[\s\S]*?padding: 10px 12px 10px 36px;/, `${label}: search text should clear the magnifier icon`);
+    assert.match(css, /\.provider-search input \{[\s\S]*?padding: 8px 10px 8px 34px;/, `${label}: provider search text should clear the magnifier icon`);
+    assert.match(css, /\.general-search-hidden \{ display: none !important; \}/, `${label}: search should force-hide filtered rows/cards`);
+    assert.match(css, /body\.settings-searching \.tab-panel\[data-search\] \{ display: block; \}/, `${label}: a search shows every searchable tab at once`);
+    assert.match(css, /body\.settings-searching \.tab-panel:not\(\[data-search\]\) \{ display: none; \}/, `${label}: a search hides the tabs it does not cover`);
 
-    const basicIds = [
-      'select-language',
-      'select-auto-screenshot',
-      'input-cost-session-limit',
-      'input-cost-total-limit',
-    ];
-    const basicIndexes = basicIds.map((id) => displayPanel.indexOf(`id="${id}"`));
-    basicIndexes.forEach((index, position) => {
-      assert.notEqual(index, -1, `${label}: ${basicIds[position]} should remain in General`);
-      assert.ok(index < advancedStart, `${label}: ${basicIds[position]} should stay in Basic`);
-    });
-    const requestedTailIds = [
-      'range-request-timeout',
-      'select-auto-screenshot',
-      'input-cost-session-limit',
-      'input-cost-total-limit',
-    ];
-    const requestedTailIndexes = requestedTailIds.map((id) => displayPanel.indexOf(`id="${id}"`));
-    assert.ok(
-      requestedTailIndexes.every((index, position) => position === 0 || requestedTailIndexes[position - 1] < index),
-      `${label}: Auto screenshot and both Cloud allowances should follow LLM request timeout`,
-    );
+    // General keeps everyday preferences; the side panel picks the language and zoom.
+    for (const id of ['select-theme', 'input-download-directory', 'select-plan-before-act-mode', 'select-auto-screenshot']) {
+      assert.ok(general.includes(`id="${id}"`), `${label}: ${id} should stay in General`);
+    }
+    assert.doesNotMatch(html, /id="select-language"|id="settings-ui-scale-|st\.display\.(?:language|ui_scale)\./, `${label}: language and zoom are chosen in the side panel`);
 
+    // Budgets holds the spend, time, step and image limits, in this order.
+    const budgetIds = ['input-cost-session-limit', 'input-cost-total-limit', 'range-clarify-timeout', 'select-clarify-timeout-policy', 'range-max-steps', 'range-request-timeout', 'select-image-detail', 'select-max-screenshots', 'select-max-image-dimension'];
+    const budgetIndexes = budgetIds.map((id) => budgets.indexOf(`id="${id}"`));
+    budgetIndexes.forEach((index, position) => assert.notEqual(index, -1, `${label}: ${budgetIds[position]} should live in Budgets`));
+    assert.ok(budgetIndexes.every((index, position) => position === 0 || budgetIndexes[position - 1] < index), `${label}: Budgets keeps the requested order`);
+    for (const id of budgetIds) {
+      assert.equal(html.indexOf(`id="${id}"`), html.indexOf(`id="${id}"`, html.indexOf('data-panel="budgets"')), `${label}: ${id} appears only in Budgets`);
+    }
+
+    assert.ok(captcha.includes('id="captcha-card"'), `${label}: CAPTCHA has its own tab`);
     for (const id of [
       'toggle-tracing',
       'toggle-verbose',
@@ -47587,47 +47720,51 @@ test('settings organizes General Basic and Advanced controls while keeping profi
       'toggle-notify-sound',
       'toggle-completion-confetti',
       'toggle-screenshot-fallback',
-      'range-clarify-timeout',
+      'toggle-screenshot-redaction',
       'toggle-site-adapters',
       'toggle-api-mutation-observer',
       'toggle-strict-secret',
       'toggle-allow-local-network',
       'toggle-help-improve',
-      'captcha-card',
     ]) {
-      const index = displayPanel.indexOf(`id="${id}"`);
-      assert.notEqual(index, -1, `${label}: ${id} should remain in General`);
-      assert.ok(index > advancedStart, `${label}: ${id} should be inside Advanced`);
+      assert.ok(advanced.includes(`id="${id}"`), `${label}: ${id} should live in Advanced`);
     }
     for (const id of ['profile-card', 'user-memory-card', 'toggle-user-memory-form']) {
-      assert.equal(displayPanel.indexOf(`id="${id}"`), -1, `${label}: ${id} should move out of General`);
-      assert.notEqual(memoryPanel.indexOf(`id="${id}"`), -1, `${label}: ${id} should live in Memory`);
+      assert.ok(memory.includes(`id="${id}"`), `${label}: ${id} should live in Memory`);
+      assert.ok(!general.includes(`id="${id}"`), `${label}: ${id} should stay out of General`);
     }
-    assert.equal(memoryPanel.indexOf('id="captcha-card"'), -1, `${label}: CAPTCHA should stay out of Memory`);
+    assert.ok(!memory.includes('id="captcha-card"'), `${label}: CAPTCHA should stay out of Memory`);
 
-    for (const id of [
-      'select-theme',
-      'input-download-directory',
-      'select-plan-before-act-mode',
-      'range-max-steps',
-      'range-request-timeout',
-    ]) {
-      const index = displayPanel.indexOf(`id="${id}"`);
-      assert.notEqual(index, -1, `${label}: ${id} should remain visible in General`);
-      assert.ok(index < advancedStart, `${label}: ${id} should stay outside Advanced`);
-    }
-
-    assert.equal(displayPanel.indexOf('id="btn-open-traces"'), -1, `${label}: redundant Open Traces setting should be removed`);
-    assert.equal(displayPanel.indexOf('id="btn-open-history"'), -1, `${label}: redundant Chat History setting should be removed`);
-    assert.match(displayPanel, /data-i18n-html="st\.display\.tracing\.desc_html"/, `${label}: Record traces should retain its inline Traces-page link`);
-    const localeDir = path.join(ROOT, path.dirname(htmlRel), 'locales');
+    assert.equal(html.indexOf('id="btn-open-traces"'), -1, `${label}: redundant Open Traces setting should be removed`);
+    assert.equal(html.indexOf('id="btn-open-history"'), -1, `${label}: redundant Chat History setting should be removed`);
+    assert.match(advanced, /data-i18n-html="st\.display\.tracing\.desc_html"/, `${label}: Record traces should retain its inline Traces-page link`);
+    const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
     for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const localeSource = fs.readFileSync(path.join(localeDir, filename), 'utf8');
       const tracingDescription = localeSource.match(/["']st\.display\.tracing\.desc_html["']\s*:[^\n]+/)?.[0] || '';
       assert.match(tracingDescription, /href=\\?["']traces\.html/, `${label}/${filename}: Record traces should link to the Traces page`);
     }
 
-    assert.match(html, /\.advanced-settings \{[\s\S]*?margin: 22px 0 32px;[\s\S]*?padding: 16px 0 22px;[\s\S]*?border-bottom: 1px solid var\(--border\);/, `${label}: Advanced should have bottom padding and a clear lower boundary`);
+    assert.match(html, /<a id="providers-page-link" class="support-link" href="providers\.html">/, `${label}: the header links to Providers`);
+  }
+});
+
+test('auto-screenshot defaults to On navigation in Settings, the agent and portable config', async () => {
+  const marker = /\s*[(（][^()（）]+[)）]\s*$/;
+  for (const [label, prefix, AgentClass, configTransfer] of [
+    ['chrome', 'src/chrome', AgentCh, ConfigTransferCh],
+    ['firefox', 'src/firefox', AgentFx, ConfigTransferFx],
+  ]) {
+    const settings = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    assert.match(settings, /autoScreenshotSelect\.value = stored\.autoScreenshot \|\| 'navigation';/, `${label}: Settings shows On navigation when nothing is stored`);
+    assert.equal(new AgentClass({}).autoScreenshot, 'navigation', `${label}: the agent captures on navigation until a choice is loaded`);
+    assert.equal(configTransfer.DEFAULT_CONFIG_SETTINGS.autoScreenshot, 'navigation', `${label}: a config import without the setting restores On navigation`);
+    const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
+    for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
+      const locale = (await import(pathToFileURL(path.join(localeDir, filename)).href)).default;
+      assert.match(locale['st.display.auto_screenshot.navigation'], marker, `${label}/${filename}: On navigation is labelled as the default`);
+      assert.doesNotMatch(locale['st.display.auto_screenshot.state_change'], marker, `${label}/${filename}: On state change is no longer labelled as the default`);
+    }
   }
 });
 
@@ -47736,21 +47873,18 @@ test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Co
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
 
     assert.match(html, /id="toggle-help-improve" checked/, `${label}: Help Improve should be on by default`);
-    const helpImproveIndex = html.indexOf('id="toggle-help-improve"');
-    const advancedIndex = html.indexOf('<details class="advanced-settings">');
-    const advancedEnd = html.indexOf('</details>', advancedIndex);
-    assert.ok(advancedIndex > -1 && helpImproveIndex > advancedIndex && helpImproveIndex < advancedEnd, `${label}: Help Improve should live in General > Advanced`);
+    assert.ok(settingsPanelHtml(html, 'advanced').includes('id="toggle-help-improve"'), `${label}: Help Improve should live in Settings > Advanced`);
     assert.match(settings, /helpImproveToggle\.checked = stored\.helpImproveWebBrain !== false/, `${label}: missing default-on storage hydration`);
     assert.match(settings, new RegExp(`${runtime}\\.storage\\.local\\.set\\(\\{ helpImproveWebBrain: helpImproveToggle\\.checked \\}\\)`), `${label}: setting should persist`);
     assert.match(locale, /'st\.display\.help_improve\.label': 'Help Improve WebBrain'/, `${label}: setting label missing`);
     assert.match(locale, /On by default[^']*<u>Local-model and bring-your-own API requests are only collected by WebBrain from providers where you turn on “Share queries for research”\.<\/u>/, `${label}: setting disclosure should explain and emphasize its default and scope`);
-    assert.match(locale, /Turn it off in General → Advanced to exclude future Compass interactions/, `${label}: provider disclosure should point to General > Advanced`);
+    assert.match(locale, /Turn it off in Settings → Advanced to exclude future Compass interactions/, `${label}: provider disclosure should point to Settings > Advanced`);
     for (const localeFile of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
       const translatedLocale = fs.readFileSync(path.join(localeDir, localeFile), 'utf8');
       const translatedMessages = (await import(pathToFileURL(path.join(localeDir, localeFile)).href)).default;
       assert.match(translatedLocale, /["']st\.display\.help_improve\.desc_html["']\s*:\s*["'][^\n]*<u>[^<]+<\/u>/, `${label}/${localeFile}: translated local/BYO exclusion should be underlined`);
       const providerDisclosure = translatedMessages['st.providers.webbrain_data_use.body'] || '';
-      assert.ok(providerDisclosure.includes(translatedMessages['st.display.advanced']), `${label}/${localeFile}: provider disclosure should name the localized Advanced section`);
+      assert.ok(providerDisclosure.includes(translatedMessages['st.tab.advanced']), `${label}/${localeFile}: provider disclosure should name the localized Advanced tab`);
       assert.match(providerDisclosure, /<u>[^<]+<\/u>/, `${label}/${localeFile}: provider local/BYO exclusion should also be underlined`);
       // Research-sharing consent must be understandable in the selected locale:
       // label, hint, and confirmation must be translated (not English).
@@ -47771,18 +47905,19 @@ test('Help Improve WebBrain is default-on in Advanced, persisted, and reloads Co
   }
 });
 
-test('settings General search filters visible and Advanced controls', () => {
+test('settings search filters rows across General, Budgets, CAPTCHA and Advanced', () => {
   for (const [label, settingsRel] of [
     ['chrome', 'src/chrome/src/ui/settings.js'],
     ['firefox', 'src/firefox/src/ui/settings.js'],
   ]) {
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
-    assert.match(settings, /const generalSearchInput = document\.getElementById\('input-general-search'\);/, `${label}: General search input should be wired`);
-    assert.match(settings, /const searchableNodes = \[item, \.\.\.Array\.from\(item\.querySelectorAll/, `${label}: General search should index the root row/card id as well as child controls`);
-    assert.match(settings, /function setGeneralSearchHidden\(item, hidden\) \{[\s\S]*?item\.hidden = hidden;[\s\S]*?item\.classList\.toggle\('general-search-hidden', hidden\);[\s\S]*?\}/, `${label}: General search should force-hide matching DOM nodes with a class`);
-    assert.match(settings, /function filterGeneralSettings\(\) \{[\s\S]*?const query = normalizeGeneralSearchText\(generalSearchInput\.value\);[\s\S]*?setGeneralSearchHidden\(item, !!query && !matches\);[\s\S]*?setGeneralSearchHidden\(advancedSettings, !!query && advancedMatches === 0\);[\s\S]*?if \(query && advancedMatches > 0\) advancedSettings\.open = true;[\s\S]*?generalSearchEmpty\.hidden = !query \|\| \(visibleMatches \+ advancedMatches\) > 0;[\s\S]*?\}/, `${label}: General search should filter rows, hide empty Advanced, and auto-open matched Advanced results`);
-    assert.match(settings, /generalSearchInput\.addEventListener\('input', filterGeneralSettings\);/, `${label}: General search should filter as the user types`);
-    assert.match(settings, /await setLocale\(languageSelect\.value\);[\s\S]*?filterGeneralSettings\(\);[\s\S]*?renderProviders\(\);/, `${label}: language changes should reapply the active General search`);
+    assert.match(settings, /const generalSearchInput = document\.getElementById\('input-general-search'\);/, `${label}: the search input should be wired`);
+    assert.match(settings, /const searchableNodes = \[item, \.\.\.Array\.from\(item\.querySelectorAll/, `${label}: search should index the root row/card id as well as child controls`);
+    assert.match(settings, /function setGeneralSearchHidden\(item, hidden\) \{[\s\S]*?item\.hidden = hidden;[\s\S]*?item\.classList\.toggle\('general-search-hidden', hidden\);[\s\S]*?\}/, `${label}: search should force-hide filtered DOM nodes with a class`);
+    assert.match(settings, /const searchPanels = Array\.from\(document\.querySelectorAll\('\.tab-panel\[data-search\]'\)\);/, `${label}: search should cover the tabs marked data-search`);
+    assert.match(settings, /function filterGeneralSettings\(\) \{[\s\S]*?const query = normalizeGeneralSearchText\(generalSearchInput\.value\);[\s\S]*?document\.body\.classList\.toggle\('settings-searching', !!query\);[\s\S]*?const scope = panel\.querySelector\('\[data-search-scope\]'\) \|\| panel;[\s\S]*?setGeneralSearchHidden\(item, !!query && !matches\);[\s\S]*?setGeneralSearchHidden\(panel, !!query && panelMatches === 0\);[\s\S]*?generalSearchEmpty\.hidden = !query \|\| totalMatches > 0;[\s\S]*?\}/, `${label}: search should filter rows in every covered tab, hide tabs without matches, and report an empty result`);
+    assert.match(settings, /generalSearchInput\?\.addEventListener\('input', filterGeneralSettings\);/, `${label}: search should filter as the user types`);
+    assert.match(settings, /document\.addEventListener\('wb-locale-changed', \(\) => \{[\s\S]*?filterGeneralSettings\(\);[\s\S]*?renderProviders\(\);/, `${label}: a language change from the side panel should reapply the active search`);
   }
 });
 
@@ -47846,12 +47981,9 @@ test('automatic WebBrain tab grouping has a portable user opt-out', async () => 
     const configModule = await import(pathToFileURL(path.join(ROOT, prefix, 'src/config-transfer.js')).href);
 
     assert.match(html, /id="toggle-auto-group-tabs"[^>]*aria-labelledby="auto-group-tabs-label"[^>]*aria-describedby="auto-group-tabs-desc"[^>]*checked/, `${label}: Advanced should expose an accessible default-on toggle`);
-    const advancedStart = html.indexOf('<div class="advanced-settings-body">');
-    const advancedEnd = html.indexOf('</details>', advancedStart);
-    const toggleIndex = html.indexOf('id="toggle-auto-group-tabs"');
     assert.ok(
-      advancedStart >= 0 && toggleIndex > advancedStart && toggleIndex < advancedEnd,
-      `${label}: tab grouping should live inside Settings > General > Advanced`,
+      settingsPanelHtml(html, 'advanced').includes('id="toggle-auto-group-tabs"'),
+      `${label}: tab grouping should live in Settings > Advanced`,
     );
     assert.match(html, /data-i18n="st\.display\.auto_group_tabs\.label"[\s\S]*?data-i18n="st\.display\.auto_group_tabs\.desc"/, `${label}: tab-group setting should be localized`);
     assert.match(settings, /autoGroupTabsToggle\.checked = stored\[AUTO_GROUP_TABS_KEY\] !== false/, `${label}: unset storage should hydrate as enabled`);
@@ -47994,7 +48126,7 @@ test('sidepanel composer permission switch drives the Settings gate in both buil
     assert.match(block, /else addPersistentSlashMessage\(systemHtml\(t\('sp\.permissions\.disabled_html'\)\)\)/, `${label}: turning prompts off should post the command's persistent notice`);
     assert.doesNotMatch(block, /resolvePendingPermissionPrompt/, `${label}: the composer switch must never approve a pending permission card`);
     assert.match(block, /permissionGateWriteQueue = write\.catch\(\(\) => renderPermissionGateControl\(\)\)/, `${label}: a failed write should restore the stored state`);
-    assert.match(block, /settings\.html#permissions/, `${label}: the popover should open Settings at the site permission list`);
+    assert.match(block, /runtime\.getURL\('src\/ui\/permissions\.html'\)/, `${label}: the popover should open the site permission page`);
     assert.match(panel, /if \(changes\[PERMISSION_GATE_KEY\]\) \{[\s\S]*?renderPermissionGateControl\(\);/, `${label}: changes made in Settings or by the command should update the switch`);
     assert.match(panel, /storage\.local\.get\(\[PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY\]\)\.then\([\s\S]*?renderPermissionGateControl\(\);/, `${label}: the stored gate should hydrate the switch`);
     assert.match(panel, /if \(closeUiScalePopover\(\)\) \{[\s\S]*?\}\n\s*if \(closePermissionGatePopover\(\)\) \{[\s\S]*?permissionGateBtn\?\.focus\(\);\s*return;/, `${label}: Escape should close the switch instead of aborting the active run`);
@@ -48057,18 +48189,10 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
     );
     assert.doesNotMatch(sidepanelCss, /max-height: min\(320px, 50vh\)/, `${label}: viewport clamps inside the zoomed body should divide the zoom back out`);
 
-    assert.match(settingsHtml, /data-i18n="st\.display\.ui_scale\.label"[\s\S]*?data-i18n="st\.display\.ui_scale\.desc"/, `${label}: settings should explain UI scale`);
-    assert.match(settingsHtml, /id="settings-ui-scale-decrease"[\s\S]*?id="settings-ui-scale-value"[\s\S]*?id="settings-ui-scale-increase"[\s\S]*?id="settings-ui-scale-reset"/, `${label}: settings should expose all scale controls`);
-    assert.doesNotMatch(settingsHtml, /data-i18n(?:-title|-aria-label)?="sp\.ui_scale\./, `${label}: settings should use settings-scoped localization keys`);
-    assert.match(settingsJs, /loadUiScale\([\s\S]*?storage\.local[\s\S]*?renderSettingsUiScale/, `${label}: settings should hydrate persisted scale`);
-    assert.match(settingsJs, /saveUiScale\([\s\S]*?storage\.local/, `${label}: settings controls should persist scale changes`);
-    assert.match(settingsJs, /changeSettingsUiScale\('decrease'\)\.catch\(\(\) => \{\}\)/, `${label}: settings scale writes should handle storage failures`);
-    assert.match(settingsJs, /await saveUiScale\([\s\S]*?renderSettingsUiScale/, `${label}: settings should render scale only after it is persisted`);
     assert.match(sidepanelJs, /await saveUiScale\([\s\S]*?renderSidepanelUiScale/, `${label}: sidepanel should render scale only after it is persisted`);
-    assert.match(settingsJs, /settingsUiScaleReady = false[\s\S]*?if \(!settingsUiScaleReady\) return/, `${label}: settings controls should wait for canonical scale hydration`);
-    assert.match(settingsJs, /settingsUiScaleWriteQueue = write\.catch/, `${label}: settings scale steps should be serialized so held buttons cannot collapse them`);
-    assert.match(settingsJs, /storage\.onChanged\.addListener\([\s\S]*?changes\[UI_SCALE_STORAGE_KEY\][\s\S]*?renderSettingsUiScale/, `${label}: settings should reflect scale changes made elsewhere`);
-    assert.match(settingsJs, /setLocale\([\s\S]*?refreshUiScaleShortcuts\(\)\.catch/, `${label}: settings should refresh the shortcut summary after locale changes`);
+    // The side panel owns the zoom; Settings does not repeat it.
+    assert.doesNotMatch(settingsHtml, /settings-ui-scale-|st\.display\.ui_scale\./, `${label}: Settings should leave UI scale to the side panel`);
+    assert.doesNotMatch(settingsJs, /ui-scale\.js|UiScale|UI_SCALE/, `${label}: Settings should not load or write the UI scale`);
 
     const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
     for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
@@ -48078,8 +48202,6 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
         'sp.ui_scale.decrease',
         'sp.ui_scale.increase',
         'sp.ui_scale.reset',
-        'st.display.ui_scale.label',
-        'st.display.ui_scale.desc',
       ]) {
         assert.ok(locale[key]?.trim(), `${label}/${filename}: missing ${key}`);
       }
@@ -48113,16 +48235,6 @@ test('dedicated UI scale commands are configurable and update the shared prefere
     const background = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     assert.match(background, /commands\.onCommand\.addListener\(async \(command[\s\S]*?uiScaleCommandAction\(command\)[\s\S]*?loadUiScale\([\s\S]*?storage\.local[\s\S]*?saveUiScale\([\s\S]*?nextUiScale/, `${label}: background commands should serialize updates to the shared scale preference`);
 
-    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
-    const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
-    assert.match(settingsHtml, /id="settings-ui-scale-shortcuts"[\s\S]*?id="settings-ui-scale-manage-shortcuts"/, `${label}: settings should show bindings and link to the native shortcut manager`);
-    assert.match(settingsJs, /commands\.getAll\(\)[\s\S]*?settingsUiScaleShortcuts/, `${label}: settings should read the active user-configured bindings`);
-    if (label === 'chrome') {
-      assert.match(settingsJs, /tabs\.create\(\{ url: 'chrome:\/\/extensions\/shortcuts' \}\)/, 'Chrome should open its shortcut manager');
-    } else {
-      assert.match(settingsJs, /commands\.openShortcutSettings\(\)/, 'Firefox should open its shortcut manager');
-    }
-
     const localeDir = path.join(ROOT, prefix, 'src/ui/locales');
     const englishLocale = (await import(pathToFileURL(path.join(localeDir, 'en.js')).href)).default;
     for (const filename of fs.readdirSync(localeDir).filter((name) => name.endsWith('.js'))) {
@@ -48132,14 +48244,6 @@ test('dedicated UI scale commands are configurable and update the shared prefere
         'sp.ui_scale.decrease',
         'sp.ui_scale.increase',
         'sp.ui_scale.reset',
-        'st.display.ui_scale.label',
-        'st.display.ui_scale.desc',
-        'st.display.ui_scale.decrease',
-        'st.display.ui_scale.increase',
-        'st.display.ui_scale.reset',
-        'st.display.ui_scale.shortcuts',
-        'st.display.ui_scale.shortcuts_none',
-        'st.display.ui_scale.manage_shortcuts',
       ]) {
         assert.ok(locale[key]?.trim(), `${label}/${filename}: missing ${key}`);
         if (filename !== 'en.js') {
@@ -48184,12 +48288,12 @@ test('Firefox browser shortcuts avoid reserved defaults and stay window-scoped',
   assert.match(sidepanel, /browser\.windows\.getCurrent\(\)[\s\S]*?shortcutCommandForWindow\(\s*changes\[SHORTCUT_COMMAND_STORAGE_KEY\](?:\?\.|\.)newValue,\s*windowId,?\s*\)/, 'Firefox sidebars should route commands only to their own browser window');
 });
 
-test('settings Providers tab has a search box beside provider filters', () => {
-  for (const [label, htmlRel, settingsRel, localeRel] of [
-    ['chrome', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/locales/en.js'],
-    ['firefox', 'src/firefox/src/ui/settings.html', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/locales/en.js'],
+test('the Providers page LLM tab has a search box beside provider filters', () => {
+  for (const [label, cssRel, settingsRel, localeRel] of [
+    ['chrome', 'src/chrome/src/ui/settings.css', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/locales/en.js'],
+    ['firefox', 'src/firefox/src/ui/settings.css', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/locales/en.js'],
   ]) {
-    const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
+    const html = fs.readFileSync(path.join(ROOT, cssRel), 'utf8');
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
     const locale = fs.readFileSync(path.join(ROOT, localeRel), 'utf8');
 
@@ -48235,17 +48339,16 @@ test('all locales translate provider search settings strings', () => {
   }
 });
 
-test('CAPTCHA guidance points to General Advanced settings', () => {
+test('CAPTCHA guidance points to the Settings CAPTCHA tab', () => {
   for (const [label, agentRel, toolsRel] of [
     ['chrome', 'src/chrome/src/agent/agent.js', 'src/chrome/src/agent/tools.js'],
     ['firefox', 'src/firefox/src/agent/agent.js', 'src/firefox/src/agent/tools.js'],
   ]) {
     const agent = fs.readFileSync(path.join(ROOT, agentRel), 'utf8');
     const tools = fs.readFileSync(path.join(ROOT, toolsRel), 'utf8');
-    const removedSettingsPath = new RegExp('Settings → ' + 'CAPTCHA');
-    assert.doesNotMatch(`${agent}\n${tools}`, removedSettingsPath, `${label}: CAPTCHA setup guidance should not point to removed tab`);
-    assert.match(agent, /Settings → General → Advanced/, `${label}: solve_captcha runtime errors should point to General Advanced`);
-    assert.match(tools, /Settings → General → Advanced/, `${label}: solve_captcha tool description should point to General Advanced`);
+    assert.doesNotMatch(`${agent}\n${tools}`, /CAPTCHA[^\n]*Settings → General → Advanced|Settings → General → Advanced[^\n]*CAPTCHA/, `${label}: CAPTCHA setup guidance should not point to the old General > Advanced drawer`);
+    assert.match(agent, /Save and enable a CAPTCHA provider key in Settings → CAPTCHA/, `${label}: solve_captcha runtime errors should point to the CAPTCHA tab`);
+    assert.match(tools, /compatible providers enabled in Settings → CAPTCHA/, `${label}: solve_captcha tool description should point to the CAPTCHA tab`);
     assert.match(agent, /const noDispatchFailure = \(error\) => \(\{[\s\S]*?dispatched: false,[\s\S]*?noDispatch: true,/, `${label}: solve_captcha preflight failures should opt out of completion debt`);
     assert.match(agent, /dispatched = true;\s*const result = await solveCaptcha/, `${label}: solve_captcha should mark the remote solve dispatch boundary`);
     assert.match(agent, /return dispatched\s*\? \{ success: false, dispatched: true, error \}\s*: noDispatchFailure\(error\);/, `${label}: solve_captcha errors should preserve whether dispatch occurred`);
@@ -49746,8 +49849,8 @@ test('WebBrain Compass branding stays distinct from the webbrain.cloud service',
 
 test('provider picker exposes both managed Compass tiers, configured providers, and More', () => {
   for (const [label, panelRel, settingsRel, settingsHtmlRel] of [
-    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html'],
-    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.html'],
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.css'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.css'],
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
@@ -49760,7 +49863,8 @@ test('provider picker exposes both managed Compass tiers, configured providers, 
     assert.match(panel, /get_providers', \{ includeSidepanelOnly: true \}/, `${label}: sidepanel should request its hidden managed provider`);
     assert.match(panel, /MORE_PROVIDERS_OPTION_VALUE = '__more_providers__'/, `${label}: More sentinel missing`);
     assert.match(panel, /providerSelect\.value = selectedProviderId;[\s\S]*?await openProvidersSettingsPage\(\);[\s\S]*?return;/, `${label}: More should restore the selection and stop before activation`);
-    assert.match(panel, /settings\.html#providers/, `${label}: More should deep-link to Providers settings`);
+    assert.match(panel, /async function openProvidersSettingsPage\(\) \{\s*const url = (?:chrome|browser)\.runtime\.getURL\('src\/ui\/providers\.html#llm'\);/, `${label}: More should open the LLM tab of the Providers page`);
+    assert.doesNotMatch(panel, /settings\.html#(?:providers|permissions|multimodal)/, `${label}: the side panel should not link to the old Settings tabs`);
     assert.match(panel, /if \(changes\.providers \|\| changes\.activeProvider\) \{[\s\S]*?loadProviders\(\)/, `${label}: picker should refresh when provider storage changes`);
 
     assert.match(settings, /const isConfigured = id !== 'webbrain_cloud' && config\.configured === true/, `${label}: Settings should derive Active from configured state`);
@@ -49883,8 +49987,8 @@ test('local provider API keys stay available in a collapsed advanced section', (
 
 test('settings warns on missing or short API keys and shows the Ollama localhost FAQ', () => {
   for (const [label, settingsRel, htmlRel, localeRel] of [
-    ['chrome', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/locales/en.js'],
-    ['firefox', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.html', 'src/firefox/src/ui/locales/en.js'],
+    ['chrome', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.css', 'src/chrome/src/ui/locales/en.js'],
+    ['firefox', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.css', 'src/firefox/src/ui/locales/en.js'],
   ]) {
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
     const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
@@ -50022,8 +50126,8 @@ test('Ollama vision settings copy is translated and mirrored in every locale', a
 
 test('settings exposes compatibility controls and native Anthropic custom request bodies', () => {
   for (const [label, settingsRel, htmlRel, PM] of [
-    ['chrome', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html', ProviderManagerCh],
-    ['firefox', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.html', ProviderManagerFx],
+    ['chrome', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.css', ProviderManagerCh],
+    ['firefox', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.css', ProviderManagerFx],
   ]) {
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
     const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
@@ -50268,8 +50372,8 @@ for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
 
 test('settings async test controls surface rejected background results', () => {
   for (const [label, settingsRel, htmlRel] of [
-    ['chrome', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.html'],
-    ['firefox', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.html'],
+    ['chrome', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/settings.css'],
+    ['firefox', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/settings.css'],
   ]) {
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
     const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
@@ -50288,7 +50392,7 @@ test('settings async test controls surface rejected background results', () => {
     assert.match(captchaSettings, /result\.textContent = message;/, `${label}: CAPTCHA status uses safe text`);
     assert.match(captchaSettings, /result\.style\.color = '';/, `${label}: CAPTCHA status resets inline color`);
 
-    const visionStart = settings.indexOf("btnTestVision.addEventListener('click', async () => {");
+    const visionStart = settings.indexOf("btnTestVision?.addEventListener('click', async () => {");
     assert.notEqual(visionStart, -1, `${label}: vision test handler missing`);
     const visionBody = settings.slice(visionStart, settings.indexOf('\n});\n\nbtnClearVision', visionStart) + 4);
     assert.match(
@@ -50543,7 +50647,7 @@ test('settings waits for immediate preference writes and theme persistence', () 
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
     assert.match(
       settings,
-      /themeSelect\.addEventListener\('change', async \(\) => \{[\s\S]*?await applyMode\(mode\);[\s\S]*?\}\);/,
+      /themeSelect\?\.addEventListener\('change', async \(\) => \{[\s\S]*?await applyMode\(mode\);[\s\S]*?\}\);/,
       `${label}: theme selection should await persistence`,
     );
     assert.match(
@@ -50570,10 +50674,12 @@ test('settings waits for immediate preference writes and theme persistence', () 
       /export async function setLocale\(code\) \{[\s\S]*?await api\?\.storage\?\.local\?\.set\?\.?\(\{ wbLocale: code \}\);[\s\S]*?applyDOMTranslations\(document\);/,
       `${label}: locale helper should await storage persistence before broadcasting`,
     );
+    // The language is picked in the side panel; Settings follows the change.
+    assert.doesNotMatch(settings, /languageSelect|setLocale\(/, `${label}: Settings should not offer its own language picker`);
     assert.match(
       settings,
-      /languageSelect\.addEventListener\('change', async \(\) => \{[\s\S]*?await setLocale\(languageSelect\.value\);[\s\S]*?renderSubtitle\(\);/,
-      `${label}: settings language change should await locale persistence`,
+      /document\.addEventListener\('wb-locale-changed', \(\) => \{[\s\S]*?renderSubtitle\(\);/,
+      `${label}: Settings should re-render its own text after a language change`,
     );
   }
 });
@@ -50586,7 +50692,7 @@ test('settings page awaits immediate preference writes before moving on', () => 
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
     assert.match(
       settings,
-      /verboseToggle\.addEventListener\('change', async \(\) => \{[\s\S]*?await (chrome|browser)\.storage\.local\.set\(\{ verboseMode: verboseToggle\.checked \}\)\.catch\(\(\) => \{\}\);[\s\S]*?\}\);/,
+      /verboseToggle\?\.addEventListener\('change', async \(\) => \{[\s\S]*?await (chrome|browser)\.storage\.local\.set\(\{ verboseMode: verboseToggle\.checked \}\)\.catch\(\(\) => \{\}\);[\s\S]*?\}\);/,
       `${label}: verbose toggle should await its storage write`,
     );
     assert.match(
@@ -65888,16 +65994,14 @@ test('MCP bridge settings are Chromium-only, live under Bridge, and keep setup g
   const firefoxBridgeSettings = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings-cloud-bridge.js'), 'utf8');
   const firefoxLocale = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/locales/en.js'), 'utf8');
 
-  const generalStart = chromeHtml.indexOf('<section class="tab-panel" data-panel="display"');
-  const providersStart = chromeHtml.indexOf('<section class="tab-panel active" data-panel="providers"', generalStart);
-  const generalPanel = chromeHtml.slice(generalStart, providersStart);
-  const advancedStart = generalPanel.indexOf('<details class="advanced-settings">');
-  const bridgePanelStart = chromeHtml.indexOf('<section class="tab-panel" data-panel="cloudbridge"');
-  const bridgePanel = chromeHtml.slice(bridgePanelStart);
-  assert.notEqual(generalStart, -1, 'Chrome General settings panel missing');
-  assert.notEqual(advancedStart, -1, 'Chrome General settings should include Advanced');
-  assert.notEqual(bridgePanelStart, -1, 'Chrome Bridge panel missing');
-  assert.doesNotMatch(generalPanel, /id="cloud-bridge-setting"|id="toggle-cloud-bridge"|id="input-cloud-bridge-url"|id="toggle-webmcp"/, 'Bridge controls should not live inside General > Advanced');
+  const chromeCss = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.css'), 'utf8');
+  const generalPanel = settingsPanelHtml(chromeHtml, 'display');
+  const advancedPanel = settingsPanelHtml(chromeHtml, 'advanced');
+  const bridgePanel = settingsPanelHtml(chromeHtml, 'cloudbridge');
+  assert.ok(generalPanel, 'Chrome General settings panel missing');
+  assert.ok(advancedPanel, 'Chrome Advanced settings panel missing');
+  assert.ok(bridgePanel, 'Chrome Bridge panel missing');
+  assert.doesNotMatch(generalPanel + advancedPanel, /id="cloud-bridge-setting"|id="toggle-cloud-bridge"|id="input-cloud-bridge-url"|id="toggle-webmcp"/, 'Bridge controls should not live in General or Advanced');
   assert.match(bridgePanel, /id="cb-enabled"/, 'Bridge tab should expose the bridge toggle');
   assert.match(bridgePanel, /id="cb-url"/, 'Bridge tab should expose the bridge URL');
   assert.match(bridgePanel, /data-cb-preset="ws:\/\/127\.0\.0\.1:17373\/extension"/, 'Bridge tab should offer the Cloud preset');
@@ -65913,7 +66017,7 @@ test('MCP bridge settings are Chromium-only, live under Bridge, and keep setup g
   assert.match(bridgePanel, /id="toggle-webmcp"\s+checked/, 'WebMCP must default on in Bridge tab');
   assert.match(bridgePanel, /id="cb-status"[^>]*role="status"[^>]*aria-live="polite"/, 'bridge status should be announced accessibly');
   assert.doesNotMatch(bridgePanel, /id="cb-enabled"\s+checked/, 'MCP must default off');
-  assert.match(chromeHtml, /prefers-reduced-motion: reduce[\s\S]*cloud-bridge-status/, 'waiting animation should respect reduced-motion preferences');
+  assert.match(chromeCss, /prefers-reduced-motion: reduce[\s\S]*cloud-bridge-status/, 'waiting animation should respect reduced-motion preferences');
   assert.match(chromeHtml, /href="https:\/\/www\.webbrain\.one\/docs\/mcp\/"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/, 'MCP setting should link to the setup guide safely');
 
   assert.doesNotMatch(firefoxHtml, /cloud-bridge-setting|toggle-cloud-bridge|input-cloud-bridge-url/, 'Firefox should not show unsupported bridge controls');
@@ -69210,21 +69314,26 @@ test('choosing an in-browser vision model never downloads and only reuses consen
   }
 });
 
-test('the in-browser vision choice stays Chrome-local and only Settings or Apocalypse Mode can change it', () => {
+test('the in-browser vision choice stays Chrome-local and only Providers or Apocalypse Mode can change it', () => {
   const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
-  assert.match(background, /case 'set_webgpu_vision_choice':[\s\S]*?src\/ui\/settings\.html[\s\S]*?src\/ui\/apocalypse-mode\.html[\s\S]*?setWebgpuVisionChoice\(msg\.choice\)/);
+  assert.match(background, /case 'set_webgpu_vision_choice':[\s\S]*?src\/ui\/providers\.html[\s\S]*?src\/ui\/apocalypse-mode\.html[\s\S]*?setWebgpuVisionChoice\(msg\.choice\)/);
+  const choiceCase = background.slice(background.indexOf("case 'set_webgpu_vision_choice':"), background.indexOf('setWebgpuVisionChoice(msg.choice)'));
+  assert.doesNotMatch(choiceCase, /src\/ui\/settings\.html/, 'the vision choice moved off the Settings page');
   for (const file of ['src/chrome/src/config-transfer.js', 'src/chrome/src/profile-sync.js', 'src/firefox/src/config-transfer.js', 'src/firefox/src/profile-sync.js']) {
     assert.doesNotMatch(fs.readFileSync(path.join(ROOT, file), 'utf8'), /webgpuVisionChoice|WEBGPU_VISION_CHOICE_KEY/,
       `${file}: the in-browser vision choice must not be exported or synced to Firefox`);
   }
-  const settingsHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
-  const choice = settingsHtml.slice(settingsHtml.indexOf('id="webgpu-vision-choice"'), settingsHtml.indexOf('</select>', settingsHtml.indexOf('id="webgpu-vision-choice"')));
+  const providersHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/providers.html'), 'utf8');
+  assert.ok(settingsPanelHtml(providersHtml, 'vision').includes('id="webgpu-vision-choice"'), 'the in-browser vision choice sits on the Vision tab');
+  const choice = providersHtml.slice(providersHtml.indexOf('id="webgpu-vision-choice"'), providersHtml.indexOf('</select>', providersHtml.indexOf('id="webgpu-vision-choice"')));
   assert.deepEqual([...choice.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), ['auto', 'bonsai', 'webbrain-vl', 'off']);
   const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
   const apocalypseChoice = apocalypseHtml.slice(apocalypseHtml.indexOf('id="vision-model-choice"'), apocalypseHtml.indexOf('</select>', apocalypseHtml.indexOf('id="vision-model-choice"')));
   assert.deepEqual([...apocalypseChoice.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), ['auto', 'bonsai', 'webbrain-vl', 'off']);
-  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings.html'), 'utf8'), /webgpu-vision-choice/,
-    'Firefox has no in-browser vision runtime to choose');
+  for (const page of ['settings.html', 'providers.html']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui', page), 'utf8'), /webgpu-vision-choice/,
+      `Firefox has no in-browser vision runtime to choose (${page})`);
+  }
 });
 
 test('Apocalypse text download fixes the Compass preset and avoids duplicate starts', async () => {
@@ -69709,8 +69818,8 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     'automatic screenshots must emit one readiness notice and continue without enrichment');
   assert.match(chromeAgent, /full_page_screenshot[\s\S]*?_recordVisionRouteTrace[\s\S]*?method: 'save_only'[\s\S]*?visionStatus[\s\S]*?_localVisionUnavailableResult/,
     'full-page screenshots must preserve save-only behavior while exposing unavailable vision');
-  assert.match(background, /case 'enable_webgpu_vision':[\s\S]*?settings\.html[\s\S]*?startExplicitVisionModelDownload/,
-    'only the dedicated Settings page may record first-time local-vision consent');
+  assert.match(background, /case 'enable_webgpu_vision':[\s\S]*?providers\.html[\s\S]*?startExplicitVisionModelDownload/,
+    'only the dedicated Providers page may record first-time local-vision consent');
   for (const [label, source] of [['chrome', chromeAgent], ['firefox', firefoxAgent]]) {
     assert.match(source, /VISION_SUB_CALL_TIMEOUT_MS = 90_000/,
       `${label}: dedicated vision timeout is missing`);
@@ -69878,8 +69987,8 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
       `aggregate model readiness is missing its ${state} state`);
   }
   assert.match(apocalypseScript, /get_webgpu_download_status/);
-  assert.match(apocalypseScript, /visionFallbackExplicitlyEnabled[\s\S]*?settings\.html#multimodal/,
-    'Apocalypse Mode must route first-time local-vision enablement to its dedicated Settings control');
+  assert.match(apocalypseScript, /visionFallbackExplicitlyEnabled[\s\S]*?providers\.html#vision/,
+    'Apocalypse Mode must route first-time local-vision enablement to the Vision tab of the Providers page');
   assert.match(apocalypseScript, /webgpu-text-download-state/);
   assert.match(settingsScript, /btn-webgpu-download/,
     'the Settings WebGPU card must offer its own download control so the chat error first path works');
@@ -69972,14 +70081,16 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(apocalypseCopy, /Local vision is optional and never downloads on its own/);
   assert.match(apocalypseDocs, /Apocalypse Mode\s+never enables or downloads a vision model/);
   assert.doesNotMatch(apocalypseDocs, /enabling Apocalypse Mode also enables[\s\S]{0,80}vision/i);
-  assert.match(englishLocale, /Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat[\s\S]*It does not replace your selected provider/);
+  assert.match(englishLocale, /Download it in Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat[\s\S]*It does not replace your selected provider/);
 
-  const settings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
-  const multimodal = settings.indexOf('data-panel="multimodal"');
-  const visionCard = settings.indexOf('id="vision-card"', multimodal);
-  const localToggle = settings.indexOf('id="btn-use-webgpu-vision"', visionCard);
-  const transcription = settings.indexOf('id="transcription-card"', localToggle);
-  assert.ok(multimodal >= 0 && visionCard > multimodal && localToggle > visionCard && transcription > localToggle);
+  const providersPage = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/providers.html'), 'utf8');
+  const visionTab = providersPage.indexOf('data-panel="vision"');
+  const visionCard = providersPage.indexOf('id="vision-card"', visionTab);
+  const localToggle = providersPage.indexOf('id="btn-use-webgpu-vision"', visionCard);
+  const speechTab = providersPage.indexOf('data-panel="speech"', localToggle);
+  const transcription = providersPage.indexOf('id="transcription-card"', speechTab);
+  assert.ok(visionTab >= 0 && visionCard > visionTab && localToggle > visionCard && speechTab > localToggle && transcription > speechTab,
+    'the local vision control sits on the Vision tab and transcription on the Speech tab');
 
   const vendorDir = path.join(ROOT, 'src/chrome/vendor/transformers');
   const transformersBundle = fs.readFileSync(path.join(vendorDir, 'transformers.web.js'), 'utf8');
@@ -75178,9 +75289,9 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
       /class="provider-filter-count">\$\{filterCounts\[f\.key\]\}/,
       `${label}: every provider filter must render its count pill`,
     );
-    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settingsCss = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.css'), 'utf8');
     assert.match(
-      settingsHtml,
+      settingsCss,
       /\.provider-filter-count\s*\{[\s\S]*?border-radius:\s*999px;/,
       `${label}: provider filter counts must use pill styling`,
     );
@@ -116380,10 +116491,10 @@ test('settings exposes custom skills tab and packaged skills resource directory'
   assert.match(privacyPolicy, /Local models and bring-your-own API:[\s\S]*never collected by WebBrain/i, 'privacy TL;DR should exclude local and BYO requests');
   assert.match(privacyPolicy, /WebBrain Compass:[\s\S]*evaluation, improvement, fine-tuning, and training/i, 'privacy TL;DR should disclose Cloud improvement use');
   assert.match(privacyPolicy, /Help Improve WebBrain[\s\S]*on by default/i, 'privacy policy should disclose the default-on setting');
-  assert.match(privacyPolicy, /Settings → General/, 'privacy policy should identify the opt-out path');
-  assert.doesNotMatch(privacyPolicy, /Help Improve WebBrain[^<\n]*Settings → General → Advanced|Settings → General → Advanced[^<\n]*Help Improve WebBrain/, 'privacy policy should not use the old Help Improve opt-out path');
-  assert.match(privacyDataFlow, /Help Improve WebBrain is available under Settings -> General and is/, 'data-flow documentation should identify the visible Help Improve location');
-  assert.doesNotMatch(privacyDataFlow, /Settings -> General -> Advanced/, 'data-flow documentation should not use the old Help Improve opt-out path');
+  assert.match(privacyPolicy, /Help Improve WebBrain<\/strong> in Settings → Advanced/, 'privacy policy should identify the opt-out path');
+  assert.doesNotMatch(privacyPolicy, /Settings → General/, 'privacy policy should not use the old Help Improve opt-out path');
+  assert.match(privacyDataFlow, /Help Improve WebBrain is available under Settings → Advanced and is/, 'data-flow documentation should identify the Help Improve location');
+  assert.doesNotMatch(privacyDataFlow, /Settings -> General|Settings → General → Advanced/, 'data-flow documentation should not use the old Help Improve opt-out path');
   assert.match(privacyPolicy, /Older WebBrain Compass clients[\s\S]*default-on setting[\s\S]*install the latest WebBrain client/i, 'privacy policy should disclose legacy default-on capture and the opt-out upgrade path');
   assert.match(privacyPolicy, /next new conversation[\s\S]*cannot make the current conversation eligible again/i, 'privacy policy should explain permanent conversation tainting');
   assert.match(privacyPolicy, /Screenshots and uploaded images may be processed for inference[\s\S]*strips image URLs, base64 media, and image bytes/i, 'privacy policy should distinguish inference processing from improvement storage');
@@ -116422,14 +116533,9 @@ test('settings exposes custom skills tab and packaged skills resource directory'
 
     assert.match(html, /data-tab="skills"/, `${label}: settings tab missing`);
     assert.match(html, /data-tab="memory"/, `${label}: Memory settings tab missing`);
-    const tabOrder = ['data-tab="multimodal"', 'data-tab="memory"', 'data-tab="skills"', 'data-tab="permissions"']
-      .map((needle) => html.indexOf(needle));
-    assert.ok(tabOrder.every((index) => index >= 0), `${label}: expected tab order markers missing`);
-    assert.ok(tabOrder[0] < tabOrder[1] && tabOrder[1] < tabOrder[2] && tabOrder[2] < tabOrder[3], `${label}: Memory should sit between Multimodal and Skills near the end`);
-    const panelOrder = ['data-panel="multimodal"', 'data-panel="memory"', 'data-panel="skills"', 'data-panel="permissions"']
-      .map((needle) => html.indexOf(needle));
-    assert.ok(panelOrder.every((index) => index >= 0), `${label}: expected panel order markers missing`);
-    assert.ok(panelOrder[0] < panelOrder[1] && panelOrder[1] < panelOrder[2] && panelOrder[2] < panelOrder[3], `${label}: Memory panel should sit between Multimodal and Skills near the end`);
+    const { tabs, panels } = settingsTabsFixture(html);
+    assert.deepEqual(tabs.slice(tabs.indexOf('budgets'), tabs.indexOf('captcha') + 1), ['budgets', 'memory', 'skills', 'captcha'], `${label}: Memory and Skills should sit between Budgets and CAPTCHA`);
+    assert.deepEqual(panels.map((panel) => panel.name), tabs, `${label}: panels should follow the tab order`);
     assert.match(html, /id="skill-url"/, `${label}: URL skill input missing`);
     assert.match(html, /id="skill-text"/, `${label}: raw skill textarea missing`);
     assert.match(html, /id="packaged-skills-list"/, `${label}: available packaged skills list missing`);
@@ -116440,7 +116546,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     assert.match(html, /id="skill-preview-raw"[^>]*tabindex="0"[^>]*hidden/, `${label}: raw skill preview should be available but hidden by default`);
     assert.match(html, /data-skill-preview-view="rendered"[^>]*aria-pressed="true"/, `${label}: rendered skill preview should be the default view`);
     assert.match(html, /data-skill-preview-view="raw"[^>]*aria-pressed="false"/, `${label}: raw skill source toggle missing`);
-    assert.match(html, /\.skill-name-button:focus-visible/, `${label}: skill preview names should have a visible keyboard focus state`);
+    assert.match(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.css'), 'utf8'), /\.skill-name-button:focus-visible/, `${label}: skill preview names should have a visible keyboard focus state`);
     assert.match(settingsJs, /CUSTOM_SKILLS_STORAGE_KEY/, `${label}: settings JS should persist custom skills`);
     assert.match(settingsJs, /PACKAGED_SKILL_SOURCES/, `${label}: settings JS should expose the packaged skill catalog`);
     assert.match(settingsJs, /function renderPackagedSkills\(\)/, `${label}: packaged skill renderer missing`);
@@ -132142,8 +132248,8 @@ test('message info toggles behaviorally through a semantic button, terminal repl
 
 test('Settings limits the subscription proxy guide to relevant provider cards', async () => {
   for (const [label, htmlRel, settingsRel, i18nRel] of [
-    ['chrome', 'src/chrome/src/ui/settings.html', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/i18n.js'],
-    ['firefox', 'src/firefox/src/ui/settings.html', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/i18n.js'],
+    ['chrome', 'src/chrome/src/ui/settings.css', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/i18n.js'],
+    ['firefox', 'src/firefox/src/ui/settings.css', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/i18n.js'],
   ]) {
     const html = fs.readFileSync(path.join(ROOT, htmlRel), 'utf8');
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
@@ -132588,9 +132694,9 @@ test('generate_image tool exists in both builds, full tier only, and settings UI
     assert.ok(!tools.COMPACT_TOOL_NAMES.has('generate_image') && !tools.MID_TOOL_NAMES.has('generate_image'),
       `${build}: generate_image should stay a full-tier tool`);
 
-    const settingsHtml = fs.readFileSync(path.join(ROOT, `src/${build}/src/ui/settings.html`), 'utf8');
+    const generativeTab = settingsPanelHtml(fs.readFileSync(path.join(ROOT, `src/${build}/src/ui/providers.html`), 'utf8'), 'generative');
     for (const id of ['image-gen-api-key', 'image-gen-model', 'btn-save-image-gen', 'btn-test-image-gen', 'btn-clear-image-gen', 'test-image-gen']) {
-      assert.ok(settingsHtml.includes(`id="${id}"`), `${build}: settings.html should contain #${id}`);
+      assert.ok(generativeTab.includes(`id="${id}"`), `${build}: the Generative tab of providers.html should contain #${id}`);
     }
 
     const settingsJs = fs.readFileSync(path.join(ROOT, `src/${build}/src/ui/settings.js`), 'utf8');

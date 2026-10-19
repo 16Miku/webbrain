@@ -1002,14 +1002,14 @@ export class Agent extends LoopDetector {
     // Permission/form-submit prompts are never timed out.
     // Loaded from chrome.storage.local in background.js (default 60).
     this.clarifyTimeoutSec = 60;
-    // Settings → General → "When a question times out": 'finish' (default)
+    // Settings → Budgets → "When a question times out": 'finish' (default)
     // keeps the task moving, 'safe' takes the safe default. See clarify-timeout.js.
     this.clarifyTimeoutPolicy = 'finish';
-    // Settings → General → "Strict checks" (off by default): quality
+    // Settings → Advanced → "Strict checks" (off by default): quality
     // guards advise instead of refusing. See guard-policy.js.
     this.strictGuards = false;
     this._guardRunStates = new Map();
-    // Settings → General → "Lean mode": 'auto' (default) | 'on' | 'off'. A run
+    // Settings → Advanced → "Lean mode": 'auto' (default) | 'on' | 'off'. A run
     // resolves it once at its start (_beginLeanRun) and keeps the answer in
     // _leanRuns, so its tools, prompt and guards agree. See lean-mode.js.
     this.leanMode = 'auto';
@@ -1043,8 +1043,9 @@ export class Agent extends LoopDetector {
     // never suppressed — see _manageContext.
     this._compactCooldown = new Map();
     // Auto-screenshot mode. 'off' | 'navigation' | 'state_change' | 'every_step'.
-    // Loaded from chrome.storage.local in background.js.
-    this.autoScreenshot = 'state_change';
+    // Loaded from chrome.storage.local in background.js. The default captures
+    // after the agent navigates, not after every click or keystroke.
+    this.autoScreenshot = 'navigation';
     // Whether to inject site adapter notes + universal cookie/paywall
     // guidance into the system prompt. Loaded from chrome.storage.local.
     // Default true. The adapter notes themselves still live in
@@ -1268,7 +1269,7 @@ export class Agent extends LoopDetector {
         try { await chrome.storage.local.set({ wb_permissions: grants }); } catch { /* best-effort */ }
       },
     });
-    // Master switch (Settings → Permissions): when the user turns OFF "Ask
+    // Master switch (permissions page and side panel): when the user turns OFF "Ask
     // before consequential actions", the permission gate is bypassed entirely
     // for fast/trusted usage. Default ON. Layers 1 & 2 (untrusted-content
     // wrapping + system-prompt contract) stay active regardless — they cost
@@ -1276,7 +1277,7 @@ export class Agent extends LoopDetector {
     this._skipPermissionGate = false;
     this._gateSettingLoaded = false;
     // Keep in-memory state in sync when storage changes out-of-band — a grant
-    // revoked in Settings, or the master switch toggled.
+    // revoked on the permissions page, or the master switch toggled.
     try {
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'local') return;
@@ -1713,8 +1714,8 @@ export class Agent extends LoopDetector {
     if (phase === 'error') return `Local vision is unavailable: ${status.error || 'download failed'}.`;
     // Auto stays off until Ternary Bonsai 2 2B Vision is downloaded, and no
     // choice downloads on its own, so both point at the one place to fix it.
-    if (phase === 'disabled') return 'Local vision is off. Choose an in-browser vision model in Settings → Assistive Models → Vision.';
-    return 'Local vision is not downloaded. Download it in Settings → Assistive Models → Vision.';
+    if (phase === 'disabled') return 'Local vision is off. Choose an in-browser vision model in Providers → Vision.';
+    return 'Local vision is not downloaded. Download it in Providers → Vision.';
   }
 
   _recordVisionStatusTrace(tabId, context, route) {
@@ -5679,7 +5680,7 @@ export class Agent extends LoopDetector {
     };
   }
 
-  // Completion guards under the default policy (Settings → General →
+  // Completion guards under the default policy (Settings → Advanced →
   // "Strict checks" off; see guard-policy.js). A completion guard refuses a
   // done or a plain final at most once per run, and that refusal is the
   // model's note. The next completion the same guard would refuse is
@@ -8789,7 +8790,7 @@ export class Agent extends LoopDetector {
 
   _costAllowanceMessage(scope, spentUsd, limitUsd) {
     const scopeText = scope === 'session' ? 'this session' : 'total cloud/router usage';
-    return `Cloud cost allowance reached: ${scopeText} is ${this._formatUsd(spentUsd)} against the ${this._formatUsd(limitUsd)} limit. Stopping before further cloud/router model calls. Increase or reset the allowance in Settings.`;
+    return `Cloud cost allowance reached: ${scopeText} is ${this._formatUsd(spentUsd)} against the ${this._formatUsd(limitUsd)} limit. Stopping before further cloud/router model calls. Increase or reset the allowance in Settings → Budgets.`;
   }
 
   // `pending`: which requests in flight to count at their most (see
@@ -11962,7 +11963,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Cost model: every auto-screenshot is not just image bytes in the context
    * (pruned to the last few messages) — it is also a *separate vision LLM call*
    * to describe it. On a run of repetitive actions (invite N people, like N
-   * posts, click through a list) the default `state_change` mode therefore paid
+   * posts, click through a list) the `state_change` mode therefore paid
    * one capture + one full model round trip per action, which is the largest
    * avoidable token and latency cost in a run.
    *
@@ -21959,7 +21960,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * wait forever). Invalid values fall back to the product default of 60s.
    * Stored slider values above 1200 mean Off.
    */
-  // Settings → General → "Strict checks": every quality guard blocks again.
+  // Settings → Advanced → "Strict checks": every quality guard blocks again.
   _guardStrict() {
     return this.strictGuards === true;
   }
@@ -22064,7 +22065,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * Settings → General → "Lean mode" for a run on `tabId` with `provider`
+   * Settings → Advanced → "Lean mode" for a run on `tabId` with `provider`
    * (the tab's active provider by default): 'on' and 'off' decide; 'auto'
    * turns it on only for a strong model on a cloud provider whose prompt tier
    * is Full (lean-mode.js). Act mode only: Ask, Dev and standalone chat keep
@@ -31818,7 +31819,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * 'once' lets this one step go ahead, anything else refuses it. Returns
    * 'once' | 'deny', or null when Stop or a correction cancelled the card.
    *
-   * A quality guard's card (`hard: false`) follows Settings → General: the
+   * A quality guard's card (`hard: false`) follows Settings → Budgets: the
    * clarify timeout (Off waits for the user, Instant answers at once) and
    * "When a question times out" ('finish' goes ahead, 'safe' does not). A
    * hard-class card never times out, like the recipient and deletion cards,
@@ -47188,7 +47189,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const stored = await chrome.storage.local.get(CAPTCHA_SETTINGS_KEYS);
         const providers = getCaptchaProviders(stored);
         if (!providers.length) {
-          return noDispatchFailure('No CAPTCHA solver is enabled with a valid API key. Save and enable a CAPTCHA provider key in Settings → General → Advanced, or ask the user to solve the CAPTCHA manually.');
+          return noDispatchFailure('No CAPTCHA solver is enabled with a valid API key. Save and enable a CAPTCHA provider key in Settings → CAPTCHA, or ask the user to solve the CAPTCHA manually.');
         }
 
         // Use the top-level URL as a fallback. Frame-aware detection below
@@ -54105,7 +54106,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (stagedVisionRoute && !stagedVisionRoute.provider && stagedVisionRoute.visionStatus) continue;
         if (!provider?.supportsVision && (!stagedVisionRoute?.provider || stagedVisionRoute.rawImage)) {
           const overrideHint = provider?.config?.visionMode != null
-            ? ' If automatic detection is unavailable or incorrect, set Vision capability to Force on in Settings.'
+            ? ' If automatic detection is unavailable or incorrect, set Vision capability to Force on in Providers.'
             : '';
           return {
             ok: false,
@@ -54151,7 +54152,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (!provider?.supportsVision && (!stagedVisionRoute?.provider || stagedVisionRoute.rawImage)) {
           const overrideHint = provider?.config?.visionMode != null
-            ? ' If automatic detection is unavailable or incorrect, set Vision capability to Force on in Settings.'
+            ? ' If automatic detection is unavailable or incorrect, set Vision capability to Force on in Providers.'
             : '';
           return {
             ok: false,

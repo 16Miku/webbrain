@@ -341,7 +341,7 @@ export class RichTextToolbarProbe {
               || el.getAttribute('data-slate-editor') === 'true' || el.getAttribute('data-lexical-editor') === 'true'
               || Array.from(el.children).some(child => child.getAttribute('data-contents') === 'true'))) {
             return { ok: false, dispatched: false, trustedTypeRequired: true,
-              error: 'This rich-text editor requires Firefox trusted automation. Enable it in Settings → General → Advanced and retry.' };
+              error: 'This rich-text editor requires Firefox trusted automation. Enable it in Settings → Advanced and retry.' };
           }
           // Preparation only binds a marker. Focus belongs after this frame's
           // dispatch fence and must retain the exact marked target.

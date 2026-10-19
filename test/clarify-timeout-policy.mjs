@@ -1,4 +1,4 @@
-// Settings → General → "When a question times out": 'finish' (default) keeps
+// Settings → Budgets → "When a question times out": 'finish' (default) keeps
 // an unattended run moving, 'safe' takes the safe first option. Questions
 // about the short list of consequential actions always take the safe answer,
 // and so does a question the model did not classify as consequence 'none'.
@@ -298,7 +298,7 @@ for (const { build, Agent, policy, Capability } of builds) {
     const api = build === 'chrome' ? 'chrome' : 'browser';
     assert.match(settingsHtml,
       /<select id="select-clarify-timeout-policy"[^>]*>\s*<option value="finish" data-i18n="st\.display\.clarify_timeout_policy\.finish"><\/option>\s*<option value="safe"/,
-      'Settings → General offers finish (first, the default) and safe');
+      'Settings → Budgets offers finish (first, the default) and safe');
     assert.ok(settingsHtml.indexOf('select-clarify-timeout-policy') > settingsHtml.indexOf('range-clarify-timeout'),
       'the policy sits right after the timeout slider');
     assert.match(settings, new RegExp(`await ${api}\\.storage\\.local\\.set\\(\\{ clarifyTimeoutPolicy: policy \\}\\)`));

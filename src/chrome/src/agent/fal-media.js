@@ -1,6 +1,6 @@
 // fal.ai generative media (assistive model).
 //
-// Configured in Settings -> Assistive Models -> Generative Media (fal.ai provider).
+// Configured in Providers -> Generative (fal.ai provider).
 // and stored in extension storage as `imageGenModel = { apiKey, model }`.
 // fal.ai uses a queue API: submit a prompt, poll status_url, then fetch
 // response_url. Auth uses `Authorization: Key <FAL_KEY>`.

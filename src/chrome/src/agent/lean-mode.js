@@ -1,4 +1,4 @@
-// Lean mode: Settings → General → "Lean mode" ('auto' | 'on' | 'off').
+// Lean mode: Settings → Advanced → "Lean mode" ('auto' | 'on' | 'off').
 //
 // A strong model does not need WebBrain's verification scaffolding: the
 // extra tools, readbacks, completion judges and forced re-check turns that

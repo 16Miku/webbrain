@@ -48,10 +48,11 @@ try {
         }, { build, lang });
 
         const openSettings = async () => {
-          await page.goto(`${origin}/src/${build}/src/ui/settings.html#display`);
+          // The solvers have their own tab in Settings.
+          await page.goto(`${origin}/src/${build}/src/ui/settings.html#captcha`);
           await page.reload();
-          await page.waitForFunction(() => testRequests.some(r => r.action === 'get_providers'));
-          await page.locator('details.advanced-settings').first().locator(':scope > summary').click();
+          await page.waitForFunction(() => document.documentElement.dataset.settingsReady === 'true');
+          assert.equal(await page.locator('.tab-btn.active').getAttribute('data-tab'), 'captcha');
         };
         await openSettings();
         const card = page.locator('#captcha-card');

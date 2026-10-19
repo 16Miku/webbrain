@@ -252,7 +252,7 @@ function makeOAuthClient(def) {
   async function getAccessToken() {
     const stored = await chrome.storage.local.get([STORAGE_KEY]);
     const tokens = stored[STORAGE_KEY];
-    if (!tokens?.accessToken) throw new Error(`Not signed in to ${def.label}. Open Settings and sign in.`);
+    if (!tokens?.accessToken) throw new Error(`Not signed in to ${def.label}. Open Providers and sign in.`);
     if (Date.now() >= tokens.expiresAt) return (await refresh()).accessToken;
     return tokens.accessToken;
   }

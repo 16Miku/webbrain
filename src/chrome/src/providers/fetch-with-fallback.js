@@ -22,7 +22,7 @@ import { ensureOffscreen } from '../offscreen/ensure.js';
 // Cloud providers (OpenAI / Anthropic / Gemini) start their SSE stream
 // within a couple seconds, so the higher default costs them nothing —
 // the timer only ever fires for genuinely stalled endpoints. Users bump
-// or lower it via Settings → Display → "LLM request timeout".
+// or lower it via Settings → Budgets → "LLM request timeout".
 //
 // Cached at module scope after a lazy first read, refreshed in-place
 // when the settings page writes a new value. Providers don't pass

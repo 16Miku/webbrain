@@ -340,7 +340,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
 
   function openProviderSettings() {
     try {
-      chrome.tabs.create({ url: chrome.runtime.getURL('src/ui/settings.html#providers') });
+      chrome.tabs.create({ url: chrome.runtime.getURL('src/ui/providers.html#llm') });
     } catch {
       chrome.runtime.openOptionsPage();
     }
@@ -469,7 +469,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
     if (!providerStatus) return;
     providerStatus.textContent = '';
     const changeLink = document.createElement('a');
-    changeLink.href = chrome.runtime.getURL('src/ui/settings.html#providers');
+    changeLink.href = chrome.runtime.getURL('src/ui/providers.html#llm');
     changeLink.target = '_blank';
     changeLink.rel = 'noopener noreferrer';
     changeLink.textContent = t('ob.cloud.change');
@@ -1806,7 +1806,7 @@ chrome.storage.onChanged.addListener((changes) => {
 });
 
 
-// Composer switch for the same storage-backed gate as Settings → Permissions and
+// Composer switch for the same storage-backed gate as the permissions page and
 // /dangerously-skip-permissions. Turning prompts off posts the command's
 // persistent notice. A permission card already waiting is left for the user to
 // answer: a display switch must never approve a pending action on its own.
@@ -2045,7 +2045,7 @@ function closePermissionGatePopover() {
 }
 
 async function openPermissionsSettingsPage() {
-  const url = chrome.runtime.getURL('src/ui/settings.html#permissions');
+  const url = chrome.runtime.getURL('src/ui/permissions.html');
   try {
     await chrome.tabs.create({ url });
   } catch {
@@ -8585,7 +8585,7 @@ async function loadProviders() {
 }
 
 async function openProvidersSettingsPage() {
-  const url = chrome.runtime.getURL('src/ui/settings.html#providers');
+  const url = chrome.runtime.getURL('src/ui/providers.html#llm');
   try {
     await chrome.tabs.create({ url });
   } catch {
@@ -13050,7 +13050,7 @@ function parseCostAllowanceError(content) {
   return {
     scope: match[1].toLowerCase() === 'this session' ? 'session' : 'total',
     limitUsd,
-    message: content.replace(/\s*Increase or reset the allowance in Settings\.\s*$/i, '').trim(),
+    message: content.replace(/\s*Increase or reset the allowance in Settings(?: → Budgets)?\.\s*$/i, '').trim(),
   };
 }
 

@@ -1,4 +1,4 @@
-// Completion guards under the default policy (Settings → General → "Strict
+// Completion guards under the default policy (Settings → Advanced → "Strict
 // checks" off, see src/*/src/agent/guard-policy.js). A completion guard
 // refuses a done or a plain final at most once per run: that refusal is the
 // model's note. The next completion the same guard would refuse is accepted,

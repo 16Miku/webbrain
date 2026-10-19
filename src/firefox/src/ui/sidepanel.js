@@ -217,7 +217,7 @@ if (globalThis.browser?.storage?.onChanged) {
 
   function openProviderSettings() {
     try {
-      browser.tabs.create({ url: browser.runtime.getURL('src/ui/settings.html#providers') });
+      browser.tabs.create({ url: browser.runtime.getURL('src/ui/providers.html#llm') });
     } catch {
       browser.runtime.openOptionsPage();
     }
@@ -346,7 +346,7 @@ if (globalThis.browser?.storage?.onChanged) {
     if (!providerStatus) return;
     providerStatus.textContent = '';
     const changeLink = document.createElement('a');
-    changeLink.href = browser.runtime.getURL('src/ui/settings.html#providers');
+    changeLink.href = browser.runtime.getURL('src/ui/providers.html#llm');
     changeLink.target = '_blank';
     changeLink.rel = 'noopener noreferrer';
     changeLink.textContent = t('ob.cloud.change');
@@ -1981,7 +1981,7 @@ browser.storage.onChanged.addListener((changes) => {
 });
 
 
-// Composer switch for the same storage-backed gate as Settings → Permissions and
+// Composer switch for the same storage-backed gate as the permissions page and
 // /dangerously-skip-permissions. Turning prompts off posts the command's
 // persistent notice. A permission card already waiting is left for the user to
 // answer: a display switch must never approve a pending action on its own.
@@ -2215,7 +2215,7 @@ function closePermissionGatePopover() {
 }
 
 async function openPermissionsSettingsPage() {
-  const url = browser.runtime.getURL('src/ui/settings.html#permissions');
+  const url = browser.runtime.getURL('src/ui/permissions.html');
   try {
     await browser.tabs.create({ url });
   } catch {
@@ -8414,7 +8414,7 @@ async function loadProviders() {
 }
 
 async function openProvidersSettingsPage() {
-  const url = browser.runtime.getURL('src/ui/settings.html#providers');
+  const url = browser.runtime.getURL('src/ui/providers.html#llm');
   try {
     await browser.tabs.create({ url });
   } catch {
@@ -12678,7 +12678,7 @@ function parseCostAllowanceError(content) {
   return {
     scope: match[1].toLowerCase() === 'this session' ? 'session' : 'total',
     limitUsd,
-    message: content.replace(/\s*Increase or reset the allowance in Settings\.\s*$/i, '').trim(),
+    message: content.replace(/\s*Increase or reset the allowance in Settings(?: → Budgets)?\.\s*$/i, '').trim(),
   };
 }
 

@@ -529,6 +529,22 @@ async function loadAutoScreenshot() {
 }
 loadAutoScreenshot();
 
+// Settings has one Record traces switch for both trace tiers: full request
+// details are recorded whenever traces are. A profile from before the merge
+// can have the two set apart; line them up once so the switch shows what is
+// recorded. Harnesses that set the tiers apart afterwards keep their choice.
+const TRACE_TIERS_MERGED_KEY = 'traceTiersMergedV1';
+async function mergeTraceTiers() {
+  const stored = await browser.storage.local.get(['tracingEnabled', 'losslessTrace', TRACE_TIERS_MERGED_KEY]);
+  if (stored[TRACE_TIERS_MERGED_KEY] === true) return;
+  const updates = { [TRACE_TIERS_MERGED_KEY]: true };
+  if ((stored.tracingEnabled === true) !== (stored.losslessTrace === true)) {
+    updates.losslessTrace = stored.tracingEnabled === true;
+  }
+  await browser.storage.local.set(updates);
+}
+mergeTraceTiers().catch(() => {});
+
 async function loadSiteAdapters() {
   const stored = await browser.storage.local.get('useSiteAdapters');
   if (stored.useSiteAdapters != null) agent.useSiteAdapters = stored.useSiteAdapters;
@@ -3885,7 +3901,11 @@ async function handleMessage(msg, sender) {
           imported.settings,
         )
         : imported.settings;
-      await browser.storage.local.set(settings);
+      // A restored export carries Record traces only; full request details follow
+      // it, as they do in Settings. Provisioning patches keep their own tiers.
+      await browser.storage.local.set(msg.action === 'import_config' && Object.hasOwn(settings, 'tracingEnabled')
+        ? { ...settings, losslessTrace: settings.tracingEnabled === true }
+        : settings);
       await providerManager.load();
       await Promise.all([
         loadMaxSteps(),
@@ -4273,9 +4293,10 @@ async function handleMessage(msg, sender) {
     }
 
     case 'd1_control': {
+      // The D1 controls are on the Decision tab of the Providers page.
       const api = globalThis.browser || globalThis.chrome;
-      const settingsUrl = api.runtime.getURL('src/ui/settings.html');
-      if (sender.id !== api.runtime.id || String(sender.url || '').split('#')[0] !== settingsUrl) return { success: false, error: 'D1 model controls are available only from extension Settings.' };
+      const providersUrl = api.runtime.getURL('src/ui/providers.html');
+      if (sender.id !== api.runtime.id || String(sender.url || '').split(/[?#]/)[0] !== providersUrl) return { success: false, error: 'D1 model controls are available only from the extension Providers page.' };
       try {
         await strictSecretModeReady;
         if (agent.strictSecretMode && !['dispose', 'reset', 'stop', 'clear', 'status'].includes(msg.command)) throw new Error('D1 is disabled in Strict Secret Mode.');
@@ -4534,10 +4555,11 @@ browser.commands.onCommand.addListener(async (command, tab) => {
   }
 });
 
-// Connection controls belong only to the packaged Settings page, never a tab.
+// Connection controls belong only to the packaged Settings page (its Advanced
+// tab, which may be opened as settings.html#advanced), never a tab.
 browser.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== 'WB_BIDI_CONNECT' && message?.type !== 'WB_BIDI_DISCONNECT') return;
-  if (sender.id !== browser.runtime.id || sender.url !== browser.runtime.getURL('src/ui/settings.html')) return;
+  if (sender.id !== browser.runtime.id || String(sender.url || '').split(/[?#]/)[0] !== browser.runtime.getURL('src/ui/settings.html')) return;
   if (message.type === 'WB_BIDI_DISCONNECT') { firefoxBidi.disconnect(); return Promise.resolve({ success: true }); }
   return firefoxBidi.connect().then(() => ({ success: true }), error => ({ success: false, error: error.message }));
 });

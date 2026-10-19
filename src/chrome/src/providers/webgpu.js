@@ -206,7 +206,7 @@ export const WEBGPU_SELECTABLE_MODEL_PRESETS = Object.freeze(WEBGPU_PICKER_MODEL
 // The preset with a trained decision probe (src/chrome/src/offscreen/bonsai-decision-probe.js).
 export const WEBGPU_DECISION_MODEL_ID = WEBGPU_BONSAI2_VL_2B_MODEL_ID;
 export const WEBGPU_DECISION_MODEL_IDS = new Set([WEBGPU_DECISION_MODEL_ID]);
-export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_COMPASS_TINY_V2_MODEL_ID} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`;
+export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_COMPASS_TINY_V2_MODEL_ID} is not downloaded. Open Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`;
 // Chrome-only selection state. Keep this separate from the synced
 // `visionModel` endpoint so enabling the fallback never overwrites a user's
 // remote vision credentials or sends a Chromium-only provider type to Firefox.
@@ -223,7 +223,7 @@ export const WEBGPU_VISION_CONSENT_VERSION = 2;
 // Which in-browser model reads screenshots (Chrome-local, never synced or
 // exported: Firefox has no WebGPU runtime). Auto follows Ternary Bonsai 2 2B
 // Vision: on once it is downloaded, off until then. Neither choice starts a
-// download; that always takes a click in Settings or Apocalypse Mode.
+// download; that always takes a click in Providers or Apocalypse Mode.
 export const WEBGPU_VISION_CHOICE_KEY = 'webgpuVisionChoice';
 export const WEBGPU_VISION_CHOICE_AUTO = 'auto';
 export const WEBGPU_VISION_CHOICE_BONSAI = 'bonsai';
@@ -505,11 +505,11 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
   async chat(messages, options = {}) {
     if (options.signal?.aborted) throw responseAbortError(options.signal);
     if (this._messagesContainImage(messages) && !this.supportsVision) {
-      throw new Error('The WebGPU chat model is text-only. Configure a separate model under Settings -> Multimodal for screenshots.');
+      throw new Error('The WebGPU chat model is text-only. Configure a separate model under Providers -> Vision for screenshots.');
     }
     const download = await this.downloadStatus();
     if (!download.ready) {
-      throw new Error(`${webgpuModelDisplayName(this.model)} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
+      throw new Error(`${webgpuModelDisplayName(this.model)} is not downloaded. Open Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
     }
     // A caller that can abort gets a key the worker can use to interrupt this generation.
     const signal = options.signal || null;
@@ -565,7 +565,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     stopIfAborted();
     const download = await this.downloadStatus();
     if (!download.ready) {
-      throw new Error(`${webgpuModelDisplayName(this.model)} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it first.`);
+      throw new Error(`${webgpuModelDisplayName(this.model)} is not downloaded. Open Providers > WebGPU or Apocalypse Mode > WebGPU to download it first.`);
     }
     const prefillSliceTokens = await this._prefillSliceTokens();
     stopIfAborted();
@@ -729,7 +729,7 @@ export class WebGPUVisionProvider extends WebGPUOffscreenProvider {
     ]);
     if (stored[WEBGPU_VISION_ENABLED_KEY] !== true
         || stored[WEBGPU_VISION_CONSENT_VERSION_KEY] !== WEBGPU_VISION_CONSENT_VERSION) {
-      const error = new Error('The local Vision Model is disabled. Enable it explicitly in Settings before using screenshots.');
+      const error = new Error('The local Vision Model is disabled. Enable it explicitly in Providers → Vision before using screenshots.');
       error.code = 'vision_model_disabled';
       throw error;
     }
