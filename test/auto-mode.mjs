@@ -479,6 +479,30 @@ for (const build of BUILDS) {
     assert.deepEqual(f.agent.takeModeEscalation(f.tab), { mode: 'dev', evidence: 'first inspect the console errors' });
   });
 
+  test(`${build}: Stop during an accepted hand-off cancels the restart and returns every correction to the composer`, async () => {
+    const f = fixture(Agent, {
+      decide: (_q, options) => (options.mainModel === false ? { choice: null, source: 'unavailable' } : { choice: 'act', source: 'main_model' }),
+      replies: [() => {
+        f.agent.conversations.get(f.tab).push({ role: 'user', content: 'use the 10 am slot',
+          webbrainSteering: { requestId: `auto-${f.tab}`, messageId: 's12', revision: 1 } });
+        return handoff('act', 'book the 9 am slot');
+      }],
+    });
+    // The user sends one more correction, then presses Stop, while the hand-off is saved.
+    f.agent._persistNow = async () => {
+      f.agent._steeringRuns.get(f.tab)?.messages.push({ id: 's13', text: 'and add a note' });
+      f.agent.abort(f.tab);
+    };
+    await f.run('Please book the 9 am slot for me.');
+    f.agent._persistNow = async () => null;
+    const queued = f.updates.filter(update => update.type === 'steering_queued');
+    assert.equal(queued.length, 1);
+    assert.deepEqual(queued[0].data.messages.map(item => item.id), ['s12', 's13'], 'the applied correction comes back too');
+    assert.equal(queued[0].data.stopped, true);
+    assert.equal(f.agent.takeModeEscalation(f.tab), null, 'nothing restarts after Stop');
+    assert.equal(f.agent._modeEscalationSteering.has(f.tab), false);
+  });
+
   test(`${build}: a restart rerouted too often ends read-only and still applies the corrections`, async () => {
     const f = fixture(Agent, { decide: () => { throw new Error('a read-only restart asks no route'); } });
     f.agent._modeEscalationSteering.set(f.tab, [{ id: 's11', text: 'instead inspect the console errors' }]);

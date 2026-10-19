@@ -7563,6 +7563,8 @@ export class Agent extends LoopDetector {
   _finishSteeringRun(tabId) {
     const run = this._steeringRuns.get(tabId);
     this._steeringRuns.delete(tabId);
+    // Stop pressed after a hand-off was accepted cancels its restart.
+    if (this._checkAbort(tabId)) this._pendingModeEscalations.delete(tabId);
     // A routed turn that handed itself to an action mode passes its
     // corrections, applied or pending, to the run that replaces it. They stay
     // journaled under the same request, so a background restart in between
@@ -7579,10 +7581,13 @@ export class Agent extends LoopDetector {
       if (carried.some(item => !checked.has(item.id))) this._pendingModeEscalations.get(tabId).reroute = true;
       void this._steeringJournal.forget(tabId, [...carriedIds]);
       for (const item of carried) void this._steeringJournal.accept(tabId, run.requestId, item);
-    } else if (run?.messages.length) {
+    } else {
       // After Stop nothing may start on its own: the panel keeps these
-      // corrections queued for an explicit send instead of draining them.
-      run.onUpdate('steering_queued', { messages: run.messages, ...(this._checkAbort(tabId) ? { stopped: true } : {}) });
+      // corrections queued for an explicit send instead of draining them. A
+      // hand-off stopped before its restart also returns the corrections it
+      // had applied, since the restored turn no longer holds them.
+      const handedBack = [...(run?.handoffApplied || []), ...(run?.messages || [])];
+      if (handedBack.length) run.onUpdate('steering_queued', { messages: handedBack, ...(this._checkAbort(tabId) ? { stopped: true } : {}) });
     }
     // Applied or just handed back: the journal no longer owns what this run
     // accepted. Entries it never restored stay for the panel to reclaim.
