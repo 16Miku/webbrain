@@ -1301,7 +1301,7 @@ pending → running → completed
 **Targets**
 
 - `current_tab` — runs against the tab that was active when the job was created; fails if the tab is gone or has navigated away.
-- `url` — opens (or reuses) a tab for a given http(s) URL at run time.
+- `url` — opens (or reuses) a tab for a given http(s) URL at run time. A tab already on that URL is used as it is. Otherwise the run opens its own inactive helper tab and keeps it for later runs; only that helper is ever navigated back to the URL. The tab the task was created from belongs to the user and is never navigated away from its page. The run is told that an error or "not found" page at the address means the target is missing, so it ends as failed and repeated failures pause the task.
 
 **Schedule**
 

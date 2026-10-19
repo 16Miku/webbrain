@@ -1610,11 +1610,16 @@ export class ScheduledJobManager {
           if (sameTargetUrl(job.target.url, tab?.url || '')) {
             return job.target.tabId;
           }
+          // Only a helper tab this job opened is sent back to its page. The
+          // tab the task was created from is the user's: it may be on
+          // anything by now, so a run never navigates it away.
           if (job.source !== 'watch') {
-            try {
-              await this.api.tabs.update(job.target.tabId, { url: job.target.url });
-              return job.target.tabId;
-            } catch { /* create a fresh tab below */ }
+            if (job.target.helperTab === true) {
+              try {
+                await this.api.tabs.update(job.target.tabId, { url: job.target.url });
+                return job.target.tabId;
+              } catch { /* create a fresh tab below */ }
+            }
           } else {
             // A diverged helper is watch-owned and inactive; close it instead
             // of leaking one abandoned tab per poll on pages that redirect or
@@ -1630,7 +1635,7 @@ export class ScheduledJobManager {
           ['pending', 'queued'].includes(prev.status) && !execution?.cancelled
         ), (prev) => ({
           tabId: tab.id,
-          target: { ...prev.target, tabId: tab.id },
+          target: { ...prev.target, tabId: tab.id, helperTab: true },
         }));
       } finally {
         // Cancellation/pause can finish before tabs.create returns, when it
@@ -1703,10 +1708,14 @@ export class ScheduledJobManager {
     // a different schedule ("on Monday at 9, start an hourly check").
     const recurring = job.schedule?.type === 'recurring';
     const pauseNote = recurring ? '; repeated failed runs pause this schedule for the user' : '';
+    // A run opens its URL itself, so an error page there is not a page the
+    // user chose: the target is missing, not the answer.
+    const targetNote = job.target?.type === 'url'
+      ? ' An error or "not found" page at the task\'s address means the target is missing.' : '';
     const scheduleNote = recurring
       ? ' This run comes from the task\'s own recurring schedule, which already repeats it; do not create another schedule for this task.'
       : ' This run is the scheduled execution of an existing task; do not schedule this task again. Create a different schedule only if the task explicitly asks to set one up.';
-    return `[Scheduled task ${job.id}: ${job.title}]\nThe user explicitly scheduled this future task. Treat this as the user-authored task for this scheduled run.\nTask: ${job.prompt}\nFirst reread the current page/state. If the task is stale, conflicts with newer user messages, or needs user input, stop and explain. If the target or condition needed to do this is missing or ambiguous, do not guess: call done with outcome "failed" and name what is missing${pauseNote}.${scheduleNote}`;
+    return `[Scheduled task ${job.id}: ${job.title}]\nThe user explicitly scheduled this future task. Treat this as the user-authored task for this scheduled run.\nTask: ${job.prompt}\nFirst reread the current page/state. If the task is stale, conflicts with newer user messages, or needs user input, stop and explain. If the target or condition needed to do this is missing or ambiguous, do not guess: call done with outcome "failed" and name what is missing${pauseNote}.${targetNote}${scheduleNote}`;
   }
 
   async _evaluateSystemOne(job, result, outcome, runMeta = {}) {
