@@ -613,13 +613,26 @@ test('chrome: the install guide queues its chat model behind D1, and the backgro
     assert.deepEqual(env.starts, [model], d1.status);
   }
   for (const chat of [{ status: 'downloading' }, { status: 'paused' }, { status: 'ready', ready: true }, { status: 'loading' }]) {
-    // A chat model already under way, paused elsewhere or ready is left alone.
-    const env = make({ chat });
+    // A chat model started, paused elsewhere or downloaded since the guide
+    // queued it is left alone.
+    const env = make();
     await env.queue.queue(model);
+    env.chat = chat;
     env.d1 = { status: 'ready', loaded: true };
     assert.equal(await env.queue.advance(), false, chat.status);
     assert.deepEqual(env.starts, [], chat.status);
     assert.equal(env.area[queue.CHAT_AFTER_D1_KEY], undefined, chat.status);
+  }
+  {
+    // A chat download already paused when the guide's Resume queued it
+    // resumes after D1.
+    const env = make({ chat: { status: 'paused', progress: 40 } });
+    await env.queue.queue(model);
+    assert.equal(env.area[queue.CHAT_AFTER_D1_KEY].resumeChat, true);
+    assert.equal(await env.queue.advance(), true, 'D1 first');
+    env.d1 = { status: 'ready', loaded: true };
+    assert.equal(await env.queue.advance(), false);
+    assert.deepEqual(env.starts, [model]);
   }
   {
     // Another model holds the WebGPU download slot: start when it is free.

@@ -55,14 +55,16 @@ export function createChatModelAfterD1({ api, d1Status, chatStatus, startChat, o
     let chat;
     try { chat = await chatStatus(queued.model); } catch { return true; }
     const chatState = String(chat?.status || '');
+    // Not started yet, or failed; or paused when the guide's Resume queued it.
+    const startable = chat?.ready !== true
+      && (!CHAT_TRANSFER_STATUSES.has(chatState) || (chatState === 'paused' && queued.resumeChat === true));
     const other = chat?.activeTransfer;
     const otherModel = String(other?.modelId || other?.model || '').trim();
-    if (chat?.ready !== true && !CHAT_TRANSFER_STATUSES.has(chatState)
-        && otherModel && otherModel !== queued.model && CHAT_TRANSFER_STATUSES.has(String(other?.status || ''))) {
+    if (startable && otherModel && otherModel !== queued.model && CHAT_TRANSFER_STATUSES.has(String(other?.status || ''))) {
       // Another model holds the WebGPU download slot: start when it is free.
       return true;
     }
-    if (chat?.ready !== true && !CHAT_TRANSFER_STATUSES.has(chatState)) {
+    if (startable) {
       try {
         await startChat(queued.model);
       } catch (error) {
@@ -77,9 +79,13 @@ export function createChatModelAfterD1({ api, d1Status, chatStatus, startChat, o
   }
 
   return {
-    // The guide asked for both models: the chat model follows D1.
+    // The guide asked for both models: the chat model follows D1. A chat
+    // download that is paused now was paused before this click, so it resumes
+    // after D1; one paused later, elsewhere, is left paused.
     queue: (model) => serial(async () => {
-      await storage.set({ [CHAT_AFTER_D1_KEY]: { model, queuedAt: now(), paused: false } });
+      let resumeChat = false;
+      try { resumeChat = String((await chatStatus(model))?.status || '') === 'paused'; } catch { /* not known to be paused */ }
+      await storage.set({ [CHAT_AFTER_D1_KEY]: { model, queuedAt: now(), paused: false, ...(resumeChat ? { resumeChat: true } : {}) } });
       try { await api.alarms?.create?.(CHAT_AFTER_D1_ALARM, { periodInMinutes: 0.5 }); } catch { /* the guide's reads still advance it */ }
     }),
     // The guide pauses D1: the chat model waits for its Resume. Called before

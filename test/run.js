@@ -45946,26 +45946,70 @@ test('chrome install page downloads D1 first, then the chat model, and says what
 
   {
     // A guide opened while D1 downloads with nothing queued (started on the
-    // Providers page, say) follows that download, but only a click here
-    // downloads the chat model.
-    const state = { bonsai: { status: 'not-downloaded', modelId }, d1: { status: 'downloading', progress: 70 } };
+    // Providers page, say) follows that download; only a click here, which
+    // stands for both models, queues the chat model.
+    for (const clicked of [false, true]) {
+      const state = { bonsai: { status: 'not-downloaded', modelId }, d1: { status: 'downloading', progress: 70 } };
+      const runtime = fakeRuntime({ ...bonsai(state), ...queueBackground(state) });
+      const documentLike = fakeDocument();
+      const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+      await settle();
+      assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.pause');
+      assert.equal(documentLike.nodes['local-model-d1'].textContent, 'install.local_model.d1_downloading|70');
+      if (clicked) {
+        await documentLike.nodes['local-model-button'].fire('click');
+        await settle();
+        await documentLike.nodes['local-model-button'].fire('click');
+        await settle();
+        assert.equal(d1Downloads(runtime)[0].chatModel, modelId, 'the guide\'s Resume queues the chat model behind D1');
+      }
+      state.d1 = { status: 'ready', loaded: true };
+      await controller.d1.refresh();
+      await settle();
+      assert.equal(state.backgroundStarts || 0, clicked ? 1 : 0, clicked ? 'the chat model follows D1' : 'no click, no chat model download');
+      assert.equal(chatStarts(runtime), 0);
+      assert.equal(documentLike.nodes['local-model-label'].textContent, clicked ? 'install.local_model.pause' : 'install.local_model.download');
+      controller.dispose();
+    }
+  }
+
+  {
+    // A paused chat download with D1 still to download: Resume downloads D1
+    // first and leaves the chat model queued to resume after it.
+    const state = { bonsai: { status: 'paused', modelId, progress: 40 }, d1: { status: 'idle' } };
     const runtime = fakeRuntime({ ...bonsai(state), ...queueBackground(state) });
     const documentLike = fakeDocument();
     const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
     await settle();
-    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.pause');
-    assert.equal(documentLike.nodes['local-model-d1'].textContent, 'install.local_model.d1_downloading|70');
+    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.resume');
     await documentLike.nodes['local-model-button'].fire('click');
     await settle();
-    await documentLike.nodes['local-model-button'].fire('click');
-    await settle();
-    assert.equal(d1Downloads(runtime)[0].chatModel, undefined, 'resuming a download started elsewhere queues nothing');
+    assert.deepEqual(d1Commands(runtime), ['probe', 'download']);
+    assert.equal(d1Downloads(runtime)[0].chatModel, modelId);
+    assert.equal(chatStarts(runtime), 0, 'the chat model waits for D1');
+    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.pause', 'the button follows D1');
+    assert.equal(documentLike.nodes['local-model-status'].textContent, 'install.local_model.paused|40', 'the chat line keeps its own progress');
     state.d1 = { status: 'ready', loaded: true };
     await controller.d1.refresh();
     await settle();
-    assert.equal(state.backgroundStarts || 0, 0, 'no click, no chat model download');
-    assert.equal(chatStarts(runtime), 0);
-    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.download');
+    assert.equal(state.backgroundStarts, 1, 'the chat model resumes after D1');
+    controller.dispose();
+  }
+
+  {
+    // A paused chat download with D1 done: Resume resumes the chat model now.
+    const state = { bonsai: { status: 'paused', modelId, progress: 40 } };
+    const runtime = fakeRuntime({
+      ...bonsai(state),
+      'd1_control:status': { success: true, result: { status: 'cached', usedForDecisions: true, chatModelQueued: false } },
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    await documentLike.nodes['local-model-button'].fire('click');
+    await settle();
+    assert.deepEqual(d1Commands(runtime), []);
+    assert.equal(chatStarts(runtime), 1);
     controller.dispose();
   }
 
