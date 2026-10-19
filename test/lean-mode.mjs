@@ -1,4 +1,4 @@
-// Lean mode (Settings → General → "Lean mode"; src/*/src/agent/lean-mode.js).
+// Lean mode (Settings → Advanced → "Lean mode"; src/*/src/agent/lean-mode.js).
 // A lean Act run gets a thin tool list and a short prompt, and every guard of
 // class `quality` is skipped: no refusal, note, caveat, judge or forced turn.
 // The hard classes, permission gates, host checks, budgets and user control
@@ -263,6 +263,17 @@ for (const build of ['chrome', 'firefox']) {
     const conditional = names(tools.getToolsForMode('act', { tier: 'full', lean: true, imageGenConfigured: true,
       carouselNavigation: true, gmailResultCounting: true }));
     for (const name of ['generate_image', 'carousel_navigate', 'gmail_count_results']) assert.ok(conditional.includes(name), name);
+    // On a native chat client the recipient guard, which lean mode keeps,
+    // confirms a contact and reads the latest messages through the chat
+    // tools, so a lean run there is offered them, with the Full schemas.
+    const chat = tools.getToolsForMode('act', { tier: 'full', lean: true, nativeChatTools: true });
+    for (const name of ['chat_observe', 'chat_send']) {
+      assert.equal(names(thin).includes(name), false, `${name} is offered off a native chat client`);
+      const tool = chat.find(item => item.function.name === name);
+      assert.ok(tool, `${name} is offered on a native chat client`);
+      assert.equal(JSON.stringify(tool), JSON.stringify(full.find(item => item.function.name === name)));
+    }
+    assert.deepEqual(names(chat).filter(name => !names(thin).includes(name)).sort(), ['chat_observe', 'chat_send']);
     const skill = { type: 'function', function: { name: 'read_youtube_transcript', description: 'skill', parameters: { type: 'object', properties: {} } } };
     assert.ok(names(tools.getToolsForMode('act', { tier: 'full', lean: true, skillTools: [skill] })).includes('read_youtube_transcript'),
       'enabled skills keep their tools');
@@ -482,6 +493,46 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(reads, 2, `${label}: read again at the second final`);
     });
   }
+
+  // From a trace: a lean run on WhatsApp Web had no chat_observe, which the
+  // recipient guard's contact check and latest-message repairs point to, and
+  // the plan's chat_observe/chat_send steps could not run.
+  test(`${build}: a lean run on a native chat client is offered the chat tools its recipient guard uses`, async () => {
+    const adapters = await import(`../src/${build}/src/agent/adapters.js`);
+    for (const [url, offered] of [['https://web.whatsapp.com/', true], ['https://web.telegram.org/k/', true],
+      ['https://webz.telegram.org/', true], ['http://web.whatsapp.com/', false], ['https://whatsapp.com/', false], [PAGE, false]]) {
+      assert.equal(adapters.isNativeChatClientUrl(url), offered, url);
+    }
+    for (const streaming of [false, true]) {
+      for (const [url, offered] of [['https://web.whatsapp.com/', true], [PAGE, false]]) {
+        const tab = nextTab++;
+        const h = runAgent(() => call('finish', 'done', { summary: 'Read.', outcome: 'success' }), { setting: 'on' });
+        h.agent._currentUrl = async () => url;
+        await runLoop(h.agent, tab, streaming, 'Read the open chat.');
+        assert.ok(h.requests.length > 0, 'the run made a model request');
+        for (const name of ['chat_observe', 'chat_send']) {
+          assert.equal(h.requests[0].tools.includes(name), offered, `${streaming ? 'streaming' : 'plain'} ${url}: ${name}`);
+        }
+        assert.ok(h.requests[0].tools.includes('click_ax'), 'the lean core stays');
+      }
+      // A run that navigates to WhatsApp Web gets them from its next turn on.
+      const tab = nextTab++;
+      let url = PAGE;
+      const h = runAgent(n => (n === 1 ? call('go', 'navigate', { url: 'https://web.whatsapp.com/' })
+        : call('finish', 'done', { summary: 'Read.', outcome: 'success' })), { setting: 'on' });
+      h.agent._currentUrl = async () => url;
+      const execute = h.agent._executeToolWithLifecycle;
+      h.agent._executeToolWithLifecycle = async (tabId, name, args, ...rest) => {
+        if (name === 'navigate') url = args.url;
+        return execute(tabId, name, args, ...rest);
+      };
+      await runLoop(h.agent, tab, streaming, 'Open WhatsApp Web and read the open chat.');
+      assert.ok(h.requests.length >= 2, `${streaming ? 'streaming' : 'plain'}: the run took a second turn`);
+      assert.equal(h.requests[0].tools.includes('chat_observe'), false);
+      assert.equal(h.requests[1].tools.includes('chat_observe'), true, `${streaming ? 'streaming' : 'plain'}: the turn after navigating`);
+      assert.equal(h.requests[1].tools.includes('chat_send'), true);
+    }
+  });
 
   test(`${build}: a lean run still refuses a tool it does not offer, and still stops at the step limit`, async () => {
     const tab = nextTab++;

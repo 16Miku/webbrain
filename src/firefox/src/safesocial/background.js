@@ -3,7 +3,8 @@ import { SETTINGS_KEY, CACHE_NAME, normalizeSettings, isInstagramUrl, isMediaUrl
 export function installSafeSocialBackground(api, runHost) {
   let generation = 0;
   let transition = Promise.resolve();
-  const settingsUrl = api.runtime.getURL('src/ui/settings.html');
+  // SafeSocial is managed from its tab on the Providers page.
+  const providersUrl = api.runtime.getURL('src/ui/providers.html');
   api.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes[SETTINGS_KEY]) return;
     generation++;
@@ -14,7 +15,7 @@ export function installSafeSocialBackground(api, runHost) {
   });
   async function handle(message, sender) {
     if (sender.id !== api.runtime.id) throw new Error('Invalid classifier caller.');
-    const trustedSettings = String(sender.url || '').split(/[?#]/)[0] === settingsUrl;
+    const trustedSettings = String(sender.url || '').split(/[?#]/)[0] === providersUrl;
     if (message.command === 'classify') {
       if (!sender.tab || sender.frameId !== 0 || !isInstagramUrl(sender.url) || !isMediaUrl(message.url)) {
         throw new Error('Classifier is limited to Instagram images.');

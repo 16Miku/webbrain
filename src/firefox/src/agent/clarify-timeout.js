@@ -1,6 +1,6 @@
 // What WebBrain does when nobody answers a clarify question in time.
 //
-// The user chooses this in Settings → General ("When a question times out"):
+// The user chooses this in Settings → Budgets ("When a question times out"):
 // - 'finish' (default) keeps the task moving. The option the model named as
 //   finish_option applies as the answer; without one, the model continues
 //   with the choice that best completes the task. Runs no longer stall

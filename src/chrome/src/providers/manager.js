@@ -1955,7 +1955,7 @@ export class ProviderManager {
         ok: false,
         recoverable: true,
         code: 'vision_consent_required',
-        error: 'Enable local vision with “Use local fallback” in Settings first.',
+        error: 'Choose an in-browser vision model in Providers → Vision first.',
         visionStatus: readiness,
       };
     }
@@ -2074,7 +2074,7 @@ export class ProviderManager {
     if (nextProvider instanceof WebGPUProvider) {
       const download = await nextProvider.downloadStatus();
       if (!download.ready) {
-        throw new Error(`Download ${webgpuModelDisplayName(nextProvider.model)} in Settings > Providers > WebGPU or Apocalypse Mode > WebGPU before selecting it for chat.`);
+        throw new Error(`Download ${webgpuModelDisplayName(nextProvider.model)} in Providers > WebGPU or Apocalypse Mode > WebGPU before selecting it for chat.`);
       }
     }
     this.activeProviderId = id;

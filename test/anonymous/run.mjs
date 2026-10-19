@@ -73,8 +73,8 @@ async function main() {
   });
   if (!providerCheck.ok) {
     console.log(`\n  No active provider configured (${providerCheck.reason}).`);
-    console.log(`  Opening Settings — enable a provider, set it active, then close the browser and re-run.`);
-    await context.newPage().then(p => p.goto(`chrome-extension://${extensionId}/src/ui/settings.html`));
+    console.log(`  Opening Providers — enable a provider, set it active, then close the browser and re-run.`);
+    await context.newPage().then(p => p.goto(`chrome-extension://${extensionId}/src/ui/providers.html`));
     if (interactiveSetup) {
       console.log('  Waiting for the browser to close...');
       await context.waitForEvent('close', { timeout: 0 });

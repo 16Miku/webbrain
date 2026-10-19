@@ -53,7 +53,7 @@ try {
             commands: { getAll: async () => [] }, tabs: { create: async () => ({}) },
           };
         }, { build, lang });
-        await page.goto(`${origin}/src/${build}/src/ui/settings.html#multimodal`);
+        await page.goto(`${origin}/src/${build}/src/ui/providers.html#generative`);
         await page.waitForFunction(() => document.querySelector('#image-gen-api-key').value === 'legacy-key');
         assert.equal(await page.locator('#image-gen-heading').innerText(), lang === 'en' ? 'Generative Media' : 'Üretken medya');
         const provider = page.locator('#image-gen-provider');

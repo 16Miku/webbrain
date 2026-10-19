@@ -482,6 +482,15 @@
   let whatsappPending = null;
   let whatsappActive = null;
   let whatsappRepairAnchor = null;
+  // The anchor is normally the first chat the run looks at. A run that names
+  // its recipient may first have to open that person's chat from the chat
+  // list: the recipient probe reports that selection, and the anchor then
+  // follows WhatsApp's selection until the run arms its one check (a guarded
+  // header click). A run for the open chat itself ("this one") never moves
+  // its anchor, since that chat is its target. Once a check is armed the
+  // anchor stays with that chat, and a later selection change spends it.
+  let whatsappAnchorFollowsSelection = false;
+  let whatsappCheckArmed = false;
   const whatsappRendered = node => {
     if (!visible(node)) return false;
     for (let current = node, depth = 0; current && depth < 128; current = current.parentElement, depth++) {
@@ -556,6 +565,7 @@
     whatsappRestore = restore && typeof restore === 'object' ? restore : null;
     if (next !== whatsappOwner) {
       invalidateWhatsappBindings(false, true); whatsappRepairAnchor = null; whatsappOwner = next;
+      whatsappAnchorFollowsSelection = false; whatsappCheckArmed = false;
       let sameRunSourceChanged = false;
       try {
         const prior = JSON.parse(whatsappParkedFloor?.owner || 'null'), current = JSON.parse(next || 'null');
@@ -734,22 +744,38 @@
     if (!pins || !contains(pins.carrier, target)) return false;
     invalidateWhatsappBindings(true, true);
     whatsappPending = { pins, owner: whatsappOwner, priorDrawers: new Set(query(document, '[data-testid="chat-info-drawer"]')) };
+    // The run's one check now belongs to this chat.
+    if (whatsappAnchorFollowsSelection) whatsappRepairAnchor = { pins, invalidated: false };
+    whatsappCheckArmed = true; whatsappAnchorFollowsSelection = false;
     return true;
   };
   window.__wb_get_native_whatsapp_repair = () => {
     const composers = query(document, '[data-testid="conversation-compose-box-input"][contenteditable="true"][role="textbox"]');
     const pins = composers.length === 1 ? whatsappPins(composers[0]) : null;
     if (!pins || !whatsappOwner) return null;
-    if (!whatsappRepairAnchor) whatsappRepairAnchor = { pins, invalidated: false };
+    if (!whatsappRepairAnchor || (whatsappAnchorFollowsSelection && !whatsappCheckArmed
+        && (whatsappRepairAnchor.invalidated || !sameWhatsappPins(whatsappRepairAnchor.pins)))) {
+      whatsappRepairAnchor = { pins, invalidated: false };
+    }
     return !whatsappRepairAnchor.invalidated && sameWhatsappPins(whatsappRepairAnchor.pins) ? pins : null;
   };
-  // A run checks one contact through its drawer: the anchor is the first
-  // chat the run looked at, and once it is invalidated, as when WhatsApp's
-  // chat selection changes, no chat can be checked again until the next run
-  // (a new owner). True when that is why no check is available. Anchored
-  // nodes that are only hidden for now, as behind a modal, do not count.
+  // The recipient probe calls this for a guarded chat-list selection in a run
+  // that names its recipient (see whatsappAnchorFollowsSelection). False once
+  // the run has armed its check, which stays with the chat it armed.
+  window.__wb_native_whatsapp_follow_selection = () => {
+    if (!whatsappObserver || !whatsappOwner || whatsappCheckArmed) return false;
+    whatsappAnchorFollowsSelection = true;
+    return true;
+  };
+  // A run checks one contact through its drawer, for its anchor chat. Once
+  // the anchor is invalidated, as when WhatsApp's chat selection changes
+  // after the check was armed (or, in a run for the open chat, at all), no
+  // chat can be checked again until the next run (a new owner). True when
+  // that is why no check is available. Anchored nodes that are only hidden
+  // for now, as behind a modal, do not count.
   window.__wb_native_whatsapp_repair_spent = () => {
     if (!whatsappOwner || whatsappRepairAnchor?.invalidated !== true) return false;
+    if (whatsappAnchorFollowsSelection && !whatsappCheckArmed) return false;
     const composers = query(document, '[data-testid="conversation-compose-box-input"][contenteditable="true"][role="textbox"]');
     return composers.length === 1 && whatsappNativeComposer(composers[0]);
   };
@@ -777,6 +803,9 @@
     if (typeof ref_id !== 'string' || !/^ref_[A-Za-z0-9_:-]{1,100}$/.test(ref_id)) return null;
     return { phase: drawers.length ? 'close_contact' : 'open_contact', ref_id };
   };
+  // The recipient probe names this same control to the model when it blocks
+  // a message action in a chat whose contact is not confirmed yet.
+  window.__wb_native_whatsapp_repair_guidance = () => whatsappRepairGuidance();
   window.__wb_native_whatsapp_repair_matches = snapshot => {
     if (!snapshot || snapshot.owner !== whatsappOwner || !whatsappObserver) return false;
     whatsappMutations(whatsappObserver.takeRecords());
@@ -1528,7 +1557,7 @@
         // here: the native composer is no longer tied to a checked chat).
         if (window.__wb_native_whatsapp_repair_spent()) {
           return { success: false, schema: SCHEMA, reason: 'native_whatsapp_contact_check_spent', retryable: false,
-            error: 'This run can no longer confirm a WhatsApp contact: its contact check belongs to the first chat it looked at, and WhatsApp\'s chat selection or that chat\'s header changed since. Nothing was sent. Report what was sent and that a message to this chat needs a new request; do not retry it in this run.' };
+            error: 'This run can no longer confirm a WhatsApp contact: its one contact check belongs to the chat it first looked at or started checking, and WhatsApp\'s chat selection or that chat\'s header changed since. Nothing was sent. Report what was sent and that a message to this chat needs a new request; do not retry it in this run.' };
         }
         if (composer && window.__wb_get_native_whatsapp_repair()?.composer === composer) {
           const nativeWhatsappRepair = whatsappRepairGuidance();

@@ -556,7 +556,7 @@ async function runVisionDownloadAction(action) {
   if (path === 'bonsai') return runBonsaiVisionAction(action);
   if (path !== 'webbrain-vl') return;
   if ((action === 'start' || action === 'resume') && !visionFallbackExplicitlyEnabled) {
-    globalThis.location.href = runtimeApi.runtime.getURL('src/ui/settings.html#multimodal');
+    globalThis.location.href = runtimeApi.runtime.getURL('src/ui/providers.html#vision');
     return;
   }
   const actionMap = {

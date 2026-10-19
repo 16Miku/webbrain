@@ -591,7 +591,7 @@ async function getTextRuntime({ localFilesOnly = false } = {}) {
   if (textRuntime) return textRuntime;
   if (textRuntimeLoadPromise) return textRuntimeLoadPromise;
   if (localFilesOnly && !await isTextModelReady()) {
-    throw new Error(`${WEBGPU_BONSAI27_MODEL_ID} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
+    throw new Error(`${WEBGPU_BONSAI27_MODEL_ID} is not downloaded. Open Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
   }
   textRuntimeLoadPromise = (async () => {
     const { createEngine: engineCreate, createChat: chatCreate } = await loadLibraries();
@@ -848,7 +848,7 @@ async function runText(payload, signal = null) {
   throwIfTextCancelled(signal);
   const modelId = assertBonsaiModel(payload?.modelId);
   if (!await isTextModelReady(modelId, payload?.dtype || WEBGPU_BONSAI27_DTYPE)) {
-    throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
+    throw new Error(`${modelId} is not downloaded. Open Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
   }
   const runtime = await getTextRuntime({ localFilesOnly: true });
   throwIfTextCancelled(signal);

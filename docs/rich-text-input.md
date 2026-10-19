@@ -92,7 +92,7 @@ continues. Editor proofs are still dropped, so a commit or publication gate neve
 treats the write as verified; the agent keeps a non-blocking record for those
 gates (`_unverifiedTextWriteRecord`). `set_field({submit: true})` still withholds
 its Enter for an unverified value and says so (`submitSkipped: 'value_unverified'`).
-Settings → General → Strict checks restores the failure result, the text-write
+Settings → Advanced → Strict checks restores the failure result, the text-write
 debt and its readback-only recovery lock (see `test/guard-advisory-writes.mjs`).
 
 When context verification or repeated page changes prevent the next action,

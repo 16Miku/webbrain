@@ -220,7 +220,7 @@ async function _doRefreshClaudeAccessToken() {
 export async function getClaudeAccessToken() {
   const stored = await browser.storage.local.get([STORAGE_KEY]);
   const tokens = stored[STORAGE_KEY];
-  if (!tokens?.accessToken) throw new Error('Not signed in to Claude. Open Settings → Claude (Pro/Max) → Sign in.');
+  if (!tokens?.accessToken) throw new Error('Not signed in to Claude. Open Providers → Claude (Pro/Max) → Sign in.');
   if (Date.now() >= tokens.expiresAt) {
     const refreshed = await refreshClaudeAccessToken();
     return refreshed.accessToken;

@@ -1,7 +1,7 @@
 export const D1_MODEL_ID = 'webbrain-one/d1-browser-decision-fp16';
 export const D1_CONSENT_VERSION = 1;
 export const D1_CONSENT_KEY = 'd1WebgpuConsentVersion';
-// Set by Settings' Download and load (or Load, once cached), cleared by Unload,
+// Set by the Providers page's Download and load (or Load, once cached), cleared by Unload,
 // Remove and switching D1 off there. While it is set, a decision that finds
 // the model unloaded (a browser restart, a discarded stalled session, a lost
 // GPU device) reloads the verified cache in the background; never downloads.

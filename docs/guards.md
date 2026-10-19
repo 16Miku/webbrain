@@ -62,7 +62,7 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
   run as given (`infra`), such as a coordinate click whose own
   `expected_name` or `expected_role` no longer matches the point; and Stop,
   corrections and cancelled cards (`user_control`).
-- **Strict checks.** Settings → General → "Strict checks" (`strictGuards`)
+- **Strict checks.** Settings → Advanced → "Strict checks" (`strictGuards`)
   makes every quality guard block again, with the old forced verification
   turns and the failure-only `done`.
 - **Unregistered ids** keep blocking, so a refusal that was never registered
@@ -88,7 +88,7 @@ When a guard cannot verify a consequential step and its `onCannotDecide` is
   step is refused there and the next attempt asks. When the checks after a
   "Go ahead" reach another guard's question about the same action, that card
   is asked in turn and the first answer stands.
-- **Timeout.** A quality guard's card follows Settings → General: the clarify
+- **Timeout.** A quality guard's card follows Settings → Budgets: the clarify
   timeout (Off waits, Instant answers at once) and "When a question times
   out" (`finish` goes ahead, `safe` does not). A hard-class card never times
   out and never goes ahead on its own, like the recipient and deletion cards.

@@ -48,7 +48,7 @@ export async function readD1Manifest(directory, { download = false, signal } = {
   let bytes;
   try { bytes = new Uint8Array(await (await (await directory.getFileHandle('package-manifest.json')).getFile()).arrayBuffer()); }
   catch {
-    if (!download) throw new Error('Download D1 explicitly in Settings > Assistive Models > Decision models first.');
+    if (!download) throw new Error('Download D1 explicitly in Providers > Decision first.');
     const response = await fetch(d1BaseURL() + 'package-manifest.json', { credentials: 'omit', redirect: 'follow', signal });
     if (!response.ok || Number(response.headers.get('content-length')) > 1024 * 1024) throw new Error('D1 package manifest download failed.');
     bytes = new Uint8Array(await response.arrayBuffer());

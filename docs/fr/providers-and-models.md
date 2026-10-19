@@ -126,7 +126,7 @@ Settings accepte aussi un dépôt Hugging Face personnalisé. Les autres
 préréglages Bonsai 2 sont livrés mais masqués des sélecteurs pour l’instant.
 Le modèle choisi est téléchargé à l’activation d’Apocalypse ; une fois en
 cache, il fonctionne sans qu’Apocalypse soit activé. Sur les GPU limités,
-réduisez la fenêtre de contexte dans Settings → Providers si nécessaire.
+réduisez la fenêtre de contexte dans la page Providers si nécessaire.
 Firefox n’expose pas cette carte.
 
 Les modèles dans le navigateur répondent seulement aux questions. Dans le
@@ -332,7 +332,7 @@ Les entrées de fournisseur obsolètes (`webbrain`, `openai_subscription`,
 
 ### Plafonds de Coût
 
-Les paramètres exposent des plafonds de coût cloud pour la session et le total. L'agent préfère une valeur `usage.cost`/`usage.cost_usd` rapportée par le fournisseur lorsqu'elle est présente (OpenRouter la rapporte directement). Pour les fournisseurs cloud directs qui ne retournent que des compteurs de tokens, WebBrain estime les dépenses à partir des champs de configuration du fournisseur :
+L'onglet Budgets des paramètres expose des plafonds de coût cloud pour la session et le total. L'agent préfère une valeur `usage.cost`/`usage.cost_usd` rapportée par le fournisseur lorsqu'elle est présente (OpenRouter la rapporte directement). Pour les fournisseurs cloud directs qui ne retournent que des compteurs de tokens, WebBrain estime les dépenses à partir des champs de configuration du fournisseur :
 
 - `inputCostPerMillionUsd`
 - `cacheReadCostPerMillionUsd`

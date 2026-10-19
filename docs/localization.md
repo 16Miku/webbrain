@@ -37,8 +37,9 @@ src/chrome/src/ui/
     └── zh.js              # Chinese
 ```
 
-Settings → Language lists all **23** locales from `LANGUAGES` in `i18n.js`
-(English and Chinese pinned first; the rest sorted by English name).
+The side panel's language picker lists all **23** locales from `LANGUAGES` in
+`i18n.js` (English and Chinese pinned first; the rest sorted by English name).
+The settings pages follow the chosen language through `wb-locale-changed`.
 ### Key Functions
 
 ```js
@@ -148,8 +149,8 @@ Copy the locale file to `src/firefox/src/ui/locales/<code>.js` and update `src/f
 
 ### Step 4: Test
 
-1. Open the extension settings
-2. Switch to the new language in the Language dropdown
+1. Open the side panel
+2. Pick the new language from its language menu (top left)
 3. Verify the side panel, settings, and traces pages render correctly
 4. Check that missing keys fall back to English gracefully
 5. Test RTL layouts for Arabic and Hebrew; `RTL_LOCALES` in `i18n.js` controls document direction
@@ -169,7 +170,7 @@ Copy the locale file to `src/firefox/src/ui/locales/<code>.js` and update `src/f
 | Prefix | Section |
 |---|---|
 | `sp.` | Side panel UI |
-| `st.` | Settings page |
+| `st.` | Settings, Providers and Permissions pages |
 | `tr.` | Traces page |
 | `tool.` | Tool labels |
 | `ob.` | Onboarding flow |

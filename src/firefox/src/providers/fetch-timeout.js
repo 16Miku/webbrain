@@ -8,7 +8,7 @@
  *   1. The same 120s default and 10–600s range apply to every LLM call.
  *   2. There's one cached timeout value across the providers — not three
  *      copies each with its own storage read and onChanged listener.
- *   3. Changing the setting in Settings → Display → "LLM request timeout"
+ *   3. Changing the setting in Settings → Budgets → "LLM request timeout"
  *      takes effect on the next request without an extension reload.
  *
  * The timer aborts ONLY the connection / time-to-headers phase. Once
@@ -96,7 +96,7 @@ export async function fetchWithTimeout(url, options = {}) {
         `Request to ${url} timed out after ${timeoutMs}ms. ` +
         `The endpoint may be unreachable, blocked by CORS, or stalled. ` +
         `If this is a local model that needs more time, raise the timeout ` +
-        `in Settings → Display → "LLM request timeout".`
+        `in Settings → Budgets → "LLM request timeout".`
       );
     }
     throw e;

@@ -253,7 +253,7 @@ Use the tools in `scripts/models/bonsai/`:
   - Apply the same pattern to any new model that serves long prompts on
     shared GPUs.
 - **Cache-only inference.** Chat never downloads. Only explicit download or
-  preload flows fetch model files: Settings → Providers → WebGPU, Apocalypse
+  preload flows fetch model files: Providers → WebGPU, Apocalypse
   Mode, and the first-install page (Chrome), which offers Ternary Bonsai 2 2B
   Vision behind its optional "Download a local model" button. The install page
   checks for hardware WebGPU before fetching anything, never changes the
@@ -349,7 +349,8 @@ Results on the held-out test, RTX 5090, through the extension:
   (Hugging Face commit `b9895bc`, `decision-validation.json`). On the CPU its
   logits and caches are bit-identical to the previous graph
   (`scripts/models/bonsai/check_decision_hidden.py`). Installs that cached
-  the previous graph keep it until the model is downloaded again in Settings;
+  the previous graph keep it until the model is downloaded again on the
+  Providers page;
   until then the provider reports that it needs the updated decoder.
 
 ## Updating a published graph

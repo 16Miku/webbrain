@@ -48,10 +48,11 @@ try {
         }, { build, lang });
 
         const openSettings = async () => {
-          await page.goto(`${origin}/src/${build}/src/ui/settings.html#display`);
+          // The solvers have their own tab in Settings.
+          await page.goto(`${origin}/src/${build}/src/ui/settings.html#captcha`);
           await page.reload();
-          await page.waitForFunction(() => testRequests.some(r => r.action === 'get_providers'));
-          await page.locator('details.advanced-settings').first().locator(':scope > summary').click();
+          await page.waitForFunction(() => document.documentElement.dataset.settingsReady === 'true');
+          assert.equal(await page.locator('.tab-btn.active').getAttribute('data-tab'), 'captcha');
         };
         await openSettings();
         const card = page.locator('#captcha-card');
@@ -142,8 +143,23 @@ try {
           assert.equal(await page.evaluate(name => testStore[name], enabledName), true);
         }
         await page.evaluate(() => chrome.storage.local.set({ webbrainCloudManaged: true }));
-        await openSettings();
+        // A managed browser has no keys to set: its CAPTCHA tab steps aside, and
+        // neither a search nor a language change brings the card back.
+        await page.goto(`${origin}/src/${build}/src/ui/settings.html#captcha`);
+        await page.reload();
+        await page.waitForFunction(() => document.documentElement.dataset.settingsReady === 'true');
+        assert.equal(await page.locator('.tab-btn.active').getAttribute('data-tab'), 'display', 'a managed CAPTCHA deep link lands on General');
+        assert.equal(await page.locator('.tab-btn[data-tab="captcha"]').isVisible(), false, 'managed settings hide the CAPTCHA tab');
         assert.equal(await card.isVisible(), false, 'managed settings keep broker-only UI');
+        await page.locator('#input-general-search').fill('CapSolver');
+        assert.equal(await page.locator('[data-panel="captcha"]').isVisible(), false, 'search leaves the managed CAPTCHA card out');
+        assert.equal(await page.locator('#general-search-empty').isVisible(), true, 'nothing else matches the solver name');
+        await page.locator('#input-general-search').fill('');
+        const otherLang = lang === 'en' ? 'de' : 'en';
+        await page.evaluate(code => chrome.storage.local.set({ wbLocale: code }), otherLang);
+        await page.waitForFunction(code => document.documentElement.lang === code, otherLang);
+        assert.equal(await card.evaluate(el => el.hidden), true, 'a cleared search or a language change keeps the managed card hidden');
+        assert.equal(await page.locator('.tab-btn[data-tab="captcha"]').isVisible(), false);
         assert.deepEqual(errors, []);
         await page.close();
         console.log(`PASS ${build} ${lang} ${width}: settings, validation, independent consent, persistence, balance, and managed mode`);

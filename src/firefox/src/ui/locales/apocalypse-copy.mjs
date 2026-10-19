@@ -38,7 +38,7 @@ const englishApocalypseModeCopy = {
   'ap.models.status.error': 'Error',
   'ap.models.remove': 'Remove',
   'ap.models.confirm_remove': 'Remove the {model} and its cached files? You will need to download it again to use it offline.',
-  'ap.vision.auto': 'Local vision is optional and never downloads on its own. WebBrain VL 2 450M first needs your consent in Settings → Assistive Models → Vision.',
+  'ap.vision.auto': 'Local vision is optional and never downloads on its own. WebBrain VL 2 450M first needs your consent in Providers → Vision.',
   'ap.vision.waiting': 'Disabled until you explicitly enable local vision',
   'ap.vision.text_model_sees': 'Your Text Model, Ternary Bonsai 2 2B Vision, already reads images. No extra download.',
   'ap.enabled': 'Enabled',

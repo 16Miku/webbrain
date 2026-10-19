@@ -50,17 +50,17 @@ for (const build of ['chrome', 'firefox']) {
       const result = messages.find(message => message.id === 2).result;
       assert.equal(result.status, 'error'); assert.equal(result.ready, false); assert.equal(result.loaded, false);
       assert.match(result.error, /Hardware WebGPU/);
-      // The error stays, but the verified cache is reported so Settings can retry with Load.
+      // The error stays, but the verified cache is reported so the Providers page can retry with Load.
       assert.equal(result.cached, true); assert.equal(cacheReads, 1);
     } finally {
       if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator); else delete globalThis.navigator;
       if (oldSelf) Object.defineProperty(globalThis, 'self', oldSelf); else delete globalThis.self;
     }
   });
-  test(`${build}: fixture diagnostics require Settings, stored selected consent and normal typed evaluation`, async () => {
+  test(`${build}: fixture diagnostics require the Providers page, stored selected consent and normal typed evaluation`, async () => {
     const settings = { decisionProvider: 'webgpu_d1', systemOneEnabled: true, [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION };
     const api = { runtime: { id: 'extension-id', getURL: path => 'chrome-extension://extension-id/' + path }, storage: { local: { get: async () => settings } } };
-    const sender = { id: api.runtime.id, url: api.runtime.getURL('src/ui/settings.html') + '#decision' };
+    const sender = { id: api.runtime.id, url: api.runtime.getURL('src/ui/providers.html') + '#decision' };
     const fixture = { state: 'Exact original state', images: ['data:image/png;base64,YQ=='], questions: { q: { type: 'noul', instructions: 'Is blue visible?' } } };
     const client = {};
     const response = { model: pin.D1_MODEL_ID, provider: 'webgpu_d1', answers: { q: { type: 'noul', noul: .75 } }, usage: { input_tokens: 12, output_tokens: 0 } };
@@ -69,7 +69,7 @@ for (const build of ['chrome', 'firefox']) {
     const args = { fixture, sender, api, strictSecretMode: false, agent, client };
     assert.equal(await diagnostic.evaluateD1LocalFixture(args), response);
     assert.equal(calls, 1);
-    for (const badSender of [{ ...sender, id: 'other-id' }, { ...sender, url: 'https://example.com/' }, { ...sender, url: api.runtime.getURL('src/ui/popup.html') }]) await assert.rejects(diagnostic.evaluateD1LocalFixture({ ...args, sender: badSender }), /only from extension Settings/);
+    for (const badSender of [{ ...sender, id: 'other-id' }, { ...sender, url: 'https://example.com/' }, { ...sender, url: api.runtime.getURL('src/ui/popup.html') }, { ...sender, url: api.runtime.getURL('src/ui/settings.html') }]) await assert.rejects(diagnostic.evaluateD1LocalFixture({ ...args, sender: badSender }), /only from the extension Providers page/);
     await assert.rejects(diagnostic.evaluateD1LocalFixture({ ...args, strictSecretMode: true }), /Strict Secret/);
     for (const stored of [{ ...settings, decisionProvider: 'compass' }, { ...settings, systemOneEnabled: false }, { ...settings, [pin.D1_CONSENT_KEY]: 0 }]) await assert.rejects(diagnostic.evaluateD1LocalFixture({ ...args, api: { ...api, storage: { local: { get: async () => stored } } } }), /Select, enable/);
     assert.equal(calls, 1);
