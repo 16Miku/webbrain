@@ -87,9 +87,16 @@ const stubFirefoxBrowser = `
   };
 `;
 
-async function setup(page, fixture) {
+async function setup(page, fixture, { asHost = '' } = {}) {
   await page.addInitScript(stubChrome);
-  await page.goto(fixtureUrl(fixture));
+  if (asHost) {
+    // Serve the fixture as if from another host, without touching the network.
+    const body = await readFile(path.join(__dirname, fixture), 'utf-8');
+    await page.route(`${asHost}/**`, route => route.fulfill({ contentType: 'text/html', body }));
+    await page.goto(`${asHost}/fixture`);
+  } else {
+    await page.goto(fixtureUrl(fixture));
+  }
   const axSrc = await readFile(accessibilityTreeJsPath, 'utf-8');
   await page.addScriptTag({ content: axSrc });
   await page.addScriptTag({ content: await readFile(toolbarHeuristicJsPath, 'utf-8') });
@@ -5900,8 +5907,21 @@ test('click_ax: Agent.executeTool keeps synthetic-first behavior and uses truste
 // From a trace: WhatsApp's chat list rows are grid cells that a
 // script-dispatched click does not open, and the trusted retry skipped every
 // role but generic, listitem and row, so the agent could not open the chat.
-test('click_ax: a grid cell row that ignores the synthetic click gets the trusted CDP retry', async (page) => {
+// Other grids (spreadsheets, calendars) keep their cells synthetic-only: a
+// second, trusted click there can turn a selection into an edit.
+test('click_ax: a grid cell outside WhatsApp\'s chat list is never retried with a trusted click', async (page) => {
   await setup(page, 'trusted-click-fallback.html');
+  const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 30000 });
+  const cellMatch = String(tree?.pageContent || '').match(/gridcell "Grid chat row" \[(ref_\d+)\]/);
+  if (!cellMatch) throw new Error('expected the grid cell in the AX tree');
+  const result = await call(page, 'ax_resolve_rect', { ref_id: cellMatch[1], forClickFallback: true });
+  if (result?.fallbackEligible !== false || !/role "gridcell" is not eligible/.test(result.fallbackBlockedReason || '')) {
+    throw new Error(`a grid cell on another site must stay synthetic-only: ${JSON.stringify(result)}`);
+  }
+});
+
+test('click_ax: a grid cell row that ignores the synthetic click gets the trusted CDP retry', async (page) => {
+  await setup(page, 'trusted-click-fallback.html', { asHost: 'https://web.whatsapp.com' });
   const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 30000 });
   const content = String(tree?.pageContent || '');
   const cellMatch = content.match(/gridcell "Grid chat row" \[(ref_\d+)\]/);

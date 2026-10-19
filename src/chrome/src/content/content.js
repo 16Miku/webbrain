@@ -1241,10 +1241,13 @@
     const unsafeAncestor = el?.parentElement?.closest?.(
       'button,a,input,select,textarea,label,form,[role="button"],[role="link"],[onclick],[data-action]'
     );
-    // A grid cell is the clickable row of a grid-based list. WhatsApp's chat
-    // list is one, and a script-dispatched click on it does not open the
-    // chat, so without the trusted retry the agent could not open a chat.
-    const safeRole = !role || ['generic', 'listitem', 'row', 'gridcell'].includes(role);
+    // WhatsApp's chat list is a grid whose cells a script-dispatched click does
+    // not open, so without the trusted retry the agent could not open a chat.
+    // Any other grid (a spreadsheet, a calendar) keeps its cells synthetic-only:
+    // a second, trusted click there can turn a selection into an edit.
+    const whatsappChatCell = role === 'gridcell' && location.hostname === 'web.whatsapp.com'
+      && !!el?.closest?.('[data-testid="chat-list"]');
+    const safeRole = !role || ['generic', 'listitem', 'row'].includes(role) || whatsappChatCell;
     let blockedReason = '';
     if (isEditable) blockedReason = 'editable targets must not be auto-clicked twice';
     else if (tag === 'select') blockedReason = 'native select controls must use keyboard selection';
