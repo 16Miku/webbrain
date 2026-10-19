@@ -23,7 +23,7 @@ This integration exposes **seven providers and 198 catalog method variants**. A 
 
 ## Setup and consent
 
-Open **Settings → General → Advanced → CAPTCHA solvers**. Each provider has its own API key, enabled checkbox, Save/Test/Clear controls, supported-family list, and official documentation link.
+Open **Settings → CAPTCHA**. Each provider has its own API key, enabled checkbox, Save/Test/Clear controls, supported-family list, and official documentation link.
 
 Typing an API key checks that provider's enabled box unless the user has manually disabled it while editing. Save persists the checkbox state. A saved key can remain present while its provider is disabled. Testing a balance does not enable solving or save consent. Clearing a key disables that provider.
 

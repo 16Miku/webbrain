@@ -46,7 +46,7 @@ inference stay on-device.
 
 ### Which provider receives the data?
 
-The user chooses their provider in Settings. Options include:
+The user chooses their provider on the Providers page (side panel provider picker → More…). Options include:
 
 - **WebBrain Compass**: requests go through `api.webbrain.one`; selected interactions may be retained and used for evaluation, improvement, fine-tuning, and training while Help Improve WebBrain is enabled
 - **Bring-your-own cloud providers**: OpenAI, Anthropic, Google Gemini, Mistral, DeepSeek, xAI, Groq, OpenRouter, etc. — requests go directly to the provider using the user's credentials; WebBrain receives a separate research copy only if the user enables that provider's **Share queries for research** switch
@@ -107,7 +107,7 @@ requests.
 
 ### Decision models and completion verification
 
-Settings → Assistive Models → Decision models has three modes. **Auto** (the
+Providers → Decision has three decision-model modes. **Auto** (the
 default) sends nothing anywhere new: in Chrome it uses Ternary Bonsai 2 2B
 Vision on the device once it is downloaded, for completion and scheduled checks
 only, and while Compass is the conversation provider Compass's managed Cloud
@@ -245,7 +245,7 @@ Strict Secret Mode disables judging; offline loopback decisions remain available
 
 ### WebBrain Compass improvement data
 
-Help Improve WebBrain is available under Settings -> General and is
+Help Improve WebBrain is available under Settings → Advanced and is
 on by default. When it is on, WebBrain may retain eligible Compass prompts, model
 responses, relevant page text, tool calls, browser-agent actions, feedback, and
 task outcome information for evaluation, development, improvement, fine-tuning,
@@ -273,7 +273,7 @@ the raw device and prompt-derived fingerprint are not stored or sent upstream.
 Repeated identical opening messages can be grouped together, and compaction can
 split a legacy conversation, so current clients' explicit conversation ids are
 authoritative. Users of older clients must install the latest client to disable
-future collection under Settings -> General.
+future collection under Settings → Advanced.
 
 An explicit `0` is always opted out. Once any explicit opt-out reaches a
 derived or client-provided session, the Compass service permanently marks that
@@ -352,7 +352,7 @@ the stored copies are not separately synced to WebBrain.
 
 ### Trace Recorder
 
-**Local feedback diagnostics** is enabled by default under Settings → Display.
+**Local feedback diagnostics** is enabled by default under Settings → Advanced.
 When ordinary trace recording is off, it retains metadata-only diagnostics for
 up to ten completed runs, seven days, and 2 MiB (with a 128 KiB per-run cap).
 These automatic records never inherit lossless tracing and contain no raw
@@ -360,13 +360,15 @@ conversation/tool text or screenshot bytes. Turning the setting off stops this
 recording and removes its automatic history; explicitly recorded traces remain.
 Retention and event-budget omissions are identified in feedback exports.
 
-When enabled (Settings → Display → "Record traces"), every agent run is written
-to the local `webbrain_traces` IndexedDB database in one of two privacy tiers.
-An external/local provider with **Share queries for research** enabled also
-records its run locally for the bounded diagnostic upload, even when this
-separate Record traces setting is off:
+When enabled (Settings → Advanced → "Record traces"), every agent run is written
+to the local `webbrain_traces` IndexedDB database with its full request details
+(the lossless tier below); one switch turns both on or off. An external/local
+provider with **Share queries for research** enabled also records its run
+locally for the bounded diagnostic upload, even when Record traces is off; such
+runs use the metadata-only tier:
 
-- **Default metadata-only tier.** The `runs` store keeps run identifiers and
+- **Metadata-only tier.** This is the default tier for runs recorded while
+  Record traces is off. The `runs` store keeps run identifiers and
   lineage, model/provider identifiers, token and event totals, timestamps,
   status, and the allowlisted runtime snapshot. It omits the user's message,
   final assistant text, full tab URL/title, and attachment filenames. The
@@ -374,15 +376,17 @@ separate Record traces setting is off:
   counts, timings, usage, finish/status/error codes, called tool name and
   outcome status, and screenshot marker/caption. It omits raw LLM
   request/response text, tool schemas, tool arguments/results, and error
-  messages. Default traces do not write screenshot blobs or data URLs to the
-  `shots` store.
-- **Lossless debug tier (explicit opt-in).** Enabling lossless tracing under
-  Settings → Display adds user/final text, bounded request messages and tool
-  schemas, model responses and tool calls, tool arguments/results, detailed
-  errors, screenshot bytes, tab URL/title, and attachment filename metadata.
-  Lossless payloads have per-request, per-result, per-run, and aggregate
-  storage bounds; old completed lossless runs may be evicted to remain within
-  the aggregate limit. These runs are visibly marked in the Traces UI.
+  messages. Metadata-only traces do not write screenshot blobs or data URLs to
+  the `shots` store.
+- **Lossless debug tier (explicit opt-in).** Record traces adds user/final
+  text, bounded request messages and tool schemas, model responses and tool
+  calls, tool arguments/results, detailed errors, screenshot bytes, tab
+  URL/title, and attachment filename metadata. Lossless payloads have
+  per-request, per-result, per-run, and aggregate storage bounds; old completed
+  lossless runs may be evicted to remain within the aggregate limit. These runs
+  are visibly marked in the Traces UI. Full request details used to have a
+  switch of their own; on update, an install that recorded traces without them
+  has them turned on once, so the single switch matches what is recorded.
 
 `click_ax_timing` trace notes retain only bounded stage durations, input-event
 counts, outcome categories, and safety-status booleans. URL, target labels,
@@ -510,7 +514,7 @@ but users should not store passwords, API keys, tokens, recovery codes, or other
 sensitive secrets as memory.
 
 When user memory is enabled, active records are appended to the agent system
-prompt as a bounded block. Settings -> Profile controls whether memory is
+prompt as a bounded block. Settings → Memory controls whether memory is
 enabled, whether optional auto-learning runs after completed turns, and the
 maximum prompt characters injected. `/memory --add <text>` writes an explicit memory
 immediately without an extractor call. Export/import JSON is local-only and is
@@ -540,7 +544,7 @@ WebBrain Compass or to the configured LLM provider.
 ### Optional Encrypted Cloud Sync
 
 Active WebBrain Compass subscribers may explicitly enable encrypted profile sync in
-Settings. The extension combines user memory, profile autofill, and provider
+Settings → Memory. The extension combines user memory, profile autofill, and provider
 configuration (including API keys, but excluding legacy OAuth access/refresh
 token stores) into one vault. Chromium-only WebGPU provider configuration and
 selection remain device-local so a Firefox sync cannot replace that local choice.
@@ -573,7 +577,7 @@ the URL + method to the active LLM conversation.
 ### Experimental WebMCP
 
 WebMCP is on by default. A user can disable **Experimental WebMCP** under
-Settings → General → Advanced to prevent WebBrain from sending its tool schemas
+Settings → Bridge to prevent WebBrain from sending its tool schemas
 or prompt guidance to the configured LLM. On supporting Chrome pages, WebBrain
 can enable the experimental CDP `WebMCP` domain. Chrome reports the structured tools registered by the current page,
 including their page-supplied name, description, input schema, annotations, and

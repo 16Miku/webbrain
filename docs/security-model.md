@@ -173,7 +173,7 @@ When disabled (the default — this is a personal-computer tool, not a third-par
 
 ### Profile Auto-Fill
 
-Users can store a short profile (name, email, throwaway password) in Settings → Profile. This text is appended to the system prompt when enabled. Warnings in the UI:
+Users can store a short profile (name, email, throwaway password) in Settings → Memory. This text is appended to the system prompt when enabled. Warnings in the UI:
 
 - Stored in plaintext in `chrome.storage.local`
 - Sent to the LLM provider on every turn as part of the system prompt
@@ -211,7 +211,7 @@ The primary threat: a malicious page crafts content that, when read by the agent
 | **Plan before Act** | When enabled, action-mode runs first produce a structured plan and wait for side-panel approval before any browser tool executes. In Try mode, planner JSON that remains invalid after repair degrades that turn to Ask/read-only; Strict stops. Scheduled runs can auto-approve the plan only through scheduler policy. |
 | **Skill import boundary** | Skills can expose read-only HTTP tools and download-job tools through a `webbrain-tools` manifest. Importing or keeping the skill enabled is the trust decision for the declared HTTPS endpoint; declared skill tools use `credentials: "omit"` and should mark third-party results `resultPolicy: "untrusted"`. Download-job skill tools still require an action mode and the normal Downloads permission gate before saving files. |
 | **WebMCP boundary** | Experimental WebMCP is on by default, so its tools and prompt guidance enter ordinary model requests unless the user opts out under Settings → Bridge. Chrome page-registered names, descriptions, schemas, frame URLs, annotations, outputs, and errors are page-controlled and always use the untrusted-content wrapper. Calls use opaque IDs. Ask may list tools but cannot invoke them. Because a callback can run arbitrary page logic, every invocation requires Act/Dev, fresh per-call confirmation, and a permission grant for the actual registration-frame origin; a page-authored `readOnly` hint never bypasses those gates. Missing/opaque frame identity fails closed, and the frame plus effective HTTP(S) security origin are revalidated immediately before dispatch to prevent navigation races from borrowing an old grant. |
-| **API mutation override** | A per-conversation `/allow-api` flag, or the default-on persistent setting under General → Advanced, *waives* the permission prompt for write-method network egress (`fetch_url`/`research_url` with POST/PUT/PATCH/DELETE). Neither option waives GET egress or any other capability. Conversation reset clears only the slash-command override. |
+| **API mutation override** | A per-conversation `/allow-api` flag, or the default-on persistent setting under Settings → Advanced, *waives* the permission prompt for write-method network egress (`fetch_url`/`research_url` with POST/PUT/PATCH/DELETE). Neither option waives GET egress or any other capability. Conversation reset clears only the slash-command override. |
 | **Decision models** | Auto (default) uses the downloaded in-browser model for completion and scheduled checks, or Compass's managed route while Compass is the chat provider; Off uses none. In On, OpenRouter, direct TypeSafe and local/custom System One endpoints share independent per-feature switches. Keys are optional for local servers. Compass completion uses its managed decision route unless D1 or the in-browser chat model is chosen. Bounded/redacted task and fresh page evidence are untrusted data. Judges have no browser executor; ordinary tool calls still pass policy, permission and completion layers. Strict Secret Mode, cancellation, quota and cost limits apply. Unavailable or malformed judgments fall through to the active LLM and existing checks. |
 | **`done()` verification** | Decision and tool-free LLM checks prefer vision, then AX. Confident pending/failed outcomes require read-only recovery before another submission. Accepted task-bound proof can satisfy generic evidence despite an unrelated comment form, while explicit recipient, payment, download, authorization and workflow contracts remain required. Existing dialog/form checks are the final fallback. |
 | **Grouped search approval** | A same-site GET form with no credential, payment or hidden token field, and no side-effect action address, shares one task-scoped approval for its navigation, typing and submit when the page's structure marks it as a search: a search landmark, a search-typed field or one whose keyboard says search, code names such as `q` or `query`, a search address, or a submit control a model read, in any language, as only searching or filtering. Words in a field's visible label decide nothing. Every other form keeps its fresh confirmation. |
@@ -235,7 +235,7 @@ The primary threat: a malicious page crafts content that, when read by the agent
 ## Unanswered Questions
 
 When the agent asks a `clarify` question and nobody answers before the clarify
-timeout (Settings → General, default 60 s), the setting **When a question times
+timeout (Settings → Budgets, default 60 s), the setting **When a question times
 out** decides the answer:
 
 - **Finish the task** (default) keeps the run moving. The option the model named
@@ -335,7 +335,7 @@ arbitrary conversation/page content.
 
 The trace recorder (`trace/recorder.js`) writes to IndexedDB on the user's
 machine for bounded automatic feedback diagnostics, when explicitly enabled
-(Settings → Display → "Record traces"), or when a local/bring-your-own provider's
+(Settings → Advanced → "Record traces"), or when a local/bring-your-own provider's
 separate **Share queries for research** switch is enabled for that run. The latter
 forces a local record so a bounded,
 content-free diagnostic timeline can be uploaded under that explicit consent.

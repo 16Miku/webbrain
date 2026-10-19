@@ -4,11 +4,13 @@
 
 ## Main provider and assistive models
 
-**Settings → Providers** selects the main model for conversation, planning and
-final replies. **Settings → Assistive Models** groups Vision (including screenshot
-limits and redaction), Speech to text, Generative Media (powering the
-`generate_image` agent tool), Decision models, and SafeSocial. Configuring an assistive
-model does not replace the active provider. Decision models share one provider/model
+The **Providers** page (`ui/providers.html`, opened from **More…** in the side
+panel's model menu or from the Settings header) selects the main model for
+conversation, planning and final replies on its **LLM** tab. Its other tabs hold
+the assistive models: Vision, Speech (speech to text), Generative (powering the
+`generate_image` agent tool), Decision models, and SafeSocial. Screenshot limits
+are in Settings → Budgets and screenshot redaction in Settings → Advanced.
+Configuring an assistive model does not replace the active provider. Decision models share one provider/model
 selection with separate completion, watch, scheduled-check, classification and browser
 decision switches. See [the settings guide](https://webbrain.one/docs/settings/#multimodal)
 and [data flow](privacy-and-data-flow.md#decision-models-and-completion-verification)
@@ -203,7 +205,7 @@ An older Cloud deployment falls through to the active LLM and existing checks.
 
 ### Generative Media
 
-Configure **Settings → Assistive Models → Generative Media** for the
+Configure **Providers → Generative** for the
 `generate_image` agent tool. Select one provider and save its settings:
 
 | Provider | Required settings | Generation |
@@ -248,7 +250,7 @@ Inline bytes are shown in chat and excluded from model context.
 
 ### SafeSocial image classifier (experimental)
 
-**Settings → Assistive Models → SafeSocial** optionally filters Instagram images
+**Providers → SafeSocial** optionally filters Instagram images
 and video posters using the local, multilabel
 [EfficientNet-Lite0 classifier](https://huggingface.co/webbrain-one/safesocial-trigger-classifier-efficientnet-lite0).
 It is off by default and does not replace the chat or screenshot vision model.
@@ -414,7 +416,7 @@ same API and billing but do not inherit the TEE privacy guarantees. See the
 [OpenAI compatibility](https://docs.near.ai/cloud/guides/openai-compatibility)
 guides.
 
-In WebBrain, open **Settings -> Providers -> NEAR AI Cloud**. Generate an API
+In WebBrain, open **Providers -> LLM -> NEAR AI Cloud**. Generate an API
 key from the [NEAR AI Cloud dashboard](https://cloud.near.ai/), paste it into
 the card, keep the default `z-ai/glm-5.3-flash` model, then click **Test
 Connection**. If selecting a model with a smaller context window, such as
@@ -560,11 +562,11 @@ validates the template after loading and rejects incompatible repositories.
 The provider defaults to the Compact prompt tier. For Compass, budget roughly
 4 GB of GPU headroom (about 1.87 GB of
 weights plus KV cache that grows with context length); on constrained GPUs,
-lower the context window on the WebGPU card in Settings → Providers (16384 is
+lower the context window on the WebGPU card on the Providers page (16384 is
 a safe fallback) and retry with a short prompt. Each repository is cached
 separately in Chrome.
-After downloading a preset in Apocalypse Mode, the WebGPU card in
-**Settings -> Providers** can be configured, tested, and selected as the normal
+After downloading a preset in Apocalypse Mode, the WebGPU card on the
+**Providers** page can be configured, tested, and selected as the normal
 chat provider. The nuclear standalone-chat control remains available as a
 per-run override that does not change the global selection. Once its files are
 cached, the selected model works without Apocalypse Mode enabled.
@@ -597,7 +599,7 @@ proxy card require their configured client keys:
 
 #### ODS
 
-Open **Settings → Providers → ODS (Local)**, set the server URL to the local
+Open **Providers → LLM → ODS (Local)**, set the server URL to the local
 inference port in ODS's `.env`, click **Load Models**, select the running model,
 and click **Test Connection**. ODS exposes OpenAI-compatible `/v1/models` and
 `/v1/chat/completions`; WebBrain reads `/props` for the live context window and
@@ -608,7 +610,7 @@ model in WebBrain unless your ODS installation exposes a stable alias. See the
 
 #### Osaurus
 
-Start the Osaurus server on your Mac, then open **Settings → Providers →
+Start the Osaurus server on your Mac, then open **Providers → LLM →
 Osaurus (Local)**. Keep `http://127.0.0.1:1337/v1` as the server URL, click
 **Load Models**, select a model, and click **Test Connection**. A model ID is
 required; discovery uses Osaurus's OpenAI-compatible `/v1/models` endpoint.
@@ -631,7 +633,7 @@ then start Studio and load a chat model. In Studio, open the avatar menu,
 choose **Settings → API Access**, and create an API key. Keys currently use the
 `sk-unsloth-` prefix; keep the full value private.
 
-In WebBrain, open **Settings → Providers → Unsloth Studio (Local)**. Enter the
+In WebBrain, open **Providers → LLM → Unsloth Studio (Local)**. Enter the
 Studio API address as `http://127.0.0.1:8888/v1`, replacing `8888` when the
 running Studio instance shows a different port. Enter the generated API key,
 click **Load Models**, select the loaded model, then click **Test Connection**.
@@ -745,7 +747,7 @@ Provider tier and conversation mode are separate knobs:
 
 Ask mode ignores provider tier and stays read-only. Act mode uses the selected tier's normal tools. Dev mode requires Mid or Full, uses the selected Act prompt, appends `SYSTEM_PROMPT_DEV_APPENDIX`, and adds Dev-only source/style tools plus Dev-extended shadow/frame inspection for Mid-tier debugging. Compact Dev is blocked before an LLM request is sent.
 
-**Lean mode** (Settings → General → Lean mode; Auto by default) replaces the tier's Act tools and prompt with a 17-tool set and a short prompt, and skips WebBrain's quality checks. Under Auto it applies only to a strong model on a cloud or router provider whose tier is Full; Compact and Mid tiers and local providers keep their tier. See [lean-mode.md](lean-mode.md).
+**Lean mode** (Settings → Advanced → Lean mode; Auto by default) replaces the tier's Act tools and prompt with a 17-tool set and a short prompt, and skips WebBrain's quality checks. Under Auto it applies only to a strong model on a cloud or router provider whose tier is Full; Compact and Mid tiers and local providers keep their tier. See [lean-mode.md](lean-mode.md).
 
 ### Vision Detection
 
@@ -869,7 +871,7 @@ Deprecated provider entries (`webbrain`, `openai_subscription`,
 
 ### Cost Allowances
 
-Settings exposes session and total cloud cost allowances. The agent prefers a provider-reported `usage.cost`/`usage.cost_usd` value when present (OpenRouter reports this directly). For direct cloud providers that only return token counts, WebBrain estimates spend from the provider config fields:
+Settings → Budgets exposes session and total cloud cost allowances. The agent prefers a provider-reported `usage.cost`/`usage.cost_usd` value when present (OpenRouter reports this directly). For direct cloud providers that only return token counts, WebBrain estimates spend from the provider config fields:
 
 - `inputCostPerMillionUsd`
 - `cacheReadCostPerMillionUsd`
@@ -906,7 +908,7 @@ const vision = await providerManager.getVisionProvider();
 // active-provider vision and the explicitly enabled, ready local fallback.
 ```
 
-On Chromium, **Settings -> Assistive Models -> Vision** also offers an
+On Chromium, **Providers -> Vision** also offers an
 in-browser vision model, chosen from **Auto** (default), **Ternary Bonsai 2 2B
 Vision**, **WebBrain VL 2 450M** or **Off**. The choice is stored in the
 Chrome-only `webgpuVisionChoice` key (`storedWebgpuVisionChoice()` and

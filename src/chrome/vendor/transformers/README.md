@@ -10,7 +10,7 @@ WebGPU paths in Chrome and by offline RAG's CPU/WASM semantic reranker:
   LFM2.5 and Nanbeige exports. An opt-in Bonsai 27B preset uses a separate
   vendored bitgpu worker, not this Transformers.js runtime; see
   `src/chrome/vendor/bitgpu/README.webbrain.md`.
-- **Settings -> Multimodal -> Vision -> LFM2.5-VL local fallback** runs
+- **Providers -> Vision -> LFM2.5-VL local fallback** runs
   `LiquidAI/LFM2.5-VL-450M-ONNX` as the dedicated screenshot sidecar.
 - **Apocalypse Mode -> Offline RAG** runs the explicitly downloaded, pinned
   `Xenova/multilingual-e5-small` q8 model in a separate CPU/WASM worker. Model

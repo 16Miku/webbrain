@@ -37,8 +37,9 @@ src/chrome/src/ui/
     └── zh.js              # Chinese
 ```
 
-Settings → Language lists all **23** locales from `LANGUAGES` in `i18n.js`
-(English and Chinese pinned first; the rest sorted by English name).
+The side panel's language picker lists all **23** locales from `LANGUAGES` in
+`i18n.js` (English and Chinese pinned first; the rest sorted by English name).
+The settings pages follow the chosen language through `wb-locale-changed`.
 ### Key Functions
 
 ```js

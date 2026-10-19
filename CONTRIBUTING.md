@@ -143,10 +143,10 @@ the Pull Requests link).
 1. Load the unpacked extension (Chrome → `chrome://extensions/` → Developer
    mode → Load unpacked → pick `src/chrome/`).
 2. Open the WebBrain side panel on the target site.
-3. **Settings → Display → Site adapters** must be on (it is by default).
+3. **Settings → Advanced → Site adapters** must be on (it is by default).
 4. Run a representative task in Act mode — for sahibinden, something like
    _"find me 5 listings under 35,000 TL for X"_. Watch what the agent does.
-5. Toggle **Settings → Display → Record traces** before the run. After
+5. Toggle **Settings → Advanced → Record traces** before the run. After
    the run, open the Traces page and inspect the timeline. Did the agent
    hit any of the dead-ends your adapter is meant to prevent? Did it follow
    the patterns you described?

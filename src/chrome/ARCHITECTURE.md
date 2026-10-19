@@ -79,8 +79,12 @@ src/chrome/
 │   └── ui/
 │       ├── sidepanel.html
 │       ├── sidepanel.js        # Chat UI, verbose mode, deep verbose
-│       ├── settings.html
-│       ├── settings.js         # Provider + display settings
+│       ├── settings.html       # Settings: General, Budgets, Memory, Skills, CAPTCHA, Bridge, Advanced
+│       ├── providers.html      # Providers: LLM, Vision, Speech, Generative, Decision, SafeSocial
+│       ├── permissions.html    # Site permissions
+│       ├── settings.css        # Shared by the three settings pages
+│       ├── settings-tabs.js    # Tab bar, deep links and moved-tab redirects
+│       ├── settings.js         # One controller for all three settings pages
 │       ├── traces.html
 │       └── traces.js           # Trace viewer / model comparison UI
 ├── skills/                     # Packaged default skills (removable after seeding)
@@ -771,7 +775,7 @@ in-progress Markdown after older delta events have been acknowledged.
 
 ## Trace Recorder (optional)
 
-Off by default. Enabled via Settings → Display → "Record traces". When on, every agent run writes to an IndexedDB database (`webbrain-traces`):
+Off by default. Enabled via Settings → Advanced → "Record traces", which records each run with its full request details (`tracingEnabled` and `losslessTrace` together). When on, every agent run writes to an IndexedDB database (`webbrain-traces`):
 
 - `runs` store: one row per user message — model, provider, token totals, timestamps.
 - `events` store: one row per LLM request/response, tool call, screenshot. LLM requests retain content-free prompt provenance (controlled variant, counts, declared prompt/tool policy revisions, and runtime-mode alignment), not fingerprints or raw system prompts, message text, tool schemas, or tool names. Policy revisions are bumped when controlled prompt templates or tool-exposure rules change; private request content does not affect them. Rows are indexed by `(runId, seq)`.
@@ -785,19 +789,21 @@ advertise mutation availability and route still-missing required inputs through
 
 ---
 
-## Display Settings
+## Settings Pages
 
-`Settings → Display` toggles (stored in `chrome.storage.local`):
+Settings (`ui/settings.html`) has General, Budgets, Memory, Skills, CAPTCHA, Bridge and Advanced tabs. The chat provider and the assistive models live on `ui/providers.html` (LLM, Vision, Speech, Generative, Decision and SafeSocial tabs), and site permissions on `ui/permissions.html`. One controller, `ui/settings.js`, serves all three pages; each section wires itself only when its markup is on the page. Old `settings.html#providers`, `#multimodal` and `#permissions` links redirect to the new pages.
 
-| Setting | Effect |
-|---|---|
-| Verbose mode | Shows full tool args + JSON results in chat instead of compact labels. |
-| Screenshot fallback | Capture a screenshot when DOM read fails or returns insufficient content. |
-| Site adapters | Inject per-site guidance and expose validated app-owned workflow jobs to the planner (default on). |
-| Auto-screenshot | `off` / `navigation` / `state_change` (default) / `every_step`. |
-| Record traces | Enable the trace recorder (see above). |
-| Completion sound | Play a chime in the side panel when the agent finishes. |
-| Max Agent Steps | 5–195 finite steps or unlimited, default 130. |
+Selected toggles (stored in `chrome.storage.local`):
+
+| Setting | Tab | Effect |
+|---|---|---|
+| Verbose mode | Advanced | Shows full tool args + JSON results in chat instead of compact labels. |
+| Screenshot fallback | Advanced | Capture a screenshot when DOM read fails or returns insufficient content. |
+| Site adapters | Advanced | Inject per-site guidance and expose validated app-owned workflow jobs to the planner (default on). |
+| Auto-screenshot | General | `off` / `navigation` (default) / `state_change` / `every_step`. |
+| Record traces | Advanced | Enable the trace recorder with full request details (see above). |
+| Completion sound | Advanced | Play a chime in the side panel when the agent finishes. |
+| Max Agent Steps | Budgets | 5–195 finite steps or unlimited, default 130. |
 
 ---
 

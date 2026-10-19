@@ -1,7 +1,7 @@
 # Manual test: capability × origin permission gate + Settings UI
 
 These two paths can't be covered by `test/run.js` (they need a live browser —
-the 3-option permission card and the Settings → Permissions tab are DOM/storage
+the 3-option permission card and the Permissions page are DOM/storage
 glue). Run this checklist after loading the unpacked extension before merging
 changes to the permission gate or its UI.
 
@@ -15,7 +15,7 @@ Settings page console):
 - **Inspect grants:** `await browser.storage.local.get('wb_permissions')`
   (Firefox) / `chrome.storage.local.get('wb_permissions')` (Chrome).
 - **Reset grants:** `browser.storage.local.remove('wb_permissions')`, or
-  Settings → Permissions → Clear all.
+  Permissions page → Clear all.
 
 ---
 
@@ -95,12 +95,12 @@ Confirms a grant is scoped to exactly one capability+host, not a blanket pass.
 ## Test 4 — Persistence across reload
 1. Grant an "Always allow."
 2. Reload the extension (or restart the browser).
-3. Agent acts on that host → **no prompt**; Settings → Permissions still lists it.
+3. Agent acts on that host → **no prompt**; the Permissions page still lists it.
 
 ---
 
 ## Test 5 — Master switch ("Ask before consequential actions")
-The toggle is at the **top** of Settings → Permissions, **on by default**.
+The toggle is at the **top** of the Permissions page, **on by default**.
 
 1. **On (default):** with the toggle on, trigger a gated action → the permission
    card appears (as in Test 1). The warning box is hidden.
@@ -123,7 +123,7 @@ The toggle is at the **top** of Settings → Permissions, **on by default**.
   non-English locales (1a.4).
 - Allow-once and Always **proceed**; Don't-allow **blocks** (1b–1d).
 - Grants are per-capability+host (Test 2).
-- Permissions tab lists/revokes/clears correctly; a revoke causes an immediate
+- The Permissions page lists/revokes/clears correctly; a revoke causes an immediate
   re-prompt (Test 3).
 - Grants persist across reload (Test 4).
 

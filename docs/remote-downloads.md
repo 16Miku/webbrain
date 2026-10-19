@@ -96,7 +96,7 @@ flowchart TD
      (1.45 GB) is the chat preset's download, started by a click on its
      Download button here, in Settings or in the Text Model picker; the separate
      810 MB WebBrain VL 2 450M is downloaded only after the user consents to it
-     in **Settings -> Assistive Models -> Vision**.
+     in **Providers -> Vision**.
 
 ---
 
