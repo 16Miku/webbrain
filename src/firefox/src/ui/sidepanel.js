@@ -2082,6 +2082,9 @@ function restoreComposerModeForCurrentTab() {
 
 function setComposerModePinForTab(tabId, mode) {
   if (isStandaloneWindow || tabId == null) return;
+  // Any change (a pick, a new chat, a recovered record, a selection scope, a
+  // provider check) supersedes a pick still waiting on its checks.
+  composerModePickGeneration += 1;
   void composerModePins.set(tabId, mode);
   if (sameTabId(currentTabId, tabId)) syncComposerModeForCurrentTab();
 }

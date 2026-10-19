@@ -371,6 +371,21 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
       });
     });
 
+    test('a new chat cancels a pick still being checked', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.evaluate(() => { window.__release = null; window.__gates.act = new Promise(resolve => { window.__release = resolve; }); });
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        // New chat (renderClearedConversationForTab) while the Act check waits.
+        await page.evaluate(() => window.setComposerModePinForTab(7, null));
+        await page.evaluate(() => window.__release());
+        await page.waitForTimeout(50);
+        const p = await picker(page);
+        assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null }, 'the new chat starts in Auto');
+        assert.equal('composerModePin:7' in p.session, false);
+      });
+    });
+
     test('a kept mode the new provider cannot run goes back to Auto, after the run', async () => {
       await fixture(async ({ page }) => {
         await page.click('#btn-permission-gate');

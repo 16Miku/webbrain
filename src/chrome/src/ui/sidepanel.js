@@ -1907,6 +1907,9 @@ function restoreComposerModeForCurrentTab() {
 
 function setComposerModePinForTab(tabId, mode) {
   if (isStandaloneWindow || tabId == null) return;
+  // Any change (a pick, a new chat, a recovered record, a selection scope, a
+  // provider check) supersedes a pick still waiting on its checks.
+  composerModePickGeneration += 1;
   const previous = composerModePins.get(tabId);
   void composerModePins.set(tabId, mode);
   // Leaving a kept Dev drains that tab's diagnostics, never another tab's.
