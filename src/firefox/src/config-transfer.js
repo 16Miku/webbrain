@@ -320,10 +320,12 @@ function normalizeSettings(source, { strict = false } = {}) {
     settings.decisionInputRate = decisionProvider === 'typesafe' || (!decisionProvider && source.typesafeApiKey)
       ? .042 : ['local', 'webgpu_d1'].includes(decisionProvider) ? 0 : .02;
   }
-  const isLegacyPreModeProfile = !DECISION_MODES.includes(source?.decisionMode) && Object.hasOwn(source, 'systemOneEnabled');
-  const isExplicitOn = source?.decisionMode === 'on';
-  const isModernAuto = resolveDecisionMode(source) === 'auto' && !isLegacyPreModeProfile;
-  if (isExplicitOn || isModernAuto) {
+  // A profile saved before modes existed and left in On keeps the old reading: a missing switch is
+  // off. Every other profile (explicit On, Auto or Off, or a pre-mode profile that was not On)
+  // switches to On with the omitted switches enabled, so they are materialized as on and a round
+  // trip does not turn them into the old `false` defaults.
+  const isLegacyOnProfile = !DECISION_MODES.includes(source?.decisionMode) && source?.systemOneEnabled === true;
+  if (!isLegacyOnProfile) {
     for (const key of Object.values(DECISION_FEATURE_KEYS)) {
       if (!Object.hasOwn(source, key)) {
         settings[key] = true;

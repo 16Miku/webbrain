@@ -283,3 +283,22 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(source, new RegExp(`materializeLegacyDecisionFeatures\\(await ${api}\\.storage\\.local\\.get\\(DECISION_SETTINGS_KEYS\\)\\);\\s*await ${api}\\.storage\\.local\\.set\\(\\{ \\.\\.\\.legacyFeatures, \\[DECISION_MODE_KEY\\]: mode, systemOneEnabled: mode === 'on' \\}\\)`));
   });
 }
+
+for (const build of ['chrome', 'firefox']) {
+  test(`${build}: exporting an Off profile keeps the latent On defaults`, async () => {
+    const transfer = await import(`../src/${build}/src/config-transfer.js`);
+    const config = await import(`../src/${build}/src/agent/decision-config.js`);
+    const keys = Object.values(config.DECISION_FEATURE_KEYS);
+    const roundTrip = (stored) => transfer.parseConfigImport(JSON.stringify(transfer.createConfigExport(stored))).settings;
+    for (const stored of [{ decisionMode: 'off' }, { decisionMode: 'auto' }, { decisionMode: 'on' }, { systemOneEnabled: false }, {}]) {
+      const restored = roundTrip(stored);
+      for (const key of keys) assert.equal(restored[key], true, `${JSON.stringify(stored)}: ${key} stays on by default`);
+      const features = config.resolveDecisionConfig({ ...restored, decisionMode: 'on', systemOneEnabled: true }).features;
+      for (const feature of ['watch', 'completion', 'classifications', 'browser']) assert.equal(features[feature], true);
+    }
+    // Explicit values are never overwritten, and a pre-mode On profile keeps its old (off) reading.
+    assert.equal(roundTrip({ decisionMode: 'off', systemOneWatchEnabled: false }).systemOneWatchEnabled, false);
+    const legacyOn = roundTrip({ systemOneEnabled: true });
+    for (const key of keys.filter((k) => k !== 'systemOneDoneEnabled')) assert.equal(legacyOn[key], false, `pre-mode On: ${key} stays off`);
+  });
+}
