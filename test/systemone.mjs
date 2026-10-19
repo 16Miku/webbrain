@@ -53,8 +53,11 @@ for (const build of ['chrome', 'firefox']) {
         error => error.code === 'JEV_STATE_EXCEEDS_MODEL_INPUT' && mod.systemOneFailureReason(error) === 'state_too_long', name);
     }
     assert.equal(requests.length, 1, 'a state past the budget is not sent');
+    // A screenshot inside the state is an image, not text, so it does not use up the budget.
+    await judge.evaluate({ config: { ...config, supportsVision: true }, state: [{ task: 'Is it done?' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(50000) } }], questions: one });
+    assert.equal(requests.length, 2, 'an image payload is excluded from the text budget');
     await judge.evaluate({ config: { ...config, model: 'another/publisher' }, state: dense.cjk, questions: one });
-    assert.equal(requests.length, 2, 'other models keep the full state');
+    assert.equal(requests.length, 3, 'other models keep the full state');
     assert.ok(mod.estimateTextTokens('x'.repeat(100)) >= 50 && mod.estimateTextTokens('日'.repeat(10)) >= 20);
   });
   test(`${build}: singleton Choice requests fail locally before a service call`, async () => {

@@ -151,7 +151,10 @@ export function estimateTextTokens(text) {
 function assertStateFitsModel(model, state) {
   const budget = SYSTEM_ONE_TEXT_TOKEN_BUDGETS[model];
   if (!budget) return;
-  if (estimateTextTokens(JSON.stringify(state)) > budget) {
+  // Screenshots ride inside the state as data URLs; the provider counts images
+  // separately, so only the text around them is measured.
+  const text = JSON.stringify(state).replace(/data:[\w.+-]+\/[\w.+-]+;base64,[A-Za-z0-9+/=]*/g, 'data:');
+  if (estimateTextTokens(text) > budget) {
     throw systemOneError('JEV_STATE_EXCEEDS_MODEL_INPUT', `The decision state is longer than ${model} reads; the fallback answers instead.`);
   }
 }
