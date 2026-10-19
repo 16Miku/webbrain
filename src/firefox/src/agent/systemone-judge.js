@@ -132,12 +132,26 @@ function validateState(state, multimodal = false) {
 // confident and wrong. A state past the budget is not sent at all; the caller
 // takes the same fallback as for any unavailable decision model. Images are
 // counted separately by the provider and are not part of this text.
-export const SYSTEM_ONE_TEXT_BUDGETS = Object.freeze({ 'cloudflare/clef-flash': 6000 });
+// The budget is in estimated tokens and sits well under the 2K the model reads
+// (see estimateTextTokens), because no tokenizer ships with the extension.
+export const SYSTEM_ONE_TEXT_TOKEN_BUDGETS = Object.freeze({ 'cloudflare/clef-flash': 1500 });
+
+// A deliberately high token estimate, so a state it passes stays under the real
+// limit for ordinary text, CJK, and identifier-heavy input alike: ASCII counts
+// half a token per character (English and JSON run near a quarter), any other
+// character two (CJK and emoji take one to three), and long unbroken runs of
+// letters and digits (hashes, base64, ids) one per character.
+export function estimateTextTokens(text) {
+  let tokens = 0;
+  const rest = String(text).replace(/[A-Za-z0-9+/=_-]{24,}/g, run => { tokens += run.length; return ' '; });
+  for (const character of rest) tokens += character.charCodeAt(0) < 128 ? .5 : 2;
+  return Math.ceil(tokens);
+}
 
 function assertStateFitsModel(model, state) {
-  const budget = SYSTEM_ONE_TEXT_BUDGETS[model];
+  const budget = SYSTEM_ONE_TEXT_TOKEN_BUDGETS[model];
   if (!budget) return;
-  if (JSON.stringify(state).length > budget) {
+  if (estimateTextTokens(JSON.stringify(state)) > budget) {
     throw systemOneError('JEV_STATE_EXCEEDS_MODEL_INPUT', `The decision state is longer than ${model} reads; the fallback answers instead.`);
   }
 }

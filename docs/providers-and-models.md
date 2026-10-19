@@ -90,10 +90,14 @@ provider until changed. Provider keys are stored separately.
 
 `cloudflare/clef-flash` reads only the first ~2K tokens of a long text state
 (OpenRouter's model page says Workers AI truncates it), so
-`SYSTEM_ONE_TEXT_BUDGETS` in `systemone-judge.js` caps the state it is sent at
-6,000 characters. A longer state is not sent; the check takes the same fallback
-as for an unavailable decision model (failure reason `state_too_long`) instead
-of judging evidence it only partly read.
+`SYSTEM_ONE_TEXT_TOKEN_BUDGETS` in `systemone-judge.js` caps the state it is sent
+at 1,500 *estimated* tokens. The estimate is deliberately high (no tokenizer
+ships with the extension): ASCII counts half a token per character, other
+characters two, long unbroken letter/digit runs one each. A longer state is not
+sent; the check takes the same fallback as for an unavailable decision model
+(failure reason `state_too_long`) instead of judging evidence it only partly
+read. In practice Clef Flash answers short decisions, and long completion
+evidence goes to the main model.
 
 Local [Kev](https://github.com/jaredpalmer/kev) defaults to
 `http://127.0.0.1:8009`, model `kev-latest`, using `/v1/systemone`. A key is optional
