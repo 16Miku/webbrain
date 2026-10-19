@@ -48,7 +48,7 @@ export function updateTimeoutRing(ring, remainingMs, totalMs) {
   const share = timeoutRingShare(remainingMs, totalMs);
   const progress = ring.querySelector('.timeout-ring-progress');
   const hand = ring.querySelector('.timeout-ring-hand');
-  if (progress) progress.setAttribute('stroke-dashoffset', (TIMEOUT_RING_CIRCUMFERENCE * (1 - share)).toFixed(3));
+  if (progress) progress.setAttribute('stroke-dashoffset', (-TIMEOUT_RING_CIRCUMFERENCE * (1 - share)).toFixed(3));
   if (hand) hand.setAttribute('transform', `rotate(${((1 - share) * 360).toFixed(1)} 12 12)`);
   ring.classList.toggle('timeout-ring-low', share <= LOW_SHARE || Number(remainingMs) <= LOW_MS);
   ring.title = formatTimeoutRingTime(remainingMs);

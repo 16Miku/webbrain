@@ -312,6 +312,25 @@ for (const item of builds) {
     assert.equal(h.audio.length, 1, 'Resolving the plan must not replay its alert');
   });
 
+  test(`${item.build}: a plan review recovered after the panel reopens keeps its deadline for the countdown ring`, async t => {
+    const agent = new item.Agent({ getActive: () => ({}) });
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const updates = [];
+    // The side panel is closed: the live update has no receiver.
+    const waiting = agent._waitForPlanReview(77, 'plan-1', { steps: [] }, 'Plan', (type, data) => updates.push({ type, data }));
+    await flush();
+    const live = updates.find(update => update.type === 'plan_review').data;
+    assert.equal(live.timeoutSec, 120);
+    t.mock.timers.tick(30_000);
+    const recovered = agent.activeRunState(77).pendingPlan;
+    assert.equal(recovered.planId, 'plan-1');
+    assert.equal(recovered.timeoutSec, 120, 'the recovered plan carries the period');
+    assert.equal(recovered.deadlineTs, live.deadlineTs, 'and the same deadline as the live update, not a fresh one');
+    assert.equal(recovered.deadlineTs - Date.now(), 90_000, 'with 30 s already used');
+    agent.submitPlanResponse(77, 'plan-1', 'reject');
+    await waiting;
+  });
+
   test(`${item.build}: scheduled runs use the same plan alert owner`, async () => {
     const h = deliveryHarness(item, { begin: false });
     const owner = { jobId: 'job-1', executionId: 'execution-1', mode: 'act', kind: 'resume' };

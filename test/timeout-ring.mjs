@@ -62,8 +62,9 @@ for (const build of ['chrome', 'firefox']) {
         }, share);
         const full = await read(1), half = await read(.5), empty = await read(0);
         assert.equal(full.offset, 0, 'a full ring at the start');
-        assert.ok(Math.abs(half.offset - half.circumference / 2) < .01, 'half the ring is gone at half time');
-        assert.ok(Math.abs(empty.offset - empty.circumference) < .01, 'nothing is left at the end');
+        assert.ok(Math.abs(half.offset + half.circumference / 2) < .01, 'half the ring is gone at half time, removed from 12 o\'clock clockwise like the hand');
+        assert.ok(Math.abs(empty.offset + empty.circumference) < .01, 'nothing is left at the end');
+        assert.ok(half.offset < 0, 'a negative offset removes the start of the arc (where the hand has swept), not its trailing end');
         assert.equal(full.hand, 'rotate(0.0 12 12)'); assert.equal(half.hand, 'rotate(180.0 12 12)'); assert.equal(empty.hand, 'rotate(360.0 12 12)');
         assert.equal(full.low, false); assert.equal(half.low, false); assert.equal(empty.low, true);
         assert.equal(full.title, '2:00'); assert.equal(half.title, '1:00'); assert.equal(empty.title, '0:00');
@@ -92,7 +93,7 @@ for (const build of ['chrome', 'firefox']) {
         });
         assert.equal(result.rings, 1);
         assert.match(result.label, /^Picks “Commit it” in (28|29|30)s$/, 'the text countdown is unchanged');
-        assert.ok(result.later > result.early, 'the ring empties as time passes');
+        assert.ok(result.later < result.early, 'the ring empties as time passes');
         assert.ok(result.rightGap >= 0 && result.rightGap <= 16, `right edge (${result.rightGap})`);
         assert.ok(result.bottomGap >= 0 && result.bottomGap <= 16, `bottom edge (${result.bottomGap})`);
       });
@@ -111,7 +112,7 @@ for (const build of ['chrome', 'firefox']) {
           await new Promise((r) => setTimeout(r, 400));
           return { start, rings: card.querySelectorAll('.timeout-ring').length };
         });
-        assert.ok(result.start < 1, 'starts (nearly) full');
+        assert.ok(result.start > -1, 'starts (nearly) full');
         assert.equal(result.rings, 0, 'the ring goes away with the countdown');
       });
     });
@@ -139,7 +140,7 @@ for (const build of ['chrome', 'firefox']) {
           return { first, rings, afterSettled: card.querySelectorAll('.timeout-ring').length, atEnd: actions.right - r.right, beyondButtons: r.left >= cancel.right - 1 };
         });
         // 90 s of 120 s left: a quarter of the ring is gone.
-        assert.ok(result.first > 10 && result.first < 18, `quarter emptied (${result.first})`);
+        assert.ok(result.first < -10 && result.first > -18, `quarter emptied (${result.first})`);
         assert.equal(result.rings, 1);
         assert.equal(result.afterSettled, 0, 'settling the review removes the ring');
         assert.ok(result.atEnd >= 0 && result.atEnd <= 4, 'at the end of the row');
@@ -170,7 +171,9 @@ for (const build of ['chrome', 'firefox']) {
 test('both agents tell the panel when the plan review runs out', async () => {
   for (const build of ['chrome', 'firefox']) {
     const agent = await read(`src/${build}/src/agent/agent.js`);
-    assert.match(agent, /onUpdate\('plan_review', \{\s*planId, plan, markdown, verboseMarkdown,\s*timeoutSec: Math\.round\(PLAN_REVIEW_TIMEOUT_MS \/ 1000\),\s*deadlineTs: Date\.now\(\) \+ PLAN_REVIEW_TIMEOUT_MS,/, build);
+    assert.match(agent, /onUpdate\('plan_review', \{\s*planId, plan, markdown, verboseMarkdown,\s*timeoutSec,\s*deadlineTs,\s*\}\)/, `${build}: the live plan_review update carries the period and the deadline`);
+    assert.match(agent, /tabPending\.set\(planId, \{[^}]*timeoutSec, deadlineTs \}\)/, `${build}: the pending entry keeps them for a reopened panel`);
+    assert.match(agent, /\.\.\.\(entry\?\.timeoutSec > 0 && entry\?\.deadlineTs > 0 \? \{ timeoutSec: entry\.timeoutSec, deadlineTs: entry\.deadlineTs \} : \{\}\)/, `${build}: the recovered pending plan carries them too`);
     const panel = await read(`src/${build}/src/ui/sidepanel.js`);
     assert.match(panel, /card\.dataset\.deadlineTs = String\(Math\.floor\(planDeadlineTs\)\)/, `${build}: the plan card keeps the deadline so a restored card can rebuild the ring`);
     assert.match(panel, /function bindPlanReviewCard\(card\) \{[\s\S]*?startPlanReviewTimeoutRing\(card\);/, `${build}: binding (also after restore) starts the ring`);

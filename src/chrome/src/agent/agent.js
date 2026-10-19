@@ -7855,6 +7855,8 @@ export class Agent extends LoopDetector {
         plan: entry?.plan || null,
         markdown: entry?.markdown || '',
         verboseMarkdown: entry?.verboseMarkdown || '',
+        // A reopened panel needs the deadline to draw the countdown ring.
+        ...(entry?.timeoutSec > 0 && entry?.deadlineTs > 0 ? { timeoutSec: entry.timeoutSec, deadlineTs: entry.deadlineTs } : {}),
       };
     }
     return state;
@@ -22122,8 +22124,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const PLAN_REVIEW_TIMEOUT_MS = 2 * 60 * 1000;
     const tabPending = this._pendingPlans.get(tabId) || new Map();
     this._pendingPlans.set(tabId, tabPending);
+    const deadlineTs = Date.now() + PLAN_REVIEW_TIMEOUT_MS;
+    const timeoutSec = Math.round(PLAN_REVIEW_TIMEOUT_MS / 1000);
     const responsePromise = new Promise((resolve) => {
-      tabPending.set(planId, { resolve, ts: Date.now(), plan, markdown, verboseMarkdown });
+      tabPending.set(planId, { resolve, ts: Date.now(), plan, markdown, verboseMarkdown, timeoutSec, deadlineTs });
     });
     let timeoutId = null;
     const timeoutPromise = new Promise((resolve) => {
@@ -22137,8 +22141,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // The panel shows how long is left before the plan runs on its own.
         onUpdate('plan_review', {
           planId, plan, markdown, verboseMarkdown,
-          timeoutSec: Math.round(PLAN_REVIEW_TIMEOUT_MS / 1000),
-          deadlineTs: Date.now() + PLAN_REVIEW_TIMEOUT_MS,
+          timeoutSec,
+          deadlineTs,
         });
       } catch {}
     }
