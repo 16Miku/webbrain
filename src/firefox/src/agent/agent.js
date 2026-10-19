@@ -10992,7 +10992,7 @@ export class Agent extends LoopDetector {
       const allowed = ['filter', 'maxDepth', 'maxChars', 'ref_id', 'page', 'tree_revision'];
       // Two values agree when they are the same once scalar types and the
       // case of a filter are normalized, as the call is repaired below.
-      const normalized = (value, key) => { const scalar = decimal(value); return typeof scalar === 'string' ? (key === 'filter' ? scalar.trim().toLowerCase() : scalar.trim()) : scalar; };
+      const normalized = (value, key) => { const scalar = decimal(value); return typeof scalar === 'string' && key === 'filter' ? scalar.trim().toLowerCase() : scalar; };
       const agrees = (key, value) => !Object.hasOwn(next, key) || Object.is(normalized(next[key], key), normalized(value, key));
       // Only a truncated result returns a continuation, and it is always for
       // page 2 or later with a tree revision. One for page 1 without a
@@ -11010,7 +11010,7 @@ export class Agent extends LoopDetector {
         // an anchored one is a placeholder only where the call disagrees with it
         // (a restart nested alone, or beside fields that agree, is the read).
         && (String(continuation.ref_id ?? '').trim() === ''
-          ? allowed.some(key => key !== 'tree_revision' && String(next[key] ?? '').trim() !== '')
+          ? allowed.some(key => key !== 'tree_revision' && (key === 'ref_id' ? Object.hasOwn(next, key) : String(next[key] ?? '').trim() !== ''))
           : Object.entries(continuation).some(([key, value]) => String(next[key] ?? '').trim() !== '' && !agrees(key, value)));
       if (restart) {
         delete next.continuationArgs;

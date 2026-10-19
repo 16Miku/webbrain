@@ -248,6 +248,15 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(altered.result?.errorCode, 'invalid_tool_arguments');
     const same = agent._repairToolCallArgs('get_accessibility_tree', { tree_revision: page2.tree_revision, continuationArgs: page2 });
     assert.equal(same.result, undefined);
+    const padded = agent._repairToolCallArgs('get_accessibility_tree', { tree_revision: ` ${page2.tree_revision} `, continuationArgs: page2 });
+    assert.equal(padded.result?.errorCode, 'invalid_tool_arguments', 'An opaque revision is not trimmed');
+  });
+
+  test(`${browser}: an explicit empty ref_id beside an unanchored page-1 object is a top-level read`, () => {
+    const agent = new Agent({ getActive: () => null });
+    const repaired = agent._repairToolCallArgs('get_accessibility_tree', { ref_id: '', continuationArgs: { filter: 'interactive', page: 1 } });
+    assert.equal(repaired.result, undefined);
+    assert.deepEqual(repaired.args, { ref_id: '' });
   });
 
   test(`${browser}: an unanchored or loosely written page-1 object beside a read is a placeholder`, () => {
