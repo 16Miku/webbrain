@@ -13,11 +13,14 @@ for (const build of ['chrome', 'firefox']) {
     }
     assert.match(tools.SYSTEM_PROMPT_ACT, /purpose message_recipient/);
   });
-  // The compact tier has no clarify tool: it stops with a partial done and asks.
-  test(`${build}: the compact Act prompt asks for a missing value instead of choosing one`, () => {
+  // The compact tier has the clarify tool, so it pauses for the answer instead of ending the run.
+  test(`${build}: the compact Act prompt asks for a missing value with clarify instead of choosing one`, () => {
     const prompt = tools.SYSTEM_PROMPT_ACT_COMPACT;
     assert.match(prompt, /which of two people with the same name/);
-    assert.match(prompt, /outcome:"partial"\}\) asking the user for it instead of choosing one yourself/);
-    assert.doesNotMatch(prompt.match(/Type only values[^\n]*/)[0], /clarify/);
-  });
+    assert.match(prompt, /ask with clarify\(\{question, options\}\) before filling or opening anything; never choose one yourself/);
+    assert.match(prompt, /purpose message_recipient/);
+    assert.doesNotMatch(prompt.match(/Type only values[^\n]*/)[0], /done\(/);
+    const names = tools.getToolsForMode('act', { tier: 'compact' }).map(tool => tool.function.name);
+    assert.ok(names.includes('clarify'), 'compact exposes clarify');
+});
 }
