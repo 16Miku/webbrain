@@ -317,6 +317,19 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   control is bound by its `datetime` value rather than its rendered text, so a
   relative timestamp ticking over ("2 min" to "3 min") is not a change of
   context, while a changed `datetime` still is.
+- An article the page offers as one item to assistive technology owns its
+  controls the same way, without a feed position: an `article` or
+  `role="article"` that can take focus (any valid `tabindex`), named by its own
+  `aria-label` or a complete `aria-labelledby`, that links somewhere and holds
+  no field or editor, with at most 64 controls. X marks each timeline post this
+  way (`tabindex="0"`), and the post a status page shows (`tabindex="-1"`).
+  Its labels, controls, images and attributes stay bound, so a change in
+  another post keeps the decision, while the post's own counters changing, or
+  its virtualized cell showing another post, invalidates it. X also names the
+  timestamp link with the relative time ("17 hours ago"), and that name is
+  bound as written, so when it ticks over the post's decision is no longer
+  certified either. Unnamed, unfocusable or unlinked articles gain nothing from
+  this rule.
 - Inside an unnamed region, or outside any entity, the nearest focusable item
   the page names for assistive technology owns the controls inside it: an
   element in the tab order (`tabindex` 0 or more), with no role or
