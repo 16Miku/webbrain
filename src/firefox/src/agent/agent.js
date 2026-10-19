@@ -37632,12 +37632,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // caveat. The one-nudge budget and run-ending statuses below are the
     // strict path.
     // The unverified action is a deletion only when deletions are all that was
-    // dispatched: an ordinary form submission leaves no resource-mutation
-    // record, but it does leave the current submit receipt.
+    // dispatched. A dispatched deletion is also the current submit receipt
+    // (_recordCompletionSubmitState keeps both), so that receipt is fine; a
+    // later ordinary form submission replaces it with one that is not a
+    // deletion and leaves no resource-mutation record of its own.
+    const currentReceipt = missingRequiredSubmission ? this._currentCompletionSubmitState(tabId) : null;
     const missingDeletion = missingRequiredSubmission
       && Array.isArray(state.resourceMutationDispatches) && state.resourceMutationDispatches.length > 0
       && state.resourceMutationDispatches.every(attempt => attempt?.mutationKind === 'delete')
-      && this._currentCompletionSubmitState(tabId)?.dispatched !== true;
+      && (currentReceipt?.dispatched !== true || currentReceipt.mutationKind === 'delete');
     const advisory = this._planGuardAdvisory(tabId, state, { viaDone, looksPlanOnly, runtimeModeContradiction,
       structuredPlan: structuredPlan
         || (state.allowsPlannerShapedResult !== true && this._isPlannerShapedJson(content)),
