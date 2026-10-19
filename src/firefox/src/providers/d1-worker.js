@@ -4,8 +4,18 @@ import { createD1Runtime } from './d1-runtime.js';
 
 let runtime = null, device = null, state = { status: 'idle', progress: 0, loaded: false }, transfer = null;
 let queue = Promise.resolve();
+// One load at a time, shared by Settings' Load, a download's last step and a
+// reload. A reload starts once per Worker until a load succeeds again, so a
+// broken cache or GPU is not verified again on every decision.
+let loading = null, reloadController = null, reloadBlocked = false;
+// An evaluation whose caller stopped waiting (a judge timeout, Stop) is
+// cancelled by request id instead of discarding the loaded model: a queued
+// one is skipped, a running one stops between graph runs (d1-runtime.js).
+const requests = new Map(), cancelledEarly = new Set();
 const publish = update => { state = { ...state, ...update }; self.postMessage({ state }); };
 const errors = [];
+const codedError = (code, message) => Object.assign(new Error(message), { code });
+const cancelled = () => codedError('D1_REQUEST_CANCELLED', 'D1 request cancelled.');
 
 async function probe() {
   if (!navigator.gpu) throw new Error('Hardware WebGPU is unavailable in this browser.');
@@ -13,8 +23,13 @@ async function probe() {
   return { adapter, info: assertD1Adapter(adapter) };
 }
 
-async function prepare(signal) {
-  if (runtime) return { ready: true, ...state };
+function prepare(signal) {
+  if (runtime) return Promise.resolve({ ready: true, ...state });
+  loading ??= load(signal).finally(() => { loading = null; });
+  return loading;
+}
+
+async function load(signal) {
   const { adapter, info } = await probe();
   const directory = await openD1Cache(), manifest = await readD1Manifest(directory), specs = validateD1Manifest(manifest);
   const { PreTrainedTokenizer } = await import('../../vendor/d1/transformers.web.js');
@@ -40,18 +55,50 @@ async function prepare(signal) {
       if (signal?.aborted) throw signal.reason;
     }
     runtime = createD1Runtime({ ort, tokenizer, config, ratios, sessions, device: loadingDevice, model: D1_MODEL_ID, dtype: manifest.dtype });
+    reloadBlocked = false;
     publish({ status: 'ready', loaded: true, progress: 100, adapter: info, runtime: ort.env.versions, error: '', cpu_fallback_policy: 'CPU/WASM control/shape fallback allowed; not a pure GPU claim.' });
     return { ready: true, ...state };
   } catch (error) { for (const session of Object.values(sessions)) await session.release().catch(() => {}); loadingDevice.destroy(); if (device === loadingDevice) device = null; publish({ status: signal?.aborted ? 'stopped' : 'error', loaded: false, error: String(error.message || error) }); throw error; }
 }
 
-async function status() {
-  if (transfer || runtime || ['error', 'stopped'].includes(state.status)) return { ...state, ready: !!runtime };
+// The finished download's marker in the cache, or null.
+async function readyMarker() {
   try {
     const directory = await openD1Cache();
-    const marker = JSON.parse(await (await (await directory.getFileHandle('ready.json')).getFile()).text());
-    return { ...state, status: marker.revision === D1_RELEASE.revision && marker.manifestSha256 === D1_RELEASE.manifestSha256 ? 'cached' : 'idle', ready: false, loaded: false };
-  } catch { return { ...state, ready: false }; }
+    return JSON.parse(await (await (await directory.getFileHandle('ready.json')).getFile()).text());
+  } catch { return null; }
+}
+const currentPackage = marker => marker?.revision === D1_RELEASE.revision && marker?.manifestSha256 === D1_RELEASE.manifestSha256;
+
+async function status() {
+  if (transfer || runtime || loading || ['error', 'stopped'].includes(state.status)) return { ...state, ready: !!runtime };
+  const marker = await readyMarker();
+  return marker ? { ...state, status: currentPackage(marker) ? 'cached' : 'idle', ready: false, loaded: false } : { ...state, ready: false };
+}
+
+// A decision found the model unloaded while the user's Load choice stands.
+// Only the verified cache is read; the decision itself uses the fallback.
+function reload() {
+  reloadBlocked = true;
+  const controller = new AbortController(); reloadController = controller;
+  loading = (async () => {
+    try {
+      if (!currentPackage(await readyMarker())) throw new Error('D1 is not downloaded. Download it in Decision models settings.');
+      return await load(controller.signal);
+    } catch (error) {
+      // Settings shows why D1 still answers nothing; no caller awaits a reload.
+      if (!controller.signal.aborted) publish({ status: 'error', loaded: false, error: String(error?.message || error) });
+      throw error;
+    }
+  })().finally(() => { loading = null; if (reloadController === controller) reloadController = null; });
+  loading.catch(() => {});
+}
+
+function unloaded(payload) {
+  if (!loading && !transfer && !reloadBlocked && payload?.keepLoaded === true && payload.consentVersion === D1_CONSENT_VERSION) reload();
+  return loading
+    ? codedError('D1_MODEL_LOADING', 'D1 is loading its cached model; this decision uses the existing fallback.')
+    : codedError('D1_MODEL_NOT_LOADED', 'D1 is not loaded. Download or load it explicitly in Decision models settings.');
 }
 
 function startDownload(payload) {
@@ -81,22 +128,47 @@ function startDownload(payload) {
   return { started: true, ...state };
 }
 
-async function execute(type, payload = {}) {
+async function execute(type, payload = {}, signal) {
   if (type === 'probe') { const { adapter, info } = await probe(); return { success: true, adapter: info, features: [...adapter.features] }; }
   if (type === 'status') return status();
   if (type === 'download') return startDownload(payload);
   if (type === 'stop') { transfer?.abort(new Error('D1 download stopped by user.')); return { stopped: true }; }
-  if (type === 'dispose') { transfer?.abort(new Error('D1 disabled.')); await runtime?.dispose(); runtime = null; device = null; publish({ status: 'idle', loaded: false }); return { disposed: true }; }
+  if (type === 'dispose') {
+    const reason = new Error('D1 disabled.'); transfer?.abort(reason); reloadController?.abort(reason);
+    await loading?.catch(() => {});
+    await runtime?.dispose(); runtime = null; device = null; publish({ status: 'idle', loaded: false }); return { disposed: true };
+  }
   if (type === 'load') { if (payload.consentVersion !== D1_CONSENT_VERSION) throw new Error('D1 consent is required.'); if (transfer) throw new Error('D1 download/load is already in progress.'); return prepare(); }
-  if (type === 'clear') { if (runtime || transfer) throw new Error('Disable D1 before removing its cache.'); const directory = await openD1Cache(); for await (const [name] of directory.entries()) await directory.removeEntry(name); publish({ status: 'idle', loaded: false }); return { removed: true }; }
-  if (type === 'evaluate') { if (!runtime) throw new Error('D1 is not loaded. Download or load it explicitly in Decision models settings.'); const result = await runtime.evaluate(payload); return { ...result, diagnostics: { ...result.diagnostics, adapter: state.adapter, runtime: state.runtime, model_revision: D1_RELEASE.revision, package_manifest_sha256: D1_RELEASE.manifestSha256, gpu_errors: [...errors] } }; }
+  if (type === 'clear') { if (runtime || transfer || loading) throw new Error('Disable D1 before removing its cache.'); const directory = await openD1Cache(); for await (const [name] of directory.entries()) await directory.removeEntry(name); publish({ status: 'idle', loaded: false }); return { removed: true }; }
+  if (type === 'evaluate') {
+    if (signal?.aborted) throw signal.reason;
+    if (!runtime) throw unloaded(payload);
+    const result = await runtime.evaluate({ state: payload.state, images: payload.images, questions: payload.questions, signal });
+    return { ...result, diagnostics: { ...result.diagnostics, adapter: state.adapter, runtime: state.runtime, model_revision: D1_RELEASE.revision, package_manifest_sha256: D1_RELEASE.manifestSha256, gpu_errors: [...errors] } };
+  }
   throw new Error('Unknown D1 worker command.');
+}
+
+function cancel(requestId) {
+  const controller = requests.get(requestId);
+  if (controller) { controller.abort(cancelled()); return; }
+  // The cancel overtook its request; keep a bounded record so it is skipped.
+  cancelledEarly.add(requestId);
+  if (cancelledEarly.size > 64) cancelledEarly.delete(cancelledEarly.values().next().value);
 }
 
 self.onmessage = event => {
   const { id, type, payload } = event.data || {};
-  const run = () => execute(type, payload);
+  if (type === 'cancel') {
+    if (typeof payload?.requestId === 'string') cancel(payload.requestId);
+    self.postMessage({ id, ok: true, result: { cancelled: true } }); return;
+  }
+  const requestId = type === 'evaluate' && typeof payload?.requestId === 'string' ? payload.requestId : null;
+  const controller = requestId ? new AbortController() : null;
+  if (requestId) { if (cancelledEarly.delete(requestId)) controller.abort(cancelled()); requests.set(requestId, controller); }
+  const run = () => execute(type, payload, controller?.signal);
   const immediate = ['status', 'stop', 'download', 'probe'].includes(type);
   const promise = immediate ? Promise.resolve().then(run) : (queue = queue.then(run, run));
-  promise.then(result => self.postMessage({ id, ok: true, result }), error => self.postMessage({ id, ok: false, error: String(error.message || error) }));
+  promise.finally(() => { if (requestId && requests.get(requestId) === controller) requests.delete(requestId); })
+    .then(result => self.postMessage({ id, ok: true, result }), error => self.postMessage({ id, ok: false, error: String(error?.message || error), ...(typeof error?.code === 'string' ? { code: error.code } : {}) }));
 };

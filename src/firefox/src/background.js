@@ -3,7 +3,7 @@ import { resolveDecisionConfig, listDecisionModels } from './agent/decision-conf
 import { resolveCurrentDecisionConfig } from './agent/decision-availability.js';
 import { d1Request } from './providers/d1.js';
 import { evaluateD1LocalFixture } from './providers/d1-diagnostic.js';
-import { D1_CONSENT_KEY, D1_CONSENT_VERSION } from './providers/d1-config.js';
+import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_KEEP_LOADED_KEY } from './providers/d1-config.js';
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && (changes.systemOneEnabled?.newValue === false || (changes.decisionMode && changes.decisionMode.newValue !== 'on') || (changes.decisionProvider && changes.decisionProvider.newValue !== 'webgpu_d1') || (changes[D1_CONSENT_KEY] && changes[D1_CONSENT_KEY].newValue !== D1_CONSENT_VERSION) || changes.strictSecretMode?.newValue === true)) void d1Request('reset').catch(() => {});
@@ -4282,7 +4282,12 @@ async function handleMessage(msg, sender) {
         if (!['status', 'probe', 'download', 'load', 'stop', 'dispose', 'clear', 'reset', 'consent'].includes(msg.command)) throw new Error('Invalid D1 model command.');
         if (['download', 'load', 'consent'].includes(msg.command)) {
           if (msg.consent !== true || msg.consentVersion !== D1_CONSENT_VERSION) throw new Error('Explicit D1 experimental-model consent is required.');
-          await api.storage.local.set({ [D1_CONSENT_KEY]: D1_CONSENT_VERSION });
+          // Download and Load also ask D1 to stay loaded: after a browser
+          // restart or a discarded session the next decision reloads the cache.
+          await api.storage.local.set({ [D1_CONSENT_KEY]: D1_CONSENT_VERSION, ...(msg.command === 'consent' ? {} : { [D1_KEEP_LOADED_KEY]: true }) });
+        } else if (['reset', 'dispose', 'clear'].includes(msg.command)) {
+          // Unload, Remove and switching D1 off in Settings end that request.
+          await api.storage.local.set({ [D1_KEEP_LOADED_KEY]: false });
         }
         return { success: true, result: msg.command === 'consent' ? { consented: true } : await d1Request(msg.command, { consentVersion: D1_CONSENT_VERSION }) };
       } catch (error) { return { success: false, error: error.message }; }

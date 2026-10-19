@@ -108,6 +108,116 @@ for (const build of ['chrome', 'firefox']) {
       globalThis.chrome = saved.chrome; globalThis.browser = saved.browser; globalThis.Worker = saved.Worker;
     }
   });
+  test(`${build}: a judge timeout cancels its D1 evaluation and keeps the loaded model`, async () => {
+    const saved = { chrome: globalThis.chrome, browser: globalThis.browser, Worker: globalThis.Worker };
+    const sent = [], workers = [];
+    let release = null;
+    const command = message => message.command || message.type;
+    // Chrome reaches the Worker through the offscreen host; Firefox owns it.
+    const deliver = message => { sent.push(message); if (command(message) === 'cancel') release?.(message.payload.requestId); return command(message) === 'cancel'; };
+    const cancelled = { ok: false, error: 'D1 request cancelled.', code: 'D1_REQUEST_CANCELLED' };
+    const api = { storage: { local: { get: async () => ({ [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION, [pin.D1_KEEP_LOADED_KEY]: true }) } }, runtime: { getURL: path => 'chrome-extension://test/' + path } };
+    if (build === 'chrome') {
+      api.offscreen = { createDocument: async () => { throw new Error('Existing host must be reused'); }, hasDocument: async () => true };
+      api.runtime.sendMessage = async message => deliver(message) ? { ok: true, result: { cancelled: true } } : new Promise(resolve => { release = requestId => { if (requestId === message.payload.requestId) resolve(cancelled); }; });
+    }
+    globalThis.chrome = api; globalThis.browser = build === 'firefox' ? api : undefined;
+    globalThis.Worker = class {
+      constructor() { workers.push(this); this.terminated = false; }
+      postMessage(message) { if (!deliver(message)) release = requestId => { if (requestId === message.payload.requestId) queueMicrotask(() => this.onmessage({ data: { id: message.id, ...cancelled } })); }; }
+      terminate() { this.terminated = true; }
+    };
+    try {
+      const selected = config.resolveDecisionConfig({ decisionProvider: 'webgpu_d1', systemOneEnabled: true, [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION });
+      const client = judge.createSystemOneJudge({ fetchImpl: () => { throw new Error('No cloud request'); }, timeoutMs: 30, maxRetries: 0 });
+      await assert.rejects(client.evaluate({ state: 'Page', questions: { q: { type: 'noul', instructions: 'Is blue visible?' } }, config: selected }), error => judge.systemOneFailureReason(error) === 'timeout');
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const evaluate = sent.find(message => command(message) === 'evaluate');
+      assert.equal(typeof evaluate.payload.requestId, 'string'); assert.equal(evaluate.payload.keepLoaded, true); assert.equal(evaluate.payload.consentVersion, pin.D1_CONSENT_VERSION);
+      assert.equal(sent.find(message => command(message) === 'cancel')?.payload.requestId, evaluate.payload.requestId);
+      assert.equal(sent.some(message => command(message) === 'reset'), false, 'a timeout must not discard the loaded model');
+      assert.ok(workers.every(worker => !worker.terminated));
+    } finally {
+      const host = await import(`../src/${build}/src/providers/d1-host.js`); host.resetD1Worker();
+      globalThis.chrome = saved.chrome; globalThis.browser = saved.browser; globalThis.Worker = saved.Worker;
+    }
+  });
+  test(`${build}: the D1 host forwards Worker error codes and cancels without terminating`, async () => {
+    const saved = { chrome: globalThis.chrome, browser: globalThis.browser, Worker: globalThis.Worker };
+    const posted = [];
+    let terminated = 0;
+    globalThis.chrome = { runtime: { getURL: path => 'chrome-extension://test/' + path } }; globalThis.browser = build === 'firefox' ? globalThis.chrome : undefined;
+    globalThis.Worker = class {
+      postMessage(message) { posted.push(message); if (message.type === 'evaluate') queueMicrotask(() => this.onmessage({ data: { id: message.id, ok: false, error: 'D1 is loading its cached model.', code: 'D1_MODEL_LOADING' } })); }
+      terminate() { terminated++; }
+    };
+    const host = await import(`../src/${build}/src/providers/d1-host.js`);
+    try {
+      await assert.rejects(host.dispatchD1Worker('evaluate', { requestId: 'x' }, 1000), error => error.code === 'D1_MODEL_LOADING' && judge.systemOneFailureReason(error) === 'model_loading');
+      host.cancelD1Request('x');
+      assert.equal(posted.at(-1).type, 'cancel'); assert.equal(posted.at(-1).payload.requestId, 'x'); assert.equal(terminated, 0);
+      assert.equal(judge.systemOneFailureReason(Object.assign(new Error('x'), { code: 'D1_MODEL_NOT_LOADED' })), 'model_not_loaded');
+      assert.equal(judge.systemOneFailureReason(Object.assign(new Error('x'), { code: 'D1_REQUEST_CANCELLED' })), 'cancelled');
+    } finally {
+      host.resetD1Worker();
+      globalThis.chrome = saved.chrome; globalThis.browser = saved.browser; globalThis.Worker = saved.Worker;
+    }
+  });
+  test(`${build}: worker skips a cancelled evaluation and reloads a kept model once, answering meanwhile`, async () => {
+    const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    const oldSelf = Object.getOwnPropertyDescriptor(globalThis, 'self');
+    const messages = [];
+    let gpuReads = 0, markerReads = 0;
+    const marker = { revision: pin.D1_RELEASE.revision, manifestSha256: pin.D1_RELEASE.manifestSha256 };
+    const directory = { getFileHandle: async name => { assert.equal(name, 'ready.json'); markerReads++; return { getFile: async () => ({ text: async () => JSON.stringify(marker) }) }; } };
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { storage: { getDirectory: async () => ({ getDirectoryHandle: async () => directory }) }, get gpu() { gpuReads++; return undefined; } } });
+    Object.defineProperty(globalThis, 'self', { configurable: true, value: { postMessage: message => messages.push(message) } });
+    const settle = () => new Promise(resolve => setTimeout(resolve, 5));
+    const response = id => messages.find(message => message.id === id);
+    const send = data => self.onmessage({ data });
+    const evaluate = (id, extra) => send({ id, type: 'evaluate', payload: { requestId: 'r' + id, state: 'Page', questions: { q: { type: 'noul', instructions: 'Is it blue?' } }, consentVersion: pin.D1_CONSENT_VERSION, ...extra } });
+    try {
+      await import(`../src/${build}/src/providers/d1-worker.js?cancel-and-reload`);
+      // Cancelled while queued, and cancelled before its request arrived.
+      evaluate(1, { keepLoaded: true }); send({ id: 2, type: 'cancel', payload: { requestId: 'r1' } });
+      send({ id: 3, type: 'cancel', payload: { requestId: 'r4' } }); evaluate(4, { keepLoaded: true });
+      await settle();
+      assert.equal(response(1).code, 'D1_REQUEST_CANCELLED'); assert.equal(response(4).code, 'D1_REQUEST_CANCELLED'); assert.equal(response(2).ok, true);
+      assert.equal(markerReads, 0, 'a cancelled evaluation starts nothing');
+      // Without Settings' Load request (or without consent) nothing is read or loaded.
+      evaluate(5, { keepLoaded: false }); evaluate(6, { keepLoaded: true, consentVersion: 0 }); await settle();
+      assert.equal(response(5).code, 'D1_MODEL_NOT_LOADED'); assert.equal(response(6).code, 'D1_MODEL_NOT_LOADED'); assert.equal(markerReads, 0); assert.equal(gpuReads, 0);
+      // A kept model is reloaded from the verified cache; this decision falls back meanwhile.
+      evaluate(7, { keepLoaded: true }); await settle();
+      assert.equal(response(7).ok, false); assert.equal(response(7).code, 'D1_MODEL_LOADING');
+      assert.equal(markerReads, 1); assert.equal(gpuReads, 1, 'the reload reached the GPU probe');
+      assert.ok(messages.some(message => message.state?.status === 'error' && /Hardware WebGPU/.test(message.state.error)), 'Settings sees why the reload failed');
+      // A failed reload is not repeated on every decision.
+      evaluate(8, { keepLoaded: true }); await settle();
+      assert.equal(response(8).code, 'D1_MODEL_NOT_LOADED'); assert.equal(gpuReads, 1);
+    } finally {
+      if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator); else delete globalThis.navigator;
+      if (oldSelf) Object.defineProperty(globalThis, 'self', oldSelf); else delete globalThis.self;
+    }
+  });
+  test(`${build}: an aborted D1 evaluation stops between graph runs`, async () => {
+    class Tensor { constructor(type, data, dims) { Object.assign(this, { type, data, dims }); } dispose() {} }
+    const tokenizer = { bos_token_id: 1, pad_token_id: 0, convert_tokens_to_ids: () => 5, encode: text => Array.from(text, c => c.charCodeAt(0) % 200) };
+    const controller = new AbortController();
+    let runs = 0;
+    const sessions = { vision: {}, projector: {}, decision: { async run(feeds) { runs++; controller.abort(new Error('caller stopped waiting')); const batch = feeds.input_ids.dims[0]; return { probabilities: { getData: async () => Float32Array.from({ length: batch * 2 }, (_, i) => i % 2 ? .75 : .25), dispose() {} } }; } } };
+    const model = runtime.createD1Runtime({ ort: { Tensor }, tokenizer, config: { max_length: 16384, image_text_length: 896, temperatures: {} }, ratios: [], sessions, model: pin.D1_MODEL_ID });
+    const questions = Object.fromEntries(Array.from({ length: 3 }, (_, i) => [`q${i}`, { type: 'noul', instructions: `Question ${i}?` }]));
+    // Three capped rows need three batches (see the batching test above).
+    await assert.rejects(model.evaluate({ state: 'x'.repeat(9000), questions, signal: controller.signal }), /caller stopped waiting/);
+    assert.equal(runs, 1, 'the remaining batches never ran');
+  });
+  test(`${build}: Settings' Download and Load keep D1 loaded until Unload, Remove or switching it off`, async () => {
+    const background = await readFile(new URL(`../src/${build}/src/background.js`, import.meta.url), 'utf8');
+    const branch = background.slice(background.indexOf("case 'd1_control':"), background.indexOf("case 'list_decision_models':"));
+    assert.match(branch, /msg\.command === 'consent' \? \{\} : \{ \[D1_KEEP_LOADED_KEY\]: true \}/);
+    assert.match(branch, /\['reset', 'dispose', 'clear'\]\.includes\(msg\.command\)\) \{[^}]*\[D1_KEEP_LOADED_KEY\]: false/);
+  });
   test(`${build}: D1 is opt-in, endpoint/key-free, zero-cost and overrides Compass only with explicit local consent`, async () => {
     const stored = { decisionProvider: 'webgpu_d1', systemOneEnabled: true };
     assert.equal(config.resolveDecisionConfig(stored).enabled, false);
