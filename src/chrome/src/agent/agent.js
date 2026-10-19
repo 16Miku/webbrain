@@ -9154,7 +9154,7 @@ export class Agent extends LoopDetector {
   async _jevSettings(tabId, provider = this._activeProvider(tabId), feature = 'semantic') {
     const stored = await chrome.storage.local.get([...JEV_FAST_KEYS, ...DECISION_SETTINGS_KEYS]);
     const compass = provider?.config?.providerName === 'webbrain-cloud' ? provider.config : null;
-    const decisionConfig = await resolveCurrentDecisionConfig(stored, compass);
+    const decisionConfig = await resolveCurrentDecisionConfig(stored, compass, { feature });
     return decisionFeatureEnabled(decisionConfig, feature) && !this.strictSecretMode && (decisionConfig.local || globalThis.navigator?.onLine !== false) ? { ...stored, decisionConfig } : null;
   }
 

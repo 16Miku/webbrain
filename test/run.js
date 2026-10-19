@@ -45566,7 +45566,7 @@ test('chrome install page offers the shipped in-browser model with progress inst
   }
 });
 
-test('chrome install page downloads D1 next to the chat model and says what D1 does', async () => {
+test('chrome install page downloads D1 first, then the chat model, and says what D1 does', async () => {
   const install = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/install.js')).href);
   const webgpu = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/providers/webgpu.js')).href);
   const d1Config = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/providers/d1-config.js')).href);
@@ -45589,7 +45589,10 @@ test('chrome install page downloads D1 next to the chat model and says what D1 d
   assert.equal(view({ status: 'idle' }).statusKey, '', 'D1 says nothing until it starts');
   assert.equal(view({ status: 'ready', usedForDecisions: true }).statusKey, 'install.local_model.d1_ready');
   assert.equal(view({ status: 'saved', usedForDecisions: true }).statusKey, 'install.local_model.d1_ready', 'a kept-loaded D1 loads for its next decision');
-  assert.equal(view({ status: 'ready', usedForDecisions: false }).statusKey, 'install.local_model.d1_saved', 'a profile with another decision model is told where D1 is');
+  assert.equal(view({ status: 'ready', usedForDecisions: false }).statusKey, 'install.local_model.d1_saved', 'a profile with another decision model is told D1 is on this device');
+  // Auto, the default, uses a downloaded D1 whatever the chat provider, so the
+  // guide never sends anyone to Settings to choose it.
+  assert.equal(english['install.local_model.d1_saved'], 'D1 is saved on this device.');
   assert.equal(view({ status: 'error' }).isError, true);
   for (const status of ['checking', 'downloading', 'paused', 'ready', 'saved', 'unsupported', 'error']) {
     const { statusKey } = view({ status, usedForDecisions: status === 'ready' });
@@ -45649,8 +45652,12 @@ test('chrome install page downloads D1 next to the chat model and says what D1 d
     pause_webgpu_download: () => { state.bonsai = { status: 'paused', modelId, progress: 10 }; return { ok: true }; },
   });
 
+  const d1Commands = (runtime) => runtime.sent.filter((message) => message.action === 'd1_control' && message.command !== 'status').map((message) => message.command);
+  const chatStarts = (runtime) => runtime.sent.filter((message) => message.action === 'start_webgpu_download').length;
+
   {
-    // A new install: one click downloads both; Auto then uses D1 for its checks.
+    // A new install: one click downloads D1 first, then the chat model; Auto
+    // then uses D1 for its checks.
     const state = { bonsai: { status: 'not-downloaded', modelId }, d1: { status: 'idle' } };
     const runtime = fakeRuntime({
       ...bonsai(state),
@@ -45668,35 +45675,57 @@ test('chrome install page downloads D1 next to the chat model and says what D1 d
 
     await nodes['local-model-button'].fire('click');
     await settle();
+    assert.ok(runtime.sent.some((message) => message.action === 'test_provider'), 'hardware WebGPU is checked before anything downloads');
     const d1Messages = runtime.sent.filter((message) => message.action === 'd1_control' && message.command !== 'status');
     assert.deepEqual(d1Messages.map((message) => message.command), ['probe', 'download'], 'D1 checks the GPU, then downloads');
     assert.deepEqual(d1Messages[1], { target: 'background', action: 'd1_control', command: 'download', consent: true,
       consentVersion: d1Config.D1_CONSENT_VERSION }, 'the click is the consent the note asks for, and nothing else');
-    assert.ok(runtime.sent.some((message) => message.action === 'start_webgpu_download'), 'the chat model downloads too');
+    assert.equal(chatStarts(runtime), 0, 'the chat model waits for D1');
+    // While D1 downloads, the button and the bar follow it.
     assert.equal(nodes['local-model'].dataset.state, 'downloading');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.pause');
+    assert.equal(nodes['local-model-button'].disabled, false);
+    assert.equal(nodes['local-model-progress'].hidden, false);
+    assert.equal(nodes['local-model-progress'].getAttribute('aria-valuenow'), '5');
+    assert.equal(nodes['local-model-status'].textContent, '', 'the chat model has not started');
     assert.equal(nodes['local-model-d1'].hidden, false);
     assert.equal(nodes['local-model-d1'].textContent, 'install.local_model.d1_downloading|5');
 
-    // Pause stops both; resume starts both again.
+    // Pause stops D1, and Resume carries on with it; the chat model still waits.
     await nodes['local-model-button'].fire('click');
     await settle();
-    assert.ok(runtime.sent.some((message) => message.action === 'd1_control' && message.command === 'stop'));
-    assert.ok(runtime.sent.some((message) => message.action === 'pause_webgpu_download'));
+    assert.deepEqual(d1Commands(runtime), ['probe', 'download', 'stop']);
+    assert.ok(!runtime.sent.some((message) => message.action === 'pause_webgpu_download'), 'no chat download to pause');
     assert.equal(nodes['local-model-d1'].textContent, 'install.local_model.d1_paused|30');
+    assert.equal(nodes['local-model-label'].textContent, 'install.local_model.resume');
+    assert.equal(nodes['local-model'].dataset.state, 'paused');
+    assert.equal(chatStarts(runtime), 0);
     await nodes['local-model-button'].fire('click');
     await settle();
     assert.equal(runtime.sent.filter((message) => message.action === 'd1_control' && message.command === 'download').length, 2,
       'resume downloads what D1 still lacks');
+    assert.equal(chatStarts(runtime), 0);
 
+    // D1 is ready: now the chat model downloads.
     state.d1 = { status: 'ready', loaded: true };
     await controller.d1.refresh();
+    await settle();
     assert.equal(nodes['local-model-d1'].textContent, 'install.local_model.d1_ready');
+    assert.equal(chatStarts(runtime), 1, 'the chat model follows D1');
+    assert.equal(nodes['local-model'].dataset.state, 'downloading');
+    assert.equal(nodes['local-model-status'].textContent, 'install.local_model.downloading|10');
+    assert.equal(nodes['local-model-progress'].getAttribute('aria-valuenow'), '10', 'the bar follows the chat model now');
+    // Its Pause pauses the chat model; D1 is done.
+    await nodes['local-model-button'].fire('click');
+    await settle();
+    assert.ok(runtime.sent.some((message) => message.action === 'pause_webgpu_download'));
+    assert.deepEqual(d1Commands(runtime), ['probe', 'download', 'stop', 'probe', 'download'], 'nothing more is asked of D1');
     controller.dispose();
   }
 
   {
-    // The button stays busy until D1 has asked for its download too, so a
-    // Pause can never run before D1's transfer exists and leave D1 running.
+    // The button stays busy until D1's download has started, so a Pause can
+    // never run before D1's transfer exists; the chat model waits throughout.
     const state = { bonsai: { status: 'not-downloaded', modelId }, d1: { status: 'idle' } };
     let releaseProbe;
     const probe = new Promise((resolve) => { releaseProbe = resolve; });
@@ -45712,16 +45741,43 @@ test('chrome install page downloads D1 next to the chat model and says what D1 d
     const button = documentLike.nodes['local-model-button'];
     const clicked = button.fire('click');
     await settle();
-    assert.ok(runtime.sent.some((message) => message.action === 'start_webgpu_download'), 'the chat model does not wait for D1');
+    assert.equal(chatStarts(runtime), 0, 'the chat model waits for D1');
     assert.equal(button.disabled, true, 'busy while D1 still checks the GPU');
+    assert.equal(button.getAttribute('aria-busy'), 'true');
     assert.equal(await Promise.race([clicked.then(() => 'done'), new Promise((resolve) => setTimeout(() => resolve('pending'), 20))]), 'pending');
     releaseProbe({ success: true, result: { success: true } });
     await clicked;
     await settle();
     assert.ok(runtime.sent.some((message) => message.action === 'd1_control' && message.command === 'download'));
-    assert.equal(button.disabled, false, 'Pause is offered once both downloads have started');
+    assert.equal(button.disabled, false, 'Pause is offered once D1 is downloading');
+    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.pause');
     assert.equal(documentLike.nodes['local-model'].dataset.state, 'downloading');
+    assert.equal(chatStarts(runtime), 0);
     controller.dispose();
+  }
+
+  {
+    // The button follows a D1 download under way while the chat model is not
+    // downloading; the chat model keeps its own line and progress.
+    const buttonView = install.localModelButtonView;
+    const idle = install.localModelView({ status: 'not-downloaded' });
+    assert.deepEqual(buttonView(idle, 'not-downloaded', { status: 'downloading', progress: 40 }),
+      { ...idle, labelKey: 'install.local_model.pause', action: 'd1-pause', progress: 40, statusProgress: null, displayState: 'downloading' });
+    assert.equal(buttonView(idle, 'not-downloaded', { status: 'paused', progress: 40 }).action, 'd1-start');
+    assert.equal(buttonView(idle, 'not-downloaded', { status: 'paused', progress: 40 }).labelKey, 'install.local_model.resume');
+    assert.equal(buttonView(idle, 'not-downloaded', { status: 'checking' }).action, null);
+    assert.equal(buttonView(idle, 'not-downloaded', { status: 'checking' }).progress, null);
+    for (const status of ['idle', 'ready', 'saved', 'unsupported', 'error']) {
+      assert.deepEqual(buttonView(idle, 'not-downloaded', { status }), idle, `${status}: the click downloads both, D1 first`);
+    }
+    const chatPaused = install.localModelView({ status: 'paused', progress: 60 });
+    const pausedView = buttonView(chatPaused, 'paused', { status: 'downloading', progress: 20 });
+    assert.equal(pausedView.action, 'd1-pause');
+    assert.equal(pausedView.progress, 20, 'the bar follows D1');
+    assert.equal(pausedView.statusProgress, 60, 'the chat model line keeps its own progress');
+    const chatDownloading = install.localModelView({ status: 'downloading', progress: 10 });
+    assert.deepEqual(buttonView(chatDownloading, 'downloading', { status: 'downloading', progress: 20 }), chatDownloading,
+      'a chat download that runs keeps the button');
   }
 
   {
@@ -45755,7 +45811,7 @@ test('chrome install page downloads D1 next to the chat model and says what D1 d
     assert.equal(nodes['local-model-button'].disabled, false, 'D1 can still be downloaded');
     await nodes['local-model-button'].fire('click');
     await settle();
-    assert.deepEqual(runtime.sent.filter((message) => message.action === 'd1_control' && message.command !== 'status').map((message) => message.command), ['probe', 'download']);
+    assert.deepEqual(d1Commands(runtime), ['probe', 'download']);
     assert.ok(!runtime.sent.some((message) => ['test_provider', 'start_webgpu_download'].includes(message.action)), 'the ready chat model is left alone');
     assert.equal(nodes['local-model-label'].textContent, 'install.local_model.pause');
     assert.equal(nodes['local-model-d1'].textContent, 'install.local_model.d1_downloading|20');
@@ -45776,7 +45832,7 @@ test('chrome install page downloads D1 next to the chat model and says what D1 d
   }
 
   {
-    // A GPU D1 cannot use: say so, and the chat model still downloads.
+    // A GPU D1 cannot use: say so, and the chat model downloads at once.
     const state = { bonsai: { status: 'not-downloaded', modelId } };
     const runtime = fakeRuntime({
       ...bonsai(state),
@@ -45789,8 +45845,110 @@ test('chrome install page downloads D1 next to the chat model and says what D1 d
     await documentLike.nodes['local-model-button'].fire('click');
     await settle();
     assert.ok(!runtime.sent.some((message) => message.action === 'd1_control' && message.command === 'download'), 'nothing downloads that cannot run');
-    assert.ok(runtime.sent.some((message) => message.action === 'start_webgpu_download'));
+    assert.equal(chatStarts(runtime), 1);
+    assert.equal(documentLike.nodes['local-model'].dataset.state, 'downloading');
     assert.equal(documentLike.nodes['local-model-d1'].textContent, 'install.local_model.d1_unsupported');
+    controller.dispose();
+  }
+
+  {
+    // D1's download stops with an error: the chat model still follows, and the
+    // button offers to retry D1 once the chat model is ready.
+    const state = { bonsai: { status: 'not-downloaded', modelId }, d1: { status: 'idle' } };
+    const runtime = fakeRuntime({
+      ...bonsai(state),
+      'd1_control:status': () => ({ success: true, result: { ...state.d1, usedForDecisions: false } }),
+      'd1_control:probe': { success: true, result: { success: true } },
+      'd1_control:download': () => { state.d1 = { status: 'downloading', progress: 50 }; return { success: true, result: { started: true, ...state.d1 } }; },
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    await documentLike.nodes['local-model-button'].fire('click');
+    await settle();
+    assert.equal(chatStarts(runtime), 0);
+    state.d1 = { status: 'error', error: 'D1 download made no byte progress for two minutes.' };
+    await controller.d1.refresh();
+    await settle();
+    assert.equal(documentLike.nodes['local-model-d1'].textContent, 'install.local_model.d1_error|D1 download made no byte progress for two minutes.');
+    assert.equal(chatStarts(runtime), 1, 'a failed D1 does not hold the chat model back');
+    state.bonsai = { status: 'ready', ready: true, modelId };
+    await controller.refresh();
+    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.retry');
+    controller.dispose();
+  }
+
+  {
+    // A D1 transfer that stops without a Pause here (no bytes for two minutes,
+    // say) does not hold the chat model back; a Pause here does.
+    const state = { bonsai: { status: 'not-downloaded', modelId }, d1: { status: 'idle' } };
+    const runtime = fakeRuntime({
+      ...bonsai(state),
+      'd1_control:status': () => ({ success: true, result: { ...state.d1, usedForDecisions: false } }),
+      'd1_control:probe': { success: true, result: { success: true } },
+      'd1_control:download': () => { state.d1 = { status: 'downloading', progress: 25 }; return { success: true, result: { started: true, ...state.d1 } }; },
+      'd1_control:stop': () => { state.d1 = { status: 'stopped', progress: 25 }; return { success: true, result: { stopped: true } }; },
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    const button = documentLike.nodes['local-model-button'];
+    await button.fire('click');
+    await settle();
+    await button.fire('click');
+    await settle();
+    assert.equal(documentLike.nodes['local-model-d1'].textContent, 'install.local_model.d1_paused|25');
+    assert.equal(chatStarts(runtime), 0, 'paused here: Resume carries on with D1 first');
+    await button.fire('click');
+    await settle();
+    assert.equal(chatStarts(runtime), 0);
+    state.d1 = { status: 'stopped', progress: 60, error: 'D1 download made no byte progress for two minutes.' };
+    await controller.d1.refresh();
+    await settle();
+    assert.equal(documentLike.nodes['local-model-d1'].textContent, 'install.local_model.d1_paused|60');
+    assert.equal(chatStarts(runtime), 1, 'a stalled D1 does not hold the chat model back');
+    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.pause', 'the chat download has the button');
+    controller.dispose();
+  }
+
+  {
+    // A reopened guide with D1 already downloaded: the click starts the chat
+    // model at once, and D1 is not downloaded again.
+    const state = { bonsai: { status: 'not-downloaded', modelId } };
+    const runtime = fakeRuntime({
+      ...bonsai(state),
+      'd1_control:status': { success: true, result: { status: 'cached', usedForDecisions: true } },
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    assert.equal(documentLike.nodes['local-model-d1'].textContent, 'install.local_model.d1_ready');
+    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.download');
+    await documentLike.nodes['local-model-button'].fire('click');
+    await settle();
+    assert.deepEqual(d1Commands(runtime), [], 'D1 is already saved');
+    assert.equal(chatStarts(runtime), 1);
+    controller.dispose();
+  }
+
+  {
+    // A guide opened while D1 downloads (started on the Providers page, say)
+    // follows that download, but only a click here downloads the chat model.
+    const state = { bonsai: { status: 'not-downloaded', modelId }, d1: { status: 'downloading', progress: 70 } };
+    const runtime = fakeRuntime({
+      ...bonsai(state),
+      'd1_control:status': () => ({ success: true, result: { ...state.d1, usedForDecisions: state.d1.status === 'ready' } }),
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.pause');
+    assert.equal(documentLike.nodes['local-model-d1'].textContent, 'install.local_model.d1_downloading|70');
+    state.d1 = { status: 'ready', loaded: true };
+    await controller.d1.refresh();
+    await settle();
+    assert.equal(chatStarts(runtime), 0, 'no click, no chat model download');
+    assert.equal(documentLike.nodes['local-model-label'].textContent, 'install.local_model.download');
     controller.dispose();
   }
 
@@ -45807,12 +45965,13 @@ test('chrome install page downloads D1 next to the chat model and says what D1 d
     await documentLike.nodes['local-model-button'].fire('click');
     await settle();
     assert.ok(!runtime.sent.some((message) => message.action === 'd1_control' && message.command !== 'status'));
+    assert.equal(chatStarts(runtime), 0);
     assert.equal(documentLike.nodes['local-model-d1'].hidden, true);
     controller.dispose();
   }
 
   {
-    // Compass's managed model, or a saved choice, answers instead: D1 is saved, and the guide says where to choose it.
+    // Off, or another model chosen under On: the guide only says D1 is on this device.
     const runtime = fakeRuntime({
       get_webgpu_download_status: { status: 'ready', ready: true, modelId },
       'd1_control:status': { success: true, result: { status: 'ready', loaded: true, usedForDecisions: false } },

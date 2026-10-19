@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': 'Завантаження D1, моделі рішень · {progress}%',
   'install.local_model.d1_paused': 'D1 призупинено на {progress}%.',
   'install.local_model.d1_ready': 'D1 готова й просто на цьому пристрої відповідає на короткі запитання WebBrain, як-от «Завдання виконано?».',
-  'install.local_model.d1_saved': 'D1 збережено на цьому пристрої. Щоб її використовувати, виберіть її в Налаштуваннях, у розділі «Моделі рішень».',
+  'install.local_model.d1_saved': 'D1 збережено на цьому пристрої.',
   'install.local_model.d1_unsupported': 'Цей GPU не може запустити D1, тож WebBrain лишає свої звичайні перевірки.',
   'install.local_model.d1_error': 'D1 зупинилася: {error}',
 

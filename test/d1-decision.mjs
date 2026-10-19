@@ -296,7 +296,7 @@ for (const build of ['chrome', 'firefox']) {
     const loaded = { [pin.D1_KEEP_LOADED_KEY]: true };
     for (const [label, stored, options, expected] of [
       ['Auto with D1 downloaded', { ...consent, ...loaded }, {}, true],
-      ['Auto while Compass chats', { ...consent, ...loaded }, { provider: compassProvider }, false],
+      ['Auto while Compass chats', { ...consent, ...loaded }, { provider: compassProvider }, true],
       ['Auto after Unload', { ...consent, [pin.D1_KEEP_LOADED_KEY]: false }, {}, false],
       ['Auto before the download finished', { ...consent, ...loaded }, { marker: 'missing' }, false],
       ['Strict Secret Mode', { ...consent, ...loaded }, { strict: true }, false],

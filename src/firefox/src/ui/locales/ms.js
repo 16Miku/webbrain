@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': 'Memuat turun D1, model keputusan · {progress}%',
   'install.local_model.d1_paused': 'D1 dijeda pada {progress}%.',
   'install.local_model.d1_ready': 'D1 sedia dan menjawab soalan pantas WebBrain, seperti “Adakah tugas ini sudah selesai?”, pada peranti ini.',
-  'install.local_model.d1_saved': 'D1 disimpan pada peranti ini. Untuk menggunakannya, pilih dalam Tetapan, di bawah Model keputusan.',
+  'install.local_model.d1_saved': 'D1 disimpan pada peranti ini.',
   'install.local_model.d1_unsupported': 'GPU ini tidak dapat menjalankan D1, jadi WebBrain kekal dengan semakan biasanya.',
   'install.local_model.d1_error': 'D1 terhenti: {error}',
 

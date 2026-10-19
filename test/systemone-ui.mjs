@@ -75,7 +75,8 @@ function installStub({ lang, build, version, seed = {} }) {
     storage: { local: storage, onChanged: { addListener: fn => listeners.push(fn) } },
     runtime: { getURL: path => `${location.origin}/src/${build}/${path}`, getManifest: () => ({ version }), onMessage: { addListener() {} }, sendMessage(msg, callback) {
       window.testRequests.push(msg);
-      const result = msg.action === 'get_providers' ? { providers: { llamacpp: { label: 'llama.cpp', category: 'local', baseUrl: 'http://localhost:8080/v1', model: 'local-model', configured: true }, openai: { label: 'OpenAI', category: 'cloud', apiKey: '', model: 'gpt-4o-mini' } }, active: 'llamacpp' }
+      const result = msg.action === 'get_providers' ? { providers: { llamacpp: { label: 'llama.cpp', category: 'local', baseUrl: 'http://localhost:8080/v1', model: 'local-model', configured: true }, openai: { label: 'OpenAI', category: 'cloud', apiKey: '', model: 'gpt-4o-mini' },
+        webbrain_cloud: { label: 'WebBrain Cloud', category: 'cloud', providerName: 'webbrain-cloud', configured: true } }, active: sessionStorage.getItem('active-provider') || 'llamacpp' }
         : msg.action === 'test_system_one' ? { success: true, model: msg.settings?.decisionModel || 'jev-1.13.0', visionVerified: msg.settings?.decisionProvider === 'openrouter' }
           : msg.action === 'list_decision_models' ? { success: true, models: [{ id: 'cloudflare/clef-flash', name: 'Decider', supportsVision: true, inputRate: .02, outputRate: 0 }, { id: 'another/publisher', name: 'Another decision model', supportsVision: false, inputRate: .1, outputRate: 0 }] }
             : msg.action === 'get_user_memory' ? { ok: true, enabled: true, records: [] } : {};
@@ -278,6 +279,31 @@ try {
             await page.waitForFunction(provider => testStore.decisionProvider === provider, provider);
             assert.deepEqual(await page.evaluate(keys => Object.fromEntries(keys.map(key => [key, testStore[key]])), Object.keys(switches)), switches);
           }
+        }
+        if (lang === 'en' && width === 1280) {
+          // While Compass is the chat provider, a downloaded D1 is still what Auto uses.
+          await page.evaluate(() => { sessionStorage.setItem('active-provider', 'webbrain_cloud'); sessionStorage.setItem('decision-profile', '{}'); });
+          await page.reload();
+          await page.waitForFunction(() => !document.querySelector('#decision-auto-status').hidden);
+          assert.match(await statusText(), /In use: WebBrain Cloud’s decision model/);
+          assert.equal(await page.locator('#btn-test-system-one').isVisible(), false, "Compass's managed model cannot be tested here");
+          await page.evaluate(async build => {
+            const { D1_CACHE_NAME, D1_RELEASE, D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_KEEP_LOADED_KEY } = await import(`/src/${build}/src/providers/d1-config.js`);
+            const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle(`${D1_CACHE_NAME}-${D1_RELEASE.revision}`, { create: true });
+            const writer = await (await directory.getFileHandle('ready.json', { create: true })).createWritable();
+            await writer.write(JSON.stringify({ revision: D1_RELEASE.revision, manifestSha256: D1_RELEASE.manifestSha256 }));
+            await writer.close();
+            Object.assign(testStore, { [D1_CONSENT_KEY]: D1_CONSENT_VERSION, [D1_KEEP_LOADED_KEY]: true });
+            dispatchEvent(new Event('focus'));
+          }, build);
+          await page.waitForFunction(() => /D1/.test(document.querySelector('#decision-auto-status').textContent));
+          assert.match(await statusText(), /In use: D1, on this device\./);
+          assert.equal(await page.locator('#btn-test-system-one').isVisible(), true, 'D1 runs here, so Auto can test it');
+          await page.evaluate(async build => {
+            const { D1_CACHE_NAME, D1_RELEASE } = await import(`/src/${build}/src/providers/d1-config.js`);
+            await (await navigator.storage.getDirectory()).removeEntry(`${D1_CACHE_NAME}-${D1_RELEASE.revision}`, { recursive: true });
+            sessionStorage.removeItem('active-provider');
+          }, build);
         }
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'settings fit viewport');
         assert.deepEqual(errors, []);

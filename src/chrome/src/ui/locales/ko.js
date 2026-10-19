@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': '결정 모델 D1 다운로드 중 · {progress}%',
   'install.local_model.d1_paused': 'D1이 {progress}%에서 일시중지됨.',
   'install.local_model.d1_ready': 'D1이 준비되었습니다. "이 작업이 끝났나요?" 같은 WebBrain의 간단한 질문에 이 기기에서 답합니다.',
-  'install.local_model.d1_saved': 'D1이 이 기기에 저장되었습니다. 사용하려면 설정의 결정 모델에서 선택하세요.',
+  'install.local_model.d1_saved': 'D1이 이 기기에 저장되었습니다.',
   'install.local_model.d1_unsupported': '이 GPU에서는 D1을 실행할 수 없어 WebBrain은 평소의 확인을 계속합니다.',
   'install.local_model.d1_error': 'D1이 중단되었습니다: {error}',
 

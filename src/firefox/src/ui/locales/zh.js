@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': '正在下载决策模型 D1 · {progress}%',
   'install.local_model.d1_paused': 'D1 已在 {progress}% 处暂停。',
   'install.local_model.d1_ready': 'D1 已就绪，会在此设备上回答 WebBrain 的快速问题，例如“这个任务完成了吗？”。',
-  'install.local_model.d1_saved': 'D1 已保存在此设备上。要使用它，请在设置的“决策模型”中选择。',
+  'install.local_model.d1_saved': 'D1 已保存在此设备上。',
   'install.local_model.d1_unsupported': '此 GPU 无法运行 D1，因此 WebBrain 继续使用常规检查。',
   'install.local_model.d1_error': 'D1 已停止：{error}',
 

@@ -127,7 +127,7 @@ export default {
   'install.local_model.d1_downloading': 'D1, het beslismodel, downloaden · {progress}%',
   'install.local_model.d1_paused': 'D1 gepauzeerd bij {progress}%.',
   'install.local_model.d1_ready': 'D1 is klaar en beantwoordt op dit apparaat de snelle vragen van WebBrain, zoals ‘Is deze taak klaar?’.',
-  'install.local_model.d1_saved': 'D1 is op dit apparaat opgeslagen. Kies het in Instellingen onder Beslismodellen om het te gebruiken.',
+  'install.local_model.d1_saved': 'D1 is op dit apparaat opgeslagen.',
   'install.local_model.d1_unsupported': 'Deze GPU kan D1 niet draaien, dus WebBrain houdt zijn gewone controles aan.',
   'install.local_model.d1_error': 'D1 is gestopt: {error}',
   'sp.status.disconnected': 'Niet verbonden',

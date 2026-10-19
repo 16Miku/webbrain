@@ -331,7 +331,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   }
   const stored = await chrome.storage.local.get(DECISION_SETTINGS_KEYS);
   const compass = provider.config?.providerName === 'webbrain-cloud' ? provider.config : null;
-  const config = await resolveCurrentDecisionConfig(stored, compass);
+  const config = await resolveCurrentDecisionConfig(stored, compass, { feature: 'done' });
   const context = agent.systemOneContext(tabId);
   const signal = agent._runAbortSignal(tabId);
   const guard = agent._planExecutionGuards.get(tabId);
@@ -343,7 +343,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
     && (!calculationEvidence || captureCalculationEvidence(agent, tabId, calculationEvidence))
     && scope === JSON.stringify([agent.completionInvariants.get(tabId)?.runToken, agent.completionInvariants.get(tabId)?.lastAction?.sequence, agent._progressTaskKeyHash(tabId), config.provider, config.model, config.url, provider.model, provider.supportsVision, JSON.stringify(config)]);
   const currentIdentity = async evidence => !!evidence.identity && currentRun()
-    && JSON.stringify(await resolveCurrentDecisionConfig(await chrome.storage.local.get(DECISION_SETTINGS_KEYS), compass)) === JSON.stringify(config)
+    && JSON.stringify(await resolveCurrentDecisionConfig(await chrome.storage.local.get(DECISION_SETTINGS_KEYS), compass, { feature: 'done' })) === JSON.stringify(config)
     && evidence.identity === await agent._completionDocumentStamp(tabId, true) && currentRun();
   const current = async evidence => {
     if (!await currentIdentity(evidence)) return false;

@@ -233,7 +233,7 @@ export default {
   'install.local_model.d1_downloading': 'Karar modeli D1 indiriliyor · %{progress}',
   'install.local_model.d1_paused': 'D1, %{progress} noktasında duraklatıldı.',
   'install.local_model.d1_ready': 'D1 hazır; WebBrain’in “Bu görev bitti mi?” gibi hızlı sorularını bu cihazda yanıtlıyor.',
-  'install.local_model.d1_saved': 'D1 bu cihaza kaydedildi. Kullanmak için Ayarlar’da Karar modelleri bölümünden seç.',
+  'install.local_model.d1_saved': 'D1 bu cihaza kaydedildi.',
   'install.local_model.d1_unsupported': 'Bu GPU D1’i çalıştıramıyor; WebBrain her zamanki kontrollerini sürdürüyor.',
   'install.local_model.d1_error': 'D1 durdu: {error}',
 
