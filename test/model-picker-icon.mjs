@@ -31,9 +31,11 @@ for (const build of ['chrome', 'firefox']) {
       { dataset: { value: 'local' }, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } }];
     const context = vm.createContext({
       t: (key, params = {}) => String(en[key] || key).replace(/\{(\w+)\}/g, (_, k) => params[k] ?? ''),
-      providerSelect: { value: 'openrouter', selectedOptions: [{ textContent: 'OpenRouter · openai/gpt-6-luna' }] },
+      // The option text carries the provider's status, never its model.
+      providerSelect: { value: 'openrouter', selectedOptions: [{ textContent: 'OpenRouter — Active' }] },
       providerPickerLabel: { textContent: '' },
-      providerPickerLabelById: new Map([['openrouter', 'OpenRouter']]),
+      providerPickerLabelById: new Map([['openrouter', 'OpenRouter'], ['webbrain_cloud', 'WebBrain Compass'], ['local', 'gpt-6-luna']]),
+      providerPickerModelById: new Map([['openrouter', 'openai/gpt-6-luna'], ['local', 'gpt-6-luna']]),
       providerPickerBtn: { title: '', setAttribute(k, v) { attributes[k] = v; } },
       providerPickerMenu: { querySelectorAll: () => options },
     });
@@ -42,6 +44,14 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(context.providerPickerBtn.title, 'Model: OpenRouter · openai/gpt-6-luna');
     assert.equal(attributes['aria-label'], 'Model: OpenRouter · openai/gpt-6-luna');
     assert.deepEqual(options.map(option => option.attrs['aria-selected']), ['true', 'false'], 'the open menu marks it');
+    assert.match(panel, /if \(typeof config\.model === 'string' && config\.model\.trim\(\)\) providerPickerModelById\.set\(id, config\.model\.trim\(\)\);/, 'loadProviders records each configured model');
+    // A provider without a configured model, and a label that already names it.
+    context.providerSelect = { value: 'webbrain_cloud', selectedOptions: [{ textContent: 'WebBrain Compass — No setup' }] };
+    context.syncProviderPickerButton();
+    assert.equal(attributes['aria-label'], 'Model: WebBrain Compass');
+    context.providerSelect = { value: 'local', selectedOptions: [{ textContent: 'gpt-6-luna — Active' }] };
+    context.syncProviderPickerButton();
+    assert.equal(attributes['aria-label'], 'Model: gpt-6-luna');
     // Nothing selected yet.
     context.providerSelect = { value: '', selectedOptions: [] };
     context.syncProviderPickerButton();

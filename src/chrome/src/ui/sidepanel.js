@@ -731,6 +731,8 @@ const MORE_PROVIDERS_OPTION_VALUE = '__more_providers__';
 const statusDot = document.getElementById('status-dot');
 // Short labels for the closed picker button (menu rows keep the longer status text).
 const providerPickerLabelById = new Map();
+// The configured model of each provider, for the picker's tooltip and name.
+const providerPickerModelById = new Map();
 let languagePickerTypeahead = '';
 let languagePickerTypeaheadTimer = null;
 
@@ -8063,8 +8065,10 @@ function syncProviderPickerButton() {
     || '';
   providerPickerLabel.textContent = shortLabel;
   if (providerPickerBtn) {
-    // The button shows an icon only, so its name says which model is active.
-    const name = providerSelect.selectedOptions?.[0]?.textContent || shortLabel;
+    // The button shows an icon only, so its name says which provider and
+    // model are active (the option text carries a status, not the model).
+    const model = providerPickerModelById.get(id) || '';
+    const name = shortLabel && model && !shortLabel.includes(model) ? `${shortLabel} · ${model}` : (shortLabel || model);
     const label = name ? t('sp.provider_picker.current', { name }) : t('sp.provider_picker.none');
     providerPickerBtn.title = label;
     providerPickerBtn.setAttribute('aria-label', label);
@@ -8307,6 +8311,7 @@ async function loadProviders() {
     providerSelect.replaceChildren();
     providerPickerMenu?.replaceChildren();
     providerPickerLabelById.clear();
+    providerPickerModelById.clear();
 
     const cloudConfig = res.providers.webbrain_cloud || { label: 'WebBrain Compass' };
     const cloudLabel = cloudConfig.label || 'WebBrain Compass';
@@ -8343,6 +8348,7 @@ async function loadProviders() {
         opt.textContent = `${name} — ${t('sp.providers.active')}`;
         activeGroup.appendChild(opt);
         providerPickerLabelById.set(id, name);
+        if (typeof config.model === 'string' && config.model.trim()) providerPickerModelById.set(id, config.model.trim());
         appendProviderPickerOption(id, name, t('sp.providers.active'), config.sourceProviderId || id);
       }
       providerSelect.appendChild(activeGroup);
