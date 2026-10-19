@@ -4555,6 +4555,18 @@ async function submitScheduleComposer(e, form) {
   }
 }
 
+// Live control values are not part of the markup a cached chat is rebuilt
+// from, so the target the form shows is also written to attributes.
+function syncScheduleTargetAttributes(form) {
+  const { targetType, urlInput } = getScheduleComposerControls(form);
+  if (!targetType || !urlInput) return;
+  urlInput.setAttribute('value', urlInput.value);
+  for (const option of targetType.options || []) {
+    if (option.value === targetType.value) option.setAttribute('selected', '');
+    else option.removeAttribute('selected');
+  }
+}
+
 // The target follows the URL the prompt names until the person picks a target
 // themselves; both live on the form so a restored composer keeps them.
 function applyScheduleTarget(form, prompt) {
@@ -4569,6 +4581,7 @@ function applyScheduleTarget(form, prompt) {
     targetType.value = 'current_tab';
   }
   updateScheduleComposerVisibility(form);
+  syncScheduleTargetAttributes(form);
 }
 
 function bindScheduleComposer(form) {
@@ -4580,8 +4593,12 @@ function bindScheduleComposer(form) {
   targetType?.addEventListener('change', () => {
     form.dataset.targetChosen = 'true';
     updateScheduleComposerVisibility(form);
+    syncScheduleTargetAttributes(form);
   });
-  urlInput?.addEventListener('input', () => { form.dataset.targetChosen = 'true'; });
+  urlInput?.addEventListener('input', () => {
+    form.dataset.targetChosen = 'true';
+    syncScheduleTargetAttributes(form);
+  });
   promptInput?.addEventListener('input', () => {
     if (form.dataset.targetChosen !== 'true') applyScheduleTarget(form, promptInput.value);
   });

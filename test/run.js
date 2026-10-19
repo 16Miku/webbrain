@@ -42624,16 +42624,18 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
     assert.match(panel, /if \(currentTabId !== tabId\) \{[\s\S]*?replaceCachedScheduleComposer\(tabId, form\.dataset\.composerId, \{[\s\S]*?id: res\.jobId,[\s\S]*?scheduledAt: res\.scheduledAt,[\s\S]*?\}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?form\.remove\(\);[\s\S]*?renderScheduledJobCreatedMessage/, `${label}: schedule form should reconcile hidden and visible composer confirmations by job id`);
     assert.match(panel, /catch \(err\) \{[\s\S]*?if \(currentTabId !== tabId\) \{[\s\S]*?updateCachedScheduleComposerError\(tabId, form\.dataset\.composerId, err\.message\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?submit\.disabled = false;[\s\S]*?errorEl\.textContent = err\.message;/, `${label}: schedule form failures should update hidden cached composers instead of leaving disabled forms`);
     assert.match(panel, /renderScheduleComposer\(payload, tabId\)/, `${label}: /schedule should pass the initiating tab into the async composer`);
-    assert.match(panel, /function applyScheduleTarget\(form, prompt\) \{[\s\S]*?const targetUrl = scheduleUrlFromPrompt\(prompt\) \|\| form\.dataset\.initialUrl \|\| '';[\s\S]*?updateScheduleComposerVisibility\(form\);\s*\}/, `${label}: schedule form should pick URL targets from the prompt, else the active tab, and refresh the URL field's visibility`);
+    assert.match(panel, /function applyScheduleTarget\(form, prompt\) \{[\s\S]*?const targetUrl = scheduleUrlFromPrompt\(prompt\) \|\| form\.dataset\.initialUrl \|\| '';[\s\S]*?updateScheduleComposerVisibility\(form\);\s*syncScheduleTargetAttributes\(form\);\s*\}/, `${label}: schedule form should pick URL targets from the prompt, else the active tab, and refresh the URL field's visibility`);
     assert.match(panel, /applyScheduleTarget\(form, prefillPrompt\);/, `${label}: the prefilled prompt sets the first target`);
     assert.match(panel, /function bindScheduleComposer\(form\) \{[\s\S]*?promptInput\?\.addEventListener\('input', \(\) => \{\s*if \(form\.dataset\.targetChosen !== 'true'\) applyScheduleTarget\(form, promptInput\.value\);/, `${label}: an unchosen target follows the prompt as it is typed or edited, from the rebindable path`);
-    assert.match(panel, /urlInput\?\.addEventListener\('input', \(\) => \{ form\.dataset\.targetChosen = 'true'; \}\);/, `${label}: a URL the person typed is not overwritten by the prompt`);
-    assert.match(panel, /targetType\?\.addEventListener\('change', \(\) => \{\s*form\.dataset\.targetChosen = 'true';\s*updateScheduleComposerVisibility\(form\);/, `${label}: a target type the person picked is not overwritten by the prompt`);
+    assert.match(panel, /urlInput\?\.addEventListener\('input', \(\) => \{\s*form\.dataset\.targetChosen = 'true';\s*syncScheduleTargetAttributes\(form\);/, `${label}: a URL the person typed is not overwritten by the prompt, and survives a restore`);
+    assert.match(panel, /targetType\?\.addEventListener\('change', \(\) => \{\s*form\.dataset\.targetChosen = 'true';\s*updateScheduleComposerVisibility\(form\);\s*syncScheduleTargetAttributes\(form\);/, `${label}: a target type the person picked is not overwritten by the prompt`);
     {
       // The tracking runs against a form rebuilt from saved markup, too.
       const fields = {};
+      const attrs = {};
       const field = (name, value = '') => ({
         value, hidden: false,
+        setAttribute: (k, v) => { attrs[`${name}.${k}`] = v; }, removeAttribute() {},
         closest: () => ({ classList: { toggle: (_c, on) => { fields[name].hidden = on; } } }),
       });
       for (const name of ['title', 'prompt', 'type', 'timeMode', 'after', 'runAt', 'interval', 'target', 'url', 'mode']) fields[name] = field(name);
@@ -42642,7 +42644,7 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
       const selectors = { '.schedule-target-type': 'target', '.schedule-url': 'url', '.schedule-type': 'type', '.schedule-time-mode': 'timeMode', '.schedule-after': 'after', '.schedule-run-at': 'runAt', '.schedule-interval': 'interval', '.schedule-prompt': 'prompt' };
       const form = { dataset: { initialUrl: '' }, querySelector: sel => fields[selectors[sel]] || null };
       const env = vm.createContext({ URL });
-      vm.runInContext(['isHttpScheduleUrl', 'trimScheduleUrlProse', 'scheduleUrlFromPrompt', 'getScheduleComposerControls', 'updateScheduleComposerVisibility', 'applyScheduleTarget'].map(name => {
+      vm.runInContext(['isHttpScheduleUrl', 'trimScheduleUrlProse', 'scheduleUrlFromPrompt', 'getScheduleComposerControls', 'updateScheduleComposerVisibility', 'syncScheduleTargetAttributes', 'applyScheduleTarget'].map(name => {
         const start = panel.indexOf(`function ${name}(`);
         return panel.slice(start, panel.indexOf('\n}\n', start) + 2);
       }).join('\n'), env);
@@ -42651,6 +42653,7 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
       assert.equal(fields.url.value, 'https://example.com/a');
       assert.equal(fields.target.value, 'url');
       assert.equal(fields.url.hidden, false, `${label}: an automatically chosen URL target shows its URL field`);
+      assert.equal(attrs['url.value'], 'https://example.com/a', `${label}: the chosen URL is kept in markup for a restored composer`);
       vm.runInContext(`applyScheduleTarget(form, 'Check the open page.')`, env);
       assert.equal(fields.target.value, 'current_tab');
       assert.equal(fields.url.hidden, true);
