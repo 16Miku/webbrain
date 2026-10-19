@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "Gesprek kon niet worden hersteld.",
   'sp.history.changed': "De pagina-URL is gewijzigd.",
   'sp.providers.more': 'Meer…',
+  'sp.provider_picker.current': 'Model: {name}',
+  'sp.provider_picker.none': 'Kies een model',
   'st.providers.selected': 'GEGEVEZEN',
   'st.providers.select_for_chat': 'Selecteren voor chat',
   'brand': 'WebBrain',

@@ -193,22 +193,34 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.evaluate(() => {
           document.documentElement.dataset.uiScale = '175';
           document.documentElement.style.setProperty('--ui-scale-zoom', '1.75');
+          // The name is only the tooltip now: a long one cannot widen the button.
           document.getElementById('provider-picker-label').textContent = 'OpenRouter · a long model name';
         });
         const rects = await page.evaluate(() => {
           const rect = (selector) => { const r = document.querySelector(selector).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
           return {
             picker: rect('#provider-picker-btn'),
+            icon: rect('#provider-picker-btn .provider-picker-icon'),
+            label: getComputedStyle(document.getElementById('provider-picker-label')).display,
             wrapper: rect('#input-wrapper'),
-            permission: rect('#btn-permission-gate'),
-            mic: rect('#btn-mic'),
+            controls: [...document.querySelectorAll('.composer-toolbar > button, .composer-toolbar > .provider-picker, .composer-toolbar > .permission-gate-menu')]
+              .map((el) => { const r = el.getBoundingClientRect(); return { id: el.id || el.className, left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; })
+              .filter((r) => r.width > 0),
           };
         });
-        // The picker keeps (nearly) the whole composer width instead of being squeezed to a few pixels.
-        assert.ok(rects.picker.width >= rects.wrapper.width * 0.6, `picker stays wide (${rects.picker.width} of ${rects.wrapper.width})`);
-        assert.ok(rects.permission.top >= rects.picker.bottom - 1, 'permission and mic controls sit below the picker, not on top of it');
-        assert.ok(rects.mic.top >= rects.picker.bottom - 1);
-        assert.ok(rects.permission.right <= rects.wrapper.right && rects.mic.right <= rects.wrapper.right, 'controls stay inside the composer');
+        assert.equal(rects.label, 'none', 'the closed picker shows no model name');
+        assert.ok(rects.icon.width > 0, 'it shows the engine icon');
+        assert.ok(rects.picker.width <= 56 * 1.75, `the picker stays an icon button (${rects.picker.width})`);
+        for (const control of rects.controls) {
+          assert.ok(control.left >= rects.wrapper.left - 1 && control.right <= rects.wrapper.right + 1, `${control.id} stays inside the composer`);
+        }
+        for (let i = 0; i < rects.controls.length; i++) {
+          for (let j = i + 1; j < rects.controls.length; j++) {
+            const a = rects.controls[i], b = rects.controls[j];
+            const overlap = Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
+            assert.ok(!overlap, `${a.id} and ${b.id} do not overlap`);
+          }
+        }
         // No visual reordering: tabbing through the toolbar reads top-to-bottom, left-to-right.
         const order = await page.evaluate(() => [...document.querySelectorAll('.composer-toolbar button:not([hidden]), .composer-toolbar [tabindex]:not([tabindex="-1"])')]
           .filter((el) => el.getBoundingClientRect().width > 0)

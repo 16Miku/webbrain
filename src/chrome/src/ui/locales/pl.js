@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "Nie udało się przywrócić rozmowy.",
   'sp.history.changed': "Adres URL strony uległ zmianie.",
   'sp.providers.more': 'Więcej…',
+  'sp.provider_picker.current': 'Model: {name}',
+  'sp.provider_picker.none': 'Wybierz model',
   'st.providers.selected': 'WYBRANO',
   'st.providers.select_for_chat': 'Wybierz do czatu',
   'brand': 'WebBrain',

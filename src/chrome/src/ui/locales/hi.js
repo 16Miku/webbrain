@@ -44,6 +44,8 @@ export default {
   'sp.history.failed': "बातचीत पुनर्प्राप्त नहीं हो सकी।",
   'sp.history.changed': "पृष्ठ का URL बदल गया है।",
   'sp.providers.more': "अधिक...",
+  'sp.provider_picker.current': 'मॉडल: {name}',
+  'sp.provider_picker.none': 'मॉडल चुनें',
   'st.providers.selected': "चयनित",
   'st.providers.select_for_chat': "चैट के लिए चयन करें",
   // Brand name: kept in English across locales.

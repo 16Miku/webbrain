@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "Не вдалося відновити розмову.",
   'sp.history.changed': "URL-адреса сторінки змінилася.",
   'sp.providers.more': 'Більше…',
+  'sp.provider_picker.current': 'Модель: {name}',
+  'sp.provider_picker.none': 'Оберіть модель',
   "st.system_one.desc_html": "Додаткова перевірка запланованих спостережень і завершення завдань.",
   "st.system_one.enabled.label": "Увімкнути Jev",
   "st.system_one.api_key.label": "Ключ API TypeSafe",

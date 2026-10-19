@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "Unterhaltung konnte nicht wiederhergestellt werden.",
   'sp.history.changed': "Die Seiten-URL hat sich geändert.",
   'sp.providers.more': 'Mehr…',
+  'sp.provider_picker.current': 'Modell: {name}',
+  'sp.provider_picker.none': 'Modell wählen',
   'st.providers.selected': 'AUSGEWÄHLT',
   'st.providers.select_for_chat': 'Für Chat auswählen',
   'brand': 'WebBrain',

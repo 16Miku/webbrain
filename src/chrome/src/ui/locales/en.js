@@ -44,6 +44,8 @@ export default {
   'sp.history.failed': 'Unable to recover conversation.',
   'sp.history.changed': 'The page URL has changed.',
   'sp.providers.more': 'More…',
+  'sp.provider_picker.current': 'Model: {name}',
+  'sp.provider_picker.none': 'Choose a model',
   'st.providers.selected': 'SELECTED',
   'st.providers.select_for_chat': 'Select for chat',
   // Brand name: kept in English across locales.
