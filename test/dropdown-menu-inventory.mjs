@@ -92,4 +92,32 @@ for (const [build, launcher] of [['chrome', chromium], ['firefox', firefox]]) {
       observed = await read(); assert.match(observed.error, /no longer connected/); assert.equal(observed.pageContent, '');
     } finally { await browser.close(); }
   });
+
+  test(`${build}: a portaled menu names the expanded control and the record it was opened from`, async () => {
+    const browser = await launcher.launch({ headless: true });
+    try {
+      const context = await browser.newContext({ viewport: { width: 1258, height: 570 } });
+      await context.addInitScript({ content: await fs.readFile(new URL(`../src/${build}/src/content/accessibility-tree.js`, import.meta.url), 'utf8') });
+      // Mastodon mounts a post's menu at the end of the body, in a wrapper its
+      // "More" button controls (aria-controls + aria-expanded).
+      const twoPosts = html.replace('<article id="owned-status">Owned QA post<button id="owned-more">Daha fazla</button></article>',
+        '<article id="first-status">First QA post<button id="first-more" aria-expanded="false">Daha fazla</button></article>'
+        + '<article id="owned-status">Owned QA post<button id="owned-more" aria-expanded="true" aria-controls="menu-wrapper">Daha fazla</button></article>')
+        .replace(menu, `<div id="menu-wrapper">${menu}</div>`);
+      await context.route('https://owned-dropdown.invalid/**', route => route.fulfill({ contentType: 'text/html', body: twoPosts }));
+      const page = await context.newPage(); await page.goto('https://owned-dropdown.invalid/menu');
+      const refs = await page.evaluate(() => ({ more: __wb_ax_ref(document.querySelector('#owned-more')), post: __wb_ax_ref(document.querySelector('#owned-status')) }));
+      const tree = () => page.evaluate(() => __generateAccessibilityTree('visible', 15, 6000).pageContent);
+      const opener = `(opened by button "Daha fazla" [${refs.more}] in article [${refs.post}])`;
+      let content = await tree();
+      assert.ok(content.includes(opener), content.slice(0, 400));
+      assert.ok(content.indexOf(opener) < content.indexOf('button "Sil"'), 'the opener precedes the menu it opened');
+      // A collapsed control, or two expanded ones for the same menu, name no opener.
+      await page.locator('#owned-more').evaluate(button => button.setAttribute('aria-expanded', 'false'));
+      content = await tree(); assert.doesNotMatch(content, /\(opened by/);
+      await page.locator('#owned-more').evaluate(button => button.setAttribute('aria-expanded', 'true'));
+      await page.locator('#first-more').evaluate(button => { button.setAttribute('aria-expanded', 'true'); button.setAttribute('aria-controls', 'menu'); });
+      content = await tree(); assert.doesNotMatch(content, /\(opened by/);
+    } finally { await browser.close(); }
+  });
 }

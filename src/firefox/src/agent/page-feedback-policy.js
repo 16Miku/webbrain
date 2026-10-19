@@ -15,6 +15,10 @@ const DETACHED_TOOLS = new Set([
   // The handler validates a one-use token and sends its exact approved prompt,
   // independently of the source page's DOM.
   'delegate_research',
+  // A routed Ask turn's hand-off is checked against the user's own words
+  // alone and never runs on the page; the action run it starts reads the page
+  // again before acting.
+  'request_action_mode',
 ]);
 const AX_ACTIONS = new Set(['click_ax', 'type_ax', 'set_field', 'set_checked']);
 // The arithmetic in a request is found by its structure: the one span the

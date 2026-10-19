@@ -303,6 +303,75 @@ for (const build of BUILDS) {
     assert.equal(conversation.filter(message => message.role === 'user').length, 1, 'the request is recorded once');
   });
 
+  // A live page (a social timeline's relative times and counters) changes
+  // while the model decides. The hand-off reads only the user's words, and
+  // the action run reads the page again, so those updates must not discard
+  // it: on X and Mastodon they did so on every call until the turn ended as
+  // page_unstable or the model gave up read-only.
+  const watchedPage = f => {
+    f.agent._pageFeedbackIdleMs = 0;
+    const from = { tab: { id: f.tab }, frameId: 0, documentId: 'main-document', url: pageUrl };
+    let monitor = null, seq = 0;
+    const enrich = f.agent._enrichUserMessageWithCurrentPage;
+    f.agent._enrichUserMessageWithCurrentPage = async (...args) => {
+      monitor = f.agent.pageMonitorState(from, 'main-token');
+      return enrich(...args);
+    };
+    return event => {
+      assert.equal(monitor?.active, true, 'the page is watched during the turn');
+      return f.agent.observePageFeedback(from, { runToken: monitor.runToken, documentToken: 'main-token',
+        seq: ++seq, revision: seq, kind: 'dom', source: 'page', target: 'time.relative', ...event }).accepted;
+    };
+  };
+  const decidesAct = (_q, options) => (options.mainModel === false
+    ? { choice: null, evidence: '', source: 'unavailable' }
+    : { choice: 'act', evidence: 'Post on Mastodon', source: 'main_model' });
+
+  test(`${build}: page updates while the model decides do not discard its hand-off`, async () => {
+    const request = 'Post on Mastodon: WebBrain QA test, please ignore';
+    const f = fixture(Agent, { decide: decidesAct });
+    const emit = watchedPage(f);
+    fixtureReplies(f, [() => {
+      // DOM churn and page-script focus, but nothing the person did.
+      for (const event of [{}, { target: 'span.counter' }, { kind: 'activity', target: 'body' }]) assert.equal(emit(event), true);
+      return handoff('act', request);
+    }]);
+    assert.equal(await f.run(request), '');
+    assert.equal(f.calls.length, 1, 'the first hand-off counts');
+    assert.deepEqual(f.agent.takeModeEscalation(f.tab), { mode: 'act', evidence: request });
+    assert.deepEqual([...new Set(f.executed)], ['get_accessibility_tree'], 'only the page-update read ran');
+    assert.equal(f.agent.conversations.get(f.tab).some(message => message.role === 'user'), false,
+      'the update read leaves with the turn it restarts');
+  });
+
+  test(`${build}: the person's own input on the page still makes the model decide again`, async () => {
+    const request = 'Post on Mastodon: WebBrain QA test, please ignore';
+    const f = fixture(Agent, { decide: decidesAct });
+    const emit = watchedPage(f);
+    fixtureReplies(f, [() => {
+      assert.equal(emit({ kind: 'input', source: 'user', target: 'textarea#compose' }), true);
+      return handoff('act', request);
+    }, handoff('act', request)]);
+    assert.equal(await f.run(request), '');
+    assert.equal(f.calls.length, 2, 'the hand-off is decided again after the person typed');
+    assert.deepEqual(f.agent.takeModeEscalation(f.tab), { mode: 'act', evidence: request });
+  });
+
+  test(`${build}: input that arrives while the hand-off is being confirmed makes the model decide again`, async () => {
+    const request = 'Post on Mastodon: WebBrain QA test, please ignore';
+    let typed = false, emit = null;
+    const f = fixture(Agent, { decide: (question, options) => {
+      // The person types while routing confirms the first hand-off.
+      if (!typed && options.mainModel !== false) { typed = true; emit({ kind: 'input', source: 'user', target: 'textarea#compose' }); }
+      return decidesAct(question, options);
+    } });
+    emit = watchedPage(f);
+    fixtureReplies(f, [handoff('act', request), handoff('act', request)]);
+    assert.equal(await f.run(request), '');
+    assert.equal(f.calls.length, 2, 'the stale hand-off was not accepted');
+    assert.deepEqual(f.agent.takeModeEscalation(f.tab), { mode: 'act', evidence: request });
+  });
+
   test(`${build}: a hand-off quoting anything but the user's words is refused`, async () => {
     const f = fixture(Agent, {
       replies: [

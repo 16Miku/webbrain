@@ -943,6 +943,13 @@ export const pageFeedbackMethods = {
     return Math.round(thinking + Math.max(0, binding.userDecisionMs || 0));
   },
 
+  // Whether feedback queued since a hand-off's model check began is one the
+  // person caused or a navigation, not page churn the hand-off ignores.
+  _pageFeedbackSupersedesHandoff(tabId) {
+    const events = [...(this._pageFeedbackRuns?.get(tabId)?.events?.values() || [])];
+    return events.length > 0 && !isAutomaticPageFeedback(events);
+  },
+
   _hasPendingPageFeedback(tabId) {
     return !!this._pageFeedbackRuns?.get(tabId)?.events.size;
   },

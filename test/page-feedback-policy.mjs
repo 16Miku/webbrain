@@ -265,7 +265,10 @@ for (const build of ['chrome', 'firefox']) {
   for (const [name, args] of [['calculate', { expression: '12345678901234567890 * 7 + 0.125' }],
     ['read_pdf', {}], ['get_captcha_capabilities', {}], ['find_text', { text: 'literal match' }],
     ['generate_image', { prompt: 'An authorized illustration' }], ['schedule_task', { title: 'Authorized reminder', prompt: 'Inspect the draft' }],
-    ['schedule_resume', { after_seconds: 60 }], ['resize_window', { width: 1280, height: 720 }]]) {
+    ['schedule_resume', { after_seconds: 60 }], ['resize_window', { width: 1280, height: 720 }],
+    // An automatic Ask turn's hand-off: checked against the user's words,
+    // never run on the page.
+    ['request_action_mode', { mode: 'act', evidence: 'Post on Mastodon: hello' }]]) {
     test(`${build}: self-validating ${name} does not starve under unrelated DOM feedback`, () => {
       assert.notEqual(pageFeedbackCallPolicy(name, args, state, page).kind, 'unsafe');
       assert.equal(canRetainPageFeedbackCalls([call(name, args)], state, page, passive, { pending: true }), true);
