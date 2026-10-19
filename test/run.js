@@ -82584,6 +82584,8 @@ test('a declined submission is not asked again in the same turn', async () => {
     let prompts = 0;
     let executed = 0;
     let email = 'you@example.com';
+    // The form and button the page probe identified, as it reports them.
+    let elements = 'form-1/subscribe';
     const updates = [];
 
     agent.conversationModes.set(tabId, 'act');
@@ -82603,6 +82605,7 @@ test('a declined submission is not asked again in the same turn', async () => {
       reason: 'submit button/control activation',
       summary: `Changed/filled fields: Email: ${email}.`,
       changedFields: [{ label: 'Email', value: email, changed: true }],
+      submissionIdentity: elements,
     });
     agent._promptSubmitConfirmation = async () => {
       prompts += 1;
@@ -82661,6 +82664,22 @@ test('a declined submission is not asked again in the same turn', async () => {
     agent.permissions.beginTurn(tabId);
     await submit('new-turn');
     assert.equal(prompts, 4, `${AgentClass.name}: a new turn asks again`);
+
+    // Another form with the same fields and action (a per-row form told
+    // apart only by a hidden ID), or another button of the same form, is a
+    // different submission and asks on its own card.
+    elements = 'form-2/subscribe';
+    await submit('other-form');
+    assert.equal(prompts, 5, `${AgentClass.name}: a declined form refused another form with the same fields`);
+    elements = 'form-1/unsubscribe';
+    await submit('other-button');
+    assert.equal(prompts, 6, `${AgentClass.name}: a declined button refused another button of the form`);
+    // A submission whose form and button the probe did not identify is never
+    // remembered: it asks every time.
+    elements = '';
+    await submit('unidentified-1');
+    await submit('unidentified-2');
+    assert.equal(prompts, 8, `${AgentClass.name}: an unidentified submission skipped its card`);
     assert.equal(executed, 0, `${AgentClass.name}: nothing declined was submitted`);
 
     // A script has no form identity: each run of one asks on its own card.

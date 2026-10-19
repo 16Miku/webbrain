@@ -772,10 +772,13 @@ export class PermissionManager {
 
   /**
    * A form submission the user declined on WebBrain's own submit card in
-   * this turn. The key is submitActionKey(): the resolved form, its method
-   * and the values that changed, hashed. WebBrain does not ask about the
-   * same submission again in the turn; a changed value, a new turn, a
-   * correction or the user's own answer on a later card asks again.
+   * this turn. The agent keys it by submitActionKey() (the form's action,
+   * method and changed values, hashed) together with the frame and the form
+   * and button elements the page probe identified, so another form or
+   * button with the same fields is a different submission. WebBrain does
+   * not ask about the same submission again in the turn; a changed value, a
+   * new turn, a correction or the user's own answer on a later card asks
+   * again.
    */
   declineSubmission(key, tabId) {
     const normalizedKey = String(key || '');

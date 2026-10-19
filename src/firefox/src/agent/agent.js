@@ -29435,14 +29435,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // The identity a declined submission is remembered by in a turn, or ''
-  // when WebBrain did not resolve one: a script or WebMCP callback, or a
-  // control whose form, fields and action it could not read.
+  // when WebBrain did not resolve one: a script or WebMCP callback, a
+  // control whose form, fields and action it could not read, or one whose
+  // form and button the page probe did not identify. Two forms can post
+  // the same visible fields to one endpoint (per-row forms told apart only
+  // by hidden IDs), and one form can have several buttons, so the key
+  // also names the frame and the form and button elements.
   _declinableSubmissionKey(toolName, submitInfo) {
     if (!submitInfo || toolName === 'execute_js' || toolName === 'execute_webmcp_tool') return '';
     const resolved = (Array.isArray(submitInfo.changedFields) && submitInfo.changedFields.length > 0)
       || (Array.isArray(submitInfo.fields) && submitInfo.fields.length > 0)
       || !!(submitInfo.actionUrl || submitInfo.action);
-    return resolved ? submitActionKey(submitInfo, submitInfo.url) : '';
+    const elements = String(submitInfo.submissionIdentity || '');
+    if (!resolved || !elements) return '';
+    const frame = Number.isInteger(submitInfo.frameId) ? submitInfo.frameId : 0;
+    return [submitActionKey(submitInfo, submitInfo.url), `frame:${frame}`, `elements:${elements}`].join('|');
   }
 
   _fallbackSubmitConfirmationInfo(host, tool, reason, summary = '') {
@@ -29579,6 +29586,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             frameDocumentIdentity: sameFrameDocument ? frameBaseline.identity : '',
             frameStatusMessages: sameFrameDocument ? frameBaseline.messages : [] } : {}),
           formRef: /^ref_\d+$/.test(String(detected.formRef || '')) ? detected.formRef : '',
+          submissionIdentity: String(detected.submissionIdentity || '').slice(0, 80),
           summary: String(detected.summary || '').slice(0, 1200),
           fields: Array.isArray(detected.fields) ? detected.fields.slice(0, 12) : [],
           hiddenFields: Array.isArray(detected.hiddenFields) ? detected.hiddenFields.slice(0, 20) : [],
@@ -30257,6 +30265,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } catch { return { complete: false }; }
     };
     const transactionOrderSite = /(?:^|\.)12306\.cn$/i.test(host);
+    // The form and the button a submission goes through, as identities of
+    // the elements this frame holds. A declined submission is remembered by
+    // them, so another form or button with the same fields and action
+    // (per-row forms told apart only by hidden IDs, Reject beside Approve)
+    // still gets its own card. An Enter in a field, or set_field({submit}),
+    // submits through the form's default button.
+    const submissionIdentity = (form, submitControl) => {
+      try {
+        if (!(window.__wbSubmissionIdentities instanceof WeakMap)) {
+          window.__wbSubmissionIdentities = new WeakMap();
+          window.__wbSubmissionIdentityPrefix = Math.random().toString(36).slice(2, 10);
+          window.__wbSubmissionIdentityCount = 0;
+        }
+        const identities = window.__wbSubmissionIdentities;
+        const identityOf = el => {
+          if (!el || el.nodeType !== 1) return '';
+          if (!identities.has(el)) {
+            window.__wbSubmissionIdentityCount = (Number(window.__wbSubmissionIdentityCount) || 0) + 1;
+            identities.set(el, `${window.__wbSubmissionIdentityPrefix}.${window.__wbSubmissionIdentityCount}`);
+          }
+          return identities.get(el);
+        };
+        const owner = submitControl ? (labelControlFor(submitControl) || submitControl) : null;
+        const typedField = !!owner && isFormField(owner)
+          && !/^(?:submit|image|button|reset)$/i.test(String(owner.type || ''));
+        const defaultButton = () => {
+          try {
+            return Array.from(form?.elements || []).find(el => /^(?:BUTTON|INPUT)$/i.test(String(el?.tagName || ''))
+              && /^(?:submit|image)$/i.test(String(el.type || ''))) || null;
+          } catch { return null; }
+        };
+        const submitter = owner && !typedField
+          ? (owner.closest?.('button,input,[role="button"]') || owner)
+          : defaultButton();
+        const formIdentity = identityOf(form);
+        const submitterIdentity = identityOf(submitter);
+        return formIdentity || submitterIdentity ? `${formIdentity}/${submitterIdentity}` : '';
+      } catch {
+        return '';
+      }
+    };
     const submitInfo = (form, reason, pendingEl = null, pendingValue = null, validationSubmitEvidence = 'strong', submitControl = null) => {
       const formOrders = transactionOrderSite
         ? transactionOrderScan(form)
@@ -30311,6 +30360,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         reason,
         validationSubmitEvidence,
         frameDocumentIdentity: [url, performance.timeOrigin].join('|'),
+        submissionIdentity: submissionIdentity(form, submitControl),
         semanticCommit: nativeConfirmationCommit(control),
         actionResource: resourceProofFor(control),
         resourceBaseline: resourceProofs().map(resource => resource.url),
