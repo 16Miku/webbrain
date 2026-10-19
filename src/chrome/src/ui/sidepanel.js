@@ -4555,13 +4555,36 @@ async function submitScheduleComposer(e, form) {
   }
 }
 
+// The target follows the URL the prompt names until the person picks a target
+// themselves; both live on the form so a restored composer keeps them.
+function applyScheduleTarget(form, prompt) {
+  const { targetType, urlInput } = getScheduleComposerControls(form);
+  if (!targetType || !urlInput) return;
+  const targetUrl = scheduleUrlFromPrompt(prompt) || form.dataset.initialUrl || '';
+  if (isHttpScheduleUrl(targetUrl)) {
+    urlInput.value = targetUrl;
+    targetType.value = 'url';
+  } else {
+    urlInput.value = '';
+    targetType.value = 'current_tab';
+  }
+  updateScheduleComposerVisibility(form);
+}
+
 function bindScheduleComposer(form) {
   if (!form || form.dataset.bound) return;
-  const { scheduleType, timeMode, targetType, cancel } = getScheduleComposerControls(form);
+  const { scheduleType, timeMode, targetType, urlInput, promptInput, cancel } = getScheduleComposerControls(form);
   form.dataset.bound = 'true';
   scheduleType?.addEventListener('change', () => updateScheduleComposerVisibility(form));
   timeMode?.addEventListener('change', () => updateScheduleComposerVisibility(form));
-  targetType?.addEventListener('change', () => updateScheduleComposerVisibility(form));
+  targetType?.addEventListener('change', () => {
+    form.dataset.targetChosen = 'true';
+    updateScheduleComposerVisibility(form);
+  });
+  urlInput?.addEventListener('input', () => { form.dataset.targetChosen = 'true'; });
+  promptInput?.addEventListener('input', () => {
+    if (form.dataset.targetChosen !== 'true') applyScheduleTarget(form, promptInput.value);
+  });
   updateScheduleComposerVisibility(form);
   cancel?.addEventListener('click', () => form.closest('.message')?.remove());
   form.addEventListener('submit', (e) => submitScheduleComposer(e, form));
@@ -4670,25 +4693,8 @@ async function renderScheduleComposer(prefillPrompt = '', tabId = currentTabId) 
   urlInput.className = 'schedule-url';
   urlInput.placeholder = 'https://example.com/';
   addScheduleField(form, t('sp.schedule_form.target_url'), urlInput);
-  const applyScheduleTarget = (prompt) => {
-    const targetUrl = scheduleUrlFromPrompt(prompt) || initialScheduleUrl;
-    if (isHttpScheduleUrl(targetUrl)) {
-      urlInput.value = targetUrl;
-      targetType.value = 'url';
-    } else {
-      urlInput.value = '';
-      targetType.value = 'current_tab';
-    }
-  };
-  applyScheduleTarget(prefillPrompt);
-  // The target follows the URL the prompt names until the person picks one
-  // themselves, so a prompt typed or edited after /schedule opened is read too.
-  let scheduleTargetChosen = false;
-  urlInput.addEventListener('input', () => { scheduleTargetChosen = true; });
-  targetType.addEventListener('change', () => { scheduleTargetChosen = true; });
-  promptInput.addEventListener('input', () => {
-    if (!scheduleTargetChosen) applyScheduleTarget(promptInput.value);
-  });
+  form.dataset.initialUrl = isHttpScheduleUrl(initialScheduleUrl) ? initialScheduleUrl : '';
+  applyScheduleTarget(form, prefillPrompt);
 
   const modeInput = document.createElement('select');
   modeInput.className = 'schedule-mode';
