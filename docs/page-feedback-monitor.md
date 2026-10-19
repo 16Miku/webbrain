@@ -248,8 +248,16 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   guard for the next key. Preflight messages that sent no input preserve the
   original snapshot through native preparation. Submissions retain the existing
   authorization, form and recipient gates.
-  Snapshots are bounded, expire after two minutes and are discarded with the run;
-  unavailable or ambiguous targets retain conservative validation. Coordinates,
+  Snapshots are bounded, expire after two minutes of WebBrain's own time and
+  are discarded with the run. The background reports with each check how long
+  it waited for the model's decision and for the user's answers to WebBrain's
+  own cards (permission, submit and deletion confirmations, questions) since
+  the capture (`modelHeldMs`, at most 30 minutes); that time does not age the
+  snapshot, and page changes during it are judged as usual. A slow provider or
+  a user reading a permission card for a minute no longer expires an unchanged
+  target as "The browser changed during action preparation", with the same
+  card shown again on every retry. Unavailable or ambiguous targets retain
+  conservative validation. Coordinates,
   scripts, child-frame actions, human activity, navigation and unknown feedback
   retain strict fences. Without a private snapshot, legacy AX comparisons and
   native-submit restrictions remain in force.
