@@ -343,7 +343,7 @@ for (const build of ['chrome', 'firefox']) {
 
       // The same text nodes, laid out differently (a line break appears), read
       // as another version of the post.
-      await t.test('an edit that only changes where the post breaks lines is another post', async () => {
+      await t.test('an edit that only changes how the text of the post renders is another post', async () => {
         const f = await fixture();
         try {
           const request = `Delete only ${resource}.`;
@@ -361,6 +361,10 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(key(await f.probe('#confirm')), key(detected), 'Unchanged layout is the same post');
           await f.page.evaluate(() => { document.getElementById('second-part').style.display = 'block'; });
           assert.notEqual(key(await f.probe('#confirm')), key(detected), 'A new line break is another version');
+          await f.page.evaluate(() => { document.getElementById('second-part').style.display = ''; });
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Restoring the layout restores the post');
+          await f.page.evaluate(() => { document.getElementById('first-part').style.textTransform = 'uppercase'; });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'Rendered case is part of the post');
         } finally { await f.page.close(); }
       });
 
