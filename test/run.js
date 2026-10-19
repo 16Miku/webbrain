@@ -73101,6 +73101,39 @@ test('Local OpenAI-compatible Proxy context window: model card, live props, mode
         assert.equal((await legacy.mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5')).contextWindow, 128000);
       }
 
+      // 5e-3. A window the proxy reported is not replaced by a name guess or the 64k fallback when a
+      // later probe cannot reach the metadata; a different model starts over.
+      {
+        let reachable = true;
+        const { mgr, config } = setup(async (url) => (reachable && String(url).endsWith('/v1/models')
+          ? jsonOk({ data: [{ id: 'claude-sonnet-4-5', max_model_len: 8192 }, { id: 'other-model', max_model_len: 32768 }] })
+          : new Response('missing', { status: 404 })), { model: 'claude-sonnet-4-5', contextWindow: 65536 });
+        assert.equal((await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5')).contextWindow, 8192);
+        assert.equal(config().autoContextWindowSource, 'reported');
+        reachable = false;
+        const failed = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(failed.contextWindow, undefined, `${label}: the name-based 128k does not replace the reported 8k`);
+        assert.equal(config().contextWindow, 8192);
+        const listFail = await mgr._attachDetectedContextWindow('local_openai_proxy', mgr.providers.get('local_openai_proxy'), { ok: true, models: [] }, { model: 'claude-sonnet-4-5' });
+        assert.equal(listFail.contextWindow, undefined, `${label}: Load models / Test connection keep it too`);
+        assert.equal(config().contextWindow, 8192);
+        // A user edit drops the provenance with the auto window.
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 4096, manualContextWindow: true });
+        assert.equal(config().autoContextWindowSource, undefined);
+        assert.equal(config().autoContextWindowModel, undefined);
+      }
+      // ...and an inferred window stays replaceable by a later reported one.
+      {
+        let reachable = false;
+        const { mgr, config } = setup(async (url) => (reachable && String(url).endsWith('/v1/models')
+          ? jsonOk({ data: [{ id: 'claude-sonnet-4-5', max_model_len: 8192 }] })
+          : new Response('missing', { status: 404 })), { model: 'claude-sonnet-4-5', contextWindow: 65536 });
+        assert.equal((await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5')).contextWindow, 128000);
+        assert.equal(config().autoContextWindowSource, 'inferred');
+        reachable = true;
+        assert.equal((await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5')).contextWindow, 8192, `${label}: a reported window replaces an inferred one`);
+      }
+
       // 5f. Settings UI: edits made while detection is pending are preserved
       {
         const settingsSource = fs.readFileSync(path.join(ROOT, label === 'chrome' ? 'src/chrome/src/ui/settings.js' : 'src/firefox/src/ui/settings.js'), 'utf8');

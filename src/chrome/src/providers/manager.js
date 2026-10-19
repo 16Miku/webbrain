@@ -2056,6 +2056,10 @@ export class ProviderManager {
     if (updates.manualContextWindow === true) {
       delete merged.autoContextWindow;
     }
+    if (!Number.isFinite(Number(merged.autoContextWindow))) {
+      delete merged.autoContextWindowSource;
+      delete merged.autoContextWindowModel;
+    }
     if (id === 'webgpu' && Object.hasOwn(updates, 'model')) {
       merged.model = normalizeWebgpuModelId(merged.model);
       const preset = webgpuModelPreset(merged.model);
@@ -2589,7 +2593,8 @@ export class ProviderManager {
     const detected = await this._detectLocalContextWindow(id, provider, { model: selectedModel });
     if (detected?.contextWindow == null) return { ok: false, error: 'No context window detected' };
     const current = this.providers.get(id) || provider;
-    if (!shouldApplyDetectedContextWindow(current?.config?.contextWindow, detected.contextWindow, {
+    if (this._keepsReportedContextWindow(id, current?.config, detected)
+      || !shouldApplyDetectedContextWindow(current?.config?.contextWindow, detected.contextWindow, {
       shrinkOverride: detected.shrinkOverride === true,
       replaceable: this._replaceableContextWindows(id, current?.config),
       explicitOverride: this._hasExplicitContextWindow(id, current?.config),
@@ -2597,7 +2602,7 @@ export class ProviderManager {
       return { ok: true };
     }
     if (!await this._updateProviderContextWindow(id, detected.contextWindow, observed,
-      this._detectedContextWindowFields(id, current?.config, detected.contextWindow))) {
+      this._detectedContextWindowFields(id, current?.config, detected))) {
       return { ok: false, error: 'Provider changed before context detection completed' };
     }
     return { ok: true, contextWindow: detected.contextWindow };
@@ -2724,10 +2729,27 @@ export class ProviderManager {
     return this._providerDefinitionId(id, config) === 'local_openai_proxy' && config?.manualContextWindow === true;
   }
 
-  _detectedContextWindowFields(id, config, contextWindow) {
-    return this._providerDefinitionId(id, config) === 'local_openai_proxy'
-      ? { autoContextWindow: contextWindow, manualContextWindow: false }
-      : {};
+  // Where the stored auto window came from: a window the proxy itself reported (its model card or a
+  // live /props) outranks one inferred from the model name or the 64k fallback.
+  _detectedContextWindowFields(id, config, detected) {
+    if (this._providerDefinitionId(id, config) !== 'local_openai_proxy') return {};
+    return {
+      autoContextWindow: detected.contextWindow,
+      manualContextWindow: false,
+      autoContextWindowSource: detected.reported === true ? 'reported' : 'inferred',
+      autoContextWindowModel: String(detected.model || ''),
+    };
+  }
+
+  // A later probe that cannot reach the proxy's metadata (a timeout, a restart) falls back to the
+  // name or the 64k default. That must not replace a window the proxy reported for the same model.
+  _keepsReportedContextWindow(id, config, detected) {
+    if (this._providerDefinitionId(id, config) !== 'local_openai_proxy') return false;
+    if (detected?.reported !== false) return false;
+    const auto = Number(config?.autoContextWindow);
+    return config?.autoContextWindowSource === 'reported'
+      && Number.isFinite(auto) && auto > 0 && Number(config?.contextWindow) === auto
+      && String(config?.autoContextWindowModel || '') === String(detected.model || '');
   }
 
   async _attachDetectedContextWindow(id, provider, result, options = {}) {
@@ -2740,7 +2762,8 @@ export class ProviderManager {
     const detected = await this._detectLocalContextWindow(id, provider, options);
     if (detected?.contextWindow == null) return result;
     const current = this.providers.get(id) || provider;
-    if (!shouldApplyDetectedContextWindow(current?.config?.contextWindow, detected.contextWindow, {
+    if (this._keepsReportedContextWindow(id, current?.config, detected)
+      || !shouldApplyDetectedContextWindow(current?.config?.contextWindow, detected.contextWindow, {
       shrinkOverride: detected.shrinkOverride === true,
       replaceable: this._replaceableContextWindows(id, current?.config),
       explicitOverride: this._hasExplicitContextWindow(id, current?.config),
@@ -2748,7 +2771,7 @@ export class ProviderManager {
       return result;
     }
     if (!await this._updateProviderContextWindow(id, detected.contextWindow, observed,
-      this._detectedContextWindowFields(id, current?.config, detected.contextWindow))) {
+      this._detectedContextWindowFields(id, current?.config, detected))) {
       return result;
     }
     return { ...result, contextWindow: detected.contextWindow };
@@ -2851,21 +2874,21 @@ export class ProviderManager {
           } catch { /* try the next source */ }
         }
         const listed = data ? parseOpenAiProxyModelListContextWindow(data, model) : null;
-        if (listed != null) return { contextWindow: listed, shrinkOverride: true };
+        if (listed != null) return { contextWindow: listed, shrinkOverride: true, reported: true, model };
         // 2. A llama.cpp server behind the proxy reports the loaded model's
         // live n_ctx (`?model=` selects it on a llama-server router).
         try {
           const res = await fetchWithFallback(`${root}/props?model=${encodeURIComponent(model)}`, { method: 'GET', headers });
           if (res.ok) {
             const live = parseLlamaCppPropsContextWindow(await res.json());
-            if (live != null) return { contextWindow: live, shrinkOverride: true };
+            if (live != null) return { contextWindow: live, shrinkOverride: true, reported: true, model };
           }
         } catch { /* try the next source */ }
         // 3. A hosted model WebBrain knows by name, capped at 128k.
         const named = inferLocalProxyModelContextWindow(model);
-        if (named != null) return { contextWindow: named, shrinkOverride: false };
+        if (named != null) return { contextWindow: named, shrinkOverride: false, reported: false, model };
         // 4. The proxy fallback. It only replaces a default, never an override.
-        return { contextWindow: LOCAL_OPENAI_PROXY_CONTEXT_WINDOW, shrinkOverride: false };
+        return { contextWindow: LOCAL_OPENAI_PROXY_CONTEXT_WINDOW, shrinkOverride: false, reported: false, model };
       }
 
       if (definitionId === 'localai') {
