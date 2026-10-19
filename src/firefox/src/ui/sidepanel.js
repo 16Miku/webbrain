@@ -9,6 +9,7 @@ import { saveScreenshot } from './screenshot-download.js';
  */
 
 import { createQuotaController } from './compass-quota.js';
+import { createTimeoutRing, updateTimeoutRing } from './timeout-ring.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
@@ -7069,10 +7070,44 @@ function planReviewViewNeedsHydration(view, savedText = '') {
     || String(savedText || '') !== '';
 }
 
+// The plan runs on its own when the review times out. A clock ring at the end of the action row
+// empties over that time; it is rebuilt on a restored card and removed once the review is settled.
+function stopPlanReviewTimeoutRing(card) {
+  if (!card) return;
+  if (card._planReviewRingTimer) {
+    try { clearInterval(card._planReviewRingTimer); } catch {}
+    card._planReviewRingTimer = null;
+  }
+  card.querySelectorAll('.plan-review-actions .timeout-ring').forEach((ring) => ring.remove());
+}
+
+function startPlanReviewTimeoutRing(card) {
+  stopPlanReviewTimeoutRing(card);
+  const deadlineTs = Number(card?.dataset?.deadlineTs);
+  const actions = card?.querySelector?.('.plan-review-actions');
+  if (!actions || !Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
+  const totalMs = Math.max((Number(card.dataset.timeoutSec) || 0) * 1000, deadlineTs - Date.now());
+  if (deadlineTs - Date.now() <= 0 || totalMs <= 0) return;
+  const ring = createTimeoutRing();
+  actions.appendChild(ring);
+  const tick = () => {
+    const remainingMs = deadlineTs - Date.now();
+    if (!card.isConnected || card.classList.contains('plan-reviewed') || remainingMs <= 0) {
+      stopPlanReviewTimeoutRing(card);
+      return;
+    }
+    updateTimeoutRing(ring, remainingMs, totalMs);
+  };
+  // The card is not in the document yet when it is first built, so only the interval checks that.
+  updateTimeoutRing(ring, deadlineTs - Date.now(), totalMs);
+  card._planReviewRingTimer = setInterval(tick, 250);
+}
+
 function bindPlanReviewCard(card) {
   if (!card || card.classList.contains('plan-reviewed')) return;
   const planId = String(card.dataset.planId || '');
   if (!planId) return;
+  startPlanReviewTimeoutRing(card);
   const rawTabId = card.dataset.tabId;
   const tabId = rawTabId != null && rawTabId !== '' ? Number(rawTabId) : currentTabId;
   if (tabId == null || Number.isNaN(tabId)) return;
@@ -11247,9 +11282,18 @@ function startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption
   if (!card || !deadlineTs || deadlineTs <= 0) return;
   clearClarifyCountdown(card);
 
+  // The label says what the timeout does; the ring in the corner shows how much time is left.
   const timerEl = document.createElement('div');
   timerEl.className = 'clarify-timeout';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'clarify-timeout-label';
+  const ringEl = createTimeoutRing();
+  timerEl.append(labelEl, ringEl);
   card.appendChild(timerEl);
+  // The full period (typing renews the deadline to a whole period again); a restored card without
+  // it falls back to what was left when the countdown started.
+  const configuredTotalMs = (Number(card.dataset.timeoutSec) || 0) * 1000;
+  const totalMs = Math.max(configuredTotalMs, Math.max(0, (Number(card.dataset.deadlineTs) || deadlineTs) - Date.now()));
 
   const tick = () => {
     if (card.classList.contains('clarify-answered')) {
@@ -11267,7 +11311,8 @@ function startClarifyCountdown(card, { tabId, clarifyId, deadlineTs, firstOption
     // localized label; the countdown names the label.
     const namedButton = continues ? null : Array.from(card.querySelectorAll('.clarify-option'))
       .find(button => button.textContent === timeoutAnswer || (!!button.dataset.value && button.dataset.value === timeoutAnswer));
-    timerEl.textContent = typeof t === 'function'
+    updateTimeoutRing(ringEl, remainingMs, totalMs);
+    labelEl.textContent = typeof t === 'function'
       ? (continues
         ? t('sp.clarify.auto_timeout_continue', { seconds: remainingSec })
         : namedButton
@@ -11572,6 +11617,12 @@ function renderPlanReviewCard(data) {
   if (data.requestId) card.dataset.runRequestId = String(data.requestId);
   if (data.runId) card.dataset.runId = String(data.runId);
   card.dataset.editing = 'false';
+  const planTimeoutSec = Number(data.timeoutSec);
+  const planDeadlineTs = Number(data.deadlineTs);
+  if (Number.isFinite(planTimeoutSec) && planTimeoutSec > 0 && Number.isFinite(planDeadlineTs) && planDeadlineTs > 0) {
+    card.dataset.timeoutSec = String(Math.floor(planTimeoutSec));
+    card.dataset.deadlineTs = String(Math.floor(planDeadlineTs));
+  }
 
   const header = document.createElement('div');
   header.className = 'plan-review-header';

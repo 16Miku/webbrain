@@ -1201,6 +1201,8 @@ let chromiumBrowser;
 before(async () => { chromiumBrowser = await chromium.launch({ headless: true }); });
 after(async () => { await chromiumBrowser?.close(); });
 
+const ringSource = async (build) => (await read(`src/${build}/src/ui/timeout-ring.js`)).replace(/^export /gm, '');
+
 function extract(source, name) {
   source = source.replace(/\r\n/g, '\n');
   const start = source.search(new RegExp(`^(?:async )?function ${name}\\(`, 'm'));
@@ -1233,6 +1235,7 @@ async function panel(build, locale = 'en') {
     async function sendToBackground(action, payload) { sent.push([action, payload]); return { matched: true }; }
     ${extract(source, 'renderClarifyCard')}
     ${extract(source, 'submitClarify')}
+    ${await ringSource(build)}
     ${extract(source, 'clearClarifyCountdown')}
     ${extract(source, 'startClarifyCountdown')}
     ${extract(source, 'lockClarifyCardFromAuto')}

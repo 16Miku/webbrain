@@ -19200,7 +19200,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
     if (typeof onUpdate === 'function') {
       try {
-        onUpdate('plan_review', { planId, plan, markdown, verboseMarkdown });
+        // The panel shows how long is left before the plan runs on its own.
+        onUpdate('plan_review', {
+          planId, plan, markdown, verboseMarkdown,
+          timeoutSec: Math.round(PLAN_REVIEW_TIMEOUT_MS / 1000),
+          deadlineTs: Date.now() + PLAN_REVIEW_TIMEOUT_MS,
+        });
       } catch {}
     }
     try {

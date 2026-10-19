@@ -353,6 +353,9 @@ let browser;
 before(async () => { browser = await chromium.launch({ headless: true }); });
 after(async () => { await browser?.close(); });
 
+// The countdown draws its clock ring with the shared module; the page harness has no module loader.
+const ringSource = async (build) => (await read(`src/${build}/src/ui/timeout-ring.js`)).replace(/^export /gm, '');
+
 function extract(source, name) {
   source = source.replace(/\r\n/g, '\n');
   const start = source.search(new RegExp(`^(?:async )?function ${name}\\(`, 'm'));
@@ -373,6 +376,7 @@ for (const build of ['chrome', 'firefox']) {
         function t(key, params = {}) { return String(EN[key] || key).replace(/\\{(\\w+)\\}/g, (_, k) => params[k] ?? ''); }
         window.submitted = [];
         function submitClarify(card, tabId, clarifyId, answer, source) { window.submitted.push({ answer, source }); }
+        ${await ringSource(build)}
         ${extract(panel, 'clearClarifyCountdown')}
         ${extract(panel, 'startClarifyCountdown')}
         window.makeCard = (options, timeoutAnswer, continues) => {
