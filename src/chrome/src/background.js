@@ -4206,6 +4206,8 @@ async function handleMessage(msg, sender) {
       const runProviderId = await standaloneRunProviderId(msg);
       assertRunCanStart(tabId, msg);
       const mode = msg.mode || 'ask';
+      // An automatic continuation reports the mode it was routed to.
+      let effectiveMode = mode;
       const runUi = await beginContinuationRunUiSnapshot(tabId, msg.requestId, {
         mode,
         kind: 'continue',
@@ -4221,10 +4223,12 @@ async function handleMessage(msg, sender) {
       try {
         if (msg.foreground) await activateForegroundCompatibilityTab(tabId);
 
-        result = await agent.continueProcessing(tabId, (type, data) => {
+        const publishUpdate = (type, data) => {
+          if (type === 'run_mode' && ['ask', 'act', 'dev'].includes(data?.mode)) effectiveMode = data.mode;
           updates.push({ type, data });
           sendAgentUpdate(tabId, runUi.requestId, type, data);
-        }, mode, {
+        };
+        const runOptions = {
           ...(msg.foreground ? { foreground: true } : {}),
           ...(runProviderId ? { providerId: runProviderId } : {}),
           ...standaloneRagFilterOptions(msg),
@@ -4235,12 +4239,26 @@ async function handleMessage(msg, sender) {
             runUiJournal.settleToolCall(tabId, runUi.requestId, name);
             return flushRunUiSnapshot(tabId, runUi.requestId);
           },
-        });
+        };
+        result = await agent.continueProcessing(tabId, publishUpdate, mode, runOptions);
+        // A continuation WebBrain routed to Ask may hand itself to Act or
+        // Dev; like a new automatic turn ('chat'), it restarts here under
+        // the same request, so Stop still cancels it.
+        let escalation = mode === 'auto' ? agent.takeModeEscalation(tabId) : null;
+        for (let restarts = 0; escalation; restarts += 1) {
+          const reroute = escalation.reroute === true;
+          const readOnly = reroute && restarts >= 2;
+          result = await agent.continueProcessing(tabId, publishUpdate, reroute ? 'auto' : escalation.mode, {
+            ...runOptions,
+            modeEscalation: { mode: escalation.mode, ...(reroute ? { reroute: true } : {}), ...(readOnly ? { readOnly: true } : {}) },
+          });
+          escalation = reroute && !readOnly ? agent.takeModeEscalation(tabId) : null;
+        }
 
         const userMemoryPayload = takeUserMemoryTurnExtractionPayload(tabId, {
           userText: 'Please continue from where you left off.',
           assistantText: result,
-          mode,
+          mode: effectiveMode,
           succeeded: runUpdatesSucceeded(updates),
         });
         userMemoryPayload.conversationId = await agent.getConversationId(tabId);
@@ -4261,7 +4279,7 @@ async function handleMessage(msg, sender) {
           runUi.requestId,
           terminalRunUiStatus(result, updates, runError),
           result || (runError ? `Error: ${runError.message}` : ''),
-          mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false,
+          effectiveMode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false,
         );
         await sendAgentRunComplete(tabId, snapshot);
         sendIndicatorMessage(tabId, 'WB_HIDE_AGENT_INDICATORS');
