@@ -2948,7 +2948,10 @@ test('research escalation is opt-in, tier-complete when enabled, and absent othe
     const generalIndex = general.indexOf('id="toggle-research-escalation"');
     const toggleTag = settingsHtml.slice(settingsHtml.lastIndexOf('<input', toggleIndex), settingsHtml.indexOf('>', toggleIndex) + 1);
     assert.ok(generalIndex >= 0, `${label}: research escalation should be a General setting`);
-    assert.doesNotMatch(general.slice(generalIndex), /class="setting-row"/, `${label}: another General setting appears after research escalation`);
+    // Only Chrome's new-tab switch (added with the opt-in new tab) follows it.
+    const afterResearch = general.slice(generalIndex)
+      .replace(/<div class="setting-row">\s*<div class="setting-info">\s*<div class="setting-label" data-i18n="st\.display\.newtab\.label"><\/div>[\s\S]*?id="toggle-newtab">[\s\S]*?<\/label>\s*<\/div>/, '');
+    assert.doesNotMatch(afterResearch, /class="setting-row"/, `${label}: another General setting appears after research escalation`);
     assert.doesNotMatch(toggleTag, /\bchecked\b/, `${label}: research escalation toggle should render off by default`);
     assert.match(settingsJs, /researchEscalationToggle\.checked = stored\.researchEscalationEnabled === true/, `${label}: missing opt-in settings hydration`);
     assert.match(backgroundJs, /researchEscalationEnabled = stored\.researchEscalationEnabled === true/, `${label}: missing opt-in runtime hydration`);
@@ -27388,7 +27391,8 @@ test('offscreen cloud bridge reconnects with backoff and rejects remote control 
   assert.equal(sockets[0].sent[0].protocolVersion, 2);
   assert.deepEqual(
     JSON.parse(JSON.stringify(sockets[0].sent[0].capabilities)),
-    ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1', 'run_provider_v1', 'private_results_v1', 'bot_memory_v1'],
+    // run_handoff_v1: Cloud runs pause and resume for a browser handoff (docs/cloud-browser-handoff.md).
+    ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1', 'run_provider_v1', 'private_results_v1', 'bot_memory_v1', 'run_handoff_v1'],
   );
   sockets[0].close();
   assert.equal(timers[0].delay, 500);
@@ -42049,7 +42053,10 @@ test('tiny Ask leaves the standalone WebGPU window and other providers unchanged
 test('in-browser models refuse Act and Dev in the side panel with a localized notice', async () => {
   const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
   for (const fn of ['ensureActMode', 'ensureDevMode']) {
-    const body = panel.slice(panel.indexOf(`async function ${fn}()`), panel.indexOf('\n}\n', panel.indexOf(`async function ${fn}()`)));
+    // The functions take an options object (switchMode), so match the name and the open paren.
+    const start = panel.indexOf(`async function ${fn}(`);
+    assert.notEqual(start, -1, `${fn} missing`);
+    const body = panel.slice(start, panel.indexOf('\n}\n', start));
     assert.match(body, /await inBrowserProviderBlocksMode\(\)/, `${fn} does not refuse in-browser models`);
   }
   assert.match(panel, /tierInfo\?\.providerId !== 'webgpu'[\s\S]*?sp\.mode\.webgpu\.ask_only/);
@@ -44315,8 +44322,8 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(agent, /async restoreSelectionGroundingScope\(tabId\)\s*\{[\s\S]*?await this\._hydrate\(tabId\);[\s\S]*?selectionGroundingScopes\.delete\(tabId\)[\s\S]*?sourceGrounding: null/, `${label}: agent should hydrate, persist, and broadcast explicit selection-scope restoration`);
     assert.equal((panel.match(/applyConversationScopeState\(tabId, res\);/g) || []).length >= 2, true, `${label}: chat and Continue results should reconcile scope state`);
     assert.match(panel, /function getInputPlaceholderKeys\(\) \{[\s\S]*?isSelectionGroundedForTab\(currentTabId\)[\s\S]*?sp\.input\.selection_placeholder/, `${label}: scoped conversations should not promise page-aware input`);
-    assert.match(panel, /async function ensureActMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'act'\) return true;/, `${label}: Act should reject selected-text scope before accepting a stale active mode`);
-    assert.match(panel, /async function ensureDevMode\(\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'dev'\) return true;/, `${label}: Dev should reject selected-text scope before accepting a stale active mode`);
+    assert.match(panel, /async function ensureActMode\([^)]*\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'act'(?: && switchMode)?\) return true;/, `${label}: Act should reject selected-text scope before accepting a stale active mode`);
+    assert.match(panel, /async function ensureDevMode\([^)]*\) \{\s*if \(isSelectionGroundedForTab\(currentTabId\)\) \{[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?if \(agentMode === 'dev'(?: && switchMode)?\) return true;/, `${label}: Dev should reject selected-text scope before accepting a stale active mode`);
     assert.match(panel, /function rejectSelectionScopedMode\(mode,[\s\S]*?mode !== 'act' && mode !== 'dev'[\s\S]*?normalizeSelectionSourceGrounding\(sourceGrounding\)[\s\S]*?isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return true;/, `${label}: restored controls should share one selected-scope mode guard`);
     assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?if \(rejectSelectionScopedMode\(mode\)\) return;[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(/, `${label}: subscription resume should reject restored Act or Dev mode before continuing`);
     assert.match(panel, /function bindErrorRetryButton\(btn\) \{[\s\S]*?rejectSelectionScopedMode\(payload\.mode, currentTabId, payload\.sourceGrounding\)[\s\S]*?setMode\(payload\.mode\);[\s\S]*?sendMessage\(/, `${label}: error retry should reject restored Act or Dev mode before resubmitting`);
@@ -44361,7 +44368,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
 
     for (const mode of ['act', 'dev']) {
       const functionName = mode === 'act' ? 'ensureActMode' : 'ensureDevMode';
-      const modeStart = panel.indexOf(`async function ${functionName}() {`);
+      const modeStart = panel.indexOf(`async function ${functionName}(`);
       const modeEnd = panel.indexOf('\n}', modeStart) + 2;
       assert.ok(modeStart >= 0 && modeEnd > modeStart, `${label}: ${functionName} helper missing`);
       const scopeToasts = [];
@@ -44814,7 +44821,8 @@ test('sidepanel awaits onboarding completion persistence before hiding', () => {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     assert.match(
       panel,
-      /async function dismissOnboarding\(\) \{[\s\S]*?await (chrome|browser)\.storage\.local\.set\(\{ onboardingComplete: true \}\)\.catch\(\(\) => \{\}\);[\s\S]*?overlay\.classList\.add\('hidden'\);[\s\S]*?\}/,
+      // Chrome stores the new-tab choice in the same write.
+      /async function dismissOnboarding\(\) \{[\s\S]*?await (chrome|browser)\.storage\.local\.set\(\{\s*onboardingComplete: true(?:,\s*\.\.\.\(newTabCheckbox \? \{ newTabEnabled: newTabCheckbox\.checked \} : \{\}\),)?\s*\}\)\.catch\(\(\) => \{\}\);\s*overlay\.classList\.add\('hidden'\);/,
       `${label}: onboarding completion should persist before the overlay is hidden`,
     );
     assert.match(
@@ -49794,11 +49802,12 @@ test('sidepanel switches Act and Dev without native confirmation dialogs', () =>
     ['firefox', 'src/firefox/src/ui/sidepanel.js'],
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
-    const ensureStart = panel.indexOf('async function ensureActMode() {');
+    // Both take an options object: switchMode: false only asks whether the mode may run.
+    const ensureStart = panel.indexOf('async function ensureActMode(');
     assert.notEqual(ensureStart, -1, `${label}: ensureActMode missing`);
     const ensureBody = panel.slice(ensureStart, panel.indexOf('\n}\n\nmodeAskBtn.addEventListener', ensureStart) + 2);
-    assert.match(ensureBody, /async function ensureActMode\(\) \{[\s\S]*?setMode\('act'\);[\s\S]*?return true;/, `${label}: Act should switch directly`);
-    assert.match(ensureBody, /async function ensureDevMode\(\) \{[\s\S]*?get_active_prompt_tier[\s\S]*?setMode\('dev'\);[\s\S]*?return true;/, `${label}: Dev should retain its tier guard and switch directly`);
+    assert.match(ensureBody, /async function ensureActMode\([^)]*\) \{[\s\S]*?setMode\('act'\);[\s\S]*?return true;/, `${label}: Act should switch directly`);
+    assert.match(ensureBody, /async function ensureDevMode\([^)]*\) \{[\s\S]*?get_active_prompt_tier[\s\S]*?setMode\('dev'\);[\s\S]*?return true;/, `${label}: Dev should retain its tier guard and switch directly`);
     assert.doesNotMatch(ensureBody, /actConfirmed|devConfirmed|\bconfirm\s*\(/, `${label}: mode switching should not depend on native confirmation dialogs`);
     assert.match(
       panel,
@@ -52418,7 +52427,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     );
     assert.match(
       panel,
-      /if \(isProcessing\) \{[\s\S]*?if \(isOutOfBandSlashDraft\(text\)\) \{[\s\S]*?await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?return true;[\s\S]*?\}[\s\S]*?if \(text\.startsWith\('\/'\)\) \{[\s\S]*?showBusySlashCommandNotice\(\);[\s\S]*?return false;[\s\S]*?\}[\s\S]*?return enqueueQueuedComposerMessage\(tabId, text\);[\s\S]*?\}/,
+      /if \(isProcessing\) \{[\s\S]*?if \(isOutOfBandSlashDraft\(text\)\) \{[\s\S]*?await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?return true;[\s\S]*?\}[\s\S]*?if \(text\.startsWith\('\/'\)\) \{[\s\S]*?showBusySlashCommandNotice\(\);[\s\S]*?return false;[\s\S]*?\}[\s\S]*?return enqueueQueuedComposerMessage\(tabId, text, modeOverride\);[\s\S]*?\}/,
       `${label}: busy send preflight should run safe slash commands and queue normal drafts`,
     );
     assert.match(
@@ -52446,7 +52455,8 @@ test('sidepanel queued composer messages expose edit and delete controls', () =>
 
     assert.match(html, /id="queued-messages" class="queued-messages hidden" role="list"/, `${label}: queued message strip should exist above the composer`);
     assert.match(panel, /const queuedComposerMessagesByTab = new Map\(\);/, `${label}: queued composer messages should be tracked per tab`);
-    assert.match(panel, /function enqueueQueuedComposerMessage\(tabId, text\) \{[\s\S]*?queue\.push\(\{[\s\S]*?text: queuedText,[\s\S]*?inputEl\.value = '';[\s\S]*?autoResizeInput\(\);[\s\S]*?syncSendButtonState\(\);[\s\S]*?return true;[\s\S]*?\}/, `${label}: busy drafts should be queued, clear the composer, and reset its height`);
+    // A pinned mode (the new tab's Ask / Act handoff) is kept with the queued text.
+    assert.match(panel, /function enqueueQueuedComposerMessage\(tabId, text, mode = null\) \{[\s\S]*?queue\.push\(\{[\s\S]*?text: queuedText,[\s\S]*?\['ask', 'act', 'dev'\]\.includes\(mode\) \? \{ mode \} : \{\}[\s\S]*?inputEl\.value = '';[\s\S]*?autoResizeInput\(\);[\s\S]*?syncSendButtonState\(\);[\s\S]*?return true;[\s\S]*?\}/, `${label}: busy drafts should be queued, clear the composer, and reset its height`);
     assert.match(panel, /function sameTabId\(a, b\) \{\s*return a != null && b != null && String\(a\) === String\(b\);\s*\}/, `${label}: queued-message tab checks should tolerate equivalent tab id types`);
     assert.match(panel, /function editQueuedComposerMessage\(tabId, queueId\) \{[\s\S]*?!sameTabId\(currentTabId, tabId\)[\s\S]*?removeQueuedComposerMessage\(tabId, queueId\);[\s\S]*?inputEl\.value = item\.text;[\s\S]*?inputEl\.setSelectionRange\(inputEl\.value\.length, inputEl\.value\.length\);[\s\S]*?\}/, `${label}: queued message edit should guard the tab and move text back into the composer`);
     assert.match(panel, /function editLastQueuedComposerMessageForCurrentTab\(\) \{[\s\S]*?const atStart = inputEl\.selectionStart === 0 && inputEl\.selectionEnd === 0;[\s\S]*?if \(inputEl\.value !== '' \|\| !atStart\) return false;[\s\S]*?const item = queue\[queue\.length - 1\];[\s\S]*?editQueuedComposerMessage\(currentTabId, item\.id\);[\s\S]*?return true;[\s\S]*?\}/, `${label}: ArrowUp edit should only pull the latest queued message into an exactly empty composer at the start`);
@@ -52501,7 +52511,7 @@ test('sidepanel Alt+Shift+Enter always queues mid-run messages', () => {
     );
     assert.match(
       panel,
-      /__deliveryMode === 'immediate'[\s\S]*?__deliveryMode !== 'queue' && composerDeliveryMode === 'steer'[\s\S]*?return enqueueQueuedComposerMessage\(tabId, text\);/,
+      /__deliveryMode === 'immediate'[\s\S]*?__deliveryMode !== 'queue' && composerDeliveryMode === 'steer'[\s\S]*?return enqueueQueuedComposerMessage\(tabId, text, modeOverride\);/,
       `${label}: forced queue delivery should bypass the steer default and enqueue`,
     );
     assert.match(
@@ -56142,7 +56152,8 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(background, /buildSelectionPrompt\(info\.selectionText, 'translate', '', menuItemId\.slice\(CONTEXT_MENU_TRANSLATE_PREFIX\.length\)\)/, `${label}: native language choices should use the safe selection prompt builder`);
     assert.match(background, /const includePageContext = selectionAction === 'custom' && msg\.includePageContext === true;/, `${label}: only an explicit custom-question choice should enable normal page context`);
     assert.match(background, /const sourceGrounding = includePageContext\s*\? ''\s*:\s*selectionAction === 'custom'[\s\S]*?SELECTION_CONTEXT_SOURCE_GROUNDING[\s\S]*?: SELECTION_ONLY_SOURCE_GROUNDING;/, `${label}: checked custom questions should be unscoped while unchecked custom questions and presets retain their source policies`);
-    assert.match(background, /const text = resumesCutOffAnswer[\s\S]*?: includePageContext\s*\? buildFullContextSelectionPrompt\(selectionText, msg\.question\)[\s\S]*?: buildSelectionPrompt\(/, `${label}: checked custom questions should use the full-context selection prompt`);
+    // A follow-up about a card's answer keeps the whole selection (trim: false).
+    assert.match(background, /const text = resumesCutOffAnswer[\s\S]*?: includePageContext\s*\? buildFullContextSelectionPrompt\(selectionText, msg\.question(?:, \{ trim: !msg\.priorAnswer \})?\)[\s\S]*?: buildSelectionPrompt\(/, `${label}: checked custom questions should use the full-context selection prompt`);
     assert.match(background, /\.\.\.\(sourceGrounding \? \{[\s\S]*?sourceGrounding,[\s\S]*?selectionAction[\s\S]*?\} : \{\}\)/, `${label}: full-context custom questions should not create a durable selection scope`);
     assert.match(background, /\.\.\.\(includePageContext \? \{ restoreSelectionScope: true \} : \{\}\)/, `${label}: checked custom questions should carry a transactional request to clear any older selection scope`);
     assert.match(background, /if \(msg\.restoreSelectionScope === true && !normalizeSelectionSourceGrounding\(msg\.sourceGrounding\)\) \{[\s\S]*?await agent\.restoreSelectionGroundingScope\(tabId\);/, `${label}: full-context custom questions should hydrate and clear an older durable selection scope only when their unscoped queued run starts`);
@@ -56186,7 +56197,9 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
   const firefoxBg = fs.readFileSync(path.join(ROOT, 'src/firefox/src/background.js'), 'utf8');
   const firefoxStart = firefoxBg.indexOf("if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;");
   const firefoxEnd = firefoxBg.indexOf('// Forget the per-window mapping', firefoxStart);
-  const firefoxPromptStart = firefoxBg.indexOf('function queueFirefoxSelectionShortcutPrompt(');
+  // The handler loads the providers first, then builds and stores the prompt in
+  // queueFirefoxSelectionShortcutPromptAfterProviders, which is defined first.
+  const firefoxPromptStart = firefoxBg.indexOf('async function queueFirefoxSelectionShortcutPromptAfterProviders(');
   const firefoxHandler = firefoxBg.slice(firefoxPromptStart, firefoxEnd);
   assert.notEqual(firefoxStart, -1, 'firefox: selection shortcut listener missing');
   assert.notEqual(firefoxPromptStart, -1, 'firefox: shared selection prompt handler missing');
@@ -125959,7 +125972,8 @@ test('teacher slash commands and value-free page capture are wired in both brows
     assert.match(background, /case 'record_teacher_action':/);
     assert.match(background, /case 'start_teacher_mode':/);
     assert.match(background, /case 'end_teacher_mode':/);
-    assert.match(background, /agent\.setRunStartGuard\(\(tabId\) => teacherRunInterlock\.guardRunStart\(tabId\)\)/);
+    // The run-start guard also waits for conversation recovery and Cloud runs; the teacher interlock answers last.
+    assert.match(background, /agent\.setRunStartGuard\(async \(tabId, context\) => \{[\s\S]*?return teacherRunInterlock\.guardRunStart\(tabId\);\s*\}\);/);
     assert.match(background, /teacherRunInterlock\.record\(tabId, msg\.teacherAction\)/);
     assert.match(background, /teacherRunInterlock\.navigation\(tabId, url, options\)/);
     assert.match(background, /scheduler\.isRunning\(tabId\)/);

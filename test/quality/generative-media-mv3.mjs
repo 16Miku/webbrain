@@ -130,8 +130,8 @@ async function start(kind) {
   console.log(JSON.stringify({ phase: 'start', kind }));
   activeCase = { kind, actionCount: 0, startedAt: Date.now() };
   await configure(kind);
-  await panel.locator('#btn-mode-act').click();
-  await panel.locator('#user-input').fill(`Generate exactly one image for OWNED_MEDIA_${kind.toUpperCase()}. Show the generated result and its save link. Use this exact generation prompt: ${prompts[kind]}`);
+  // The side panel picks the mode per message (Automatic mode); /act runs this one in Act.
+  await panel.locator('#user-input').fill(`/act Generate exactly one image for OWNED_MEDIA_${kind.toUpperCase()}. Show the generated result and its save link. Use this exact generation prompt: ${prompts[kind]}`);
   await panel.locator('#btn-send').click();
 }
 async function imageHash(selector) {
@@ -160,7 +160,6 @@ async function openNativePanel(tabId) {
   await panel.locator('#user-input').waitFor();
   if (await panel.locator('#pin-coachmark').isVisible()) await panel.locator('#pin-coachmark-skip').click();
   await until(() => panel.locator('#btn-send').isEnabled(), 'real composer initialization');
-  await panel.locator('#btn-mode-act').click();
 }
 async function visibleNativePanel() {
   return until(async () => {

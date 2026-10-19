@@ -193,7 +193,10 @@ try {
   await settings.evaluate(async () => chrome.storage.local.set({ helpImproveWebBrain: false, planBeforeActMode: 'off',
     planBeforeAct: false, planReviewMode: 'never', screenshotFallback: false, autoScreenshot: false,
     maxAgentSteps: 10, systemOneEnabled: false, tracingEnabled: false, agentAllowLocalNetwork: true,
-    askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false, contextWindowMode: 'full' }));
+    askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false, contextWindowMode: 'full',
+    // gpt-5.4-mini on a router is a strong model, so Auto lean mode would skip the
+    // calculation reading and the tool projection this case checks.
+    leanMode: 'off' }));
   assert.equal((await messageFrom(settings, 'update_provider', { providerId: 'openrouter', config: {
     apiKey: 'owned-loopback-fake-key', baseUrl: `${origin}/v1`, model: 'openai/gpt-5.4-mini',
     contextWindow: 128000, enabled: true, supportsAskStreaming: false,
