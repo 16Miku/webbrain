@@ -72,8 +72,9 @@ Providers page, or the Chrome install guide's optional **Download local
 models** button, whose note names D1, its size and its source. The control
 handler accepts only the extension's own Providers page and, for status, the
 GPU check, download and stop only, its own install guide page; load, unload,
-removal and consent stay on the Providers page. The guide writes no decision
-settings. Auto uses D1 only after that consent, while the download is complete
+removal and consent stay on the Providers page. The guide's download may name
+the chat model to download after D1, and only a shipped, selectable WebGPU
+preset is queued. The guide writes no decision settings. Auto uses D1 only after that consent, while the download is complete
 and its Load request stands, and never in place of a saved choice; with Compass
 as the chat provider, D1 takes only the completion and scheduled checks, and
 Compass's managed route keeps semantic decisions. Chrome uses its shared offscreen

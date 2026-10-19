@@ -126,11 +126,16 @@ the [Hugging Face model repository](https://huggingface.co/webbrain-one/d1-brows
 into OPFS. In Chrome the first-install guide offers the same download: its
 optional **Download local models** button, whose note names D1 and its size,
 is that consent. It downloads D1 first, in D1's own Worker, and loads it;
-Ternary Bonsai 2 2B Vision follows once D1 is ready, or at once when this GPU
-cannot run D1 or D1's download stops with an error. The guide reads D1's
-status, checks the GPU and starts or stops the download (the only
-`d1_control` commands it may send); it writes no decision settings, so Auto,
-the default, then uses D1 as described above, and the guide says so. The package stores FP16 weights and computes in FP32; it is the
+Ternary Bonsai 2 2B Vision follows once D1's download is over (ready or
+saved, failed, or stopped other than by the guide's Pause), and at once when
+this GPU cannot run D1. The guide's download queues Bonsai in the background
+(`providers/install-download-queue.js`, `installChatModelAfterD1` in storage),
+so it follows even after the guide is closed: the guide's reads of D1's
+status and an alarm move it along, and a queue older than D1's own
+thirty-minute limit allows is dropped. The guide reads D1's status, checks the
+GPU and starts or stops the download (the only `d1_control` commands it may
+send); it writes no decision settings, so Auto, the default, then uses D1 as
+described above, and the guide says so. The package stores FP16 weights and computes in FP32; it is the
 [FP32 release](https://huggingface.co/webbrain-one/d1-browser-decision-fp32)
 with its weights rounded once, and answers the same on its held-out test. A
 cached FP32 package from an earlier version is removed on the next download. The repository name is not a production-readiness claim; this provider

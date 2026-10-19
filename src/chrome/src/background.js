@@ -4,6 +4,7 @@ import { resolveCurrentDecisionConfig } from './agent/decision-availability.js';
 import { d1Request } from './providers/d1.js';
 import { evaluateD1LocalFixture } from './providers/d1-diagnostic.js';
 import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_KEEP_LOADED_KEY } from './providers/d1-config.js';
+import { CHAT_AFTER_D1_ALARM, createChatModelAfterD1 } from './providers/install-download-queue.js';
 
 // D1's Worker and GPU memory are released when decisions are switched Off,
 // another decision provider is saved, consent changes or Strict Secret Mode
@@ -39,6 +40,7 @@ import {
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_MODEL_ID,
+  isSelectableWebgpuPreset,
   isShippedWebgpuPreset,
   webgpuModelDisplayName,
 } from './providers/webgpu.js';
@@ -184,6 +186,26 @@ installSafeSocialBackground(chrome, async (command, payload = {}) => {
 });
 
 const providerManager = new ProviderManager();
+// The install guide's chat model, queued behind D1's download; the alarm moves
+// it along while the guide is closed (providers/install-download-queue.js).
+const chatModelAfterD1 = createChatModelAfterD1({
+  api: chrome,
+  d1Status: () => d1Request('status'),
+  chatStatus: async (model) => {
+    if (providerManager.providers.size === 0) await providerManager.load();
+    return providerManager.getWebgpuDownloadStatus({ model });
+  },
+  startChat: async (model) => {
+    if (providerManager.providers.size === 0) await providerManager.load();
+    return providerManager.startWebgpuDownload({ model });
+  },
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm?.name !== CHAT_AFTER_D1_ALARM) return;
+  chatModelAfterD1.advance().catch((error) => {
+    console.warn('[WebBrain] The queued local chat-model download could not start:', error);
+  });
+});
 const apocalypseController = createApocalypseController(chrome);
 const VISION_OFFSCREEN_URL = chrome.runtime.getURL('src/offscreen/offscreen.html');
 // The stale-run repair scan waits a beat after wake so a run resuming from
@@ -4989,13 +5011,16 @@ async function handleMessage(msg, sender) {
       // The D1 controls are on the Decision tab of the Providers page.
       const api = globalThis.browser || globalThis.chrome;
       const page = sender.id === api.runtime.id ? String(sender.url || '').split(/[?#]/)[0] : '';
-      // The install guide downloads D1 next to its local chat model: it reads
+      // The install guide downloads D1 before its local chat model: it reads
       // D1's status, checks the GPU, and starts or stops that download. Every
       // other control stays on the Providers page.
       const fromInstall = page === api.runtime.getURL('src/ui/install.html')
         && ['status', 'probe', 'download', 'stop'].includes(msg.command);
       if (page !== api.runtime.getURL('src/ui/providers.html') && !fromInstall) return { success: false, error: 'D1 model controls are available only from the extension Providers page.' };
       try {
+        // The guide's download names the chat model to download after D1.
+        const chatModel = fromInstall && msg.command === 'download' && msg.chatModel != null ? String(msg.chatModel) : '';
+        if (chatModel && !isSelectableWebgpuPreset(chatModel)) throw new Error('Unknown local chat model.');
         await strictSecretModeReady;
         if (agent.strictSecretMode && !['dispose', 'reset', 'stop', 'clear', 'status'].includes(msg.command)) throw new Error('D1 is disabled in Strict Secret Mode.');
         if (!['status', 'probe', 'download', 'load', 'stop', 'dispose', 'clear', 'reset', 'consent'].includes(msg.command)) throw new Error('Invalid D1 model command.');
@@ -5009,8 +5034,19 @@ async function handleMessage(msg, sender) {
           await api.storage.local.set({ [D1_KEEP_LOADED_KEY]: false });
         }
         const result = msg.command === 'consent' ? { consented: true } : await d1Request(msg.command, { consentVersion: D1_CONSENT_VERSION });
+        if (!fromInstall) return { success: true, result };
+        // The chat model waits for D1's download, and its Pause; the guide's
+        // reads of D1's status start it once D1's download is over.
+        if (chatModel) await chatModelAfterD1.queue(chatModel);
+        else if (msg.command === 'stop') await chatModelAfterD1.pause();
+        const chatModelQueued = msg.command === 'status'
+          ? await chatModelAfterD1.advance(result).catch((error) => {
+            console.warn('[WebBrain] The queued local chat-model download could not start:', error);
+            return false;
+          })
+          : await chatModelAfterD1.queued();
         // The guide says whether D1 answers this profile's decisions.
-        return { success: true, result: fromInstall ? { ...result, usedForDecisions: await d1UsedForDecisions(api) } : result };
+        return { success: true, result: { ...result, usedForDecisions: await d1UsedForDecisions(api), chatModelQueued } };
       } catch (error) { return { success: false, error: error.message }; }
     }
     case 'list_decision_models': {

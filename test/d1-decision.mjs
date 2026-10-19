@@ -286,7 +286,22 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(branch, /const page = sender\.id === api\.runtime\.id \? String\(sender\.url \|\| ''\)\.split\(\/\[\?#\]\/\)\[0\] : '';/);
     assert.match(branch, /if \(page !== api\.runtime\.getURL\('src\/ui\/providers\.html'\) && !fromInstall\) return \{ success: false/);
     assert.match(branch, /if \(msg\.consent !== true \|\| msg\.consentVersion !== D1_CONSENT_VERSION\) throw/);
-    assert.match(branch, /result: fromInstall \? \{ \.\.\.result, usedForDecisions: await d1UsedForDecisions\(api\) \} : result/);
+    if (build === 'chrome') {
+      // The guide's download queues its chat model behind D1 in the
+      // background (install-download-queue.js): only a shipped, selectable
+      // WebGPU chat model, only from the guide's download; its Pause holds
+      // the queue and its status reads move it along.
+      assert.match(branch, /const chatModel = fromInstall && msg\.command === 'download' && msg\.chatModel != null \? String\(msg\.chatModel\) : '';/);
+      assert.match(branch, /if \(chatModel && !isSelectableWebgpuPreset\(chatModel\)\) throw new Error\('Unknown local chat model\.'\);/);
+      assert.match(branch, /if \(!fromInstall\) return \{ success: true, result \};/);
+      assert.match(branch, /if \(chatModel\) await chatModelAfterD1\.queue\(chatModel\);\s*else if \(msg\.command === 'stop'\) await chatModelAfterD1\.pause\(\);/);
+      assert.match(branch, /msg\.command === 'status'\s*\? await chatModelAfterD1\.advance\(result\)/);
+      assert.match(branch, /result: \{ \.\.\.result, usedForDecisions: await d1UsedForDecisions\(api\), chatModelQueued \}/);
+      assert.match(background, /chrome\.alarms\.onAlarm\.addListener\(\(alarm\) => \{\s*if \(alarm\?\.name !== CHAT_AFTER_D1_ALARM\) return;\s*chatModelAfterD1\.advance\(\)/);
+    } else {
+      // Firefox has no in-browser chat model to queue.
+      assert.match(branch, /result: fromInstall \? \{ \.\.\.result, usedForDecisions: await d1UsedForDecisions\(api\) \} : result/);
+    }
     assert.doesNotMatch(background, /adoptForDecisions|adoptD1ForDecisions/, 'the guide never writes decision settings');
     // The guide says whether D1 answers this profile's decisions now.
     const source = topLevelFunction(background, 'd1UsedForDecisions');
@@ -492,6 +507,151 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(Object.hasOwn(seen[0], 'past_key_values'), false); assert.equal(Object.hasOwn(seen[0], 'causal_mask'), false);
   });
 }
+
+test('chrome: the install guide queues its chat model behind D1, and the background starts it once D1 is done', async () => {
+  const queue = await import('../src/chrome/src/providers/install-download-queue.js');
+  const model = 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision';
+  const make = ({ d1 = { status: 'downloading' }, chat = { status: 'not-downloaded' } } = {}) => {
+    const env = { d1, chat, now: 1_000_000, area: {}, alarms: [], cleared: [], starts: [], reads: 0 };
+    const api = {
+      storage: { local: {
+        get: async (key) => (key in env.area ? { [key]: structuredClone(env.area[key]) } : {}),
+        set: async (values) => { Object.assign(env.area, structuredClone(values)); },
+        remove: async (key) => { delete env.area[key]; },
+      } },
+      alarms: { create: async (name, info) => { env.alarms.push([name, info]); }, clear: async (name) => { env.cleared.push(name); return true; } },
+    };
+    env.queue = queue.createChatModelAfterD1({
+      api,
+      d1Status: async () => { env.reads += 1; if (env.d1 instanceof Error) throw env.d1; return env.d1; },
+      chatStatus: async () => env.chat,
+      startChat: async (name) => { env.starts.push(name); env.chat = { status: 'downloading' }; },
+      now: () => env.now,
+    });
+    return env;
+  };
+
+  {
+    // Nothing queued: nothing starts, and a left-over alarm is cleared.
+    const env = make({ d1: { status: 'ready', loaded: true } });
+    assert.equal(await env.queue.advance(), false);
+    assert.deepEqual(env.starts, []);
+    assert.deepEqual(env.cleared, [queue.CHAT_AFTER_D1_ALARM]);
+  }
+  {
+    // Queued while D1 downloads: the alarm checks again; D1 first.
+    const env = make();
+    await env.queue.queue(model);
+    assert.deepEqual(env.area[queue.CHAT_AFTER_D1_KEY], { model, queuedAt: env.now, paused: false });
+    assert.deepEqual(env.alarms, [[queue.CHAT_AFTER_D1_ALARM, { periodInMinutes: 0.5 }]]);
+    assert.equal(await env.queue.queued(), true);
+    for (const status of ['checking', 'downloading', 'loading']) {
+      env.d1 = { status };
+      assert.equal(await env.queue.advance(), true, status);
+    }
+    assert.deepEqual(env.starts, []);
+    // D1 is ready: the chat model starts once, and the queue is gone.
+    env.d1 = { status: 'ready', loaded: true };
+    assert.equal(await env.queue.advance(), false);
+    assert.deepEqual(env.starts, [model]);
+    assert.equal(env.area[queue.CHAT_AFTER_D1_KEY], undefined);
+    assert.ok(env.cleared.includes(queue.CHAT_AFTER_D1_ALARM));
+    assert.equal(await env.queue.advance(), false);
+    assert.deepEqual(env.starts, [model], 'started once');
+    assert.equal(await env.queue.queued(), false);
+  }
+  {
+    // A status the guide just read is used as it is.
+    const env = make({ d1: { status: 'downloading' } });
+    await env.queue.queue(model);
+    assert.equal(await env.queue.advance({ status: 'cached', cached: true }), false);
+    assert.deepEqual(env.starts, [model]);
+    assert.equal(env.reads, 0);
+  }
+  {
+    // A Pause on the guide holds the chat model until Resume queues it again;
+    // a D1 transfer stopped any other way does not.
+    const env = make();
+    await env.queue.queue(model);
+    await env.queue.pause();
+    env.d1 = { status: 'stopped', progress: 40 };
+    assert.equal(await env.queue.advance(), true, 'paused on the guide');
+    assert.deepEqual(env.starts, []);
+    await env.queue.queue(model);
+    assert.equal(env.area[queue.CHAT_AFTER_D1_KEY].paused, false, 'Resume');
+    assert.equal(await env.queue.advance(), false, 'stopped by a stall, its time limit or the Providers page');
+    assert.deepEqual(env.starts, [model]);
+  }
+  {
+    // Paused on the guide, but the package was already saved: nothing to wait for.
+    const env = make();
+    await env.queue.queue(model);
+    await env.queue.pause();
+    env.d1 = { status: 'stopped', cached: true };
+    assert.equal(await env.queue.advance(), false);
+    assert.deepEqual(env.starts, [model]);
+  }
+  for (const d1 of [{ status: 'error', error: 'no bytes' }, { status: 'idle' }, { status: 'cached' }]) {
+    // Failed, reset or saved: the chat model does not wait any longer.
+    const env = make();
+    await env.queue.queue(model);
+    env.d1 = d1;
+    assert.equal(await env.queue.advance(), false, d1.status);
+    assert.deepEqual(env.starts, [model], d1.status);
+  }
+  for (const chat of [{ status: 'downloading' }, { status: 'paused' }, { status: 'ready', ready: true }, { status: 'loading' }]) {
+    // A chat model already under way, paused elsewhere or ready is left alone.
+    const env = make({ chat });
+    await env.queue.queue(model);
+    env.d1 = { status: 'ready', loaded: true };
+    assert.equal(await env.queue.advance(), false, chat.status);
+    assert.deepEqual(env.starts, [], chat.status);
+    assert.equal(env.area[queue.CHAT_AFTER_D1_KEY], undefined, chat.status);
+  }
+  {
+    // Another model holds the WebGPU download slot: start when it is free.
+    const env = make({ chat: { status: 'not-downloaded', activeTransfer: { modelId: 'other/model', status: 'downloading' } } });
+    await env.queue.queue(model);
+    env.d1 = { status: 'ready', loaded: true };
+    assert.equal(await env.queue.advance(), true);
+    assert.deepEqual(env.starts, []);
+    env.chat = { status: 'not-downloaded' };
+    assert.equal(await env.queue.advance(), false);
+    assert.deepEqual(env.starts, [model]);
+  }
+  {
+    // D1's status cannot be read: try again later.
+    const env = make({ d1: new Error('offscreen document closed') });
+    await env.queue.queue(model);
+    assert.equal(await env.queue.advance(), true);
+    assert.deepEqual(env.starts, []);
+  }
+  {
+    // A queue older than D1's own time limit allows is dropped, unstarted.
+    const env = make();
+    await env.queue.queue(model);
+    env.now += queue.CHAT_AFTER_D1_MAX_AGE_MS + 1;
+    env.d1 = { status: 'ready', loaded: true };
+    assert.equal(await env.queue.advance(), false);
+    assert.deepEqual(env.starts, []);
+    assert.equal(env.area[queue.CHAT_AFTER_D1_KEY], undefined);
+  }
+  {
+    // The guide's read and the alarm at the same moment start it once.
+    const env = make();
+    await env.queue.queue(model);
+    env.d1 = { status: 'ready', loaded: true };
+    assert.deepEqual(await Promise.all([env.queue.advance(), env.queue.advance(), env.queue.advance()]), [false, false, false]);
+    assert.deepEqual(env.starts, [model]);
+  }
+  {
+    // A stored entry without a model is removed.
+    const env = make();
+    env.area[queue.CHAT_AFTER_D1_KEY] = { queuedAt: env.now };
+    assert.equal(await env.queue.advance(), false);
+    assert.equal(env.area[queue.CHAT_AFTER_D1_KEY], undefined);
+  }
+});
 
 test('new shared decision runtime modules are byte-identical across Chrome and Firefox', async () => {
   for (const name of ['d1-config.js', 'd1-runtime.js', 'd1-preprocess.js', 'd1-cache.js', 'd1-worker.js', 'd1-host.js', 'd1-diagnostic.js']) assert.deepEqual(await readFile(new URL(`../src/chrome/src/providers/${name}`, import.meta.url)), await readFile(new URL(`../src/firefox/src/providers/${name}`, import.meta.url)), name);
