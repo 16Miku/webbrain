@@ -296,10 +296,10 @@ try {
     const probeStart = await worker.evaluate(() => ({ commands: relaxedFixtureProbe.commands.length,
       transports: relaxedFixtureProbe.transports.length, monitorStateRequests: relaxedFixtureProbe.monitorStateRequests.length }));
     const requestStart = await panel.evaluate(() => relaxedFixturePanelRequests.length);
-    await panel.locator('#btn-mode-act').click();
     const task = `In this isolated owned local QA fixture, write exactly this draft into ${specification.editorName}:\n${body}\n`
       + `Then freshly observe ${specification.menuName}, click it exactly once, and verify both the draft and the local menu. Leave all submission controls untouched. ${current.marker}`;
-    await panel.locator('#user-input').fill(task); await panel.locator('#btn-send').click();
+    // The side panel picks the mode per message (Automatic mode); /act runs this one in Act.
+    await panel.locator('#user-input').fill(`/act ${task}`); await panel.locator('#btn-send').click();
     const card = panel.locator('.failure-recovery-card[data-retry-mode="action_monitoring_relaxed"]');
     await card.waitFor({ timeout: 60000 });
     const retryButton = card.locator('[data-recovery-choice="retry"]');
