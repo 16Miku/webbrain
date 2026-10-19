@@ -4,6 +4,7 @@ import Clock from '../../time/Clock';
 import Greeting from '../../greeting/Greeting';
 import TaskBox from '../../agent/TaskBox';
 import RecentChats from '../../agent/RecentChats';
+import Bulletin from '../../bulletin/Bulletin.jsx';
 import QuickLinks from '../../quicklinks/QuickLinks';
 import Date from '../../time/Date';
 import Message from '../../message/Message';
@@ -56,6 +57,8 @@ const Widgets = () => {
         <Fragment key={key}>{Object.hasOwn(widgets, element) ? widgets[element] : null}</Fragment>
       ))}
       {enabled('taskBox') && <TaskBox />}
+      {/* Under the task box; renders nothing unless webbrain.one publishes a bulletin. */}
+      <Bulletin />
       {enabled('recentChats') && <RecentChats />}
     </WidgetsLayout>
   );

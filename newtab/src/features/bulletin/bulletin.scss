@@ -1,0 +1,69 @@
+@use 'scss/variables' as *;
+
+// Same width as the task box above it. The published file draws its own banner; this is
+// only the frame, so a notice fits the page in either theme.
+.wbBulletin {
+  @extend %basic;
+
+  position: relative;
+  width: min(640px, 90vw);
+  height: 88px;
+  margin-top: 1rem;
+  overflow: hidden;
+  border-radius: 18px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+
+  &.loaded {
+    opacity: 1;
+  }
+}
+
+.wbBulletinFrame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+.wbBulletinDismiss {
+  position: absolute;
+  top: 8px;
+  inset-inline-end: 8px;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: 50%;
+  background: rgb(10 15 13 / 55%);
+  color: rgb(255 255 255 / 90%);
+  font-size: 15px;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+
+  &:hover {
+    background: rgb(10 15 13 / 82%);
+    color: #fff;
+  }
+
+  &:focus-visible {
+    outline: 2px solid currentcolor;
+    outline-offset: 2px;
+  }
+}
+
+@media (width <= 620px) {
+  .wbBulletin {
+    height: 128px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wbBulletin {
+    transition: none;
+  }
+}

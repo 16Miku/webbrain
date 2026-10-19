@@ -48,7 +48,8 @@ back to Firefox's page.
 | Act | The panel opens in Act and the text is **sent immediately**, like Ask. The box shows a warning that Act starts working right away. If **Plan before Act** is on in WebBrain, the plan is still shown for approval before anything is done. |
 | Search | A URL is opened (http/https only); anything else goes to the browser's default search engine via `chrome.search.query` / `browser.search.search`. Hidden if the API is missing. |
 
-No search engine is hard-coded and nothing is sent to WebBrain's servers by the page.
+No search engine is hard-coded, and nothing typed into the box is sent to WebBrain's servers by
+the page. The only request the page itself makes to WebBrain is the bulletin check below.
 
 ## Hand-off
 
@@ -96,6 +97,42 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
 
 The text is user-typed, so it enters the panel exactly like typing in the composer;
 it is never treated as page content.
+
+## WebBrain bulletin
+
+A banner slot under the box lets WebBrain put a short notice (an outage, an emergency, a
+release note) on every new tab without an extension update. It follows the Apocalypse Mode
+bulletin (`src/*/src/ui/apocalypse-comm.js`), which reads its own file.
+
+| | New tab | Apocalypse Mode pages |
+|---|---|---|
+| Published file | `https://webbrain.one/newtab-comm.html` (`web/newtab-comm.html`) | `https://webbrain.one/apocalypse-comm.html` (`web/apocalypse-comm.html`) |
+| Preview | `?newtab-comm=placeholder` → `newtab-comm-placeholder.html` | `?apocalypse-comm=placeholder` → `apocalypse-comm-placeholder.html` |
+| How often it is read | at most once every 10 minutes per browser (cached in extension storage) | each time a page opens |
+
+- **Off while empty.** Both files ship empty. Whitespace, a doctype and complete HTML comments
+  count as empty, so commenting a notice out also switches it off. While the file is empty the
+  page renders nothing and reserves no space. To publish, put a small self-contained HTML
+  banner (≤ 128 KB, no scripts; the placeholder is a template) in `web/newtab-comm.html` and
+  deploy the site; to clear it, empty the file again. The file must stay in `web/` even when
+  empty: the site rewrites unknown paths to the landing page.
+- **What is sent.** One `GET` of that fixed URL: no cookies (`credentials: 'omit'`), no
+  referrer, no query string, no identifiers. webbrain.one sees the request like any page
+  fetch (IP address, user agent). The answer is cached in `chrome.storage.local`
+  (`wbNewtabBulletin`), coordinated across tabs via a storage lease so opening many tabs
+  causes at most one request per 10 minutes. If the file cannot be read, the last bulletin
+  stays up for at most 24 hours and the next attempt waits another 10 minutes. Offline or on
+  any error the page shows nothing.
+- **Checks.** https only, the response (after redirects) must come from `webbrain.one` or
+  `www.webbrain.one`, at most 128 KB, a 5 s deadline. The markup is shown in a sandboxed
+  `srcdoc` iframe that cannot run scripts (`allow-popups` only), with a Content Security
+  Policy (`default-src 'none'; style-src 'unsafe-inline'; img-src data:;`) that prevents
+  external subresources, `<base target="_blank">` so its links open on webbrain.one in a
+  new tab, and `no-referrer`.
+- **Dismiss.** The × hides that bulletin on every new tab (`wbNewtabBulletinDismissed` keeps a
+  hash of its markup); a different bulletin shows again.
+- It is shown whether or not the box itself is turned on, and only when the page is shown
+  at all (the gate above runs first).
 
 ## Things to know
 

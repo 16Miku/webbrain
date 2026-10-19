@@ -41,6 +41,7 @@ export default [
         FileReader: 'readonly',
         Blob: 'readonly',
         URL: 'readonly',
+        URLSearchParams: 'readonly',
         TextEncoder: 'readonly',
         TextDecoder: 'readonly',
         DOMParser: 'readonly',
