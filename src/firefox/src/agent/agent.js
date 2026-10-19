@@ -2184,6 +2184,11 @@ export class Agent extends LoopDetector {
       };
     }
     this._completionSubmitStates.set(tabId, state);
+    // A later non-committing form (a GET search) replaces this receipt, so the
+    // guard remembers that something other than a deletion was committed.
+    if (state.dispatched && publicationGuard && state.nonCommitting !== true && state.mutationKind !== 'delete') {
+      publicationGuard.ordinaryCommitDispatched = true;
+    }
     if (state.dispatched && publicationGuard?.resourceMutationAuthorization) {
       const record = state.actionRecord;
       (publicationGuard.resourceMutationDispatches ||= []).push({ key: publicationGuard.resourceMutationAuthorization.key,
@@ -6119,6 +6124,7 @@ export class Agent extends LoopDetector {
         socialPublication: structuredClone(previous?.socialPublication || null),
       } : null);
       guard.resourceMutationDispatches = structuredClone(previous?.resourceMutationDispatches || []);
+      guard.ordinaryCommitDispatched = previous?.ordinaryCommitDispatched === true;
       if (priorSubmission || attemptedPublication) guard.evidenceTaskKey = guard.taskKey;
       guard.socialPublicationSteering = previous?.socialPublicationSteering || null;
       guard.socialPublicationClarifications = previous?.socialPublicationClarifications || [];
@@ -36755,6 +36761,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       steeringPriorContext: carryMatches ? structuredClone(carried.steeringPriorContext || null) : null,
       steeringPriorSubmissionReconciliation: carryMatches ? structuredClone(carried.steeringPriorSubmissionReconciliation || null) : null,
       resourceMutationDispatches: carryMatches ? structuredClone(carried.resourceMutationDispatches || []) : [],
+      ordinaryCommitDispatched: carryMatches && carried.ordinaryCommitDispatched === true,
       // The user's answers on WebBrain's deletion card hold for the same task.
       deletionDecisions: carryMatches && Array.isArray(carried.deletionDecisions)
         ? structuredClone(carried.deletionDecisions.slice(-32)) : [],
@@ -37302,6 +37309,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         steeringPriorContext: structuredClone(guard.steeringPriorContext || null),
         steeringPriorSubmissionReconciliation: structuredClone(guard.steeringPriorSubmissionReconciliation || null),
         resourceMutationDispatches: structuredClone(guard.resourceMutationDispatches || []),
+        ordinaryCommitDispatched: guard.ordinaryCommitDispatched === true,
         deletionDecisions: structuredClone((guard.deletionDecisions || []).slice(-32)),
         unverifiedStepDecisions: structuredClone(this._carriedUnverifiedStepDecisions(guard)),
         socialPublication: guard.socialPublication ? structuredClone(guard.socialPublication) : null,
@@ -37642,6 +37650,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const missingDeletion = missingRequiredSubmission
       && Array.isArray(state.resourceMutationDispatches) && state.resourceMutationDispatches.length > 0
       && state.resourceMutationDispatches.every(attempt => attempt?.mutationKind === 'delete')
+      && state.ordinaryCommitDispatched !== true
       && (currentReceipt?.dispatched !== true || currentReceipt.mutationKind === 'delete' || currentReceipt.nonCommitting === true);
     const advisory = this._planGuardAdvisory(tabId, state, { viaDone, looksPlanOnly, runtimeModeContradiction,
       structuredPlan: structuredPlan
