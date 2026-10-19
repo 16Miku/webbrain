@@ -690,6 +690,8 @@ for (const build of BUILDS) {
     const { SYSTEM_PROMPT_ASK } = await import(`../src/${build}/src/agent/tools.js`);
     assert.match(SYSTEM_PROMPT_ASK, /requires clicking or typing: when an AUTOMATIC MODE section follows, call `request_action_mode` as it says; otherwise let them know they need to switch to Act mode\./);
     assert.match(SYSTEM_PROMPT_ASK, /\(c\) the task needs browser actions that this read-only Ask turn cannot do\. When an AUTOMATIC MODE section follows, hand the request off as it says instead of declining\./);
+    // "Set this up as a scheduled task" got "there's no scheduler available here" (G4).
+    assert.match(SYSTEM_PROMPT_ASK, /Scheduling itself is not impossible: when the user explicitly asks to schedule future or recurring work and an AUTOMATIC MODE section follows, hand the request off as it says \(Act mode schedules tasks\); otherwise tell them that Act mode can schedule it, or that `\/schedule` creates a scheduled task\./);
     const { AUTO_MODE_ASK_NOTE } = await import(`../src/${build}/src/agent/auto-mode.js`);
     assert.match(AUTO_MODE_ASK_NOTE, /This section replaces every instruction above that tells the user to switch to Act or Dev mode: never ask the user to switch modes\./);
     const f = fixture(Agent, { replies: [done('Answer.')] });
