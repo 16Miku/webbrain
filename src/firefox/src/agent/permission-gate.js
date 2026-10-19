@@ -571,6 +571,46 @@ export function frameHostMatches(frameUrl, urlFilter) {
   return host === want || host.endsWith('.' + want);
 }
 
+// Whether a urlFilter starts with something that is a host ("stripe.com",
+// "127.0.0.1:8080/x", "localhost") rather than a path or a file name
+// ("iframe-inner.html", "/embed", "widget").
+const FILE_NAME_SUFFIX = /\.(?:html?|xhtml|php|aspx?|jsp|cgi|js|mjs|css|json|xml|txt|svg|png|jpe?g|gif|webp|pdf)$/i;
+function urlFilterNamesHost(filter) {
+  const first = filter.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split(/[/?#]/)[0];
+  const host = first.replace(/:\d+$/, '');
+  if (!host) return false;
+  return /^\[[0-9a-f:.]+\]$/i.test(host) || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.toLowerCase() === 'localhost'
+    || (/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(host) && !FILE_NAME_SUFFIX.test(host));
+}
+
+// urlFilter names an iframe's host, optionally followed by more of its URL
+// ("stripe.com", "airtable.com/embed/"): target resolution and the permission
+// scope both rely on that host. A filter that is only a path or file name
+// ("iframe-inner.html") matches no frame; this names the host form that
+// would, from the child frames whose address contains it, or returns ''. A
+// filter that names a host never gets another host suggested: a page cannot
+// turn "stripe.com" into its own frame that merely mentions stripe.com.
+export function urlFilterHostHint(urlFilter, frameUrls = []) {
+  const filter = String(urlFilter || '').trim();
+  if (!filter || urlFilterNamesHost(filter)) return '';
+  const examples = [];
+  for (const raw of frameUrls || []) {
+    const url = String(raw || '');
+    if (!url.includes(filter) || frameHostMatches(url, filter)) continue;
+    try {
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) continue;
+      const example = `${parsed.host}${parsed.pathname}`.slice(0, 200);
+      if (!examples.includes(example)) examples.push(example);
+    } catch { /* not an http(s) frame address */ }
+    if (examples.length >= 3) break;
+  }
+  return examples.length
+    ? `urlFilter ${JSON.stringify(filter.slice(0, 200))} does not name an iframe host, so no frame matched. `
+      + `Start it with the frame's host, for example ${examples.map(example => JSON.stringify(example)).join(' or ')}.`
+    : '';
+}
+
 /** Resolve a URL (relative / protocol-relative / absolute) to a host against a
  *  base page URL — exactly what the browser handler does (new URL(raw, base)). */
 function resolveHostAgainst(url, base) {

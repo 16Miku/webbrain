@@ -120,7 +120,7 @@ import {
   cloudflareManagedChallengeStorageKey,
   normalizeCloudflareManagedChallengeState,
 } from './cloudflare-managed-challenge.js';
-import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
+import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, urlFilterHostHint, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
   buildPlannerAlignmentMessages,
@@ -41097,11 +41097,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { success: false, dispatched: false, noDispatch: true, error: 'promote_iframe: matchIndex must be a non-negative integer' };
       }
       if (matches.length === 0) {
+        const hint = urlFilterHostHint(urlFilter, frames.filter(frame => Number(frame?.frameId) !== 0).map(frame => frame?.url));
         return {
           success: false,
           dispatched: false,
           noDispatch: true,
-          error: `promote_iframe: no child frame matched urlFilter "${urlFilter}"`,
+          error: `promote_iframe: no child frame matched urlFilter "${urlFilter}"${hint ? `. ${hint}` : ''}`,
         };
       }
       if (!hasMatchIndex && matches.length > 1) {
@@ -44513,11 +44514,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }));
         const frames = inspected.filter(r => r && !r.isTop
           && (!urlFilter || (frameHostMatches(r.url, urlFilter) && r.url.includes(urlFilter))));
+        const hint = frames.length ? '' : urlFilterHostHint(urlFilter,
+          frameInfos.filter(frame => frame.frameId !== 0).map(frame => frame.url));
         return {
           success: true,
           pageUrl: await this._currentUrl(tabId),
           frameCount: frames.length,
           frames,
+          ...(hint ? { hint } : {}),
         };
       } catch (e) {
         return { success: false, error: `Iframe read failed: ${e.message}` };
@@ -44630,7 +44634,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             frameUrls: candidates.map(candidate => candidate.url).slice(0, 10),
             error: targetCount > 1
               ? 'iframe_click matched multiple elements. Call iframe_read and pass the intended matchIndex or narrow urlFilter before clicking.'
-              : 'Element not found in any matching iframe',
+              : urlFilterHostHint(urlFilter, frames.filter(frame => frame.frameId !== 0).map(frame => frame.url))
+                || 'Element not found in any matching iframe',
           };
         }
         const selected = candidates[0];

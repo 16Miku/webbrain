@@ -2553,6 +2553,61 @@ test('rich-text frame geometry uses wildcard delivery only for known opaque sand
   }
 });
 
+test('iframe tools say how to name a frame host when urlFilter is only a path', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const frameUrl = 'http://127.0.0.1:47615/iframe-inner.html';
+  try {
+    for (const build of ['chrome', 'firefox']) {
+      const gate = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/permission-gate.js`)).href);
+      const hint = gate.urlFilterHostHint('iframe-inner.html', ['http://127.0.0.1:47615/', frameUrl, 'about:blank', frameUrl]);
+      assert.equal(hint, 'urlFilter "iframe-inner.html" does not name an iframe host, so no frame matched. '
+        + 'Start it with the frame\'s host, for example "127.0.0.1:47615/iframe-inner.html".', `${build}: path-only filter hint`);
+      // The suggested filter matches, so the hint is never a dead end.
+      assert.equal(gate.frameHostMatches(frameUrl, '127.0.0.1:47615/iframe-inner.html') && frameUrl.includes('127.0.0.1:47615/iframe-inner.html'), true);
+      assert.match(gate.urlFilterHostHint('embed', ['https://forms.example/embed/v2']), /for example "forms\.example\/embed\/v2"/);
+      // No hint when the filter names a host (even one no frame has: a page
+      // cannot steer "stripe.com" to its own frame that mentions it), when
+      // nothing contains the filter, or without a filter.
+      for (const [filter, urls] of [['127.0.0.1:47615', [frameUrl]], ['missing.html', [frameUrl]], ['', [frameUrl]],
+        ['stripe.com', ['https://evil.example/?next=stripe.com', 'https://evil.example/stripe.com/pay']],
+        ['localhost:3000', ['https://evil.example/localhost:3000']], ['[::1]', ['https://evil.example/[::1]']]]) {
+        assert.equal(gate.urlFilterHostHint(filter, urls), '', `${build}: ${filter || '(empty)'}`);
+      }
+      // iframe_type answers a path-only filter with the same hint, before anything is typed.
+      const execute = async () => (build === 'chrome'
+        ? [{ frameId: 0, result: { ok: true, url: 'http://127.0.0.1:47615/', isTop: true, matchCount: 0 } },
+          { frameId: 9, result: { ok: true, url: frameUrl, isTop: false, matchCount: 1 } }]
+        : [{ ok: true, url: frameUrl, matchCount: 1 }]);
+      globalThis.chrome = build === 'chrome' ? { scripting: { executeScript: execute } } : originalChrome;
+      globalThis.browser = build === 'firefox'
+        ? { webNavigation: { getAllFrames: async () => [{ frameId: 0, parentFrameId: -1, url: 'http://127.0.0.1:47615/' },
+          { frameId: 9, parentFrameId: 0, url: frameUrl }] }, tabs: { executeScript: execute } }
+        : originalBrowser;
+      const { RichTextToolbarProbe } = await import(`${pathToFileURL(path.join(ROOT, `src/${build}/src/agent/rich-text-toolbar-probe.js`)).href}?url-filter-hint=${build}`);
+      const typed = await new RichTextToolbarProbe({}).legacyIframeTypeAllFrames(77, {
+        selector: '#ref', text: 'WB-QA-B2', clear: true, urlFilter: 'iframe-inner.html',
+      }, { beforeDispatch: async () => assert.fail(`${build}: nothing may be typed`) });
+      assert.equal(typed.success, false);
+      assert.equal(typed.noDispatch, true);
+      assert.match(typed.error, /does not name an iframe host[\s\S]*"127\.0\.0\.1:47615\/iframe-inner\.html"/, `${build}: iframe_type hint`);
+    }
+    for (const build of ['chrome', 'firefox']) {
+      const agent = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
+      assert.match(agent, /: urlFilterHostHint\(urlFilter, [^\n]+\)\n\s*\|\| 'Element not found in any matching iframe',/, `${build}: iframe_click hint`);
+      assert.match(agent, /const hint = urlFilterHostHint\(urlFilter, frames\.filter\(frame => Number\(frame\?\.frameId\) !== 0\)\.map\(frame => frame\?\.url\)\);[\s\S]{0,240}promote_iframe: no child frame matched urlFilter "\$\{urlFilter\}"\$\{hint \? `\. \$\{hint\}` : ''\}`/, `${build}: promote_iframe hint`);
+      assert.match(agent, /const hint = frames\.length \? '' : urlFilterHostHint\(urlFilter,[\s\S]{0,400}\.\.\.\(hint \? \{ hint \} : \{\}\),/, `${build}: iframe_read hint`);
+      const tools = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/tools.js`), 'utf8');
+      assert.doesNotMatch(tools, /urlFilter[^\n]*(?:host or URL substring|substring to filter frames|substring match against the iframe)/, `${build}: no tool still calls urlFilter a plain substring`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('legacy iframe typing marks background dispatch only for its mutation phase', async () => {
   const originalChrome = globalThis.chrome;
   const originalBrowser = globalThis.browser;
