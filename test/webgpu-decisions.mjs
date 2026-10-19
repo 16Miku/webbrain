@@ -150,6 +150,25 @@ test('saved Ternary decision selections stay local and disabled', async () => {
   }
 });
 
+test('disabled Ternary keeps configured feature switches for a replacement provider', async () => {
+  const { resolveDecisionConfig, decisionFeatureEnabled } = await import('../src/chrome/src/agent/decision-config.js');
+  for (const mode of [{ decisionMode: 'on' }, {}]) {
+    const stored = { ...mode, decisionProvider: 'webgpu_chat', systemOneEnabled: true,
+      systemOneDoneEnabled: true, systemOneWatchEnabled: false, systemOneCompletionEnabled: true,
+      systemOneFastClassifications: false, systemOneFastBrowser: true };
+    const selected = resolveDecisionConfig(stored);
+    assert.equal(selected.enabled, false);
+    assert.deepEqual(selected.features, { done: true, watch: false, completion: true, classifications: false, browser: true, semantic: true });
+    for (const feature of Object.keys(selected.features)) assert.equal(decisionFeatureEnabled(selected, feature), false, feature);
+    for (const provider of ['openrouter', 'typesafe', 'local']) {
+      const replacement = resolveDecisionConfig({ ...stored, decisionProvider: provider });
+      assert.deepEqual(replacement.features, selected.features, `${provider} keeps saved switches`);
+    }
+  }
+  const legacy = resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
+  assert.deepEqual(legacy.features, { done: false, watch: false, completion: false, classifications: false, browser: false, semantic: true });
+});
+
 test('Firefox never enables the Chrome-only chat-model provider and imports it with System One off', async () => {
   const config = await import('../src/firefox/src/agent/decision-config.js');
   const transfer = await import('../src/firefox/src/config-transfer.js');

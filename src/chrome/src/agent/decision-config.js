@@ -78,7 +78,7 @@ export function resolveDecisionConfig(stored = {}, compass = null, _options = {}
   const legacy = mode === 'on' && !DECISION_MODES.includes(stored[DECISION_MODE_KEY]);
   const on = mode === 'on';
   const config = selectedDecisionConfig(stored, mode === 'off' ? null : compass, on);
-  const features = mode === 'off' || config.provider === 'webgpu_chat' ? { ...NO_DECISION_FEATURES }
+  const features = mode === 'off' ? { ...NO_DECISION_FEATURES }
     : on ? onDecisionFeatures(stored, config, legacy)
       : config.provider === 'compass' ? { ...AUTO_COMPASS_FEATURES } : { ...NO_DECISION_FEATURES };
   const source = mode === 'off' ? 'off' : config.provider === 'compass' ? 'compass' : on ? 'configured' : 'none';
@@ -122,7 +122,8 @@ function selectedDecisionConfig(stored, compass, on) {
   if (provider === 'webgpu_chat') return {
     provider, model: WEBGPU_CHAT_DECISION_MODEL, apiKey: '', baseUrl: '', url: '', local: true,
     enabled: false, unavailable: 'decision_validation_failed',
-    doneEnabled: false,
+    // Preserve the legacy opt-in value for Settings; enabled gates every use.
+    doneEnabled: stored.systemOneDoneEnabled === true,
     threshold: doneThreshold(stored),
     supportsVision: stored.decisionVisionMode !== 'off', experimental: true,
     requiresIndependentSuccessConfirmation: true,

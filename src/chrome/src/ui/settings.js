@@ -1788,6 +1788,7 @@ decisionProviderInput?.addEventListener('change', () => {
   document.getElementById('decision-models').replaceChildren();
   document.getElementById('decision-endpoint-field').hidden = previousDecisionProvider !== 'local';
   syncWebgpuDecisionProvider();
+  void syncDecisionStatus();
 });
 decisionModelInput?.addEventListener('input', () => {
   decisionVisionSupported = decisionModels.find(m => m.id === decisionModelInput.value)?.supportsVision === true;

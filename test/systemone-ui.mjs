@@ -47,7 +47,8 @@ try {
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await page.addInitScript(({ lang, build, version }) => {
           localStorage.setItem('wbLocale', lang);
-          const data = { wbLocale: lang, typesafeApiKey: '', systemOneEnabled: false, systemOneWatchEnabled: true, systemOneCompletionEnabled: true };
+          const data = { wbLocale: lang, typesafeApiKey: '', systemOneEnabled: false, systemOneWatchEnabled: true, systemOneCompletionEnabled: true,
+            ...JSON.parse(sessionStorage.getItem('decision-profile') || '{}') };
           window.testStore = data; window.testRequests = [];
           const listeners = [];
           const storage = {
@@ -197,6 +198,28 @@ try {
         assert.equal(await page.locator('#decision-configured').isVisible(), false);
         if (build === 'chrome' && lang === 'en' && width === 1280 && process.env.JEV_DOC_SCREENSHOTS) {
           await captureDocScreenshots(page, process.env.JEV_DOC_SCREENSHOTS);
+        }
+        if (build === 'chrome') {
+          const switches = { systemOneDoneEnabled: true, systemOneWatchEnabled: false, systemOneCompletionEnabled: true,
+            systemOneFastClassifications: false, systemOneFastBrowser: true };
+          await page.evaluate(switches => sessionStorage.setItem('decision-profile', JSON.stringify({
+            decisionMode: 'on', systemOneEnabled: true, decisionProvider: 'webgpu_chat', ...switches,
+          })), switches);
+          await page.reload();
+          await page.waitForFunction(() => document.querySelector('#decision-provider').value === 'webgpu_chat');
+          assert.equal(await page.locator('#btn-test-system-one').isVisible(), false, 'saved Ternary cannot be tested');
+          const ids = ['toggle-decision-done', 'toggle-system-one-watch', 'toggle-system-one-completion', 'toggle-system-one-classifications', 'toggle-system-one-browser'];
+          for (const [i, value] of Object.values(switches).entries()) assert.equal(await page.locator(`#${ids[i]}`).isChecked(), value, 'saved Ternary retains switches');
+          for (const provider of ['openrouter', 'typesafe', 'local']) {
+            await page.locator('#decision-provider').selectOption(provider);
+            assert.equal(await page.locator('#btn-test-system-one').isVisible(), true, `${provider} can be tested immediately`);
+            await page.locator('#system-one-api-key').fill('synthetic-replacement-key');
+            await page.locator('#btn-test-system-one').click();
+            await page.waitForFunction(provider => testRequests.some(r => r.action === 'test_system_one' && r.settings?.decisionProvider === provider), provider);
+            await page.locator('#btn-save-system-one').click();
+            await page.waitForFunction(provider => testStore.decisionProvider === provider, provider);
+            assert.deepEqual(await page.evaluate(keys => Object.fromEntries(keys.map(key => [key, testStore[key]])), Object.keys(switches)), switches);
+          }
         }
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'settings fit viewport');
         assert.deepEqual(errors, []);
