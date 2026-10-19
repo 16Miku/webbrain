@@ -17663,6 +17663,7 @@ const ADAPTERS = [
 - First-time setup REQUIRES the user to scan a QR code with their phone's WhatsApp app. The agent CANNOT scan a QR code — if the QR is on screen, surface it to the user and stop. Don't loop waiting for it to disappear.
 - Once linked, layout is: conversation list on the LEFT (chats sorted by recency), active conversation on the RIGHT.
 - Message input is a contenteditable div at the bottom of the conversation. set_field works; Enter sends by default.
+- Open the recipient's chat first: click_ax its row in the chat list, or search for them. Then, before sending or attaching, confirm the contact: click_ax the contact name in the chat header, and close the Contact info panel it opens with that panel's own Close button. Until then message actions are blocked, and the blocked result names the exact control. One run confirms one chat.
 - Emoji picker, attachment button (paperclip), voice-note (mic) sit to the left/right of the input.
 - Search at the top of the conversation list searches across all chats (people, group names, message content).
 - "Status" tab (eye icon) is a separate stream of ephemeral updates; "Calls" tab shows call history and starts voice/video calls.
@@ -18347,6 +18348,21 @@ export function getMessageRecipientGuardPolicy(url) {
       ? { supportsRecipientSets: true }
       : {}),
   };
+}
+
+/**
+ * Native chat clients whose recipient guard confirms a contact and reads the
+ * latest messages through the chat tools (chat_observe, chat_send). Lean mode
+ * keeps that guard, so it offers those two tools on these pages.
+ */
+export function isNativeChatClientUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && (parsed.hostname === 'web.whatsapp.com'
+      || /^(?:web|webk|weba|webz|k)\.telegram\.org$/i.test(parsed.hostname));
+  } catch {
+    return false;
+  }
 }
 
 /**

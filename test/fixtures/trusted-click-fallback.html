@@ -197,11 +197,16 @@
   <div id="opacity-row" class="row" role="listitem" tabindex="0">Opacity row</div>
   <div id="pointer-row" class="row" role="listitem" tabindex="0" style="pointer-events:none">Pointer disabled row</div>
   <div id="zero-row" role="listitem" tabindex="0">Zero row</div>
+  <div id="grid-chat-list" role="grid" aria-label="Grid chat list">
+    <div role="row"><div id="grid-chat-cell" class="row" role="gridcell" tabindex="-1">Grid chat row</div></div>
+    <div role="row"><div id="grid-selected-cell" class="row" role="gridcell" tabindex="-1" aria-selected="true">Selected grid chat row</div></div>
+  </div>
   <p id="status">idle</p>
   <p id="ambient-status">ambient-idle</p>
 
   <script>
     window.__trustedClickEvents = [];
+    window.__gridChatEvents = [];
     window.__syntheticClickEvents = [];
     window.__trustedCheckboxEvents = [];
     window.__frameworkInputEvents = [];
@@ -256,6 +261,18 @@
         }, 40);
       }
     });
+    // A grid chat list row like WhatsApp's: a real press opens it, a
+    // script-dispatched click does nothing.
+    for (const type of ['mousedown', 'click']) {
+      document.getElementById('grid-chat-cell').addEventListener(type, (event) => {
+        window.__gridChatEvents.push({ trusted: event.isTrusted, type: event.type });
+        if (event.isTrusted && event.type === 'mousedown') {
+          event.currentTarget.classList.add('grid-opened');
+          event.currentTarget.setAttribute('aria-current', 'true');
+          document.getElementById('status').textContent = 'grid-opened';
+        }
+      });
+    }
     document.getElementById('synthetic-row').addEventListener('click', (event) => {
       window.__syntheticClickEvents.push({ trusted: event.isTrusted, type: event.type });
       event.currentTarget.classList.add('synthetic-opened');

@@ -215,6 +215,20 @@ remain the exact original nodes throughout. Pre-existing drawers, stale drawer
 responses, same-name row recycling, selection changes and ambiguous phone fields
 cannot bind a recipient. Contact names or opaque message IDs alone cannot do so.
 
+A message action that the recipient probe blocks in a chat whose contact is not
+confirmed yet carries the same exact reference (`nativeWhatsappRepairTarget`,
+`open_contact` or `close_contact`), and the Agent names that control to the
+model instead of telling it to re-read the page and retry. A row of WhatsApp's
+own chat list, clicked on the row itself, opens another chat whatever the open
+chat's state; the row's menu and other nested controls stay guarded. A run
+checks one contact, for its anchor chat: the first chat it looks at, or, in a
+request that names its recipient, the chat that is selected when the run arms
+its check with the guarded contact-name click, so such a request can first open
+the right chat. The probe reports that kind of request
+(`namedRecipientSelection`); a request for the open chat itself, or a target
+already pinned to a verified chat identity, never moves its anchor. Once a check
+is armed, a later selection change spends it.
+
 The drawer's close control is its header's one named plain button, whatever
 language names it ("Close", "Kapat"); a header with two controls offers none,
 and the control must keep the name it had when the guarded click armed it.
@@ -259,6 +273,9 @@ are outside this reader's proved contract.
 
 `test/native-whatsapp-contact.mjs`, `test/whatsapp-chat-completion.mjs` and
 `test/whatsapp-chat-restart.mjs` exercise these boundaries in both browser builds.
+`test/whatsapp-chat-selection.mjs` covers the repair reference on a blocked
+message action, chat-list navigation away from an unconfirmed chat, and which
+requests may move the contact check, in both builds.
 `test/whatsapp-native-bootstrap.mjs` adds 34 actual-Agent/browser checks for the
 generic native composer, precise repair references and wrong or stale targets.
 `test/whatsapp-drawer-identity.mjs` adds 56 paired production-reader/browser
