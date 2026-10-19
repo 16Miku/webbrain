@@ -302,3 +302,24 @@ for (const build of ['chrome', 'firefox']) {
     for (const key of keys.filter((k) => k !== 'systemOneDoneEnabled')) assert.equal(legacyOn[key], false, `pre-mode On: ${key} stays off`);
   });
 }
+
+for (const build of ['chrome', 'firefox']) {
+  test(`${build}: a pre-mode On profile exports its resolved completion default`, async () => {
+    const transfer = await import(`../src/${build}/src/config-transfer.js`);
+    const config = await import(`../src/${build}/src/agent/decision-config.js`);
+    const roundTrip = (stored) => transfer.parseConfigImport(JSON.stringify(transfer.createConfigExport(stored))).settings;
+    for (const stored of [
+      { systemOneEnabled: true, decisionProvider: 'webgpu_chat' },
+      { systemOneEnabled: true, decisionProvider: 'webgpu_d1' },
+      { systemOneEnabled: true, decisionApiKey: 'sk-or-v1-test' },
+    ]) {
+      const before = config.resolveDecisionConfig(stored).features;
+      const restored = roundTrip(stored);
+      if (restored.decisionProvider !== stored.decisionProvider) continue; // Firefox drops the Chrome-only provider and goes Auto
+      const after = config.resolveDecisionConfig(restored).features;
+      for (const feature of ['done', 'watch', 'completion', 'classifications', 'browser']) {
+        assert.equal(after[feature], before[feature], `${JSON.stringify(stored)}: ${feature} survives the round trip`);
+      }
+    }
+  });
+}

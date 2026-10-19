@@ -301,12 +301,13 @@ function normalizeSettings(source, { strict = false } = {}) {
   // switches to On with the omitted switches enabled, so they are materialized as on and a round
   // trip does not turn them into the old `false` defaults.
   const isLegacyOnProfile = !DECISION_MODES.includes(source?.decisionMode) && source?.systemOneEnabled === true;
-  if (!isLegacyOnProfile) {
-    for (const key of Object.values(DECISION_FEATURE_KEYS)) {
-      if (!Object.hasOwn(source, key)) {
-        settings[key] = true;
-      }
-    }
+  // The legacy reading is resolved from the profile itself (completion verification, for one, is off
+  // for an in-browser provider that never stored its switch), not taken from the modern defaults.
+  const legacyFeatures = isLegacyOnProfile ? resolveDecisionConfig(source).features : null;
+  for (const [feature, key] of Object.entries(DECISION_FEATURE_KEYS)) {
+    if (Object.hasOwn(source, key)) continue;
+    if (legacyFeatures) settings[key] = legacyFeatures[feature] === true;
+    else settings[key] = true;
   }
   return settings;
 }
