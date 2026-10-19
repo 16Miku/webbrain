@@ -100,6 +100,21 @@ export function resolveDecisionConfig(stored = {}, compass = null, { localAssist
   return { ...config, enabled: mode !== 'off' && config.enabled, doneEnabled: features.done, mode, source, features };
 }
 
+// A profile saved before modes existed and left in On keeps the feature defaults it had then: a
+// missing switch means off. Writing an explicit mode makes the modern reading apply (missing means
+// on), so the switches the user sees have to be written down before the mode changes. Returns the
+// explicit values to store; nothing for a profile that already has a mode or was not On.
+export function materializeLegacyDecisionFeatures(stored = {}) {
+  stored = stored || {};
+  if (DECISION_MODES.includes(stored[DECISION_MODE_KEY]) || stored.systemOneEnabled !== true) return {};
+  const { features } = resolveDecisionConfig(stored);
+  const values = {};
+  for (const [feature, key] of Object.entries(DECISION_FEATURE_KEYS)) {
+    if (!Object.hasOwn(stored, key)) values[key] = features[feature] === true;
+  }
+  return values;
+}
+
 // The provider configuration itself. `on` means the user turned decisions on:
 // only then can an explicit local choice (D1, the chat model) or a configured
 // key answer; Compass answers whenever it is passed in.

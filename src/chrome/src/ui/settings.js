@@ -1,4 +1,4 @@
-import { DECISION_MODE_KEY, DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, WEBGPU_CHAT_DECISION_MODEL, resolveDecisionConfig, resolveDecisionMode } from '../agent/decision-config.js';
+import { DECISION_MODE_KEY, DECISION_SETTINGS_KEYS, materializeLegacyDecisionFeatures, DEFAULT_DECISION_MODEL, WEBGPU_CHAT_DECISION_MODEL, resolveDecisionConfig, resolveDecisionMode } from '../agent/decision-config.js';
 import { isLocalAssistModelReady } from '../providers/webgpu-model-cache.js';
 import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
 import { D1_MODEL_ID } from '../providers/d1-config.js';
@@ -312,7 +312,9 @@ for (const input of decisionModeInputs) {
     const mode = input.value;
     void syncDecisionStatus();
     // The mode applies at once; On's provider fields still use Save.
-    await chrome.storage.local.set({ [DECISION_MODE_KEY]: mode, systemOneEnabled: mode === 'on' });
+    // A pre-mode On profile shows its stored switches; keep them when the explicit mode replaces that reading.
+    const legacyFeatures = materializeLegacyDecisionFeatures(await chrome.storage.local.get(DECISION_SETTINGS_KEYS));
+    await chrome.storage.local.set({ ...legacyFeatures, [DECISION_MODE_KEY]: mode, systemOneEnabled: mode === 'on' });
     if (mode !== 'on') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     showSystemOneResult('ok', t('st.providers.saved'));
   });

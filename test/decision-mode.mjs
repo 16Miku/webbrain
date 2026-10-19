@@ -249,3 +249,37 @@ test('a provider-only Chrome patch leaves the Firefox mode alone', async () => {
   assert.equal(sparse({ decisionProvider: 'webgpu_chat', decisionMode: 'off' }).decisionMode, 'off');
   assert.equal(Object.hasOwn(sparse({ decisionProvider: 'webgpu_chat', decisionMode: 'off' }), 'systemOneEnabled'), false);
 });
+
+for (const build of ['chrome', 'firefox']) {
+  test(`${build}: leaving a pre-mode On profile writes its switches down before the explicit mode`, async () => {
+    const config = await import(`../src/${build}/src/agent/decision-config.js`);
+    const legacy = { systemOneEnabled: true, decisionApiKey: 'sk-or-v1-test', systemOneWatchEnabled: true };
+    const before = config.resolveDecisionConfig(legacy).features;
+    assert.equal(before.watch, true); assert.equal(before.completion, false); assert.equal(before.browser, false);
+    const written = config.materializeLegacyDecisionFeatures(legacy);
+    assert.deepEqual(Object.keys(written).sort(), ['systemOneDoneEnabled', 'systemOneCompletionEnabled', 'systemOneFastBrowser', 'systemOneFastClassifications'].sort(), 'only the missing switches are written');
+    for (const [feature, key] of Object.entries(config.DECISION_FEATURE_KEYS)) {
+      if (key in written) assert.equal(written[key], before[feature], `${feature} is stored as it was resolved`);
+    }
+    // Auto, Off, then back to On: the switches stay as they were shown.
+    let stored = { ...legacy, ...written, decisionMode: 'auto', systemOneEnabled: false };
+    stored = { ...stored, decisionMode: 'on', systemOneEnabled: true };
+    const after = config.resolveDecisionConfig(stored).features;
+    for (const feature of ['done', 'watch', 'completion', 'classifications', 'browser']) assert.equal(after[feature], before[feature], `${feature} unchanged`);
+    // Without the materialization the modern reading would have enabled them.
+    const naive = config.resolveDecisionConfig({ ...legacy, decisionMode: 'on', systemOneEnabled: true }).features;
+    assert.equal(naive.completion, true);
+    // Nothing to write for a profile that already has a mode, or was not On.
+    assert.deepEqual(config.materializeLegacyDecisionFeatures({ decisionMode: 'auto', systemOneEnabled: false }), {});
+    assert.deepEqual(config.materializeLegacyDecisionFeatures({ systemOneEnabled: false }), {});
+    assert.deepEqual(config.materializeLegacyDecisionFeatures({ decisionMode: 'on', systemOneEnabled: true }), {});
+    assert.deepEqual(config.materializeLegacyDecisionFeatures(null), {});
+  });
+
+  test(`${build}: the Settings mode switch stores the legacy switches together with the mode`, async () => {
+    const fs = await import('node:fs');
+    const source = fs.readFileSync(new URL(`../src/${build}/src/ui/settings.js`, import.meta.url), 'utf8');
+    const api = build === 'chrome' ? 'chrome' : 'browser';
+    assert.match(source, new RegExp(`materializeLegacyDecisionFeatures\\(await ${api}\\.storage\\.local\\.get\\(DECISION_SETTINGS_KEYS\\)\\);\\s*await ${api}\\.storage\\.local\\.set\\(\\{ \\.\\.\\.legacyFeatures, \\[DECISION_MODE_KEY\\]: mode, systemOneEnabled: mode === 'on' \\}\\)`));
+  });
+}
