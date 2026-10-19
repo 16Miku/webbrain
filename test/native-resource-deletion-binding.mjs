@@ -301,6 +301,256 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await f.page.close(); }
       });
 
+      // QA M1c: the post's relative time ("8 min") ticked over while the
+      // user decided on WebBrain's deletion card, and the confirmation's
+      // fresh probe no longer matched, so the deletion was refused as
+      // resource_changed every time it was retried.
+      await t.test('a relative time ticking over while the deletion waits keeps the same post', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<time datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          assert.equal(detected.actionResource.url, resource);
+          const tick = text => f.page.evaluate(value => {
+            document.querySelector('#record-200 .status__relative-time time').textContent = value;
+          }, text);
+          let probes = 0;
+          agent._detectLikelySubmitAction = async () => { await tick(`${9 + probes++} dk`); return f.probe('#confirm'); };
+          installModelStub(agent);
+          const result = await agent._resourceMutationPreSubmitBlock(1, 'click', { selector: '#confirm' }, detected, provider);
+          assert.equal(result?.actionGuard?.reason || null, null, JSON.stringify(result?.actionGuard));
+          assert.ok(probes >= 1, 'The post was probed again after it ticked over');
+          assert.equal(await f.page.evaluate(() => qaDeletes), 0, 'Preflight never dispatches deletion.');
+          // What the post says, and the moment it was posted, still bind it.
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__content__text--visible p').textContent = 'Edited post'; });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'Edited text is another post');
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__content__text--visible p').textContent = 'Exact owned post 200';
+            document.querySelector('#record-200 .status__relative-time time').setAttribute('datetime', '2026-10-18T18:00:00.000Z');
+          });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'Another moment is another post');
+        } finally { await f.page.close(); }
+      });
+
+      // The same text nodes, laid out differently (a line break appears), read
+      // as another version of the post.
+      await t.test('an edit that only changes how the text of the post renders is another post', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__content__text--visible p').innerHTML
+              = '<span id="first-part">Exact owned</span><span id="second-part"> post 200</span>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          assert.equal(detected.actionResource.url, resource);
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Unchanged layout is the same post');
+          await f.page.evaluate(() => { document.getElementById('second-part').style.display = 'block'; });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'A new line break is another version');
+          await f.page.evaluate(() => { document.getElementById('second-part').style.display = ''; });
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Restoring the layout restores the post');
+          await f.page.evaluate(() => { document.getElementById('first-part').style.textTransform = 'uppercase'; });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'Rendered case is part of the post');
+        } finally { await f.page.close(); }
+      });
+
+      // The post says what its timestamp renders ("8 dk") before the timestamp.
+      await t.test('a relative time that the post text also says keeps the same post when it ticks over', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<span>Back in 8 dk</span> <time datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__relative-time time').textContent = '9 dk'; });
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Only the timestamp ticked');
+        } finally { await f.page.close(); }
+      });
+
+      await t.test('text that only renders like the relative time does not take the timestamp\'s place', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<span style="text-transform:uppercase">back in 8 dk</span> <time style="text-transform:uppercase" datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__relative-time time').textContent = '9 dk'; });
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Only the timestamp ticked');
+        } finally { await f.page.close(); }
+      });
+
+      await t.test('preformatted text that renders like the relative time does not take the timestamp\'s place', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<span style="white-space:pre">8   dk</span> <time datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__relative-time time').textContent = '9 dk'; });
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Only the timestamp ticked');
+        } finally { await f.page.close(); }
+      });
+
+      await t.test('a timestamp without a usable datetime keeps its rendered text in the key, and a hidden one is not the visible one', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<time datetime="">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__relative-time time').textContent = '9 dk'; });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'Without a datetime the shown time is part of the post');
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<time datetime="2026-10-18T10:00:00.000Z" style="display:none">8 dk</time><time datetime="2026-10-18T19:22:00.000Z">8 dk</time>';
+          });
+          const hidden = await f.probe('#confirm');
+          await f.page.evaluate(() => { document.querySelectorAll('#record-200 .status__relative-time time')[1].textContent = '9 dk'; });
+          assert.equal(key(await f.probe('#confirm')), key(hidden), 'The visible timestamp stands for its own datetime');
+        } finally { await f.page.close(); }
+      });
+
+      await t.test('text that layout separates into lines like the relative time does not take the timestamp\'s place', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<div>8</div><div>dk</div><time datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__relative-time time').textContent = '9 dk'; });
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Only the timestamp ticked');
+        } finally { await f.page.close(); }
+      });
+
+      await t.test('a value that only the stabilized text pushes over the size limit stays in the key', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<time datetime="2026-10-18T19:22:00.000Z">8 dk</time>';
+            // A long text that is the record's own text node, so only the record carries it.
+            const record = document.querySelector('#record-200');
+            const filler = document.createTextNode('x');
+            record.append(filler);
+            // The record's rendered text is just under the limit; the timestamp marker lifts it over.
+            filler.data = 'x'.repeat(24995 - record.innerText.length + 1);
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { const own = document.querySelector('#record-200').lastChild; own.data = 'y'.repeat(own.data.length); });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'An edit of the long text is another post');
+        } finally { await f.page.close(); }
+      });
+
+      await t.test('hidden text equal to the relative time does not hide the timestamp from the key', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<span style="display:none">8 dk</span><time datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22">8 dk</time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__relative-time time').textContent = '9 dk'; });
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Only the timestamp ticked');
+        } finally { await f.page.close(); }
+      });
+
+      await t.test('a relative time with nested markup ticking over keeps the same post', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__relative-time').innerHTML
+              = '<time datetime="2026-10-18T19:22:00.000Z" title="18 Eki 2026 22:22"><span>8 dk</span></time>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          assert.equal(detected.actionResource.url, resource);
+          const tick = text => f.page.evaluate(value => {
+            document.querySelector('#record-200 .status__relative-time time span').textContent = value;
+          }, text);
+          let probes = 0;
+          agent._detectLikelySubmitAction = async () => { await tick(`${9 + probes++} dk`); return f.probe('#confirm'); };
+          installModelStub(agent);
+          const result = await agent._resourceMutationPreSubmitBlock(1, 'click', { selector: '#confirm' }, detected, provider);
+          assert.equal(result?.actionGuard?.reason || null, null, JSON.stringify(result?.actionGuard));
+          assert.ok(probes >= 1, 'The post was probed again after it ticked over');
+          assert.equal(await f.page.evaluate(() => qaDeletes), 0, 'Preflight never dispatches deletion.');
+          // What the post says, and the moment it was posted, still bind it.
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          await f.page.evaluate(() => { document.querySelector('#record-200 .status__content__text--visible p').textContent = 'Edited post'; });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'Edited text is another post');
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__content__text--visible p').textContent = 'Exact owned post 200';
+            document.querySelector('#record-200 .status__relative-time time').setAttribute('datetime', '2026-10-18T18:00:00.000Z');
+          });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'Another moment is another post');
+        } finally { await f.page.close(); }
+      });
+
       for (const variant of ['stable-confirmation', 'stable-direct', 'flip-before-authorization', 'flip-during-authorization']) {
         await t.test(`${variant} is revalidated by production mutation preflight`, async () => {
           const f = await fixture();
