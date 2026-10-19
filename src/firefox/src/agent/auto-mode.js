@@ -123,7 +123,7 @@ export function requestActionModeTool() {
           },
           evidence: {
             type: 'string',
-            description: 'The words of the user\'s latest message that ask for the action, quoted exactly as written.',
+            description: 'The user\'s own words that ask for the action, from their request or a correction they sent, quoted exactly as written.',
           },
         },
         required: ['mode', 'evidence'],
