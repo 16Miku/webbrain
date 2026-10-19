@@ -5,9 +5,25 @@ import { d1Request } from './providers/d1.js';
 import { evaluateD1LocalFixture } from './providers/d1-diagnostic.js';
 import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_KEEP_LOADED_KEY } from './providers/d1-config.js';
 
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && (changes.systemOneEnabled?.newValue === false || (changes.decisionMode && changes.decisionMode.newValue !== 'on') || (changes.decisionProvider && changes.decisionProvider.newValue !== 'webgpu_d1') || (changes[D1_CONSENT_KEY] && changes[D1_CONSENT_KEY].newValue !== D1_CONSENT_VERSION) || changes.strictSecretMode?.newValue === true)) void d1Request('reset').catch(() => {});
-});
+// D1's Worker and GPU memory are released when decisions are switched Off,
+// another decision provider is saved, consent changes or Strict Secret Mode
+// starts. Leaving On (for Auto) keeps D1 loaded while Auto uses it: D1 is
+// downloaded and Compass is not the chat provider (decision-availability.js).
+function releaseD1OnDecisionChange(changes, area) {
+  if (area !== 'local') return;
+  const reset = () => { void d1Request('reset').catch(() => {}); };
+  if ((changes.decisionMode && changes.decisionMode.newValue === 'off')
+      || (changes.decisionProvider && changes.decisionProvider.newValue !== 'webgpu_d1')
+      || (changes[D1_CONSENT_KEY] && changes[D1_CONSENT_KEY].newValue !== D1_CONSENT_VERSION)
+      || changes.strictSecretMode?.newValue === true) {
+    reset();
+    return;
+  }
+  if (changes.systemOneEnabled?.newValue === false || (changes.decisionMode && changes.decisionMode.newValue !== 'on')) {
+    void d1UsedForDecisions(browser).then(used => { if (!used) reset(); }, reset);
+  }
+}
+browser.storage.onChanged.addListener(releaseD1OnDecisionChange);
 import { probeDecisionVision } from './agent/decision-vision-probe.js';
 import { installSafeSocialBackground } from './safesocial/background.js';
 import { createFeedbackHandoff } from './feedback-handoff.js';

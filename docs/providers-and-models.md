@@ -152,10 +152,12 @@ claim. **Unload** or disabling outsourcing releases the Worker/GPU resources and
 retains the cache; **Remove cached model** requires the model to be unloaded.
 After **Download and load**, **Load** or the install guide's download, D1
 stays loaded until it is unloaded, removed or switched off on the Providers
-page (decisions Off, or another provider saved under On; switching to Auto
-keeps it, since Auto uses it): a decision that finds it unloaded (a browser
-restart, a discarded stalled session, a lost GPU device, or a mode change that
-released the Worker) starts one reload from the verified cache in the
+page (decisions Off, or another provider saved under On). Switching to Auto
+keeps it loaded while Auto uses it; while Compass is the chat provider, Auto
+does not, so the Worker and its GPU memory are released and the Load request
+stays for later (`releaseD1OnDecisionChange` in `background.js`). A decision
+that finds D1 unloaded (a browser restart, a discarded stalled session, a lost
+GPU device, or that release) starts one reload from the verified cache in the
 background and uses the fallback chain meanwhile. A reload never downloads. A decision whose caller
 stops waiting (a judge timeout, Stop) is cancelled in the Worker, skipped if
 it was still queued, and the loaded model stays.

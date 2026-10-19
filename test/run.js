@@ -45687,6 +45687,36 @@ test('chrome install page downloads D1 next to the chat model and says what D1 d
   }
 
   {
+    // The button stays busy until D1 has asked for its download too, so a
+    // Pause can never run before D1's transfer exists and leave D1 running.
+    const state = { bonsai: { status: 'not-downloaded', modelId }, d1: { status: 'idle' } };
+    let releaseProbe;
+    const probe = new Promise((resolve) => { releaseProbe = resolve; });
+    const runtime = fakeRuntime({
+      ...bonsai(state),
+      'd1_control:status': () => ({ success: true, result: { ...state.d1, usedForDecisions: false } }),
+      'd1_control:probe': () => probe,
+      'd1_control:download': () => { state.d1 = { status: 'downloading', progress: 1 }; return { success: true, result: { started: true, ...state.d1 } }; },
+    });
+    const documentLike = fakeDocument();
+    const controller = install.initializeLocalModelDownload({ documentLike, runtime, translate, pollMs: 60_000 });
+    await settle();
+    const button = documentLike.nodes['local-model-button'];
+    const clicked = button.fire('click');
+    await settle();
+    assert.ok(runtime.sent.some((message) => message.action === 'start_webgpu_download'), 'the chat model does not wait for D1');
+    assert.equal(button.disabled, true, 'busy while D1 still checks the GPU');
+    assert.equal(await Promise.race([clicked.then(() => 'done'), new Promise((resolve) => setTimeout(() => resolve('pending'), 20))]), 'pending');
+    releaseProbe({ success: true, result: { success: true } });
+    await clicked;
+    await settle();
+    assert.ok(runtime.sent.some((message) => message.action === 'd1_control' && message.command === 'download'));
+    assert.equal(button.disabled, false, 'Pause is offered once both downloads have started');
+    assert.equal(documentLike.nodes['local-model'].dataset.state, 'downloading');
+    controller.dispose();
+  }
+
+  {
     // A GPU D1 cannot use: say so, and the chat model still downloads.
     const state = { bonsai: { status: 'not-downloaded', modelId } };
     const runtime = fakeRuntime({

@@ -439,9 +439,13 @@ export function initializeLocalModelDownload({
         } else {
           render();
         }
-        // D1 downloads alongside, in its own worker; its line reports it.
-        void d1?.start();
-        await backgroundCommand(runtime, 'start_webgpu_download', { model: modelId });
+        // D1 downloads alongside, in its own worker; its line reports it. The
+        // button stays busy until both downloads have started, so a Pause
+        // always finds D1's transfer to stop.
+        await Promise.all([
+          d1?.start(),
+          backgroundCommand(runtime, 'start_webgpu_download', { model: modelId }),
+        ]);
       }
     } catch (error) {
       inFlight = false;
