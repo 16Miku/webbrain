@@ -55386,6 +55386,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           continue;
         }
         const escalation = handoff.accepted;
+        // The check above awaited a model decision. Input or a main-frame
+        // navigation that arrived meanwhile is queued, and a hand-off that did
+        // not see it is not accepted; page churn alone does not count.
+        if (escalation && this._pageFeedbackSupersedesHandoff?.(tabId)) {
+          onUpdate('text', { content: '', replace: true });
+          continue;
+        }
         if (escalation) {
           // The caller restarts this turn in the requested mode, from the
           // state the turn started with, so the request is recorded once.
