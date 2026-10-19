@@ -11316,7 +11316,11 @@ export class Agent extends LoopDetector {
       // case of a filter are normalized, as the call is repaired below.
       const normalized = (value, key) => {
         // A page is repaired below from up to four digits ("01" is 1).
-        if (key === 'page' && typeof value === 'string' && /^\s*\d{1,4}\s*$/.test(value)) return Number(value);
+        if (key === 'page') {
+          // The page the read serves: Math.max(1, floor(Number(page) || 1)).
+          const number = typeof value === 'string' && /^\s*\d{1,4}\s*$/.test(value) ? Number(value) : decimal(value);
+          if (typeof number === 'number' && Number.isFinite(number)) return Math.max(1, Math.floor(number) || 1);
+        }
         // The read trims a revision before comparing it; its case is kept.
         if (key === 'tree_revision' && typeof value === 'string') return value.trim();
         const scalar = decimal(value);
