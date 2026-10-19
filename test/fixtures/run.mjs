@@ -5417,6 +5417,22 @@ for (const browserKind of ['chrome', 'firefox']) {
     }
   });
 
+  test(`click_ax (${browserKind}): an inline menu without a launcher keeps its post as context`, async (page) => {
+    await setupContentHtml(page, `
+      <header><h1>Profile header</h1><a href="/settings/profile">Edit profile</a></header>
+      <article><a href="/@qa/7">2d</a><p>Seventh test toot</p>
+        <div class="dropdown-menu"><ul><li><button>Delete</button></li></ul></div>
+      </article>`, browserKind);
+    const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 12, maxChars: 20000 });
+    const ref = String(tree?.pageContent || '').match(/button "Delete" \[(ref_\d+)\]/)?.[1];
+    const result = await call(page, 'click_ax', { ref_id: ref });
+    const context = result?.targetContext || {};
+    if (!result?.success || !String(context.text || '').includes('Seventh test toot') || /Profile header/.test(String(context.text))
+        || !String(context.href || '').endsWith('/@qa/7')) {
+      throw new Error(`an inline menu must keep the post it sits in as context: ${JSON.stringify(result)}`);
+    }
+  });
+
   test(`resolve_visual_target (${browserKind}): nested SVG resolves semantic button`, async (page) => {
     await setupContentHtml(page, `
       <style>button { position: fixed; left: 40px; top: 30px; width: 120px; height: 60px; }</style>

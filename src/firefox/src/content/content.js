@@ -8532,10 +8532,18 @@
               const popup = el.closest?.('.dropdown-menu,[role="menu"],[role="listbox"],[popover],[role="dialog"],[role="alertdialog"],dialog');
               const launcher = popup && typeof window.__wb_ax_popup_launcher === 'function'
                 ? window.__wb_ax_popup_launcher(popup) : null;
+              // No launcher: a popup mounted inside its own record or card keeps
+              // trustworthy DOM ancestry, so only a detached one (a portal under
+              // the body) is kept from borrowing the page around it.
+              const detachedPopup = !!popup && !launcher && !popup.parentElement?.closest([
+                'article,[role="article"],li,[role="listitem"],tr,[role="row"]',
+                '[data-product-id],[data-product],[data-testid*="product" i]',
+                '[class*="product" i],[class*="card" i],[class*="tile" i]',
+              ].join(','));
               let fallback = null;
               let node = launcher || el.parentElement;
               for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
-                if (popup && !launcher && !popup.contains(node)) break;
+                if (detachedPopup && !popup.contains(node)) break;
                 const text = String(node.innerText || '').replace(/\s+/g, ' ').trim();
                 if (!text || text === ownText) continue;
                 const headingEl = node.querySelector?.('h1,h2,h3,h4,[role="heading"]');

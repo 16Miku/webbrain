@@ -1373,7 +1373,7 @@
     const launcher = popupLauncher(popup);
     if (!launcher) return '';
     const label = el => {
-      const name = String(modelAccessibleName(el) || '').replace(/\s+/g, ' ').substring(0, MAX_NAME_LEN).replace(/"/g, '\\"');
+      const name = String(modelAccessibleName(el) || '').replace(/\s+/g, ' ').substring(0, MAX_NAME_LEN).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       return getRole(el) + (name ? ' "' + name + '"' : '') + ' [' + getOrMintRef(el) + ']';
     };
     const record = launcher.closest(POPUP_RECORD_SELECTOR);
