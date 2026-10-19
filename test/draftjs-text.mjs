@@ -79,7 +79,11 @@ function contentHarness(build, current) {
   const source = fs.readFileSync(`src/${build}/src/content/content.js`, 'utf8');
   const ownInputScope = source.match(/^  let _messageRecipientOwnedInputScope = null;$/m)?.[0];
   assert.ok(ownInputScope, 'Use the real private production owned-input scope');
-  const names = ['_setFieldValueMatches', 'readProseMirrorText', 'readCodeMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText',
+  // The handlers focus the editor through _withTypingPreparation. Without it
+  // here, that call threw inside the handler's own try/catch, the editor was
+  // never focused, and the caret cases failed as "The editor focus or
+  // selection changed before text insertion."
+  const names = ['_withTypingPreparation', '_setFieldValueMatches', 'readProseMirrorText', 'readCodeMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText',
     '_nativeChatCaretContext', '_sameNativeChatCaretContext', '_singleEditableCaretBreak',
     '_rememberNativeChatEmptyCaret', '_nativeChatCaretValueIsEmpty', '_editableTextValue', '_insertContentEditableText'];
   if (build === 'chrome') names.unshift('_contentEditableValueMatches');
@@ -272,7 +276,7 @@ for (const build of ['chrome', 'firefox']) {
 }
 
 test('Chrome: native appends preserve strong empty-editor proof and do not retry ambiguous literal prefix loss', async t => {
-  for (const mode of ['draftjs', 'direct-caret', 'wrapped-caret']) await t.test(mode, async () => {
+  for (const strict of [false, true]) for (const mode of ['draftjs', 'direct-caret', 'wrapped-caret']) await t.test(`${mode}${strict ? ' with Strict checks' : ''}`, async () => {
     const current = { editor: mode === 'draftjs' ? draft([''], { raw: '\n' }) : caret(mode === 'direct-caret' ? [] : ['DIV', 'SPAN']) }, h = contentHarness('chrome', current);
     let nativeInsertions = 0;
     current.onInsert = (editor, text) => {
@@ -284,6 +288,7 @@ test('Chrome: native appends preserve strong empty-editor proof and do not retry
     const args = { ref_id: 'ref_42', text: tweet, clear: false };
     const oldMessage = api.tabs.sendMessage, oldAttach = cdpClient.attach, oldSend = cdpClient.sendCommand;
     const agent = new Agent({}); const commands = [];
+    agent.strictGuards = strict;
     agent._lastAxScopes.set(41, { documentToken: 'doc', pageUrl: 'https://x.com/compose/post' });
     api.tabs.sendMessage = async (_tab, message) => {
       if (message.action === 'ax_prepare_field_for_trusted_type') return { success: true, contentEditable: true, rect: { x: 10, y: 20, w: 300, h: 90 } };
@@ -306,7 +311,18 @@ test('Chrome: native appends preserve strong empty-editor proof and do not retry
       const typed = await agent._maybeFallbackFieldWithCdp(41, 'type_ax', args, initial);
       assert.equal(typed.success, mode === 'draftjs'); assert.equal(typed.verified, mode === 'draftjs');
       const finalized = await agent._finalizeTextMutationResult(41, 'type_ax', args, typed);
-      assert.equal(finalized.success, mode === 'draftjs'); assert.equal(agent._uncertainTextMutations.has(41), mode !== 'draftjs');
+      if (mode === 'draftjs') {
+        assert.equal(finalized.success, true); assert.equal(agent._uncertainTextMutations.has(41), false);
+      } else if (strict) {
+        // Strict checks keep the unverified append as debt that blocks a repeat.
+        assert.equal(finalized.success, false); assert.equal(agent._uncertainTextMutations.has(41), true);
+      } else {
+        // By default the append is reported as sent but unverified, with a
+        // record that warns a later append about duplicates, not a lock.
+        assert.equal(finalized.success, true); assert.notEqual(finalized.verified, true);
+        assert.equal(agent._uncertainTextMutations.has(41), false);
+        assert.equal(agent._unverifiedTextWrites?.get(41)?.size, 1);
+      }
       assert.equal(commands.filter(method => method === 'Input.insertText').length, mode === 'draftjs' ? 1 : 0,
         'Only a proven no-dispatch result may send one trusted insertion.');
       assert.equal(h.read(current.editor), tweet);
