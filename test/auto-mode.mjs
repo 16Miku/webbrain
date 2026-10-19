@@ -826,7 +826,10 @@ for (const build of BUILDS) {
     const settle = () => new Promise(resolve => setImmediate(resolve));
     const f = fixture(Agent, { replies: [done('Unused.')] });
     delete f.agent._maybeEmitAskModeHandoff;
-    f.agent._jevClassify = async () => 'act';
+    // A read-only request has no unfulfilled action, so a classifier asked
+    // about it answers none; the runtime's own limitation does not depend on it.
+    let classified = 0;
+    f.agent._jevClassify = async () => { classified += 1; return 'none'; };
     f.agent.readCompletenessStates.set(f.tab, { required: true, complete: false, requiresExpansionEvidence: true, treeCoverageComplete: true });
     const limitation = f.agent._readCompletenessLimitation(f.tab);
     assert.match(limitation, /Ask mode cannot expand them/);
@@ -837,6 +840,7 @@ for (const build of BUILDS) {
     await settle();
     assert.deepEqual(f.updates.filter(update => update.type === 'ask_mode_handoff').map(update => update.data), [{ value: 'act' }],
       'only the runtime limitation is offered the switch');
+    assert.equal(classified, 0, 'the runtime limitation is offered without asking the classifier');
   });
 
   test(`${build}: a slow decision model leaves the turn read-only after the grace period`, async () => {

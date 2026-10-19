@@ -24352,6 +24352,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || this.selectionGroundingScopes.has(tabId)) {
       return;
     }
+    // Nothing the user asked is unfulfilled here, so the classifier would
+    // rightly answer "none" for a read-only request: the runtime itself says
+    // a retry in Act is the recovery, and offers it directly.
+    if (runOptions?.autoModeRouting && runtimeLimitation) {
+      onUpdate('ask_mode_handoff', { value: 'act' });
+      return;
+    }
     const handoffContext = this.systemOneContext(tabId);
     try {
       const provider = this._activeProvider(tabId);
