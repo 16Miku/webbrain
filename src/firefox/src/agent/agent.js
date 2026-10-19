@@ -30804,7 +30804,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return text;
     };
-    const stableTexts = nodes => [...new Set(nodes.map(stableText).filter(value => value.length <= 25000))];
+    // A node inside a <time datetime> is part of the timestamp that node already
+    // stands for, so it adds no text of its own (<time><span>8 min</span></time>).
+    const stableTexts = nodes => [...new Set(nodes
+      .filter(node => !node.parentElement?.closest('time[datetime]'))
+      .map(stableText).filter(value => value.length <= 25000))];
     const nativeResourceProofs = () => {
       if (args.__wbNativeResourceAdapter !== 'mastodon') return [];
       const signedIn = nativeSignedInAccount();
