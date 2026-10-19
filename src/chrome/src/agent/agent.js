@@ -11338,7 +11338,7 @@ export class Agent extends LoopDetector {
         // (a restart nested alone, or beside fields that agree, is the read).
         && (String(continuation.ref_id ?? '').trim() === ''
           ? allowed.some(key => key !== 'tree_revision' && (key === 'ref_id' ? Object.hasOwn(next, key) : String(next[key] ?? '').trim() !== ''))
-          : Object.entries(continuation).some(([key, value]) => String(next[key] ?? '').trim() !== '' && !agrees(key, value)));
+          : Object.entries(continuation).some(([key, value]) => (key === 'ref_id' ? Object.hasOwn(next, key) : String(next[key] ?? '').trim() !== '') && !agrees(key, value)));
       if (restart) {
         delete next.continuationArgs;
         repaired = true;

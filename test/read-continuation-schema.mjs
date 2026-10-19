@@ -257,6 +257,10 @@ for (const browser of ['chrome', 'firefox']) {
     const repaired = agent._repairToolCallArgs('get_accessibility_tree', { ref_id: '', continuationArgs: { filter: 'interactive', page: 1 } });
     assert.equal(repaired.result, undefined);
     assert.deepEqual(repaired.args, { ref_id: '' });
+    // An explicit document-root scope disagrees with an anchored page-1 object.
+    const anchored = agent._repairToolCallArgs('get_accessibility_tree', { ref_id: '', continuationArgs: { filter: 'interactive', ref_id: 'ref_12', page: 1 } });
+    assert.equal(anchored.result, undefined);
+    assert.deepEqual(anchored.args, { ref_id: '' });
   });
 
   test(`${browser}: an unanchored or loosely written page-1 object beside a read is a placeholder`, () => {
