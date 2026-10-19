@@ -421,8 +421,19 @@
                 <path d="M12 9v4"/>
                 <path d="M12 17h.01"/>
               </svg>
+              <span id="composer-mode-badge" class="composer-mode-badge" hidden></span>
             </button>
             <div id="permission-gate-popover" class="permission-gate-popover hidden" role="group" aria-labelledby="permission-gate-label">
+              <div class="composer-mode-picker">
+                <span id="composer-mode-label" class="permission-gate-title" data-i18n="sp.mode_picker.label">Mode</span>
+                <div class="composer-mode-options" role="radiogroup" aria-labelledby="composer-mode-label" aria-describedby="composer-mode-desc">
+                  <button type="button" class="composer-mode-option active" role="radio" aria-checked="true" data-composer-mode="auto" data-i18n="sp.mode_picker.auto">Auto</button>
+                  <button type="button" class="composer-mode-option" role="radio" aria-checked="false" tabindex="-1" data-composer-mode="ask" data-i18n="sp.mode.ask">Ask</button>
+                  <button type="button" class="composer-mode-option" role="radio" aria-checked="false" tabindex="-1" data-composer-mode="act" data-i18n="sp.mode.act">Act</button>
+                  <button type="button" class="composer-mode-option" role="radio" aria-checked="false" tabindex="-1" data-composer-mode="dev" data-i18n="sp.mode.dev">Dev</button>
+                </div>
+                <span id="composer-mode-desc" class="permission-gate-desc" data-i18n="sp.mode_picker.desc">Auto picks Ask, Act or Dev for each message. Choose one to keep it for this chat; a new chat starts in Auto.</span>
+              </div>
               <label class="permission-gate-row" for="toggle-permission-gate-panel">
                 <span class="permission-gate-copy">
                   <span id="permission-gate-label" class="permission-gate-title" data-i18n="st.perms.gate.label">Ask before consequential actions</span>

@@ -217,6 +217,10 @@ export default {
   'sp.mode.act.confirm': "O modo Act permite que WebBrain clique, digite, role e navegue em seu nome.\n\nEle é executado dentro da sessão autenticada do navegador, portanto, tem o mesmo acesso que você tem em todos os sites em que está conectado.\n\nObserve o que ele faz e pare a qualquer momento com o botão ◼.\n\nContinuar?",
   'sp.mode.dev': "Desenvolvedor",
   'sp.mode.dev.title': "Use ferramentas de origem, estilo e depuração de página",
+  'sp.mode_picker.label': 'Modo',
+  'sp.mode_picker.auto': 'Auto',
+  'sp.mode_picker.desc': 'Auto escolhe Pergunte, Agir ou Desenvolvedor para cada mensagem. Escolha um para mantê-lo neste chat; um novo chat começa em Auto.',
+  'sp.mode_picker.button_pinned': '{mode} neste chat · {permissions}',
   'sp.mode.dev.confirm': "O modo Dev adiciona fonte de página, inspeção de estilo, inspeção de DOM/frame e ferramentas de depuração no modo Act.\n\nUse-o para trabalhos de HTML/CSS/edição de páginas e solução de problemas. Está bloqueado para provedores de nível compacto.\n\nContinuar?",
   'sp.mode.dev.compact_blocked': "O modo Dev está bloqueado para provedores de nível compacto. {provider} atualmente é compacto; mude para um provedor de nível intermediário/completo ou altere seu nível de prompt.",
 

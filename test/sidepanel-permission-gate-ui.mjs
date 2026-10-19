@@ -25,7 +25,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
     });
     after(async () => { await browser?.close(); });
 
-    async function fixture(run, { askBefore = true, width = 420 } = {}) {
+    async function fixture(run, { askBefore = true, width = 420, storedPin = null } = {}) {
       const context = await browser.newContext({ viewport: { width, height: 640 } });
       const errors = [];
       try {
@@ -46,7 +46,28 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.addStyleTag({ content: await read(build, 'styles/sidepanel.css') });
         await page.addScriptTag({ type: 'module', content: `
           import { t, applyDOMTranslations } from '/src/${build}/src/ui/i18n.js';
-          const log = window.__log = { writes: [], notices: [], toasts: [], opened: [], actWarning: 0, placeholder: 0, scaleClosed: 0 };
+          import { createComposerModePins } from '/src/${build}/src/ui/composer-mode-pin.js';
+          const log = window.__log = { writes: [], notices: [], toasts: [], opened: [], actWarning: 0, placeholder: 0, scaleClosed: 0, setMode: [], ensure: [] };
+          // The mode picker's collaborators: the panel's mode state and checks.
+          const session = window.__session = { ${storedPin ? `'composerModePin:7': ${JSON.stringify(storedPin)}` : ''} };
+          const sessionArea = {
+            async get(key) { return key in session ? { [key]: session[key] } : {}; },
+            async set(values) { Object.assign(session, values); },
+            async remove(key) { delete session[key]; },
+          };
+          const isStandaloneWindow = false;
+          let autoModeSelection = true;
+          let agentMode = 'ask';
+          let currentTabId = 7;
+          const sameTabId = (a, b) => a != null && b != null && String(a) === String(b);
+          const composerModePins = createComposerModePins(sessionArea);
+          const setMode = (mode, { pinned = false } = {}) => {
+            log.setMode.push({ mode, pinned, auto: autoModeSelection });
+            agentMode = autoModeSelection ? 'ask' : mode;
+          };
+          const blocked = window.__blocked = { act: false, dev: false };
+          const ensureActMode = async ({ switchMode = true } = {}) => { log.ensure.push({ mode: 'act', switchMode }); return !blocked.act; };
+          const ensureDevMode = async ({ switchMode = true } = {}) => { log.ensure.push({ mode: 'dev', switchMode }); return !blocked.dev; };
           let failNextWrite = false;
           window.__failNextWrite = () => { failNextWrite = true; };
           const ${api} = {
@@ -71,6 +92,11 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
           const closeUiScalePopover = () => { log.scaleClosed += 1; return false; };
           applyDOMTranslations(document);
           ${block}
+          Object.assign(window, {
+            restoreComposerModeForCurrentTab, setComposerModePinForTab,
+            switchTab(id) { currentTabId = id; restoreComposerModeForCurrentTab(); },
+            modeState: () => ({ auto: autoModeSelection, agentMode, pin: composerModePins.get(currentTabId) }),
+          });
           window.__ready = true;
         ` });
         await page.waitForFunction(() => window.__ready === true);
@@ -152,7 +178,8 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         assert.equal(s.log.notices.length, 0);
         assert.equal(s.off, false);
         assert.equal(s.noteShown, false);
-        await page.mouse.click(200, 400);
+        // Left of the popover, which is anchored to the toolbar's end.
+        await page.mouse.click(20, 300);
         assert.equal((await state()).open, false);
       }, { askBefore: false });
     });
@@ -185,6 +212,142 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         const s = await state();
         assert.deepEqual(s.log.opened, ['ext://webbrain/src/ui/settings.html#permissions']);
         assert.equal(s.open, false);
+      }, { width: 360 });
+    });
+
+    const picker = (page) => page.evaluate(() => {
+      const btn = document.getElementById('btn-permission-gate');
+      const badge = document.getElementById('composer-mode-badge');
+      return {
+        active: [...document.querySelectorAll('.composer-mode-option.active')].map(option => option.dataset.composerMode),
+        checked: [...document.querySelectorAll('.composer-mode-option')].map(option => option.getAttribute('aria-checked')),
+        tabbable: [...document.querySelectorAll('.composer-mode-option')].map(option => option.tabIndex),
+        badge: badge.hidden ? null : badge.textContent,
+        pinned: btn.classList.contains('has-mode-pin'),
+        title: btn.title,
+        label: btn.getAttribute('aria-label'),
+        state: window.modeState(),
+        session: { ...window.__session },
+        log: structuredClone(window.__log),
+      };
+    });
+
+    test('the mode picker starts in Auto and keeps Act for the chat', async () => {
+      await fixture(async ({ page }) => {
+        let p = await picker(page);
+        assert.deepEqual(p.active, ['auto']);
+        assert.deepEqual(p.checked, ['true', 'false', 'false', 'false']);
+        assert.deepEqual(p.tabbable, [0, -1, -1, -1], 'one tab stop, on the chosen mode');
+        assert.equal(p.badge, null);
+        assert.equal(p.pinned, false);
+        assert.equal(p.state.auto, true);
+        await page.click('#btn-permission-gate');
+        assert.match(await page.textContent('.composer-mode-picker'), /Mode[\s\S]*Auto[\s\S]*Ask[\s\S]*Act[\s\S]*Dev[\s\S]*a new chat starts in Auto/);
+
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.waitForFunction(() => window.modeState().pin === 'act');
+        p = await picker(page);
+        assert.deepEqual(p.log.ensure, [{ mode: 'act', switchMode: false }], 'Act is checked like the shortcut, without switching on its own');
+        assert.deepEqual(p.active, ['act']);
+        assert.deepEqual(p.state, { auto: false, agentMode: 'act', pin: 'act' }, 'Automatic is off and the composer sends Act');
+        assert.deepEqual(p.log.setMode.at(-1), { mode: 'act', pinned: true, auto: false });
+        assert.equal(p.badge, 'Act', 'the trigger shows the kept mode');
+        assert.equal(p.pinned, true);
+        assert.equal(p.title, 'Act for this chat · Permission prompts: on');
+        assert.equal(p.label, p.title);
+        await page.waitForFunction(() => window.__session['composerModePin:7'] === 'act');
+        await page.waitForFunction(() => getComputedStyle(document.getElementById('btn-permission-gate')).color
+          === getComputedStyle(document.getElementById('permission-gate-off-note')).color);
+
+        await page.click('.composer-mode-option[data-composer-mode="auto"]');
+        await page.waitForFunction(() => window.modeState().auto === true);
+        p = await picker(page);
+        assert.deepEqual(p.active, ['auto']);
+        assert.equal(p.badge, null);
+        assert.equal(p.title, 'Permission prompts: on');
+        assert.equal(p.state.agentMode, 'ask');
+        await page.waitForFunction(() => !('composerModePin:7' in window.__session));
+      });
+    });
+
+    test('the mode picker moves with the arrow keys and refuses a blocked mode', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.focus('.composer-mode-option[data-composer-mode="auto"]');
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(() => window.modeState().pin === 'ask');
+        assert.equal(await page.evaluate(() => document.activeElement.dataset.composerMode), 'ask');
+        await page.keyboard.press('End');
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        let p = await picker(page);
+        assert.equal(p.badge, 'Dev');
+        await page.keyboard.press('Home');
+        await page.waitForFunction(() => window.modeState().auto === true);
+
+        await page.evaluate(() => { window.__blocked.act = true; });
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.waitForFunction(() => window.__log.ensure.length === 2);
+        p = await picker(page);
+        assert.deepEqual(p.active, ['auto'], 'a mode the checks refuse is not kept');
+        assert.equal(p.state.auto, true);
+      });
+    });
+
+    test('each tab keeps its own mode, and a reopened panel finds it', async () => {
+      await fixture(async ({ page }) => {
+        await page.evaluate(() => window.restoreComposerModeForCurrentTab());
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        let p = await picker(page);
+        assert.deepEqual(p.active, ['dev'], 'the stored choice comes back');
+        assert.equal(p.badge, 'Dev');
+        await page.evaluate(() => window.switchTab(8));
+        p = await picker(page);
+        assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null }, 'another tab stays in Auto');
+        assert.equal(p.badge, null);
+        await page.evaluate(() => window.switchTab(7));
+        await page.waitForFunction(() => window.modeState().pin === 'dev');
+        // A new chat on the tab clears it.
+        await page.evaluate(() => window.setComposerModePinForTab(7, null));
+        p = await picker(page);
+        assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null });
+        await page.waitForFunction(() => !('composerModePin:7' in window.__session));
+      }, { storedPin: 'dev' });
+    });
+
+    test('a kept mode keeps the toolbar on one row in a narrow panel', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.waitForFunction(() => window.modeState().pin === 'act');
+        const toolbar = await page.locator('.composer-toolbar').boundingBox();
+        assert.ok(toolbar.height <= 36, `the composer toolbar stays on one row (${toolbar.height})`);
+        const box = await page.locator('#permission-gate-popover').boundingBox();
+        assert.ok(box.x >= 0 && box.x + box.width <= 360, 'the popover with the picker fits a 360px panel');
+        const options = await page.evaluate(() => [...document.querySelectorAll('.composer-mode-option')]
+          .map(option => option.scrollWidth <= option.clientWidth + 1));
+        assert.deepEqual(options, [true, true, true, true], 'no mode name is cut off');
+      }, { width: 360 });
+    });
+
+    test('mode names in every language fit, wrapping rather than being cut off', async () => {
+      const codes = ['en', 'tr', 'es', 'fr', 'de', 'nl', 'pt', 'pl', 'ru', 'uk', 'zh', 'ja', 'ko', 'ar', 'he', 'fa', 'hi', 'bn', 'id', 'ms', 'tl', 'th', 'vi'];
+      const dicts = {};
+      for (const code of codes) dicts[code] = (await import(`../src/${build}/src/ui/locales/${code}.js`)).default;
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        const problems = await page.evaluate((all) => {
+          const found = [];
+          const popover = document.getElementById('permission-gate-popover');
+          for (const [code, dict] of Object.entries(all)) {
+            for (const el of popover.querySelectorAll('.composer-mode-picker [data-i18n]')) el.textContent = dict[el.dataset.i18n] || el.textContent;
+            for (const option of popover.querySelectorAll('.composer-mode-option')) {
+              if (option.scrollWidth > option.clientWidth + 1) found.push(`${code}: ${option.textContent} is cut off`);
+            }
+            if (popover.scrollWidth > popover.clientWidth + 1) found.push(`${code}: the popover overflows`);
+          }
+          return found;
+        }, dicts);
+        assert.deepEqual(problems, []);
       }, { width: 360 });
     });
 

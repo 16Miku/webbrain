@@ -24,6 +24,47 @@ test('the automatic mode contract stays identical across browsers', () => {
   assert.equal(source('chrome', 'run-ui-journal.js'), source('firefox', 'run-ui-journal.js'));
 });
 
+test('the composer mode pin module is identical in both builds', () => {
+  assert.equal(source('chrome', 'ui/composer-mode-pin.js'), source('firefox', 'ui/composer-mode-pin.js'));
+});
+
+test('a kept composer mode is per tab, survives a reopened panel and clears for good', async () => {
+  const { createComposerModePins, COMPOSER_MODE_PIN_PREFIX } = await import('../src/chrome/src/ui/composer-mode-pin.js');
+  const store = {};
+  const area = {
+    async get(key) { return key in store ? { [key]: store[key] } : {}; },
+    async set(values) { Object.assign(store, values); },
+    async remove(key) { delete store[key]; },
+  };
+  const pins = createComposerModePins(area);
+  assert.equal(pins.get(1), null);
+  await pins.set(1, 'act');
+  await pins.set(2, 'dev');
+  await pins.set(3, 'auto');
+  assert.deepEqual([pins.get(1), pins.get(2), pins.get(3)], ['act', 'dev', null]);
+  assert.deepEqual(store, { [`${COMPOSER_MODE_PIN_PREFIX}1`]: 'act', [`${COMPOSER_MODE_PIN_PREFIX}2`]: 'dev' }, 'one key per tab');
+  // A reopened panel (a new document) finds each tab's choice.
+  const reopened = createComposerModePins(() => area);
+  assert.equal(reopened.get(1), null);
+  assert.equal(await reopened.load(1), 'act');
+  assert.equal(await reopened.load(4), null);
+  // Clearing reaches storage even where this document never set one.
+  await reopened.clear(2);
+  assert.equal(`${COMPOSER_MODE_PIN_PREFIX}2` in store, false);
+  // A choice made here wins over a slower stored read.
+  store[`${COMPOSER_MODE_PIN_PREFIX}5`] = 'act';
+  const racing = createComposerModePins(area);
+  const loading = racing.load(5);
+  await racing.clear(5);
+  assert.equal(await loading, null);
+  assert.equal(racing.get(5), null);
+  // Without storage it still works in memory.
+  const volatile = createComposerModePins(() => undefined);
+  await volatile.set(9, 'ask');
+  assert.equal(volatile.get(9), 'ask');
+  assert.equal(await volatile.load(10), null);
+});
+
 for (const build of BUILDS) {
   const autoMode = await import(`../src/${build}/src/agent/auto-mode.js`);
   const { SEMANTIC_QUESTIONS } = await import(`../src/${build}/src/agent/semantic-decisions.js`);
@@ -797,13 +838,19 @@ for (const build of BUILDS) {
     assert.equal(context.modeForMessageText('Book a table'), 'ask');
   });
 
-  test(`${build}: Automatic never pins a mode and keeps shortcuts to one message`, () => {
-    assert.match(panel, /function setMode\(mode\) \{\s*mode = normalizeAgentMode\(mode\);\s*\/\/[^\n]*\n\s*if \(autoModeSelection\) mode = 'ask';/);
-    assert.match(panel, /if \(agentMode === 'act'\) return true;\s*(?:if \(await inBrowserProviderBlocksMode\(\)\) return false;\s*)?if \(autoModeSelection\) return true;\s*setMode\('act'\);/);
-    assert.match(panel, /if \(autoModeSelection\) return true;\s*setMode\('dev'\);/);
+  test(`${build}: only the "!" menu keeps a mode; shortcuts and slash commands stay one message`, () => {
+    assert.match(panel, /function setMode\(mode, \{ pinned = false \} = \{\}\) \{\s*mode = normalizeAgentMode\(mode\);\s*\/\/[^\n]*\n\s*if \(autoModeSelection\) mode = 'ask';\s*(?:\/\/[^\n]*\n\s*)+else if \(!pinned && composerModePinForCurrentTab\(\)\) return;/,
+      'Automatic never keeps a mode, and a kept mode changes only in the menu');
+    assert.match(panel, build === 'chrome'
+      ? /if \(agentMode === 'act' && switchMode\) return true;\s*if \(await inBrowserProviderBlocksMode\(\)\) return false;\s*if \(autoModeSelection\) return true;\s*if \(switchMode && agentMode !== 'act'\) setMode\('act'\);/
+      : /if \(agentMode === 'act'\) return true;\s*if \(autoModeSelection\) return true;\s*if \(switchMode\) setMode\('act'\);/);
+    assert.match(panel, /async function ensureDevMode\(\{ switchMode = true \} = \{\}\) \{/);
+    assert.match(panel, /if \(autoModeSelection \|\| !switchMode\) return true;\s*setMode\('dev'\);/);
     for (const command of ['/ask', '/act', '/dev']) {
-      assert.match(panel, new RegExp(`if \\(autoModeSelection\\) prefixComposerModeCommand\\('${command}'\\);`));
+      assert.match(panel, new RegExp(`if \\(!isStandaloneWindow\\) prefixComposerModeCommand\\('${command}'\\);`), `${command}: one message, also with a kept mode`);
     }
+    // The menu checks Act and Dev like the shortcuts but never switches through them.
+    assert.match(panel, /const allowed = pin === 'act' \? await ensureActMode\(\{ switchMode: false \}\)\s*: pin === 'dev' \? await ensureDevMode\(\{ switchMode: false \}\)\s*: true;/);
     const input = { value: '/act  book it', focus() {}, setSelectionRange() {} };
     const context = vm.createContext({ inputEl: input, autoResizeInput: () => {} });
     vm.runInContext(extract(panel, 'prefixComposerModeCommand'), context);
@@ -832,7 +879,7 @@ for (const build of BUILDS) {
   });
 
   test(`${build}: context-menu prompts and old retries keep their own mode`, () => {
-    assert.match(panel, /getAgentMode: \(\) => \(autoModeSelection \? 'auto' : agentMode\),/);
+    assert.match(panel, /getAgentMode: \(\) => \(isStandaloneWindow \? agentMode : 'auto'\),/, 'a kept mode does not apply to context-menu prompts');
     const prompts = source(build, 'ui/context-menu-prompts.js');
     assert.match(prompts, /accepted = await sendMessage\(\{\s*\/\/[^\n]*\n\s*\.\.\.\(getAgentMode\(\) === 'auto' \? \{ __mode: 'ask' \} : \{\}\),/);
     assert.match(panel, /\|\| \(btn\.dataset\.retryMode === 'auto' && autoModeSelection\)/, 'Manual never replays an automatic retry');
@@ -843,10 +890,22 @@ for (const build of BUILDS) {
     assert.deepEqual([...context.keys.auto], [context.keys.ask[0], 'sp.input.act_placeholder', ...context.keys.ask.slice(1)], 'Automatic keeps each build\'s Ask tips');
   });
 
-  test(`${build}: mode selection is always Automatic outside the standalone window`, () => {
+  test(`${build}: mode selection is Automatic unless the "!" menu keeps a mode for the tab's chat`, () => {
     const css = readFileSync(new URL(`../src/${build}/styles/sidepanel.css`, import.meta.url), 'utf8');
-    assert.match(panel, /const autoModeSelection = !isStandaloneWindow;/);
-    assert.doesNotMatch(panel, /modeSelection|applyModeSelection/, 'no stored choice can turn Automatic off');
+    const html = readFileSync(new URL(`../src/${build}/src/ui/sidepanel.html`, import.meta.url), 'utf8');
+    assert.match(panel, /let autoModeSelection = !isStandaloneWindow;/);
+    assert.doesNotMatch(panel, /modeSelection|applyModeSelection/, 'no panel-wide stored choice turns Automatic off');
+    assert.match(panel, new RegExp(`const composerModePins = createComposerModePins\\(\\(\\) => ${build === 'chrome' ? 'chrome' : 'browser'}\\.storage\\?\\.session\\);`), 'kept per tab in session storage only');
+    assert.match(panel, /function syncComposerModeForCurrentTab\(\) \{\s*if \(isStandaloneWindow\) return;\s*const pin = composerModePinForCurrentTab\(\);\s*autoModeSelection = !pin;\s*setMode\(pin \|\| 'ask', \{ pinned: true \}\);/);
+    // A new chat or a recovered history record starts in Automatic again.
+    assert.match(panel, /setApiMutationsAllowedForTab\(tabId, false\);\s*setComposerModePinForTab\(tabId, null\);\s*await resetChatHistoryStateForTab\(tabId\);/);
+    assert.match(panel, /applyConversationScopeState\(tabId, result\);\s*setComposerModePinForTab\(tabId, null\);\s*setMode\('ask'\);/);
+    // Tab switches and startup restore the visible tab's choice.
+    assert.equal(panel.match(/restoreComposerModeForCurrentTab\(\);/g)?.length, 3);
+    const options = [...html.matchAll(/<button type="button" class="composer-mode-option[^"]*" role="radio"[^>]*data-composer-mode="(\w+)"/g)].map(match => match[1]);
+    assert.deepEqual(options, ['auto', 'ask', 'act', 'dev']);
+    assert.match(html, /<div class="composer-mode-options" role="radiogroup" aria-labelledby="composer-mode-label" aria-describedby="composer-mode-desc">/);
+    assert.match(css, /html\[data-standalone="true"\] \.composer-mode-picker \{ display: none; \}/, 'the standalone window stays in Ask');
     // The Ask/Act/Dev row never shows; its rule follows the base layout rule it overrides.
     assert.ok(css.lastIndexOf('.composer-control-row {\n  display: none;') > css.indexOf('.composer-control-row {\n  display: flex;'));
   });
