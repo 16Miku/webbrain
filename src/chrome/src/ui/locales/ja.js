@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "会話を復元できませんでした。",
   'sp.history.changed': "ページのURLが変更されました。",
   'sp.providers.more': 'その他…',
+  'sp.provider_picker.current': 'モデル: {name}',
+  'sp.provider_picker.none': 'モデルを選択',
   "st.system_one.desc_html": "定期監視と予約タスクの完了を追加検証します。",
   "st.system_one.enabled.label": "Jev を有効にする",
   "st.system_one.api_key.label": "TypeSafe API キー",

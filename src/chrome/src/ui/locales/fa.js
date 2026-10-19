@@ -44,6 +44,8 @@ export default {
   'sp.history.failed': "بازیابی گفتگو ممکن نشد.",
   'sp.history.changed': "نشانی صفحه تغییر کرده است.",
   'sp.providers.more': "بیشتر…",
+  'sp.provider_picker.current': 'مدل: {name}',
+  'sp.provider_picker.none': 'انتخاب مدل',
   'st.providers.selected': "انتخاب شد",
   'st.providers.select_for_chat': "برای چت انتخاب کنید",
   // Brand name: kept in English across locales.

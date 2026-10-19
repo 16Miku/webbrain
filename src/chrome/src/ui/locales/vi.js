@@ -44,6 +44,8 @@ export default {
   'sp.history.failed': "Không thể khôi phục cuộc trò chuyện.",
   'sp.history.changed': "URL của trang đã thay đổi.",
   'sp.providers.more': "Thêm…",
+  'sp.provider_picker.current': 'Mô hình: {name}',
+  'sp.provider_picker.none': 'Chọn mô hình',
   'st.providers.selected': "ĐÃ CHỌN",
   'st.providers.select_for_chat': "Chọn để trò chuyện",
   // Brand name: kept in English across locales.

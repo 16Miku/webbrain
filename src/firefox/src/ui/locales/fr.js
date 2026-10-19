@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "Impossible de restaurer la conversation.",
   'sp.history.changed': "L’URL de la page a changé.",
   'sp.providers.more': 'Plus…',
+  'sp.provider_picker.current': 'Modèle : {name}',
+  'sp.provider_picker.none': 'Choisir un modèle',
   "st.system_one.desc_html": "Vérification supplémentaire des surveillances et tâches planifiées.",
   "st.system_one.enabled.label": "Activer Jev",
   "st.system_one.api_key.label": "Clé API TypeSafe",

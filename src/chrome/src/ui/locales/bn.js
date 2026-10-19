@@ -44,6 +44,8 @@ export default {
   'sp.history.failed': "কথোপকথন পুনরুদ্ধার করা যায়নি।",
   'sp.history.changed': "পৃষ্ঠার URL পরিবর্তিত হয়েছে।",
   'sp.providers.more': "আরও…",
+  'sp.provider_picker.current': 'মডেল: {name}',
+  'sp.provider_picker.none': 'মডেল বেছে নিন',
   'st.providers.selected': "নির্বাচিত",
   'st.providers.select_for_chat': "চ্যাটের জন্য নির্বাচন করুন",
   // Brand name: kept in English across locales.

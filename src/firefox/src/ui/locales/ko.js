@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "대화를 복원할 수 없습니다.",
   'sp.history.changed': "페이지 URL이 변경되었습니다.",
   'sp.providers.more': '더 보기…',
+  'sp.provider_picker.current': '모델: {name}',
+  'sp.provider_picker.none': '모델 선택',
   "st.system_one.desc_html": "예약된 모니터링과 작업 완료를 추가로 검증합니다.",
   "st.system_one.enabled.label": "Jev 활성화",
   "st.system_one.api_key.label": "TypeSafe API 키",

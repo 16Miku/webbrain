@@ -47,6 +47,8 @@ export default {
   'sp.history.failed': "Hindi maibalik ang pag-uusap.",
   'sp.history.changed': "Nagbago ang URL ng pahina.",
   'sp.providers.more': 'Higit pa…',
+  'sp.provider_picker.current': 'Modelo: {name}',
+  'sp.provider_picker.none': 'Pumili ng modelo',
   "st.system_one.desc_html": "Dagdag na pagtiyak sa nakaiskedyul na pagsubaybay at pagkumpleto ng gawain.",
   "st.system_one.enabled.label": "Paganahin ang Jev",
   "st.system_one.api_key.label": "TypeSafe API key",
