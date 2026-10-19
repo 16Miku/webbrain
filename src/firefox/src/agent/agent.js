@@ -1612,8 +1612,17 @@ export class Agent extends LoopDetector {
     // Every path that substitutes this fixed text for the model's answer (the
     // done tool and the plain-final branches alike) asks here first, so it is
     // remembered once, for _maybeEmitAskModeHandoff.
-    if (limitation) (this._runtimeAskLimitations ||= new Map()).set(tabId, limitation);
+    if (limitation) this._rememberRuntimeAskLimitation(tabId, limitation);
     return limitation;
+  }
+
+  // The texts the runtime itself puts in an Ask answer for a limit only Act
+  // mode lifts, as a set: the fixed limitation and the advisory caveat.
+  _rememberRuntimeAskLimitation(tabId, text) {
+    if (!text) return;
+    const known = (this._runtimeAskLimitations ||= new Map());
+    if (!known.has(tabId)) known.set(tabId, new Set());
+    known.get(tabId).add(text);
   }
 
   // The status texts an observation showed after a submit: the accessibility
@@ -5419,12 +5428,16 @@ export class Agent extends LoopDetector {
     const state = this.readCompletenessStates.get(tabId);
     const expansionUnverified = state?.requiresExpansionEvidence === true
       && state.treeCoverageComplete === true && state.expansionConfirmed !== true;
+    const caveat = !expansionUnverified ? 'Not every part of the conversation was confirmed as read.'
+      : this._isActionMode(this._effectiveRunMode(tabId))
+        ? 'Some Gmail messages may have stayed collapsed, so the whole conversation was not confirmed as read.'
+        : 'Ask mode cannot expand collapsed Gmail messages, so some messages in the conversation may be missing.';
+    // Only Act mode expands the messages, so an automatic Ask turn that ends
+    // with this caveat is offered the switch (see _maybeEmitAskModeHandoff).
+    if (expansionUnverified && !this._isActionMode(this._effectiveRunMode(tabId))) this._rememberRuntimeAskLimitation(tabId, caveat);
     return this._guardRefusesOnce(tabId, 'read-coverage-incomplete', {
       decided: !expansionUnverified,
-      caveat: !expansionUnverified ? 'Not every part of the conversation was confirmed as read.'
-        : this._isActionMode(this._effectiveRunMode(tabId))
-          ? 'Some Gmail messages may have stayed collapsed, so the whole conversation was not confirmed as read.'
-          : 'Ask mode cannot expand collapsed Gmail messages, so some messages in the conversation may be missing.',
+      caveat,
     });
   }
 
@@ -24343,7 +24356,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // is not a conversational offer: the model cannot hand it off, and a retry
     // in Act is the recovery, so a routed turn keeps the one-click switch for it.
     const runtimeLimitation = typeof finalResponse === 'string' && finalResponse !== ''
-      && finalResponse.includes(this._runtimeAskLimitations?.get(tabId) ?? '\0');
+      && [...(this._runtimeAskLimitations?.get(tabId) || [])].some(text => finalResponse.includes(text));
     if (mode !== 'ask'
         || (runOptions?.autoModeRouting && !runtimeLimitation)
         || runOptions?.cloudRun

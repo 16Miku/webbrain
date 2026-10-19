@@ -843,12 +843,28 @@ for (const build of BUILDS) {
     assert.equal(classified, 0, 'the runtime limitation is offered without asking the classifier');
   });
 
+  test(`${build}: the advisory coverage caveat of a collapsed Gmail thread is offered the switch too`, async () => {
+    // By default the limitation reaches the user as a caveat appended to the
+    // model's own summary, not as the fixed text.
+    const f = fixture(Agent, { replies: [done('Unused.')] });
+    delete f.agent._maybeEmitAskModeHandoff;
+    let classified = 0;
+    f.agent._jevClassify = async () => { classified += 1; return 'none'; };
+    f.agent.readCompletenessStates.set(f.tab, { required: true, complete: false, requiresExpansionEvidence: true, treeCoverageComplete: true, expansionConfirmed: false });
+    f.agent._readCoverageGuardRefuses(f.tab);
+    const answer = 'The visible messages discuss the launch date.\n\nNote: Ask mode cannot expand collapsed Gmail messages, so some messages in the conversation may be missing.';
+    const emit = (type, data) => f.updates.push({ type, data });
+    await f.agent._maybeEmitAskModeHandoff(f.tab, 'ask', 'Summarize this thread', answer, emit, { autoModeRouting: { previousMode: null } });
+    assert.deepEqual(f.updates.filter(update => update.type === 'ask_mode_handoff').map(update => update.data), [{ value: 'act' }]);
+    assert.equal(classified, 0);
+  });
+
   test(`${build}: the runtime's Ask limitation text is forgotten when its run ends or the next begins`, async () => {
     const f = fixture(Agent, { replies: [done('Unused.')] });
     const state = { required: true, complete: false, requiresExpansionEvidence: true, treeCoverageComplete: true };
     f.agent.readCompletenessStates.set(f.tab, state);
     const limitation = f.agent._readCompletenessLimitation(f.tab);
-    assert.equal(f.agent._runtimeAskLimitations.get(f.tab), limitation);
+    assert.ok(f.agent._runtimeAskLimitations.get(f.tab).has(limitation));
     f.agent._clearReadCompleteness(f.tab);
     assert.equal(f.agent._runtimeAskLimitations.has(f.tab), false, 'cleared with the read state');
     f.agent.readCompletenessStates.set(f.tab, state);
