@@ -21736,6 +21736,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!tabPending) return false;
     const entry = tabPending.get(clarifyId);
     if (!entry) return false;
+    // The time the user took to answer one of WebBrain's own cards does not
+    // age the page observation the pending action was decided on.
+    this._noteClarifyHeld(tabId, entry);
     this._settleClarification(entry, { answer, source });
     return true;
   }
@@ -22141,6 +22144,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!entry?.timer) return;
     try { clearTimeout(entry.timer); } catch {}
     entry.timer = null;
+  }
+
+  // The time a card waited, whether the user answered or its own timeout chose,
+  // does not age the page observation the pending action was decided on.
+  _noteClarifyHeld(tabId, entry) {
+    if (tabId != null && entry && !entry.settled && Number.isFinite(entry.ts)) {
+      this._notePageFeedbackUserDecision?.(tabId, Date.now() - entry.ts);
+    }
   }
 
   /**
@@ -31893,6 +31904,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           entry.timer = null;
           try { onUpdate('clarify_auto', { clarifyId, answer: timedAnswer, source, timeoutSec: waitSec }); }
           catch { /* UI emit must never break the run */ }
+          this._noteClarifyHeld(tabId, entry);
           this._settleClarification(entry, { answer: timedAnswer, source });
         };
         if (timeoutSec === 0) {
@@ -45210,6 +45222,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 });
               }
             } catch { /* UI emit must never break the run */ }
+            this._noteClarifyHeld(tabId, entry);
             this._settleClarification(entry, { answer, source: autoSource });
           };
           entry.restartTimeout = () => {
@@ -55291,6 +55304,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
+      // The model's thinking time does not age its page observation.
+      this._notePageFeedbackModelResponse(tabId);
       const feedbackCalls = result?.toolCalls?.length ? result.toolCalls
         : !this._containsProviderReplayState(result?.responseItems) ? this._tryParseToolCallsFromText(result?.content || '', allowedToolNames) : [];
       // A pending correction supersedes this response anyway; do not first
@@ -56777,6 +56792,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           toolCalls: streamedToolCalls,
         }));
 
+        // The model's thinking time does not age its page observation.
+        this._notePageFeedbackModelResponse(tabId);
         const feedbackCalls = streamedToolCalls?.length ? streamedToolCalls
           : !this._containsProviderReplayState(responseItems) ? this._tryParseToolCallsFromText(fullText || '', allowedToolNames) : [];
         // A pending correction supersedes this response anyway; do not first
