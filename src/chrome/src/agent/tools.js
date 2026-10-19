@@ -2539,6 +2539,7 @@ RULES:
 15. CAPTCHA: stop and ask the user to complete verification manually. Never dismiss, close, or resubmit the challenge. Report blocked work with done({outcome:"partial"}).
 16. Before filling an external email/message/post composer, formulate the exact recipient, subject, and body. For more than a one-line body, save the complete text as \`[pending draft]\` with scratchpad_write first so it can be recovered if the UI fails; never mark it sent until verified.
 17. Recover incomplete source text with read_page or return to its observed URL. Pending uploads need available waits/reads. Complete independent authorized destinations before done; preserve unresolved submissions/challenges and stop for real blockers, cancellation, or limits.
+18. Type only values the user gave or the page already shows. When a needed value has neither (a date, an amount, which of two people with the same name), call done({summary:"...", outcome:"partial"}) asking the user for it instead of choosing one yourself.
 
 ${SENSITIVE_PAGE_DATA_GUIDANCE}
 
