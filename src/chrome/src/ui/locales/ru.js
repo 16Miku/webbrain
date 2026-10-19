@@ -915,6 +915,7 @@ export default {
   'sp.plan.expired': 'Этот план больше не ожидает рассмотрения — запуск отменён.',
   'sp.plan.timed_out': 'Время ожидания одобрения истекло',
   'sp.plan.timed_out_hint': 'Ничего не было запущено. Повторите попытку, чтобы проверить новый план.',
+  'sp.plan.auto_run_in': 'Запустится сам через {time}',
   'sp.plan.awaiting_review': 'Одобрите или отмените план выше, прежде чем отправлять другое сообщение.',
   'sp.plan.intent_unavailable': "Планирование не удалось после двух попыток. Работа продолжится в режиме Act с обычными мерами защиты.",
   'sp.slash.busy_only_oob': 'Пока WebBrain занят, сообщения ставятся в очередь. Только /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces и /verbose могут запускаться сразу как slash-команды.',

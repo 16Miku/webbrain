@@ -1,6 +1,8 @@
 // A small clock face that empties as an auto-timeout runs down: a ring that
 // shrinks clockwise with a hand sweeping the removed part. It carries no text
-// (the label next to it says what happens), so it needs no translation.
+// of its own. Where a label next to it already says what happens it stays
+// hidden from assistive technology; otherwise the caller passes `label`, a
+// function of the time left ("1:30"), and the ring becomes a named timer.
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const RADIUS = 9;
 export const TIMEOUT_RING_CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -14,11 +16,18 @@ function svgEl(name, attrs = {}) {
   return el;
 }
 
-export function createTimeoutRing() {
+export function createTimeoutRing({ label = null } = {}) {
   const ring = document.createElement('span');
   ring.className = 'timeout-ring';
-  ring.setAttribute('aria-hidden', 'true');
+  if (typeof label === 'function') {
+    ring.setAttribute('role', 'timer');
+    ring._timeoutRingLabel = label;
+  } else {
+    ring.setAttribute('aria-hidden', 'true');
+  }
   const svg = svgEl('svg', { viewBox: '0 0 24 24', width: 22, height: 22 });
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
   svg.append(
     svgEl('circle', { class: 'timeout-ring-track', cx: 12, cy: 12, r: RADIUS, fill: 'none', 'stroke-width': 3 }),
     svgEl('circle', {
@@ -51,5 +60,10 @@ export function updateTimeoutRing(ring, remainingMs, totalMs) {
   if (progress) progress.setAttribute('stroke-dashoffset', (-TIMEOUT_RING_CIRCUMFERENCE * (1 - share)).toFixed(3));
   if (hand) hand.setAttribute('transform', `rotate(${((1 - share) * 360).toFixed(1)} 12 12)`);
   ring.classList.toggle('timeout-ring-low', share <= LOW_SHARE || Number(remainingMs) <= LOW_MS);
-  ring.title = formatTimeoutRingTime(remainingMs);
+  const time = formatTimeoutRingTime(remainingMs);
+  ring.title = time;
+  if (ring._timeoutRingLabel) {
+    const spoken = String(ring._timeoutRingLabel(time) || '');
+    if (ring.getAttribute('aria-label') !== spoken) ring.setAttribute('aria-label', spoken);
+  }
 }

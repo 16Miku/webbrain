@@ -889,6 +889,7 @@ export default {
   'sp.plan.expired': 'لم تعد هذه الخطة قيد المراجعة — تم إلغاء التشغيل.',
   'sp.plan.timed_out': 'انتهت مهلة الموافقة',
   'sp.plan.timed_out_hint': 'لم يتم تنفيذ أي شيء. أعد المحاولة لمراجعة خطة جديدة.',
+  'sp.plan.auto_run_in': 'يعمل تلقائيًا بعد {time}',
   'sp.plan.awaiting_review': 'وافق على الخطة أعلاه أو ألغها قبل إرسال رسالة أخرى.',
   'sp.plan.intent_unavailable': "فشل التخطيط بعد محاولتين. ستتم المتابعة في وضع Act مع إجراءات الحماية المعتادة.",
   'sp.slash.busy_only_oob': 'تُضاف الرسائل إلى قائمة الانتظار بينما يكون WebBrain مشغولًا. يمكن فقط لـ /help و /progress و /btw و /scratchpad و /memory و /schedule --list و /watch و /dangerously-skip-permissions و /screenshot و /export و /export --traces و /verbose العمل فورًا كأوامر slash.',

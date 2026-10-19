@@ -898,6 +898,7 @@ export default {
   'sp.plan.expired': 'Bu plan artık inceleme beklenmiyor — çalıştırma iptal edildi.',
   'sp.plan.timed_out': 'Onay süresi doldu',
   'sp.plan.timed_out_hint': 'Hiçbir işlem yapılmadı. Yeni bir planı incelemek için yeniden deneyin.',
+  'sp.plan.auto_run_in': '{time} içinde kendiliğinden çalışır',
   'sp.plan.awaiting_review': 'Başka bir mesaj göndermeden önce yukarıdaki planı onaylayın veya iptal edin.',
   'sp.plan.intent_unavailable': 'Planlama iki denemeden sonra başarısız oldu. Normal güvenlik kontrolleriyle Act modunda devam ediliyor.',
   'sp.slash.busy_only_oob': 'WebBrain meşgulken mesajlar kuyruğa alınır. Yalnızca /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces ve /verbose slash komutları olarak hemen çalışabilir.',

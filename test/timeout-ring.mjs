@@ -41,7 +41,14 @@ for (const build of ['chrome', 'firefox']) {
           ${extract(panel, 'startClarifyCountdown')}
           ${extract(panel, 'stopPlanReviewTimeoutRing')}
           ${extract(panel, 'startPlanReviewTimeoutRing')}
-          Object.assign(window, { createTimeoutRing, updateTimeoutRing, startClarifyCountdown, startPlanReviewTimeoutRing, stopPlanReviewTimeoutRing });
+          // submitPlanReview's collaborators; the decision fails after the ring's first tick.
+          window.decisionResult = () => new Promise((_, reject) => setTimeout(() => reject(new Error('Could not establish connection')), 600));
+          const reattachPlanReviewActiveRun = () => null, setPlanReviewAwaiting = () => {}, scrollToBottom = () => {};
+          const isBackgroundConnectionError = () => true, clearPlanReviewActiveRun = () => {}, restoreActiveRunState = async () => {};
+          const cancelledRunRecoveryRequestIds = new Set(), setTabAbortRequested = () => {};
+          const sendPlanReviewDecisionWithReconnect = () => window.decisionResult();
+          ${extract(panel, 'submitPlanReview')}
+          Object.assign(window, { createTimeoutRing, updateTimeoutRing, startClarifyCountdown, startPlanReviewTimeoutRing, stopPlanReviewTimeoutRing, submitPlanReview });
         ` });
         return await run(p);
       } finally { await p.close(); }
@@ -145,6 +152,59 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(result.afterSettled, 0, 'settling the review removes the ring');
         assert.ok(result.atEnd >= 0 && result.atEnd <= 4, 'at the end of the row');
         assert.equal(result.beyondButtons, true, 'it does not overlap the buttons');
+      });
+    });
+
+    test('the plan ring is a named timer for screen readers; the clarification ring stays hidden next to its text', async () => {
+      await page(async (p) => {
+        const result = await p.evaluate(() => {
+          const card = document.createElement('div');
+          card.className = 'plan-review-card';
+          card.innerHTML = '<div class="plan-review-actions"></div>';
+          card.dataset.timeoutSec = '120';
+          card.dataset.deadlineTs = String(Date.now() + 90_000);
+          document.getElementById('root').appendChild(card);
+          window.startPlanReviewTimeoutRing(card);
+          const ring = card.querySelector('.timeout-ring');
+          const clarify = window.createTimeoutRing();
+          window.updateTimeoutRing(clarify, 30_000, 60_000);
+          return { role: ring.getAttribute('role'), label: ring.getAttribute('aria-label'), hidden: ring.getAttribute('aria-hidden'),
+            svgHidden: ring.querySelector('svg').getAttribute('aria-hidden'),
+            clarifyHidden: clarify.getAttribute('aria-hidden'), clarifyRole: clarify.getAttribute('role'), clarifyLabel: clarify.getAttribute('aria-label') };
+        });
+        assert.equal(result.role, 'timer');
+        assert.match(result.label, /^Runs on its own in 1:(29|30)$/);
+        assert.equal(result.hidden, null);
+        assert.equal(result.svgHidden, 'true', 'only the drawing is hidden');
+        assert.deepEqual([result.clarifyHidden, result.clarifyRole, result.clarifyLabel], ['true', null, null]);
+      });
+    });
+
+    test('a failed approval brings the ring back while the review is still live', async () => {
+      await page(async (p) => {
+        const result = await p.evaluate(async () => {
+          const card = document.createElement('div');
+          card.className = 'plan-review-card';
+          card.innerHTML = '<div class="plan-review-actions"><button class="plan-review-approve">Run</button></div>';
+          card.dataset.planId = 'p1';
+          card.dataset.timeoutSec = '120';
+          card.dataset.deadlineTs = String(Date.now() + 90_000);
+          document.getElementById('root').appendChild(card);
+          window.startPlanReviewTimeoutRing(card);
+          window.submitPlanReview(card, 1, 'p1', 'approve', '');
+          await new Promise((r) => setTimeout(r, 400));
+          const during = card.querySelectorAll('.timeout-ring').length;
+          await new Promise((r) => setTimeout(r, 600));
+          const ring = card.querySelector('.timeout-ring');
+          return { during, after: card.querySelectorAll('.timeout-ring').length, reviewed: card.classList.contains('plan-reviewed'),
+            enabled: !card.querySelector('button').disabled, timer: !!card._planReviewRingTimer, label: ring?.getAttribute('aria-label') };
+        });
+        assert.equal(result.during, 0, 'an in-flight approval hides the countdown');
+        assert.equal(result.reviewed, false);
+        assert.equal(result.enabled, true);
+        assert.equal(result.after, 1, 'the ring is back after the failure');
+        assert.equal(result.timer, true, 'and keeps counting');
+        assert.match(result.label, /^Runs on its own in 1:(2\d|30)$/);
       });
     });
 

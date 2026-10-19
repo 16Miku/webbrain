@@ -889,6 +889,7 @@ export default {
   'sp.plan.expired': '该计划不再等待审查 — 运行已取消。',
   'sp.plan.timed_out': '审批已超时',
   'sp.plan.timed_out_hint': '未执行任何操作。请重试以查看新计划。',
+  'sp.plan.auto_run_in': '{time} 后自动运行',
   'sp.plan.awaiting_review': '发送另一条消息前，请先批准或取消上面的计划。',
   'sp.plan.intent_unavailable': "规划在两次尝试后仍失败。系统将保留常规安全措施并继续以 Act 模式运行。",
   'sp.slash.busy_only_oob': 'WebBrain 忙碌时，消息会排队。只有 /help、/progress、/btw、/scratchpad、/memory、/schedule --list、/watch、/dangerously-skip-permissions、/screenshot、/export、/export --traces 和 /verbose 可以作为斜杠命令立即运行。',

@@ -915,6 +915,7 @@ export default {
   'sp.plan.expired': 'Rancangan ini tidak lagi menunggu semakan — pelaksanaan dibatalkan.',
   'sp.plan.timed_out': 'Kelulusan tamat masa',
   'sp.plan.timed_out_hint': 'Tiada apa-apa dijalankan. Cuba lagi untuk menyemak rancangan baharu.',
+  'sp.plan.auto_run_in': 'Berjalan sendiri dalam {time}',
   'sp.plan.awaiting_review': 'Luluskan atau batalkan rancangan di atas sebelum menghantar mesej lain.',
   'sp.plan.intent_unavailable': "Perancangan gagal selepas dua percubaan. Proses diteruskan dalam mod Act dengan perlindungan biasa.",
   'sp.slash.busy_only_oob': 'Mesej dimasukkan ke giliran semasa WebBrain sibuk. Hanya /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, dan /verbose boleh berjalan serta-merta sebagai arahan slash.',

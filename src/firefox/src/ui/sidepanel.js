@@ -7088,7 +7088,8 @@ function startPlanReviewTimeoutRing(card) {
   if (!actions || !Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
   const totalMs = Math.max((Number(card.dataset.timeoutSec) || 0) * 1000, deadlineTs - Date.now());
   if (deadlineTs - Date.now() <= 0 || totalMs <= 0) return;
-  const ring = createTimeoutRing();
+  // The ring is the plan card's only countdown, so it is a named timer.
+  const ring = createTimeoutRing({ label: time => t('sp.plan.auto_run_in', { time }) });
   actions.appendChild(ring);
   const tick = () => {
     const remainingMs = deadlineTs - Date.now();
@@ -11762,6 +11763,8 @@ function submitPlanReview(card, tabId, planId, action, editedText) {
         for (const el of card.querySelectorAll('button, textarea')) {
           el.disabled = false;
         }
+        // The submission stopped the ring; the review is still live.
+        startPlanReviewTimeoutRing(card);
         setPlanReviewAwaiting(tabId, true, activeAssistantEl || card.closest('.message.assistant'));
         scrollToBottom();
       }

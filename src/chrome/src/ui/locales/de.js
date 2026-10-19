@@ -440,6 +440,7 @@ export default {
   'sp.plan.expired': 'Dieser Plan wartet nicht mehr auf Überprüfung — der Durchlauf wurde abgebrochen.',
   'sp.plan.timed_out': 'Zeit für die Genehmigung abgelaufen',
   'sp.plan.timed_out_hint': 'Nichts wurde ausgeführt. Versuche es erneut, um einen neuen Plan zu prüfen.',
+  'sp.plan.auto_run_in': 'Läuft in {time} von selbst',
   'sp.plan.awaiting_review': 'Genehmigen oder brechen Sie den obigen Plan ab, bevor Sie eine weitere Nachricht senden.',
   'sp.plan.intent_unavailable': "Die Planung ist nach zwei Versuchen fehlgeschlagen. Der Act-Modus wird mit den üblichen Schutzmaßnahmen fortgesetzt.",
   'sp.step.details': 'Details',
