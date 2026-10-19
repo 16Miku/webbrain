@@ -11040,10 +11040,54 @@ export class Agent extends LoopDetector {
         try { continuation = continuation.length <= 32768 ? JSON.parse(continuation) : null; } catch { continuation = null; }
       }
       const allowed = ['filter', 'maxDepth', 'maxChars', 'ref_id', 'page', 'tree_revision'];
-      const valid = continuation && typeof continuation === 'object' && !Array.isArray(continuation)
+      // Two values agree when they are the same once scalar types and the
+      // case of a filter are normalized, as the call is repaired below.
+      const normalized = (value, key) => {
+        // A page is repaired below from up to four digits ("01" is 1).
+        if (key === 'page') {
+          // The page the read serves: Math.max(1, floor(Number(page) || 1)).
+          const number = typeof value === 'string' && /^\s*\d{1,4}\s*$/.test(value) ? Number(value) : decimal(value);
+          if (typeof number === 'number' && Number.isFinite(number)) return Math.max(1, Math.floor(number) || 1);
+        }
+        // The read trims a revision before comparing it; its case is kept.
+        if (key === 'tree_revision' && typeof value === 'string') return value.trim();
+        const scalar = decimal(value);
+        return typeof scalar === 'string' && key === 'filter' ? scalar.trim().toLowerCase() : scalar;
+      };
+      const agrees = (key, value) => !Object.hasOwn(next, key) || Object.is(normalized(next[key], key), normalized(value, key));
+      // Every page value the read treats as the first (Math.max(1, floor(Number(page) || 1))).
+      const firstPage = value => {
+        if (value === undefined || value === null || value === '') return true;
+        const page = normalized(value, 'page');
+        const number = typeof page === 'string' ? decimal(page) : page;
+        return typeof number === 'number' && Number.isFinite(number) && Math.max(1, Math.floor(number)) === 1;
+      };
+      // Only a truncated result returns a continuation, and it is always for
+      // page 2 or later with a tree revision. One for page 1 without a
+      // revision, on a call that names none either, continues nothing: the
+      // call starts a read, and its top-level fields are that read. Models
+      // that fill every field of the schema send one with each first read,
+      // often with other values, so it is dropped instead of failing the read.
+      const restart = continuation && typeof continuation === 'object' && !Array.isArray(continuation)
+        && Object.keys(continuation).length > 0 && Object.keys(continuation).every(key => allowed.includes(key))
+        && !String(continuation.tree_revision ?? '').trim() && !String(next.tree_revision ?? '').trim()
+        && firstPage(continuation.page)
+        // It is a placeholder only beside a read of the call's own. A restart
+        // the tool returns is always anchored (it names a ref_id), so one that
+        // names none cannot be genuine and is dropped beside any top-level read;
+        // an anchored one is a placeholder only where the call disagrees with it
+        // (a restart nested alone, or beside fields that agree, is the read).
+        && (String(continuation.ref_id ?? '').trim() === ''
+          ? allowed.some(key => key !== 'tree_revision' && (key === 'ref_id' ? Object.hasOwn(next, key) : String(next[key] ?? '').trim() !== ''))
+          : Object.entries(continuation).some(([key, value]) => (key === 'ref_id' ? Object.hasOwn(next, key) : String(next[key] ?? '').trim() !== '') && !agrees(key, value)));
+      if (restart) {
+        delete next.continuationArgs;
+        repaired = true;
+      }
+      const valid = restart || continuation && typeof continuation === 'object' && !Array.isArray(continuation)
         && Object.keys(continuation).length > 0
         && Object.keys(continuation).every(key => allowed.includes(key))
-        && Object.entries(continuation).every(([key, value]) => !Object.hasOwn(next, key) || Object.is(next[key], value));
+        && Object.entries(continuation).every(([key, value]) => agrees(key, value));
       if (!valid) {
         return { args, repaired: false, note: '', result: {
           success: false, invalidArguments: true, invalidToolArguments: true,
@@ -11052,8 +11096,10 @@ export class Agent extends LoopDetector {
           error: 'get_accessibility_tree continuationArgs must be one complete JSON object containing only declared read fields, with no conflicting top-level fields. Re-emit the exact returned continuation fields as top-level arguments.',
         } };
       }
-      next = this._normalizeContinuationToolArgs(name, { ...next, continuationArgs: continuation });
-      repaired = true;
+      if (!restart) {
+        next = this._normalizeContinuationToolArgs(name, { ...next, continuationArgs: continuation });
+        repaired = true;
+      }
     }
     for (const key of ['maxDepth', 'maxChars', 'page']) {
       const value = decimal(next[key]);
