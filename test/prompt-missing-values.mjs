@@ -11,6 +11,11 @@ for (const build of ['chrome', 'firefox']) {
       assert.match(prompt, /which of two (?:contacts|people) with the same name/, name);
       assert.match(prompt, /never (?:choose one yourself|fill one in yourself)|instead of choosing one/, name);
     }
+    // A value the page pre-fills (a default date) is not one the user gave.
+    for (const [name, prompt] of [['full', tools.SYSTEM_PROMPT_ACT], ['mid', tools.SYSTEM_PROMPT_ACT_MID], ['lean', tools.SYSTEM_PROMPT_ACT_LEAN], ['compact', tools.SYSTEM_PROMPT_ACT_COMPACT]]) {
+      assert.match(prompt, /pre-fills/, name);
+      assert.doesNotMatch(prompt, /Type only values the user gave or the page already shows/, name);
+    }
     // A timeout or Instant must not answer for the user, so every tier asks for an explicit answer.
     for (const [name, prompt] of [['full', tools.SYSTEM_PROMPT_ACT], ['mid', tools.SYSTEM_PROMPT_ACT_MID], ['lean', tools.SYSTEM_PROMPT_ACT_LEAN], ['compact', tools.SYSTEM_PROMPT_ACT_COMPACT]]) {
       assert.match(prompt, /require_explicit_answer:true/, name);
