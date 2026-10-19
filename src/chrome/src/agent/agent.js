@@ -969,6 +969,8 @@ export class Agent extends LoopDetector {
     this._autoModeEscalationTabs = new Set();
     this._autoModeRoutePendingTabs = new Set();
     this._pendingModeEscalations = new Map();
+    // Corrections a routed turn carries into the action run that replaces it.
+    this._modeEscalationSteering = new Map();
     this._autoModeDevDrainTabs = new Set(); // routed Ask turns after Dev: drain diagnostics unless they hand off to Dev
     this._runProviderOverrides = new Map(); // tabId -> provider id for this run only
     this._standaloneChatRunTabs = new Set(); // tabIds using the provider-independent plain-chat boundary
@@ -7562,14 +7564,48 @@ export class Agent extends LoopDetector {
   _finishSteeringRun(tabId) {
     const run = this._steeringRuns.get(tabId);
     this._steeringRuns.delete(tabId);
-    if (run?.messages.length) {
+    // Stop pressed after a hand-off was accepted cancels its restart.
+    if (this._checkAbort(tabId)) this._pendingModeEscalations.delete(tabId);
+    // A routed turn that handed itself to an action mode passes its
+    // corrections, applied or pending, to the run that replaces it. They stay
+    // journaled under the same request, so a background restart in between
+    // still hands them back to the panel.
+    const carried = run && this._pendingModeEscalations.has(tabId) && !this._checkAbort(tabId)
+      ? [...(run.handoffApplied || []), ...run.messages].map(({ id, text }) => ({ id: String(id), text }))
+      : [];
+    const carriedIds = new Set(carried.map(item => item.id));
+    if (carried.length) {
+      this._modeEscalationSteering.set(tabId, carried);
+      // One sent after the hand-off was checked may need another mode: the
+      // restart routes the corrected request again instead of trusting it.
+      const checked = run.handoffChecked || new Set();
+      if (carried.some(item => !checked.has(item.id))) this._pendingModeEscalations.get(tabId).reroute = true;
+      void this._steeringJournal.forget(tabId, [...carriedIds]);
+      for (const item of carried) void this._steeringJournal.accept(tabId, run.requestId, item);
+    } else {
       // After Stop nothing may start on its own: the panel keeps these
-      // corrections queued for an explicit send instead of draining them.
-      run.onUpdate('steering_queued', { messages: run.messages, ...(this._checkAbort(tabId) ? { stopped: true } : {}) });
+      // corrections queued for an explicit send instead of draining them. A
+      // hand-off stopped before its restart also returns the corrections it
+      // had applied, since the restored turn no longer holds them.
+      const handedBack = [...(run?.handoffApplied || []), ...(run?.messages || [])];
+      if (handedBack.length) run.onUpdate('steering_queued', { messages: handedBack, ...(this._checkAbort(tabId) ? { stopped: true } : {}) });
     }
     // Applied or just handed back: the journal no longer owns what this run
     // accepted. Entries it never restored stay for the panel to reclaim.
-    if (run?.acceptedIds.size) void this._steeringJournal.forget(tabId, [...run.acceptedIds]);
+    const forgotten = [...(run?.acceptedIds || [])].filter(id => !carriedIds.has(String(id)));
+    if (forgotten.length) void this._steeringJournal.forget(tabId, forgotten);
+  }
+
+  // The corrections a hand-off carried, queued before the action run's first
+  // model or tool boundary so it never acts on the uncorrected request.
+  _takeModeEscalationSteering(tabId) {
+    const carried = this._modeEscalationSteering.get(tabId) || [];
+    this._modeEscalationSteering.delete(tabId);
+    const run = this._steeringRuns.get(tabId);
+    const fresh = run ? carried.filter(item => !run.acceptedIds.has(item.id)) : [];
+    for (const item of fresh) run.acceptedIds.add(item.id);
+    if (fresh.length) run.messages.unshift(...fresh);
+    return carried;
   }
 
   async _completeInitialResponseOnlyTurn(tabId, messages, onUpdate, mode, provider, costState, runId, runOptions, gate, enriched, priorMessages) {
@@ -26310,7 +26346,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._finalizeSelectionGroundingScope(tabId, messages, submittedUserMessage);
     }
     await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
-    if (enriched.webbrainTurnKind === 'acknowledge' && runOptions.steeringRevision == null) {
+    // A pending correction (one sent during the turn, or carried by a mode
+    // hand-off) is never acknowledged away: the gate goes on and revalidates it.
+    if (enriched.webbrainTurnKind === 'acknowledge' && runOptions.steeringRevision == null && !this._hasPendingSteering(tabId)) {
       this.plannerFollowUpSkipTabs.delete(tabId);
       const message = 'Acknowledged.';
       messages.push({ role: 'assistant', content: message });
@@ -27011,6 +27049,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const previousMode = this.conversationModes.get(tabId) || null;
     let tier = '';
     try { tier = this._resolvePromptTier(this._activeProvider(tabId)); } catch {}
+    // A hand-off restart the user kept correcting ends read-only, without the
+    // hand-off tool: it applies the corrections and answers.
+    if (runOptions?.modeEscalation?.readOnly === true) {
+      onUpdate('run_mode', { mode: 'ask', source: 'reroute_limit' });
+      return { mode: 'ask', runOptions: { ...runOptions, modeRoute: { requested: AUTO_MODE, mode: 'ask', source: 'reroute_limit' } } };
+    }
     const hard = autoModeHardRoute({
       trustedContinuation: runOptions?.trustedContinuation === true,
       previousMode,
@@ -27034,11 +27078,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // The `run_mode` question of a routed turn, read before the turn joins the
   // conversation: the user's words, the previous turn's mode and the earlier
   // task, never page content.
-  _autoModeQuestion(messages, userMessage, previousMode = null) {
+  _autoModeQuestion(messages, userMessage, previousMode = null, corrections = []) {
     const binding = this._activeTaskBinding(messages || []);
     const task = binding.index >= 0 ? String(binding.requestText || binding.text || '') : '';
     return {
-      request: this._messageText(userMessage),
+      // A rerouted hand-off restart also reads the corrections it carries.
+      request: [this._messageText(userMessage), ...(Array.isArray(corrections) ? corrections : [])].join('\n'),
       page: {
         previous_mode: isRunMode(previousMode) ? previousMode : 'none',
         // An earlier selection prompt with page context is not the user's own words.
@@ -27071,7 +27116,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // run mode, system prompt, the turn's runtime line and dialog handling.
   async _settleAutoModeRun(tabId, route, enriched, onUpdate, runOptions = {}) {
     const waitStartedAt = Date.now();
-    const routed = await settleAutoModeRoute(route);
+    let routed = await settleAutoModeRoute(route);
+    // The route read the request and the corrections it was given. One the
+    // user sent while it ran, or while the action run's browser setup below
+    // starts, is not covered, so an action route is not trusted: the turn
+    // starts read-only, applies the correction and can still hand itself off
+    // through request_action_mode. The check comes after the last await, so
+    // nothing can arrive between it and the mode being committed.
+    const covered = new Set(runOptions?.autoModeRouting?.correctionIds || []);
+    const corrected = () => (this._steeringRuns.get(tabId)?.messages || []).some(item => !covered.has(String(item.id)));
+    if (routed.mode !== 'ask' && !corrected() && !this._isStandaloneChatRun(runOptions)) {
+      await cdpClient.startDialogHandling(tabId, {
+        signal: this._runAbortSignal(tabId),
+      }).catch(error => {
+        if (error?.name === 'AbortError' || error?.code === 'dialog_startup_timeout') throw error;
+        // Restricted tabs can still use non-CDP tools.
+      });
+    }
+    if (routed.mode !== 'ask' && corrected()) {
+      cdpClient.stopDialogHandling(tabId);
+      routed = { mode: 'ask', choice: null, source: 'route_corrected', latencyMs: routed.latencyMs };
+    }
     const previousMode = runOptions?.autoModeRouting?.previousMode || null;
     const mode = routed.mode;
     this._autoModeRoutePendingTabs.delete(tabId);
@@ -27080,14 +27145,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._runModeOverrides.set(tabId, mode);
       this.getConversation(tabId, mode);
       withRoutedRuntimeMode(enriched, mode);
-      if (!this._isStandaloneChatRun(runOptions)) {
-        await cdpClient.startDialogHandling(tabId, {
-          signal: this._runAbortSignal(tabId),
-        }).catch(error => {
-          if (error?.name === 'AbortError' || error?.code === 'dialog_startup_timeout') throw error;
-          // Restricted tabs can still use non-CDP tools.
-        });
-      }
     }
     // Leaving Dev drains its diagnostics. A read-only turn may still hand
     // itself to Dev, so processMessage decides when the turn ends.
@@ -27110,38 +27167,54 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  // The user's corrections to a routed turn since it started, applied or
+  // still pending, in the order they were sent.
+  _autoModeTurnCorrections(tabId, messages, snapshot = null) {
+    const before = new Set(snapshot?.messages || []);
+    const applied = (messages || [])
+      .filter(message => message?.role === 'user' && message.webbrainSteering && !before.has(message))
+      .map(message => ({
+        id: String(message.webbrainSteering.messageId || ''),
+        text: typeof message.content === 'string' ? message.content : this._messageText(message),
+      }));
+    const pending = (this._steeringRuns.get(tabId)?.messages || []).map(item => ({ id: String(item.id || ''), text: item.text }));
+    return [...applied, ...pending].filter(item => item.id && String(item.text || '').trim());
+  }
+
   // Reads a `request_action_mode` call of a routed Ask turn. Its quote must
-  // come from the user's own words; and because the calling model has read
-  // the page, the page-free `run_mode` question must also answer act or dev
-  // (a sure decision-model "answer" from routing is reused from the cache).
-  // Returns { accepted: { mode, evidence } } or { refusal: text }.
+  // come from the user's own words: the request or a correction the user sent
+  // during the turn. Because the calling model has read the page, the
+  // page-free `run_mode` question about the corrected request must also
+  // answer act or dev (a sure decision-model "answer" from routing is reused
+  // from the cache). Returns { accepted: { mode, evidence }, corrections },
+  // { refusal: text }, or { superseded: true } when the user corrected the
+  // request while the check ran: the call no longer covers the request, and
+  // the model asks again (for Act or Dev) once it has read the correction.
   async _autoModeEscalation(tabId, toolCalls, enriched, provider, question, messages, snapshot = null) {
     const call = (toolCalls || []).find(item => item?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME);
     const request = typeof enriched?.webbrainUserAuthoredText === 'string'
       ? enriched.webbrainUserAuthoredText
       : this._plannerUserAuthoredText(enriched);
     const tier = this._resolvePromptTier(provider);
-    const requested = acceptModeEscalation(call?.function?.arguments, request, { tier });
+    const corrected = corrections => [request, ...corrections.map(item => item.text)].join('\n');
+    let corrections = this._autoModeTurnCorrections(tabId, messages, snapshot);
+    const requested = acceptModeEscalation(call?.function?.arguments, corrected(corrections), { tier });
     if (!requested) {
-      return { refusal: 'request_action_mode was refused: `evidence` must quote the words of the user\'s latest message that ask for the action, exactly as written. Answer the request read-only if you can.' };
+      return { refusal: 'request_action_mode was refused: `evidence` must quote the user\'s own words that ask for the action (from their request or a correction they sent), exactly as written. Answer the request read-only if you can.' };
     }
-    // A correction made during this turn, applied or still pending, belongs
-    // to the turn the restart replaces.
-    const corrected = () => {
-      const before = new Set(snapshot?.messages || []);
-      return this._hasPendingSteering(tabId)
-        || messages.some(message => message?.webbrainSteering && !before.has(message));
-    };
-    const steeredRefusal = { refusal: 'request_action_mode was refused because the user corrected the request during this turn. Answer the corrected request read-only; the user can send it again to have it done.' };
-    if (corrected()) return steeredRefusal;
+    const base = question || { request, page: {} };
+    const asked = corrections.length ? { ...base, request: corrected(corrections) } : base;
     // A sure "answer" from routing settles it; an "unclear" one asks again.
-    const verdict = await this._semanticDecision(tabId, 'run_mode', question || { request, page: {} }, { provider, retryChoices: ['unclear'] });
-    if (corrected()) return steeredRefusal;
+    const verdict = await this._semanticDecision(tabId, 'run_mode', asked, { provider, retryChoices: ['unclear'] });
+    const latest = this._autoModeTurnCorrections(tabId, messages, snapshot);
+    if (latest.length !== corrections.length || latest.some((item, index) => item.id !== corrections[index].id)) {
+      return { superseded: true };
+    }
     const mode = confirmedEscalationMode(requested, verdict.choice, { tier });
     if (!mode) {
       return { refusal: 'request_action_mode was refused: read on its own, the user\'s request does not ask for browser actions. Answer it read-only.' };
     }
-    return { accepted: { mode, evidence: requested.evidence } };
+    return { accepted: { mode, evidence: requested.evidence }, corrections };
   }
 
   // The conversation and per-tab turn state before a routed turn gathers its
@@ -53833,10 +53906,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._hydrate(tabId);
     this._pendingModeEscalations.delete(tabId);
     if (mode === AUTO_MODE) {
+      // A hand-off restart routed again keeps its carried corrections, and
+      // its route reads them with the request.
+      const reroute = runOptions?.modeEscalation?.reroute === true;
+      if (!reroute) this._modeEscalationSteering.delete(tabId);
       ({ mode, runOptions } = this._beginAutoModeRun(tabId, userMessage, attachments, runOptions, onUpdate));
+      const carried = reroute ? this._takeModeEscalationSteering(tabId) : [];
+      if (carried.length && runOptions?.autoModeRouting) {
+        runOptions = { ...runOptions, autoModeRouting: { ...runOptions.autoModeRouting,
+          corrections: carried.map(item => item.text), correctionIds: carried.map(item => item.id) } };
+      }
     } else if (runOptions?.modeEscalation && isRunMode(mode)) {
       runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation' } };
       onUpdate('run_mode', { mode, source: 'escalation' });
+      this._takeModeEscalationSteering(tabId);
+    } else {
+      this._modeEscalationSteering.delete(tabId);
     }
     // Before any model or tool boundary, so a run resumed after a background
     // restart applies the corrections it had accepted before the old task acts.
@@ -54244,7 +54329,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // An automatically routed turn asks the decision model while its page
     // context is gathered below (see auto-mode.js).
     const autoModeQuestion = runOptions?.autoModeRouting
-      ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode)
+      ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode, runOptions.autoModeRouting.corrections)
       : null;
     const autoModeRoute = autoModeQuestion ? this._routeAutoRunMode(tabId, autoModeQuestion) : null;
 
@@ -55265,10 +55350,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (mode === 'ask' && this._autoModeEscalationTabs.has(tabId)
           && result.toolCalls?.some(call => call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME)) {
         const handoff = await this._autoModeEscalation(tabId, result.toolCalls, enriched, provider, autoModeQuestion, messages, autoModeTurnStart);
+        if (handoff.superseded) {
+          // Like any response a pending correction supersedes: the next step
+          // applies the correction and the model decides again, so a
+          // correction that needs Dev gets a Dev hand-off.
+          onUpdate('text', { content: '', replace: true });
+          continue;
+        }
         const escalation = handoff.accepted;
         if (escalation) {
           // The caller restarts this turn in the requested mode, from the
           // state the turn started with, so the request is recorded once.
+          // Corrections the turn applied leave with it; the action run
+          // applies them again, with any still pending, before it acts.
+          const steeringRun = this._steeringRuns.get(tabId);
+          if (steeringRun) {
+            const pendingIds = new Set(steeringRun.messages.map(item => String(item.id)));
+            steeringRun.handoffApplied = (handoff.corrections || []).filter(item => !pendingIds.has(item.id));
+            steeringRun.handoffChecked = new Set((handoff.corrections || []).map(item => item.id));
+          }
           this._restoreAutoModeTurn(tabId, messages, autoModeTurnStart);
           this._pendingModeEscalations.set(tabId, escalation);
           onUpdate('text', { content: '', replace: true });
