@@ -1217,6 +1217,28 @@ for (const [browser, Agent, Scheduler] of schedulingVariants) {
       assert.equal(created.length, 1); assert.deepEqual(runs, [1902, 1902]);
     } finally { await f.close(); }
   });
+  test(`${browser}: a busy tab the URL task was created from does not defer the task's own helper tab`, async () => {
+    const f = await schedulingFixture(Agent, Scheduler);
+    const created = [], runs = [];
+    api.tabs.get = async id => id === 1903 ? { id, url: 'https://owned.example/inspection', title: 'Owned helper' } : { id, url: 'https://example.com/', title: 'The page the user is on' };
+    api.tabs.create = async args => { created.push(structuredClone(args)); return { id: 1903, ...args }; };
+    api.tabs.update = async (id, args) => ({ id, ...args });
+    f.agent.processMessage = async (id) => { runs.push(id); return 'The owned page was read.'; };
+    try {
+      const result = await f.manager.createTaskJob({ tabId: f.tabId, conversationId: 'manual', source: 'ui', currentUrl: 'https://example.com/',
+        args: { ...schedulingArgs('schedule_task'), schedule: { type: 'recurring', after_seconds: 90, interval_minutes: 5 },
+          target: { type: 'url', url: 'https://owned.example/inspection' } } });
+      assert.equal(result.success, true);
+      f.agent._finishSteeringRun(f.tabId); f.agent._releaseRunEntry(f.tabId);
+      // The user is running something in the tab the task was created from.
+      f.manager._runningTabs.add(f.tabId);
+      await f.manager.handleAlarm([...f.alarms.keys()][0]);
+      assert.deepEqual(runs, [1903], 'the task ran in its own helper tab');
+      assert.equal(created.length, 1);
+      assert.notEqual(f.jobs()[0].status, 'queued', 'the user\'s busy tab did not requeue the task');
+      assert.ok(f.manager._runningTabs.has(f.tabId), 'the user\'s run is untouched');
+    } finally { await f.close(); }
+  });
 }
 
 for (const [browser, Agent, Scheduler] of schedulingVariants) {

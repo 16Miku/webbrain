@@ -2222,9 +2222,14 @@ export class ScheduledJobManager {
       }
     };
     try {
+      // A URL task created from the user's tab does not run there (see
+      // _resolveTab), so that tab is not reserved up front: the user's own run
+      // in it must not defer a task that opens its own helper. The tab the run
+      // really uses is reserved below, once it is known.
+      const ownsTargetTab = job.target?.type !== 'url' || job.source === 'watch' || job.target?.helperTab === true;
       const candidateTabId = job.kind === 'resume' || job.target?.type === 'current_tab'
         ? (job.tabId || job.target?.tabId)
-        : job.target?.tabId;
+        : ownsTargetTab ? job.target?.tabId : null;
       await reserveTab(candidateTabId);
       if (execution.cancelled) { releaseReservation(); return; }
       tabId = await this._resolveTab(job, execution);
