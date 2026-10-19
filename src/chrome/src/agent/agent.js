@@ -40093,8 +40093,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && gateOutcome.deliverables.every(value => typeof value === 'string' && value.length <= 1000)
         ? [...gateOutcome.deliverables]
         : [],
+      // A continuation of the same task still owes the deliverables the first run did.
       multipleDeliverables: gateOutcome?.multipleDeliverables === true
-        || (Array.isArray(gateOutcome?.deliverables) && gateOutcome.deliverables.length > 1),
+        || (Array.isArray(gateOutcome?.deliverables) && gateOutcome.deliverables.length > 1)
+        || (carryScopeMatches && carried?.multipleDeliverables === true),
       siteWorkflowUrl: String(gateOutcome?.siteWorkflowUrl || ''),
       messaging,
       messagingConversationScope,
@@ -40671,6 +40673,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         scheduledResume: guard.scheduledResume === true,
         conditionalSiteWorkflow: guard.conditionalSiteWorkflow,
         conditionalMutationBlocked: guard.conditionalMutationBlocked === true,
+        multipleDeliverables: guard.multipleDeliverables === true || (guard.deliverables || []).length > 1,
         approvedPlanAnchor: guard.approvedPlanAnchor,
         approvedPlanText: guard.approvedPlanText,
         taskKey: guard.taskKey,

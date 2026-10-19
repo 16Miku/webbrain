@@ -165,6 +165,24 @@ for (const browser of ['chrome', 'firefox']) {
     assert.deepEqual(f.operations, [], 'one verified submission cannot finish nine');
   });
 
+  test(`${browser}: Continue keeps the task's several-deliverables flag`, async () => {
+    const f = fixture();
+    const gate = { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true };
+    f.agent._startPlanExecutionGuard(f.tab, 'act', { ...gate, deliverables: [], multipleDeliverables: true }, {});
+    const first = f.agent._planExecutionGuards.get(f.tab);
+    assert.equal(first.multipleDeliverables, true);
+    first.successfulTaskToolCalls = 1;
+    first.successfulConsequentialToolCalls = 1;
+    f.agent._storeContinuationExecutionEvidence(f.tab);
+    assert.equal(f.agent._continuationExecutionEvidence.get(f.tab)?.multipleDeliverables, true, 'the first run stores the flag');
+    // The trusted continuation's own plan names no deliverables.
+    f.agent._startPlanExecutionGuard(f.tab, 'act', { ...gate, deliverables: [] }, { trustedContinuation: true });
+    assert.equal(f.agent._planExecutionGuards.get(f.tab).multipleDeliverables, true, 'the continuation restores it');
+    // A run that is not a continuation does not inherit it.
+    f.agent._startPlanExecutionGuard(f.tab, 'act', { ...gate, deliverables: [] }, {});
+    assert.equal(f.agent._planExecutionGuards.get(f.tab).multipleDeliverables, false);
+  });
+
   test(`${browser}: a later self-verifying action does not make the earlier submission the latest step`, async () => {
     // The submission left verification debt; scheduling a follow-up then
     // succeeded and proved itself. lastAction still names the submission, but
