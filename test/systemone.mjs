@@ -56,6 +56,11 @@ for (const build of ['chrome', 'firefox']) {
     // A screenshot inside the state is an image, not text, so it does not use up the budget.
     await judge.evaluate({ config: { ...config, supportsVision: true }, state: [{ task: 'Is it done?' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(50000) } }], questions: one });
     assert.equal(requests.length, 2, 'an image payload is excluded from the text budget');
+    // The same data URL as ordinary text is text: the model reads it as tokens.
+    await assert.rejects(judge.evaluate({ config: { ...config, supportsVision: true }, questions: one,
+      state: [{ observation: 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(400) }, { task: 'Is it done?' }] }),
+    error => error.code === 'JEV_STATE_EXCEEDS_MODEL_INPUT');
+    assert.equal(requests.length, 2, 'a data URL in text is not sent');
     await judge.evaluate({ config: { ...config, model: 'another/publisher' }, state: dense.cjk, questions: one });
     assert.equal(requests.length, 3, 'other models keep the full state');
     assert.ok(mod.estimateTextTokens('x'.repeat(100)) >= 50 && mod.estimateTextTokens('日'.repeat(10)) >= 20);
