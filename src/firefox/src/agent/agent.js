@@ -30806,11 +30806,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let cursor = 0;
       const times = [...node.querySelectorAll?.('time[datetime]') || []]
         .filter(time => !time.parentElement?.closest('time[datetime]'));
+      // Beyond this many timestamps the text is left as it is rendered: it
+      // still binds the post, and a ticking clock only makes it refuse.
+      if (times.length > 16) return text;
       let previous = null;
       for (const time of times) {
-        const shown = rendered(time);
-        // The occurrence that belongs to this element: as many equal strings
-        // as the text between the previous timestamp and this one holds come first.
+        const shown = rendered(time).trim();
+        // One representation for counting and for replacing: the rendered text
+        // of the timestamp, in any case and white-space.
+        const pattern = () => new RegExp(shown.split(/\s+/).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'), 'gi');
+        // The occurrence that belongs to this element: as many matches as the
+        // rendered text between the previous timestamp and this one holds come first.
         let skip = 0;
         if (shown) {
           try {
@@ -30824,23 +30830,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               const owner = part.parentElement;
               if (owner && (typeof owner.checkVisibility !== 'function' || owner.checkVisibility({ visibilityProperty: true }))) between += part.data;
             }
-            // Compared as rendered: case and white-space as styled are folded on both sides.
-            const fold = value => value.replace(/\s+/g, ' ').toLowerCase();
-            const needle = fold(shown), haystack = fold(between);
-            for (let from = needle ? haystack.indexOf(needle) : -1; from >= 0; from = haystack.indexOf(needle, from + needle.length)) skip += 1;
+            skip = (between.match(pattern()) || []).length;
           } catch { skip = 0; }
         }
         previous = time;
-        let at = -1;
-        for (let n = 0, from = cursor; shown && n <= skip; n += 1) {
-          at = text.indexOf(shown, from);
-          if (at < 0) break;
-          from = at + shown.length;
+        let found = null;
+        if (shown) {
+          const search = pattern();
+          search.lastIndex = cursor;
+          for (let n = 0; n <= skip; n += 1) { found = search.exec(text); if (!found) break; }
         }
-        if (at < 0) continue;
+        if (!found) continue;
         const replacement = marker(time);
-        text = text.slice(0, at) + replacement + text.slice(at + shown.length);
-        cursor = at + replacement.length;
+        text = text.slice(0, found.index) + replacement + text.slice(found.index + found[0].length);
+        cursor = found.index + replacement.length;
       }
       return text;
     };
