@@ -73117,8 +73117,15 @@ test('Local OpenAI-compatible Proxy context window: model card, live props, mode
         const listFail = await mgr._attachDetectedContextWindow('local_openai_proxy', mgr.providers.get('local_openai_proxy'), { ok: true, models: [] }, { model: 'claude-sonnet-4-5' });
         assert.equal(listFail.contextWindow, undefined, `${label}: Load models / Test connection keep it too`);
         assert.equal(config().contextWindow, 8192);
+        // The same model name behind another Base URL is another server: the old report does not apply.
+        await mgr.updateProvider('local_openai_proxy', { baseUrl: 'http://127.0.0.1:9999/v1' });
+        const moved = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(moved.contextWindow, 128000, `${label}: a window reported by the old endpoint is not kept for the new one`);
+        assert.equal(config().autoContextWindowSource, 'inferred');
+        assert.equal(config().autoContextWindowBaseUrl, 'http://127.0.0.1:9999/v1');
         // A user edit drops the provenance with the auto window.
         await mgr.updateProvider('local_openai_proxy', { contextWindow: 4096, manualContextWindow: true });
+        assert.equal(config().autoContextWindowBaseUrl, undefined);
         assert.equal(config().autoContextWindowSource, undefined);
         assert.equal(config().autoContextWindowModel, undefined);
       }

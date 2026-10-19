@@ -2059,6 +2059,7 @@ export class ProviderManager {
     if (!Number.isFinite(Number(merged.autoContextWindow))) {
       delete merged.autoContextWindowSource;
       delete merged.autoContextWindowModel;
+      delete merged.autoContextWindowBaseUrl;
     }
     if (id === 'webgpu' && Object.hasOwn(updates, 'model')) {
       merged.model = normalizeWebgpuModelId(merged.model);
@@ -2738,6 +2739,7 @@ export class ProviderManager {
       manualContextWindow: false,
       autoContextWindowSource: detected.reported === true ? 'reported' : 'inferred',
       autoContextWindowModel: String(detected.model || ''),
+      autoContextWindowBaseUrl: this._contextProvenanceBaseUrl(config),
     };
   }
 
@@ -2749,7 +2751,14 @@ export class ProviderManager {
     const auto = Number(config?.autoContextWindow);
     return config?.autoContextWindowSource === 'reported'
       && Number.isFinite(auto) && auto > 0 && Number(config?.contextWindow) === auto
-      && String(config?.autoContextWindowModel || '') === String(detected.model || '');
+      && String(config?.autoContextWindowModel || '') === String(detected.model || '')
+      && String(config?.autoContextWindowBaseUrl || '') === this._contextProvenanceBaseUrl(config);
+  }
+
+  // The endpoint a reported window belongs to: the same model name behind another Base URL is a
+  // different server, whose window the old one says nothing about.
+  _contextProvenanceBaseUrl(config) {
+    return String(config?.baseUrl || '').trim().replace(/\/+$/, '').toLowerCase();
   }
 
   async _attachDetectedContextWindow(id, provider, result, options = {}) {
