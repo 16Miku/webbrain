@@ -27077,8 +27077,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       onUpdate('run_mode', { mode: 'ask', source: 'reroute_limit' });
       return { mode: 'ask', runOptions: { ...runOptions, modeRoute: { requested: AUTO_MODE, mode: 'ask', source: 'reroute_limit' } } };
     }
+    // A continuation of a read-only run is routed from the continued task's
+    // own words, never from WebBrain's continuation text.
+    const continuation = runOptions?.trustedContinuation === true;
+    const continuedTask = continuation && previousMode !== 'act' && previousMode !== 'dev'
+      ? this._autoModeContinuedTask(tabId) : '';
     const hard = autoModeHardRoute({
-      trustedContinuation: runOptions?.trustedContinuation === true,
+      trustedContinuation: continuation,
       previousMode,
       inBrowserModel: this._isTinyAskRun(runOptions),
       standaloneChat: this._isStandaloneChatRun(runOptions),
@@ -27086,30 +27091,44 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       cloudRun: runOptions?.cloudRun === true,
       attachments,
       tier,
-      text: this._messageText(userMessage),
+      text: continuation ? continuedTask : this._messageText(userMessage),
     });
-    if (hard) {
-      onUpdate('run_mode', { mode: hard.mode, source: hard.source });
-      return { mode: hard.mode, runOptions: { ...runOptions, modeRoute: { requested: AUTO_MODE, ...hard } } };
+    // Without words of its own to route, a continuation stays read-only.
+    const route = hard || (continuation && !continuedTask ? { mode: 'ask', source: 'continuation' } : null);
+    if (route) {
+      onUpdate('run_mode', { mode: route.mode, source: route.source });
+      return { mode: route.mode, runOptions: { ...runOptions, modeRoute: { requested: AUTO_MODE, ...route } } };
     }
     this._autoModeEscalationTabs.add(tabId);
     this._autoModeRoutePendingTabs.add(tabId);
-    return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode } } };
+    return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode, ...(continuation ? { continuedTask } : {}) } } };
+  }
+
+  // The user's own words of the task a continuation resumes: its request and
+  // the answers, updates and corrections bound to it.
+  _autoModeContinuedTask(tabId) {
+    const binding = this._activeTaskBinding(this.conversations.get(tabId) || []);
+    if (binding.index < 0) return '';
+    const bound = binding.updates || (binding.answers || []).map(text => ({ text }));
+    return [binding.requestText || binding.text, ...bound.map(item => item?.text)]
+      .map(text => String(text ?? '').trim()).filter(Boolean).join('\n');
   }
 
   // The `run_mode` question of a routed turn, read before the turn joins the
   // conversation: the user's words, the previous turn's mode and the earlier
   // task, never page content.
-  _autoModeQuestion(messages, userMessage, previousMode = null, corrections = []) {
+  _autoModeQuestion(messages, userMessage, previousMode = null, corrections = [], continuedTask = '') {
     const binding = this._activeTaskBinding(messages || []);
     const task = binding.index >= 0 ? String(binding.requestText || binding.text || '') : '';
     return {
-      // A rerouted hand-off restart also reads the corrections it carries.
-      request: [this._messageText(userMessage), ...(Array.isArray(corrections) ? corrections : [])].join('\n'),
+      // A rerouted hand-off restart also reads the corrections it carries; a
+      // continuation reads the words of the task it continues.
+      request: [continuedTask || this._messageText(userMessage), ...(Array.isArray(corrections) ? corrections : [])].join('\n'),
       page: {
         previous_mode: isRunMode(previousMode) ? previousMode : 'none',
-        // An earlier selection prompt with page context is not the user's own words.
-        current_task: carriesUntrustedText(task) ? '' : task,
+        // An earlier selection prompt with page context is not the user's own
+        // words; a continued task is the request itself.
+        current_task: (continuedTask || carriesUntrustedText(task)) ? '' : task,
       },
     };
   }
@@ -27212,11 +27231,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // { refusal: text }, or { superseded: true } when the user corrected the
   // request while the check ran: the call no longer covers the request, and
   // the model asks again (for Act or Dev) once it has read the correction.
-  async _autoModeEscalation(tabId, toolCalls, enriched, provider, question, messages, snapshot = null) {
+  async _autoModeEscalation(tabId, toolCalls, enriched, provider, question, messages, snapshot = null, continuedTask = '') {
     const call = (toolCalls || []).find(item => item?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME);
-    const request = typeof enriched?.webbrainUserAuthoredText === 'string'
+    // A continuation's request is the continued task's own words, never
+    // WebBrain's continuation text.
+    const request = continuedTask || (typeof enriched?.webbrainUserAuthoredText === 'string'
       ? enriched.webbrainUserAuthoredText
-      : this._plannerUserAuthoredText(enriched);
+      : this._plannerUserAuthoredText(enriched));
     const tier = this._resolvePromptTier(provider);
     const corrected = corrections => [request, ...corrections.map(item => item.text)].join('\n');
     let corrections = this._autoModeTurnCorrections(tabId, messages, snapshot);
@@ -54371,7 +54392,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // An automatically routed turn asks the decision model while its page
     // context is gathered below (see auto-mode.js).
     const autoModeQuestion = runOptions?.autoModeRouting
-      ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode, runOptions.autoModeRouting.corrections)
+      ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode, runOptions.autoModeRouting.corrections,
+        runOptions.autoModeRouting.continuedTask)
       : null;
     const autoModeRoute = autoModeQuestion ? this._routeAutoRunMode(tabId, autoModeQuestion) : null;
 
@@ -55391,7 +55413,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       if (mode === 'ask' && this._autoModeEscalationTabs.has(tabId)
           && result.toolCalls?.some(call => call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME)) {
-        const handoff = await this._autoModeEscalation(tabId, result.toolCalls, enriched, provider, autoModeQuestion, messages, autoModeTurnStart);
+        const handoff = await this._autoModeEscalation(tabId, result.toolCalls, enriched, provider, autoModeQuestion, messages, autoModeTurnStart,
+          runOptions?.autoModeRouting?.continuedTask);
         if (handoff.superseded) {
           // Like any response a pending correction supersedes: the next step
           // applies the correction and the model decides again, so a

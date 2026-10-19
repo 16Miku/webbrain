@@ -91,6 +91,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       'clearThinkingActivityTimers', 'setActivityText', 'showActivity', 'hideActivity',
       'startThinkingActivity', 'renderAgentErrorUpdate', 'handleAgentUpdateMessage',
       'roleFromMessageElement', 'normalizeHistoryText', 'extractChatHistoryMessages', 'formatMarkdown', 'isSuccessfulAskCompletion',
+      'invalidateUnresolvedClarifyCards',
     ].map(name => extract(source, name)).join('\n');
     const hydration = extract(source, 'applyActiveRunState');
     const snapshotStart = hydration.indexOf('    let lastRenderedSeq =');

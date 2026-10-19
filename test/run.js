@@ -45592,7 +45592,7 @@ test('/foreground is a run-scoped compatibility override in both local builds', 
     ), `${label}: compatibility mode should activate the run tab and focus its window`);
     assert.match(background, /if \(msg\.foreground\) await activateForegroundCompatibilityTab\(tabId\);[\s\S]*?\.\.\.\(msg\.foreground \? \{ foreground: true \} : \{\}\)/,
       `${label}: background dispatch should scope foreground behavior to the requested run`);
-    assert.match(background, /case 'continue':[\s\S]*?foreground: msg\.foreground === true,[\s\S]*?agent\.continueProcessing\([\s\S]*?\.\.\.\(msg\.foreground \? \{ foreground: true \} : \{\}\)/,
+    assert.match(background, /case 'continue':[\s\S]*?foreground: msg\.foreground === true,[\s\S]*?const runOptions = \{\s*\.\.\.\(msg\.foreground \? \{ foreground: true \} : \{\}\)[\s\S]*?agent\.continueProcessing\(tabId, publishUpdate, mode, runOptions\)/,
       `${label}: background continuations should persist foreground mode and configure the agent`);
 
     for (const [caseName, nextCaseName] of [
@@ -52349,7 +52349,7 @@ test('sidepanel continue runs use the initiating tab state', () => {
     const match = panel.match(/async function continueAgent\(options = \{\}\) \{[\s\S]*?\n\}/);
     assert.ok(match, `${label}: continueAgent missing`);
     const body = match[0];
-    assert.match(body, /const tabId = currentTabId;[\s\S]*?const modeForSend = \['ask', 'act', 'dev'\]\.includes\(options\?\.mode\) \? options\.mode : agentMode;[\s\S]*?sendRunWithReconnect\(options\.failureRecoveryId \? 'failure_recovery_response' : 'continue_start', \{[\s\S]*?tabId,[\s\S]*?mode: modeForSend,/, `${label}: Continue should send with the tab and requested-or-current mode captured before awaiting`);
+    assert.match(body, /const tabId = currentTabId;[\s\S]*?const modeForSend = autoModeSelection && options\?\.autoRouted === true && options\?\.mode === 'ask' \? 'auto'\s*: \['ask', 'act', 'dev'\]\.includes\(options\?\.mode\) \? options\.mode : agentMode;[\s\S]*?sendRunWithReconnect\(options\.failureRecoveryId \? 'failure_recovery_response' : 'continue_start', \{[\s\S]*?tabId,[\s\S]*?mode: modeForSend,/, `${label}: Continue should send with the tab and requested-or-current mode captured before awaiting`);
     assert.doesNotMatch(body, /sendRunWithReconnect\([^,]+, \{[\s\S]*?tabId: currentTabId/, `${label}: Continue should not read currentTabId inside the async send payload`);
     assert.doesNotMatch(body, /sendRunWithReconnect\([^,]+, \{[\s\S]*?mode: agentMode/, `${label}: Continue should not read agentMode inside the async send payload`);
     assert.match(body, /await prepareChatHistoryForTurn\(tabId, modeForSend\);[\s\S]*?if \(isTabAbortRequested\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\) \|\| !sameTabId\(renderedTabId, tabId\)\) return false;[\s\S]*?assistantEl = addMessage\('assistant', ''\);/, `${label}: Continue should hydrate history, honor aborts, and re-check the initiating tab before rendering`);

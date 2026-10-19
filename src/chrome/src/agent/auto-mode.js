@@ -3,11 +3,12 @@
 // The side panel sends each turn with mode "auto" instead of asking the user
 // to pick Ask, Act or Dev. The agent routes it:
 //
-//   1. Run state alone decides when it can: a continuation keeps its run's
-//      mode; an in-browser model's turn (a tiny Ask), a selected-text scope,
-//      the standalone window and a message that carries page text (a
-//      selection shortcut with page context) stay in Ask; and a video
-//      attachment, which can only be uploaded, needs Act.
+//   1. Run state alone decides when it can: a continuation keeps an action
+//      run's mode (one of a read-only run is routed like a new turn, from
+//      the continued task's own words); an in-browser model's turn (a tiny
+//      Ask), a selected-text scope, the standalone window and a message that
+//      carries page text (a selection shortcut with page context) stay in
+//      Ask; and a video attachment, which can only be uploaded, needs Act.
 //   2. Otherwise the decision model answers the `run_mode` question while the
 //      page context is gathered. The turn waits for it at most
 //      AUTO_MODE_ROUTE_GRACE_MS after that context is ready.
@@ -47,8 +48,11 @@ export function autoModeHardRoute({
   trustedContinuation = false, previousMode = null, inBrowserModel = false, standaloneChat = false,
   selectionScoped = false, cloudRun = false, attachments = [], tier = '', text = '',
 } = {}) {
-  if (trustedContinuation) {
-    return { mode: actionModeForTier(isRunMode(previousMode) ? previousMode : 'ask', tier), source: 'continuation' };
+  // A continuation keeps an action run's mode. One of a read-only run is
+  // routed again, so it can still hand itself to an action mode: `text` is
+  // then the continued task's own words, never WebBrain's continuation text.
+  if (trustedContinuation && (previousMode === 'act' || previousMode === 'dev')) {
+    return { mode: actionModeForTier(previousMode, tier), source: 'continuation' };
   }
   // An in-browser model only answers questions (a tiny Ask run).
   if (inBrowserModel) return { mode: 'ask', source: 'in_browser_model' };
