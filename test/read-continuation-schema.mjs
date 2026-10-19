@@ -228,6 +228,11 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(repaired.args.maxChars, 6000);
     const text = agent._repairToolCallArgs('get_accessibility_tree', { continuationArgs: JSON.stringify(restart) });
     assert.equal(text.args.ref_id, 'ref_12');
+    // Beside top-level fields that only repeat part of it, it is still the read.
+    const partial = agent._repairToolCallArgs('get_accessibility_tree', { maxChars: 6000, continuationArgs: restart });
+    assert.equal(partial.result, undefined);
+    assert.equal(partial.args.ref_id, 'ref_12');
+    assert.equal(partial.args.filter, 'interactive');
   });
 
   test(`${browser}: oversized declared prose windows are bounded without losing the requested document position`, () => {

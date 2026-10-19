@@ -11322,11 +11322,12 @@ export class Agent extends LoopDetector {
         && Object.keys(continuation).length > 0 && Object.keys(continuation).every(key => allowed.includes(key))
         && !String(continuation.tree_revision ?? '').trim() && !String(next.tree_revision ?? '').trim()
         && [undefined, null, '', 1, '1'].includes(continuation.page)
-        // Only a call that asks for a read of its own at the top level has a
-        // placeholder here. A continuationArgs that is all the call carries is
-        // the restart the tool returned (page 1 of an anchored subtree after
-        // its revision changed), and it is the read.
-        && allowed.some(key => key !== 'tree_revision' && String(next[key] ?? '').trim() !== '');
+        // It is a placeholder only beside a read of the call's own that it
+        // disagrees with. A restart nested alone, or beside top-level fields
+        // that agree with it (a partial copy), is the restart the tool
+        // returned (page 1 of an anchored subtree after its revision changed),
+        // and it is the read.
+        && Object.entries(continuation).some(([key, value]) => String(next[key] ?? '').trim() !== '' && !Object.is(next[key], value));
       if (restart) {
         delete next.continuationArgs;
         repaired = true;
