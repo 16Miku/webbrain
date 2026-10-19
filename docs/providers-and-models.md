@@ -107,8 +107,9 @@ into OPFS. The package stores FP16 weights and computes in FP32; it is the
 with its weights rounded once, and answers the same on its held-out test. A
 cached FP32 package from an earlier version is removed on the next download. The repository name is not a production-readiness claim; this provider
 remains experimental. Executable JS/WASM is packaged in the extension, not
-downloaded from the model repository. **Load cached model** verifies the files
-again; inference cannot trigger a model download.
+downloaded from the model repository. Once the package is in the cache the
+same button reads **Load**: it verifies the files again and loads them without
+the download pass; inference cannot trigger a model download.
 
 This experimental path needs hardware WebGPU, OPFS and substantial GPU/host
 memory. Software adapters are rejected. The encoder's attention is dense, so
@@ -123,9 +124,9 @@ document with a dedicated decision Worker; Firefox uses its background-page
 Worker when the corresponding browser capabilities are available. Mirrored
 code is not evidence that every browser/GPU is supported. CPU/WASM control and
 shape operators are permitted and explicitly disclosed; it is not a pure-GPU
-claim. Unload or disabling outsourcing releases the Worker/GPU resources and
+claim. **Unload** or disabling outsourcing releases the Worker/GPU resources and
 retains the cache; **Remove cached model** requires the model to be unloaded.
-After **Download and load** or **Load cached model**, D1 stays loaded until
+After **Download and load** or **Load**, D1 stays loaded until
 it is unloaded, removed or switched off in Settings: a decision that finds it
 unloaded (a browser restart, a discarded stalled session, a lost GPU device)
 starts one reload from the verified cache in the background and uses the
