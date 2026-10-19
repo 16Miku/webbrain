@@ -179,8 +179,8 @@ export default {
   'install.chip.shot': 'لقطات شاشة كاملة للصفحة',
   'install.chip.dl': 'تنزيلات جماعية',
   'install.local_model.intro': 'ابدأ بنموذج محلي اختياري. وعندما تكون جاهزًا، افتح WebBrain من أسفل هذه الصفحة.',
-  'install.local_model.download': 'تنزيل نموذج محلي',
-  'install.local_model.note': 'اختياري · نحو 1.45 غيغابايت · يعمل على هذا الجهاز. يمكنك تخطي هذه الخطوة.',
+  'install.local_model.download': 'تنزيل النماذج المحلية',
+  'install.local_model.note': 'اختياري · نحو 1.45 غيغابايت، إضافة إلى 0.95 غيغابايت لـ D1، نموذج القرار التجريبي من WebBrain، من Hugging Face. يعمل كلاهما على هذا الجهاز ويستخدمان ذاكرة وحدة معالجة الرسومات. يمكنك تخطي هذه الخطوة.',
   'install.local_model.checking': 'جارٍ التحقق من هذا المتصفح…',
   'install.local_model.downloading': 'جارٍ تنزيل Ternary Bonsai 2 2B Vision · {progress}%',
   'install.local_model.pause': 'إيقاف التنزيل مؤقتًا',
@@ -194,6 +194,12 @@ export default {
   'install.local_model.unsupported': 'تحتاج النماذج المحلية إلى WebGPU عبر العتاد، ولا يوفّره هذا المتصفح حاليًا.',
   'install.local_model.busy': 'يجري تنزيل نموذج محلي آخر. يمكن أن يبدأ هذا التنزيل بعد انتهائه.',
   'install.local_model.progress_label': 'تنزيل النموذج المحلي',
+  'install.local_model.d1_downloading': 'جارٍ تنزيل D1، نموذج القرار · {progress}%',
+  'install.local_model.d1_paused': 'توقف D1 مؤقتًا عند {progress}%.',
+  'install.local_model.d1_ready': 'D1 جاهز ويجيب على هذا الجهاز عن أسئلة WebBrain السريعة، مثل «هل انتهت هذه المهمة؟».',
+  'install.local_model.d1_saved': 'تم حفظ D1 على هذا الجهاز. لاستخدامه، اختره في الإعدادات ضمن نماذج القرار.',
+  'install.local_model.d1_unsupported': 'لا تستطيع وحدة معالجة الرسومات هذه تشغيل D1، لذا يواصل WebBrain فحوصه المعتادة.',
+  'install.local_model.d1_error': 'توقف D1: {error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} من {total}',

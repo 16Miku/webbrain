@@ -107,8 +107,8 @@ export default {
   'install.chip.shot': 'Full-page screenshots',
   'install.chip.dl': 'Bulk downloads',
   'install.local_model.intro': 'Start with an optional local model. When you’re ready, open WebBrain at the bottom of this page.',
-  'install.local_model.download': 'Download a local model',
-  'install.local_model.note': 'Optional · about 1.45 GB · runs on this device. You can skip this.',
+  'install.local_model.download': 'Download local models',
+  'install.local_model.note': 'Optional · about 1.45 GB, plus 0.95 GB for D1, WebBrain’s experimental decision model from Hugging Face. Both run on this device and use its GPU memory. You can skip this.',
   'install.local_model.checking': 'Checking this browser…',
   'install.local_model.downloading': 'Downloading Ternary Bonsai 2 2B Vision · {progress}%',
   'install.local_model.pause': 'Pause download',
@@ -122,6 +122,12 @@ export default {
   'install.local_model.unsupported': 'Local models need hardware WebGPU, which this browser isn’t offering right now.',
   'install.local_model.busy': 'Another local model is downloading. This one can start after it finishes.',
   'install.local_model.progress_label': 'Local model download',
+  'install.local_model.d1_downloading': 'Downloading D1, the decision model · {progress}%',
+  'install.local_model.d1_paused': 'D1 paused at {progress}%.',
+  'install.local_model.d1_ready': 'D1 is ready and answers WebBrain’s quick questions, such as “Is this task finished?”, on this device.',
+  'install.local_model.d1_saved': 'D1 is saved on this device. To use it, choose it in Settings under Decision models.',
+  'install.local_model.d1_unsupported': 'This GPU can’t run D1, so WebBrain keeps its usual checks.',
+  'install.local_model.d1_error': 'D1 stopped: {error}',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': 'Disconnected',

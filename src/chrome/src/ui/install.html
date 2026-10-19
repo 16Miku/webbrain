@@ -20,8 +20,8 @@
              lives here so install.js stays identical in the Firefox build,
              which has no in-browser model runtime and no such block. -->
         <div id="local-model" class="local-model" data-model="webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision" data-state="checking">
-          <button id="local-model-button" class="open-panel-button local-model-button" type="button" aria-describedby="local-model-status local-model-note" disabled>
-            <span id="local-model-label" data-i18n="install.local_model.download">Download a local model</span>
+          <button id="local-model-button" class="open-panel-button local-model-button" type="button" aria-describedby="local-model-status local-model-d1 local-model-note" disabled>
+            <span id="local-model-label" data-i18n="install.local_model.download">Download local models</span>
             <svg class="local-model-icon local-model-icon--download" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"/>
             </svg>
@@ -34,7 +34,9 @@
           </button>
           <div id="local-model-progress" class="local-model-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Local model download" data-i18n-aria-label="install.local_model.progress_label" hidden><i></i></div>
           <p id="local-model-status" class="local-model-status" aria-live="polite"></p>
-          <p id="local-model-note" class="local-model-note" data-i18n="install.local_model.note">Optional · about 1.45 GB · runs on this device. You can skip this.</p>
+          <!-- D1, the on-device decision model, downloads alongside (install.js). -->
+          <p id="local-model-d1" class="local-model-status local-model-d1" aria-live="polite" hidden></p>
+          <p id="local-model-note" class="local-model-note" data-i18n="install.local_model.note">Optional · about 1.45 GB, plus 0.95 GB for D1, WebBrain’s experimental decision model from Hugging Face. Both run on this device and use its GPU memory. You can skip this.</p>
         </div>
       </div>
 

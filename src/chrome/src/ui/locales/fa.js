@@ -107,8 +107,8 @@ export default {
   'install.chip.shot': 'اسکرین‌شات تمام‌صفحه',
   'install.chip.dl': 'دانلود گروهی',
   'install.local_model.intro': 'اگر بخواهید، اول یک مدل محلی اختیاری دانلود کنید. هر وقت آماده بودید، WebBrain را از پایین همین صفحه باز کنید.',
-  'install.local_model.download': 'دانلود مدل محلی',
-  'install.local_model.note': 'اختیاری · حدود ۱٫۴۵ گیگابایت · روی همین دستگاه اجرا می‌شود. می‌توانید این مرحله را رد کنید.',
+  'install.local_model.download': 'دانلود مدل‌های محلی',
+  'install.local_model.note': 'اختیاری · حدود ۱٫۴۵ گیگابایت، به‌علاوه ۰٫۹۵ گیگابایت برای D1، مدل تصمیم آزمایشی WebBrain از Hugging Face. هر دو روی همین دستگاه اجرا می‌شوند و از حافظهٔ GPU آن استفاده می‌کنند. می‌توانید این مرحله را رد کنید.',
   'install.local_model.checking': 'در حال بررسی این مرورگر…',
   'install.local_model.downloading': 'در حال دانلود Ternary Bonsai 2 2B Vision · {progress}%',
   'install.local_model.pause': 'توقف موقت دانلود',
@@ -122,6 +122,12 @@ export default {
   'install.local_model.unsupported': 'مدل‌های محلی به WebGPU سخت‌افزاری نیاز دارند که این مرورگر فعلاً ارائه نمی‌کند.',
   'install.local_model.busy': 'مدل محلی دیگری در حال دانلود است. این دانلود بعد از آن می‌تواند شروع شود.',
   'install.local_model.progress_label': 'دانلود مدل محلی',
+  'install.local_model.d1_downloading': 'در حال دانلود D1، مدل تصمیم · {progress}%',
+  'install.local_model.d1_paused': 'D1 در {progress}% متوقف شد.',
+  'install.local_model.d1_ready': 'D1 آماده است و روی همین دستگاه به پرسش‌های کوتاه WebBrain، مثل «آیا این کار تمام شد؟»، پاسخ می‌دهد.',
+  'install.local_model.d1_saved': 'D1 روی این دستگاه ذخیره شد. برای استفاده، آن را در تنظیمات، بخش مدل‌های تصمیم، انتخاب کنید.',
+  'install.local_model.d1_unsupported': 'این GPU نمی‌تواند D1 را اجرا کند، بنابراین WebBrain بررسی‌های معمول خود را ادامه می‌دهد.',
+  'install.local_model.d1_error': 'D1 متوقف شد: {error}',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "قطع شد",

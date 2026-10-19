@@ -1,13 +1,31 @@
 import { getChatHistoryRecord } from './ui/chat-history-store.js';
-import { resolveDecisionConfig, listDecisionModels } from './agent/decision-config.js';
+import { resolveDecisionConfig, listDecisionModels, DECISION_SETTINGS_KEYS } from './agent/decision-config.js';
 import { resolveCurrentDecisionConfig } from './agent/decision-availability.js';
 import { d1Request } from './providers/d1.js';
 import { evaluateD1LocalFixture } from './providers/d1-diagnostic.js';
 import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_KEEP_LOADED_KEY } from './providers/d1-config.js';
 
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && (changes.systemOneEnabled?.newValue === false || (changes.decisionMode && changes.decisionMode.newValue !== 'on') || (changes.decisionProvider && changes.decisionProvider.newValue !== 'webgpu_d1') || (changes[D1_CONSENT_KEY] && changes[D1_CONSENT_KEY].newValue !== D1_CONSENT_VERSION) || changes.strictSecretMode?.newValue === true)) void d1Request('reset').catch(() => {});
-});
+// D1's Worker and GPU memory are released when decisions are switched Off,
+// another decision provider is saved, consent changes or Strict Secret Mode
+// starts. Leaving On for Auto keeps D1, loaded or still downloading, while the
+// user's Download or Load request stands: Auto uses it once it is downloaded,
+// unless Compass is the chat provider (decision-availability.js), and Unload
+// on the Providers page releases it.
+function releaseD1OnDecisionChange(changes, area) {
+  if (area !== 'local') return;
+  const reset = () => { void d1Request('reset').catch(() => {}); };
+  if ((changes.decisionMode && changes.decisionMode.newValue === 'off')
+      || (changes.decisionProvider && changes.decisionProvider.newValue !== 'webgpu_d1')
+      || (changes[D1_CONSENT_KEY] && changes[D1_CONSENT_KEY].newValue !== D1_CONSENT_VERSION)
+      || changes.strictSecretMode?.newValue === true) {
+    reset();
+    return;
+  }
+  if (changes.systemOneEnabled?.newValue === false || (changes.decisionMode && changes.decisionMode.newValue !== 'on')) {
+    void browser.storage.local.get(D1_KEEP_LOADED_KEY).then(stored => { if (stored?.[D1_KEEP_LOADED_KEY] !== true) reset(); }, reset);
+  }
+}
+browser.storage.onChanged.addListener(releaseD1OnDecisionChange);
 import { probeDecisionVision } from './agent/decision-vision-probe.js';
 import { installSafeSocialBackground } from './safesocial/background.js';
 import { createFeedbackHandoff } from './feedback-handoff.js';
@@ -3048,6 +3066,23 @@ async function handleFailureRecoveryResponse(msg, sender) {
   }
 }
 
+// Whether D1 answers this profile's decisions now, for the install guide: an
+// explicit On selection, or Auto once D1 is downloaded while Compass is not the
+// chat provider (decision-availability.js).
+async function d1UsedForDecisions(api) {
+  try {
+    if (agent.strictSecretMode) return false;
+    if (providerManager.providers.size === 0) await providerManager.load();
+    let compass = null;
+    try {
+      const provider = providerManager.getActive();
+      if (provider?.config?.providerName === 'webbrain-cloud') compass = provider.config;
+    } catch { /* no active provider yet */ }
+    const config = await resolveCurrentDecisionConfig(await api.storage.local.get(DECISION_SETTINGS_KEYS), compass);
+    return config.provider === 'webgpu_d1' && config.enabled === true;
+  } catch { return false; }
+}
+
 async function handleMessage(msg, sender) {
   if (msg.action === 'failure_recovery_response') return handleFailureRecoveryResponse(msg, sender);
   if (['chat_start', 'chat', 'chat_stream'].includes(msg.action)) assertChatRequestInput(msg);
@@ -4325,8 +4360,13 @@ async function handleMessage(msg, sender) {
     case 'd1_control': {
       // The D1 controls are on the Decision tab of the Providers page.
       const api = globalThis.browser || globalThis.chrome;
-      const providersUrl = api.runtime.getURL('src/ui/providers.html');
-      if (sender.id !== api.runtime.id || String(sender.url || '').split(/[?#]/)[0] !== providersUrl) return { success: false, error: 'D1 model controls are available only from the extension Providers page.' };
+      const page = sender.id === api.runtime.id ? String(sender.url || '').split(/[?#]/)[0] : '';
+      // The install guide downloads D1 next to its local chat model: it reads
+      // D1's status, checks the GPU, and starts or stops that download. Every
+      // other control stays on the Providers page.
+      const fromInstall = page === api.runtime.getURL('src/ui/install.html')
+        && ['status', 'probe', 'download', 'stop'].includes(msg.command);
+      if (page !== api.runtime.getURL('src/ui/providers.html') && !fromInstall) return { success: false, error: 'D1 model controls are available only from the extension Providers page.' };
       try {
         await strictSecretModeReady;
         if (agent.strictSecretMode && !['dispose', 'reset', 'stop', 'clear', 'status'].includes(msg.command)) throw new Error('D1 is disabled in Strict Secret Mode.');
@@ -4340,7 +4380,9 @@ async function handleMessage(msg, sender) {
           // Unload, Remove and switching D1 off in Settings end that request.
           await api.storage.local.set({ [D1_KEEP_LOADED_KEY]: false });
         }
-        return { success: true, result: msg.command === 'consent' ? { consented: true } : await d1Request(msg.command, { consentVersion: D1_CONSENT_VERSION }) };
+        const result = msg.command === 'consent' ? { consented: true } : await d1Request(msg.command, { consentVersion: D1_CONSENT_VERSION });
+        // The guide says whether D1 answers this profile's decisions.
+        return { success: true, result: fromInstall ? { ...result, usedForDecisions: await d1UsedForDecisions(api) } : result };
       } catch (error) { return { success: false, error: error.message }; }
     }
     case 'list_decision_models': {
@@ -4363,7 +4405,8 @@ async function handleMessage(msg, sender) {
         // On tests the configured provider, enabled or not; Auto tests what it
         // would use now, and there is nothing to test when it uses nothing.
         const testsConfigured = !msg.settings || ['on', undefined].includes(msg.settings.decisionMode);
-        let config = msg.settings ? (testsConfigured ? resolveDecisionConfig({ ...msg.settings, decisionMode: 'on' }) : await resolveCurrentDecisionConfig(msg.settings)) : undefined;
+        // Auto's D1 needs the experimental-model consent the draft does not carry.
+        let config = msg.settings ? (testsConfigured ? resolveDecisionConfig({ ...msg.settings, decisionMode: 'on' }) : await resolveCurrentDecisionConfig({ ...await browser.storage.local.get(D1_CONSENT_KEY), ...msg.settings })) : undefined;
         if (config && !testsConfigured && !config.enabled) throw new Error('No decision model is in use.');
         if (config?.provider === 'openrouter' && (!msg.settings.decisionVisionMode || msg.settings.decisionVisionMode === 'auto')) {
           try { const card = (await listDecisionModels(config)).find(m => m.id === config.model); if (card) config = { ...config, supportsVision: card.supportsVision }; } catch {}

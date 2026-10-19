@@ -140,7 +140,35 @@ try {
           assert.equal(await page.evaluate(() => testRequests.filter(r => r.action === 'test_system_one').length), 0);
           await page.evaluate(async () => { await caches.delete('transformers-cache'); });
         }
-        const tests = 0;
+        // A finished D1 download (its consent, Load request and ready marker) is what Auto uses.
+        await page.evaluate(async build => {
+          const { D1_CACHE_NAME, D1_RELEASE, D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_KEEP_LOADED_KEY } = await import(`/src/${build}/src/providers/d1-config.js`);
+          const directory = await (await navigator.storage.getDirectory()).getDirectoryHandle(`${D1_CACHE_NAME}-${D1_RELEASE.revision}`, { create: true });
+          const writer = await (await directory.getFileHandle('ready.json', { create: true })).createWritable();
+          await writer.write(JSON.stringify({ revision: D1_RELEASE.revision, manifestSha256: D1_RELEASE.manifestSha256 }));
+          await writer.close();
+          Object.assign(testStore, { [D1_CONSENT_KEY]: D1_CONSENT_VERSION, [D1_KEEP_LOADED_KEY]: true });
+          dispatchEvent(new Event('focus'));
+        }, build);
+        await page.waitForFunction(() => document.querySelector('#decision-auto-status').dataset.state === 'active');
+        assert.match(await statusText(), tr ? /Kullanılıyor: bu cihazda D1\./ : /In use: D1, on this device\./);
+        assert.equal(await page.locator('#btn-test-system-one').isVisible(), true, 'D1 runs here, so Auto can test it');
+        await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-auto-d1.png` });
+        await page.locator('#btn-test-system-one').click();
+        await page.waitForFunction(() => testRequests.filter(r => r.action === 'test_system_one').length === 1);
+        assert.equal(await page.evaluate(() => testRequests.at(-1).settings.decisionMode), 'auto');
+        // Unload ends what Auto uses.
+        await page.evaluate(async build => {
+          const { D1_CACHE_NAME, D1_RELEASE, D1_CONSENT_KEY, D1_KEEP_LOADED_KEY } = await import(`/src/${build}/src/providers/d1-config.js`);
+          testStore[D1_KEEP_LOADED_KEY] = false;
+          dispatchEvent(new Event('focus'));
+          await new Promise(resolve => setTimeout(resolve, 50));
+          await (await navigator.storage.getDirectory()).removeEntry(`${D1_CACHE_NAME}-${D1_RELEASE.revision}`, { recursive: true });
+          delete testStore[D1_CONSENT_KEY]; delete testStore[D1_KEEP_LOADED_KEY];
+        }, build);
+        await page.waitForFunction(() => document.querySelector('#decision-auto-status').dataset.state === 'inactive');
+        assert.equal(await page.locator('#btn-test-system-one').isVisible(), false);
+        const tests = 1;
         // On applies at once and shows the provider fields; switches stay folded.
         await page.locator('input[name="decision-mode"][value="on"]').locator('..').click();
         await page.waitForFunction(() => testStore.decisionMode === 'on' && testStore.systemOneEnabled === true);
@@ -202,13 +230,20 @@ try {
         await page.screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}.png`, fullPage: true });
         await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-decision-card.png` });
         // Off applies at once and hides everything but the explanation.
+        const resets = () => page.evaluate(() => testRequests.filter(r => r.action === 'd1_control' && r.command === 'reset').length);
+        const resetsBeforeOff = await resets();
         await page.locator('input[name="decision-mode"][value="off"]').locator('..').click();
         await page.waitForFunction(() => testStore.decisionMode === 'off' && testStore.systemOneEnabled === false);
+        await page.waitForFunction(count => testRequests.filter(r => r.action === 'd1_control' && r.command === 'reset').length === count, resetsBeforeOff + 1);
         assert.equal(await page.locator('#decision-configured').isVisible(), false);
         assert.equal(await page.locator('#btn-test-system-one').isVisible(), false);
         assert.equal(await page.locator('#btn-save-system-one').isVisible(), false);
         assert.equal(await page.locator('#decision-auto-status').isVisible(), false);
         await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-off.png` });
+        // Off ended D1's Load; Auto keeps it, since Auto uses a downloaded D1.
+        await page.locator('input[name="decision-mode"][value="auto"]').locator('..').click();
+        await page.waitForFunction(() => testStore.decisionMode === 'auto' && testStore.systemOneEnabled === false);
+        assert.equal(await resets(), resetsBeforeOff + 1);
         // Reset returns to Auto with On's defaults and deletes the keys.
         await page.locator('#btn-clear-system-one').click();
         await page.waitForFunction(() => testStore.decisionMode === undefined && testStore.typesafeApiKey === undefined);

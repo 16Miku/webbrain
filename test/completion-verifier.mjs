@@ -575,6 +575,34 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(decisionCalls, 0, 'disabled Ternary never starts, even before main-model fallback');
     }, { decisionMode, decisionProvider: 'webgpu_chat', systemOneEnabled: true, systemOneDoneEnabled: true }));
   }
+  test(`${build}: Auto checks completion with a downloaded D1, and a positive D1 answer still needs the main model`, async () => {
+    const pin = await import(`../src/${build}/src/providers/d1-config.js`);
+    const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
+    const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    const marker = { revision: pin.D1_RELEASE.revision, manifestSha256: pin.D1_RELEASE.manifestSha256 };
+    const directory = { getFileHandle: async () => ({ getFile: async () => ({ text: async () => JSON.stringify(marker) }) }) };
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true, storage: { getDirectory: async () => ({ getDirectoryHandle: async () => directory }) } } });
+    // Auto (nothing saved) after the install guide's download: consent and the Load request.
+    const stored = { [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION, [pin.D1_KEEP_LOADED_KEY]: true };
+    globalThis.chrome = globalThis.browser = { storage: { local: { get: async () => ({ ...stored }) } } };
+    try {
+      for (const [decisionOutcome, expected] of [['succeeded', { engine: 'llm', outcome: 'failed', mainCalls: 1 }], ['pending', { engine: 'webgpu_d1', outcome: 'pending', mainCalls: 0 }]]) {
+        const providers = [];
+        let mainCalls = 0;
+        const agent = stagedFormAgent({ messages: [], guard: { enabled: true, requiresSubmission: false, requiresStateChange: true }, captures: { count: 0 }, decisionOutcome,
+          onDecision: args => providers.push(args.config.provider),
+          onChat: () => { mainCalls++; return { content: JSON.stringify({ outcome: 'failed', reason: 'the page still shows the form' }) }; } });
+        const verdict = await runtime.verifyBrowserCompletion(agent, 1, { pageUrl: 'https://forms.example/signup' });
+        assert.ok(providers.length > 0 && providers.every(provider => provider === 'webgpu_d1'), `${decisionOutcome}: D1 answered first`);
+        assert.equal(verdict.engine, expected.engine, decisionOutcome);
+        assert.equal(verdict.outcome, expected.outcome, decisionOutcome);
+        assert.equal(mainCalls, expected.mainCalls, decisionOutcome);
+      }
+    } finally {
+      globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
+      if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor); else delete globalThis.navigator;
+    }
+  });
   test(`${build}: a staged form whose request names a password reaches the active judge intact, and a blind third-party sidecar is not asked`, withDecisionRuntime(async () => {
     const fields = [['ref_1', 'skanlsmds', false], ['ref_2', 'person@example.com', false], ['ref_3', typedPassword, true], ['ref_4', typedPassword, true]];
     const messages = fields.flatMap(([ref, text, sensitive], index) => [

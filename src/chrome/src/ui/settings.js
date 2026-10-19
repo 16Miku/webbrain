@@ -1,6 +1,7 @@
 import { DECISION_MODE_KEY, DECISION_SETTINGS_KEYS, materializeLegacyDecisionFeatures, DEFAULT_DECISION_MODEL, WEBGPU_CHAT_DECISION_MODEL, resolveDecisionConfig, resolveDecisionMode } from '../agent/decision-config.js';
 import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
-import { D1_MODEL_ID } from '../providers/d1-config.js';
+import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_MODEL_ID } from '../providers/d1-config.js';
+import { d1LocalAssistReady } from '../agent/decision-availability.js';
 import { initD1Settings } from './d1-settings.js';
 /**
  * WebBrain Settings pages — settings.html (preferences, budgets, memory,
@@ -308,16 +309,21 @@ async function syncDecisionStatus() {
   // Strict Secret Mode keeps page content away from every decision model, so Auto has nothing to use.
   const strict = strictSecretModeOn;
   const compass = !strict && activeProviderIsCompass();
+  // Without Compass, Auto uses D1 once it is downloaded (decision-availability.js).
+  const local = !strict && !compass
+    && (await chrome.storage.local.get(D1_CONSENT_KEY).catch(() => ({})))?.[D1_CONSENT_KEY] === D1_CONSENT_VERSION
+    && await d1LocalAssistReady();
   if (sequence !== decisionStatusSequence || selectedDecisionMode() !== 'auto') return;
-  const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : 'st.decision.status.none';
+  const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : local ? 'st.decision.status.local' : 'st.decision.status.none';
   if (status) {
     status.dataset.i18n = key;
-    status.dataset.state = compass ? 'active' : 'inactive';
+    status.dataset.state = compass || local ? 'active' : 'inactive';
     status.textContent = t(key);
     status.hidden = false;
   }
-  // Compass's managed model is not tested by the browser's Settings probe.
-  if (btnTestSystemOne) btnTestSystemOne.hidden = true;
+  // Test runs here in the browser, so it can check D1 but not Compass's
+  // managed model.
+  if (btnTestSystemOne) btnTestSystemOne.hidden = !local;
 }
 for (const input of decisionModeInputs) {
   input.addEventListener('change', async () => {
@@ -328,7 +334,9 @@ for (const input of decisionModeInputs) {
     // A pre-mode On profile shows its stored switches; keep them when the explicit mode replaces that reading.
     const legacyFeatures = materializeLegacyDecisionFeatures(await chrome.storage.local.get(DECISION_SETTINGS_KEYS));
     await chrome.storage.local.set({ ...legacyFeatures, [DECISION_MODE_KEY]: mode, systemOneEnabled: mode === 'on' });
-    if (mode !== 'on') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    // Off ends D1's Download or Load; Auto keeps it, since Auto uses a
+    // downloaded D1 while Compass is not the chat provider.
+    if (mode === 'off') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     showSystemOneResult('ok', t('st.providers.saved'));
   });
 }

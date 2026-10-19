@@ -255,10 +255,17 @@ Use the tools in `scripts/models/bonsai/`:
 - **Cache-only inference.** Chat never downloads. Only explicit download or
   preload flows fetch model files: Providers → WebGPU, Apocalypse
   Mode, and the first-install page (Chrome), which offers Ternary Bonsai 2 2B
-  Vision behind its optional "Download a local model" button. The install page
-  checks for hardware WebGPU before fetching anything, never changes the
-  active provider, and only points an idle WebGPU provider at Bonsai when the
-  configured model is not already downloaded.
+  Vision and D1, the decision model, behind its optional "Download local
+  models" button. The two download at once, each in its own worker, and the
+  page shows D1's progress on a line of its own; once the chat model is
+  ready, the same button starts, pauses, resumes or retries D1 alone. The
+  install page checks for
+  hardware WebGPU before fetching anything (D1 runs its own adapter check, and
+  a GPU it cannot use leaves the Bonsai download going), never changes the
+  active provider or the decision settings, and only points an idle WebGPU
+  provider at Bonsai when the configured model is not already downloaded.
+  Auto decisions then use D1, not Bonsai
+  ([`providers-and-models.md`](providers-and-models.md#decision-models)).
 
 ## Decisions on WebGPU
 
@@ -317,8 +324,11 @@ The labelled set is d1's balanced-V3 held-out test (72 synthetic screenshots,
     using the raw token readout also produced confident false completions on
     wrong destinations and unsubmitted drafts. The synthetic results below
     do not establish reliability on real browser tasks.
-  - Completion checks now stay with the active chat model without starting
-    Ternary's former 15-second decision request. Ternary chat and screenshot
+  - Completion checks no longer start Ternary's former 15-second decision
+    request. Auto gives its former slot to D1: once D1 is downloaded, and
+    while Compass is not the chat provider, D1 answers completion and
+    scheduled checks, and a positive answer still needs independent proof;
+    otherwise the active chat model checks. Ternary chat and screenshot
     reading remain available. The diagnostic fixture/readout path is retained
     for evaluating a future replacement; its results do not authorize actions.
 

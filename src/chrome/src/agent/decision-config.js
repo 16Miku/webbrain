@@ -31,6 +31,11 @@ const NO_DECISION_FEATURES = Object.freeze(Object.fromEntries(DECISION_FEATURES.
 // Auto with Compass keeps what Compass did before modes existed: completion
 // checks and semantic decisions on its managed model.
 const AUTO_COMPASS_FEATURES = Object.freeze({ ...NO_DECISION_FEATURES, done: true, semantic: true });
+// Auto with D1 downloaded and no Compass: the checks D1 answers by itself, the
+// ones the in-browser chat model answered before its decisions were disabled.
+// Fast classifications, fast browser actions and semantic decisions need an
+// explicit On, so the experimental and guard-facing paths stay opt-in.
+const AUTO_LOCAL_FEATURES = Object.freeze({ ...NO_DECISION_FEATURES, done: true, watch: true, completion: true });
 
 // A saved mode wins. Profiles saved before modes existed map an enabled
 // System One switch to On and everything else to the Auto default, without
@@ -38,6 +43,13 @@ const AUTO_COMPASS_FEATURES = Object.freeze({ ...NO_DECISION_FEATURES, done: tru
 export function resolveDecisionMode(stored = {}) {
   if (DECISION_MODES.includes(stored?.[DECISION_MODE_KEY])) return stored[DECISION_MODE_KEY];
   return stored?.systemOneEnabled === true ? 'on' : 'auto';
+}
+
+// Only Auto without Compass, after D1's experimental-model consent, looks for
+// D1's download (decision-availability.js), so callers can skip that lookup
+// otherwise.
+export function decisionNeedsLocalAssist(stored = {}, compass = null) {
+  return resolveDecisionMode(stored) === 'auto' && !compass && stored?.[D1_CONSENT_KEY] === D1_CONSENT_VERSION;
 }
 
 // Whether the resolved configuration answers this decision. Every caller asks
@@ -70,11 +82,17 @@ function onDecisionFeatures(stored, config, legacy) {
 // Resolve settings without rewriting credentials or opted-in features. The
 // result keeps the selected provider's fields even when no decision is
 // answered, so Settings and model discovery see the same configuration.
-// Downloaded chat/vision weights do not establish reliable decision behavior.
-// Keep accepting the old options argument without activating that model.
-export function resolveDecisionConfig(stored = {}, compass = null, _options = {}) {
+// Downloaded chat/vision weights do not establish reliable decision behavior;
+// `localAssistReady` says D1, a decision model, is downloaded and the user's
+// Download or Load stands (decision-availability.js). Only Auto without
+// Compass reads it.
+export function resolveDecisionConfig(stored = {}, compass = null, { localAssistReady = false } = {}) {
   stored = stored || {};
   const mode = resolveDecisionMode(stored);
+  if (localAssistReady === true && decisionNeedsLocalAssist(stored, compass)) {
+    const config = selectedDecisionConfig({ ...stored, decisionProvider: 'webgpu_d1', decisionVisionMode: 'auto' }, null, true);
+    return { ...config, doneEnabled: true, mode, source: 'local_assist', features: { ...AUTO_LOCAL_FEATURES } };
+  }
   const legacy = mode === 'on' && !DECISION_MODES.includes(stored[DECISION_MODE_KEY]);
   const on = mode === 'on';
   const config = selectedDecisionConfig(stored, mode === 'off' ? null : compass, on);

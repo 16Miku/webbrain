@@ -180,7 +180,7 @@ export default {
   'install.chip.dl': 'ดาวน์โหลดจำนวนมาก',
   'install.local_model.intro': 'เริ่มด้วยโมเดลในเครื่องแบบไม่บังคับก็ได้ เมื่อพร้อมแล้ว เปิด WebBrain ที่ด้านล่างของหน้านี้',
   'install.local_model.download': 'ดาวน์โหลดโมเดลในเครื่อง',
-  'install.local_model.note': 'ไม่บังคับ · ประมาณ 1.45 GB · ทำงานบนอุปกรณ์นี้ ข้ามขั้นตอนนี้ได้',
+  'install.local_model.note': 'ไม่บังคับ · ประมาณ 1.45 GB และอีก 0.95 GB สำหรับ D1 โมเดลการตัดสินใจรุ่นทดลองของ WebBrain จาก Hugging Face ทั้งสองทำงานบนอุปกรณ์นี้และใช้หน่วยความจำ GPU ข้ามขั้นตอนนี้ได้',
   'install.local_model.checking': 'กำลังตรวจสอบเบราว์เซอร์นี้…',
   'install.local_model.downloading': 'กำลังดาวน์โหลด Ternary Bonsai 2 2B Vision · {progress}%',
   'install.local_model.pause': 'หยุดดาวน์โหลดชั่วคราว',
@@ -194,6 +194,12 @@ export default {
   'install.local_model.unsupported': 'โมเดลในเครื่องต้องใช้ WebGPU ระดับฮาร์ดแวร์ ซึ่งเบราว์เซอร์นี้ยังไม่มีให้ในตอนนี้',
   'install.local_model.busy': 'กำลังดาวน์โหลดโมเดลในเครื่องตัวอื่นอยู่ ตัวนี้จะเริ่มได้หลังจากนั้น',
   'install.local_model.progress_label': 'การดาวน์โหลดโมเดลในเครื่อง',
+  'install.local_model.d1_downloading': 'กำลังดาวน์โหลด D1 โมเดลการตัดสินใจ · {progress}%',
+  'install.local_model.d1_paused': 'D1 หยุดชั่วคราวที่ {progress}%',
+  'install.local_model.d1_ready': 'D1 พร้อมแล้ว และตอบคำถามสั้นๆ ของ WebBrain เช่น “งานนี้เสร็จหรือยัง” บนอุปกรณ์นี้',
+  'install.local_model.d1_saved': 'บันทึก D1 ไว้บนอุปกรณ์นี้แล้ว หากต้องการใช้ ให้เลือกในการตั้งค่า ใต้โมเดลการตัดสินใจ',
+  'install.local_model.d1_unsupported': 'GPU นี้รัน D1 ไม่ได้ WebBrain จึงใช้การตรวจสอบตามปกติต่อไป',
+  'install.local_model.d1_error': 'D1 หยุดทำงาน: {error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} จาก {total}',

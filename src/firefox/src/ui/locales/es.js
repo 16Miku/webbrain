@@ -179,8 +179,8 @@ export default {
   'install.chip.shot': 'Capturas de página completa',
   'install.chip.dl': 'Descargas masivas',
   'install.local_model.intro': 'Empieza con un modelo local opcional. Cuando estés listo, abre WebBrain al final de esta página.',
-  'install.local_model.download': 'Descargar un modelo local',
-  'install.local_model.note': 'Opcional · unos 1,45 GB · se ejecuta en este dispositivo. Puedes omitirlo.',
+  'install.local_model.download': 'Descargar modelos locales',
+  'install.local_model.note': 'Opcional · unos 1,45 GB, más 0,95 GB para D1, el modelo de decisión experimental de WebBrain, desde Hugging Face. Ambos se ejecutan en este dispositivo y usan su memoria de GPU. Puedes omitirlo.',
   'install.local_model.checking': 'Comprobando este navegador…',
   'install.local_model.downloading': 'Descargando Ternary Bonsai 2 2B Vision · {progress} %',
   'install.local_model.pause': 'Pausar descarga',
@@ -194,6 +194,12 @@ export default {
   'install.local_model.unsupported': 'Los modelos locales necesitan WebGPU por hardware, que este navegador no ofrece ahora mismo.',
   'install.local_model.busy': 'Se está descargando otro modelo local. Este podrá empezar cuando termine.',
   'install.local_model.progress_label': 'Descarga del modelo local',
+  'install.local_model.d1_downloading': 'Descargando D1, el modelo de decisión · {progress} %',
+  'install.local_model.d1_paused': 'D1 en pausa al {progress} %.',
+  'install.local_model.d1_ready': 'D1 está listo y responde en este dispositivo a las preguntas rápidas de WebBrain, como «¿Terminó esta tarea?».',
+  'install.local_model.d1_saved': 'D1 está guardado en este dispositivo. Para usarlo, elígelo en Ajustes, en Modelos de decisión.',
+  'install.local_model.d1_unsupported': 'Esta GPU no puede ejecutar D1, así que WebBrain mantiene sus comprobaciones habituales.',
+  'install.local_model.d1_error': 'D1 se detuvo: {error}',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} de {total}',
