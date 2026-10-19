@@ -16,7 +16,7 @@ export function initD1Settings(send) {
   // cache it only loads, which skips the download pass's second verification.
   const loadButton = document.getElementById('d1-load');
   const showLoadButton = snapshot => {
-    const cached = snapshot?.loaded === true || ['cached', 'ready'].includes(snapshot?.status);
+    const cached = snapshot?.loaded === true || snapshot?.cached === true || ['cached', 'ready'].includes(snapshot?.status);
     loadButton.dataset.d1Command = cached ? 'load' : 'download';
     loadButton.dataset.i18n = cached ? 'st.d1.load' : 'st.d1.download';
     loadButton.textContent = t(loadButton.dataset.i18n);

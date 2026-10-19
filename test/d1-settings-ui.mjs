@@ -42,7 +42,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
           runtime: { getURL: path => `${location.origin}/src/${build}/${path}`, getManifest: () => ({ version }), onMessage: { addListener() {} }, sendMessage(msg, callback) {
             window.testRequests.push(msg);
             const result = msg.action === 'd1_control'
-              ? { success: true, result: msg.command === 'status' ? { status: window.d1Status, ready: window.d1Status === 'ready', loaded: window.d1Status === 'ready' } : { started: true } }
+              ? { success: true, result: msg.command === 'status' ? { status: window.d1Status, ready: window.d1Status === 'ready', loaded: window.d1Status === 'ready', cached: window.d1Cached === true } : { started: true } }
               : msg.action === 'get_providers' ? { providers: {}, active: '' } : { success: true };
             callback?.(result); return Promise.resolve(result);
           } },
@@ -61,6 +61,14 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       await page.evaluate(() => { window.d1Status = 'cached'; });
       await page.waitForFunction(() => document.querySelector('#d1-load').textContent === 'Load', null, { timeout: 5000 });
       assert.equal(await load.getAttribute('data-d1-command'), 'load');
+      // A transient load error keeps the cache: retrying still only loads.
+      await page.evaluate(() => { window.d1Status = 'error'; window.d1Cached = true; });
+      await page.waitForFunction(() => document.querySelector('#d1-status').textContent.startsWith('error'), null, { timeout: 5000 });
+      assert.equal(await load.getAttribute('data-d1-command'), 'load', 'a cached model with an error retries with Load');
+      await page.evaluate(() => { window.d1Cached = false; });
+      await page.waitForFunction(() => document.querySelector('#d1-load').dataset.d1Command === 'download', null, { timeout: 5000 });
+      await page.evaluate(() => { window.d1Status = 'cached'; window.d1Cached = false; });
+      await page.waitForFunction(() => document.querySelector('#d1-load').textContent === 'Load', null, { timeout: 5000 });
       await page.locator('#d1-consent').check();
       await load.click();
       await page.waitForFunction(() => window.testRequests.some(msg => msg.action === 'd1_control' && msg.command === 'load'));
