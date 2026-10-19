@@ -44239,6 +44239,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             && frame.url.includes(iframeUrlFilter)
           ));
           const verifiedFrames = matchingFrames.filter(frame => frame?.found);
+          const noFrameHint = matchingFrames.length ? '' : urlFilterHostHint(iframeUrlFilter,
+            navigationFrames.filter(frame => Number(frame?.frameId) !== 0).map(frame => frame?.url));
           const fields = verifiedFrames.flatMap(frame => frame.fields.map(field => ({
             ...field,
             frameId: frame.frameId,
@@ -44282,6 +44284,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             targetChecks,
             frames: publicFrames,
             ...(matchingFrames.length === 0 ? { error: 'No iframe matched urlFilter' } : {}),
+            ...(noFrameHint ? { hint: noFrameHint } : {}),
             ...(matchingFrames.length > 0 && verifiedFrames.length === 0 ? { error: 'No form found in matching iframe(s)' } : {}),
             ...(verifiedFrames.length === 0 ? unavailableHtmlFormVerification('iframe', matchingFrames.length) : {}),
           };

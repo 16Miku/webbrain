@@ -1271,7 +1271,7 @@ export const AGENT_TOOLS = [
           },
           urlFilter: {
             type: 'string',
-            description: 'Optional iframe host or URL substring. When supplied, verifies forms inside matching child frames instead of the top document.',
+            description: 'Optional iframe host, optionally followed by more of its URL (e.g. "stripe.com"). When supplied, verifies forms inside matching child frames instead of the top document. A file name without its host, such as "embed.html", matches no frame.',
           },
         },
         required: [],

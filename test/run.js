@@ -112318,6 +112318,43 @@ test('verify_form returns semantic iframe-scoped field evidence', async () => {
   }
 });
 
+test('verify_form names the frame host when a path-only urlFilter matches no iframe', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const frameUrl = 'https://forms.example/embed/iframe-inner.html';
+  const frame = { found: true, url: frameUrl, fieldCount: 1, fields: [{ matchIndex: 0, label: 'Name', value: 'x' }] };
+  const expected = 'urlFilter "iframe-inner.html" does not name an iframe host, so no frame matched. '
+    + 'Start it with the frame\'s host, for example "forms.example/embed/iframe-inner.html".';
+  try {
+    globalThis.chrome = {
+      tabs: { get: async () => ({ id: 42, url: 'https://host.example/form-page' }) },
+      scripting: { executeScript: async () => [{ frameId: 0, result: { found: false, url: 'https://host.example/form-page', isTop: true } },
+        { frameId: 7, result: { ...frame, isTop: false } }] },
+    };
+    const chromeResult = await new AgentCh({}).executeTool(42, 'verify_form', { urlFilter: 'iframe-inner.html' });
+    assert.equal(chromeResult.success, false);
+    assert.equal(chromeResult.error, 'No iframe matched urlFilter');
+    assert.equal(chromeResult.hint, expected);
+    globalThis.browser = {
+      webNavigation: { getAllFrames: async () => [{ frameId: 0, url: 'https://host.example/form-page' }, { frameId: 7, url: frameUrl }] },
+      tabs: { get: async () => ({ id: 42, url: 'https://host.example/form-page' }), executeScript: async () => [frame] },
+    };
+    const firefoxResult = await new AgentFx({}).executeTool(42, 'verify_form', { urlFilter: 'iframe-inner.html' });
+    assert.equal(firefoxResult.error, 'No iframe matched urlFilter');
+    assert.equal(firefoxResult.hint, expected);
+    for (const build of ['chrome', 'firefox']) {
+      const tools = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/tools.js`)).href);
+      const schema = tools.AGENT_TOOLS.find(tool => tool.function.name === 'verify_form').function.parameters.properties.urlFilter;
+      assert.match(schema.description, /A file name without its host, such as "embed\.html", matches no frame/, `${build}: verify_form schema`);
+    }
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
 test('verify_form checks pending iframe values without exposing raw comparison evidence', async () => {
   const previousChrome = globalThis.chrome;
   const previousBrowser = globalThis.browser;

@@ -48068,6 +48068,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             .map(item => item?.result ? { frameId: item.frameId, ...item.result } : null)
             .filter(frame => frame && !frame.isTop && frame.frameId !== 0 && frameHostMatches(frame.url, iframeUrlFilter) && frame.url.includes(iframeUrlFilter));
           const verifiedFrames = matchingFrames.filter(frame => frame.found);
+          const noFrameHint = matchingFrames.length ? '' : urlFilterHostHint(iframeUrlFilter,
+            observations.map(item => (item?.result && !item.result.isTop && item.frameId !== 0 ? item.result.url : '')));
           const fields = verifiedFrames.flatMap(frame => frame.fields.map(field => ({
             ...field,
             frameId: frame.frameId,
@@ -48111,6 +48113,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             targetChecks,
             frames: publicFrames,
             ...(matchingFrames.length === 0 ? { error: 'No iframe matched urlFilter' } : {}),
+            ...(noFrameHint ? { hint: noFrameHint } : {}),
             ...(matchingFrames.length > 0 && verifiedFrames.length === 0 ? { error: 'No form found in matching iframe(s)' } : {}),
             ...(verifiedFrames.length === 0 ? unavailableHtmlFormVerification('iframe', matchingFrames.length) : {}),
           };
