@@ -132,32 +132,21 @@ function validateState(state, multimodal = false) {
 // confident and wrong. A state past the budget is not sent at all; the caller
 // takes the same fallback as for any unavailable decision model. Images are
 // counted separately by the provider and are not part of this text.
-// The budget is in estimated tokens and sits well under the 2K the model reads
-// (see estimateTextTokens), because no tokenizer ships with the extension.
-export const SYSTEM_ONE_TEXT_TOKEN_BUDGETS = Object.freeze({ 'cloudflare/clef-flash': 1500 });
-
-// A deliberately high token estimate, so a state it passes stays under the real
-// limit for ordinary text, CJK, and identifier-heavy input alike: ASCII counts
-// half a token per character (English and JSON run near a quarter), any other
-// character three (CJK and emoji take one to three, so the worst case is
-// charged), and long unbroken runs of
-// letters and digits (hashes, base64, ids) one per character.
-export function estimateTextTokens(text) {
-  let tokens = 0;
-  const rest = String(text).replace(/[A-Za-z0-9+/=_-]{24,}/g, run => { tokens += run.length; return ' '; });
-  for (const character of rest) tokens += character.charCodeAt(0) < 128 ? .5 : 3;
-  return Math.ceil(tokens);
-}
+// The budget is in UTF-8 bytes: a byte-level BPE tokenizer never produces more
+// tokens than bytes, so the byte count is a bound that holds for any text (CJK,
+// emoji, punctuation, hashes) without shipping a tokenizer. 1,500 sits well
+// under the roughly 2K tokens the model reads.
+export const SYSTEM_ONE_TEXT_BYTE_BUDGETS = Object.freeze({ 'cloudflare/clef-flash': 1500 });
 
 function assertStateFitsModel(model, state) {
-  const budget = SYSTEM_ONE_TEXT_TOKEN_BUDGETS[model];
+  const budget = SYSTEM_ONE_TEXT_BYTE_BUDGETS[model];
   if (!budget) return;
   // Screenshots ride inside the state as structured image_url blocks; the
   // provider counts images separately, so only those blocks' payloads are left
   // out. A data URL that sits in ordinary text is text and is measured.
   const text = JSON.stringify(state, (_key, value) => (value && typeof value === 'object' && value.type === 'image_url'
     && value.image_url && typeof value.image_url === 'object' ? { type: 'image_url' } : value));
-  if (estimateTextTokens(text) > budget) {
+  if (new TextEncoder().encode(text).length > budget) {
     throw systemOneError('JEV_STATE_EXCEEDS_MODEL_INPUT', `The decision state is longer than ${model} reads; the fallback answers instead.`);
   }
 }

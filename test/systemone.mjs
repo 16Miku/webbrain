@@ -37,8 +37,8 @@ for (const build of ['chrome', 'firefox']) {
       return { ok: true, json: async () => ({ model: body.model, answers: { p: { type: 'noul', noul: .9 } }, usage: { input_tokens: 10, output_tokens: 0 } }) }; } });
     const one = { p: questions.p };
     const config = { provider: 'openrouter', model: 'cloudflare/clef-flash', apiKey: 'test', url: 'https://example.test/v1/decisions' };
-    const budget = mod.SYSTEM_ONE_TEXT_TOKEN_BUDGETS['cloudflare/clef-flash'];
-    assert.ok(budget < 2000, 'the budget stays under the 2K tokens the model reads');
+    const budget = mod.SYSTEM_ONE_TEXT_BYTE_BUDGETS['cloudflare/clef-flash'];
+    assert.ok(budget < 2000, 'the budget (bytes, an upper bound on byte-level tokens) stays under the 2K tokens the model reads');
     await judge.evaluate({ config, state: { evidence: 'The post was published and its page shows it. '.repeat(20) }, questions: one });
     assert.equal(requests.length, 1, 'ordinary text within the budget is sent');
     // Each of these stays far below the old 6,000-character cap yet can exceed 2K real tokens.
@@ -47,6 +47,7 @@ for (const build of ['chrome', 'firefox']) {
       hashes: { evidence: ('a1b2c3d4e5f60718293a4b5c6d7e8f90 ').repeat(60) },
       unbroken: { evidence: 'Zm9vYmFy'.repeat(250) },
       emoji: { evidence: '\u{1F600}'.repeat(700) },
+      punctuation: { evidence: '\\"\\n{}[]<>|~^'.repeat(150) },
     };
     for (const [name, state] of Object.entries(dense)) {
       assert.ok(JSON.stringify(state).length < 6000, `${name} is under the old character cap`);
@@ -64,7 +65,6 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(requests.length, 2, 'a data URL in text is not sent');
     await judge.evaluate({ config: { ...config, model: 'another/publisher' }, state: dense.cjk, questions: one });
     assert.equal(requests.length, 3, 'other models keep the full state');
-    assert.ok(mod.estimateTextTokens('x'.repeat(100)) >= 50 && mod.estimateTextTokens('日'.repeat(10)) >= 30);
   });
   test(`${build}: singleton Choice requests fail locally before a service call`, async () => {
     let calls = 0;
