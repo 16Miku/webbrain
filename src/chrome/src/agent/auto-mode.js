@@ -139,7 +139,7 @@ export function requestActionModeTool() {
 // Appended to the Ask system prompt of an automatically routed turn, after
 // the cache-stable base prompt.
 export const AUTO_MODE_ASK_NOTE = `AUTOMATIC MODE:
-- WebBrain chose this read-only turn from the request; the user did not pick a mode. Never ask the user to switch to Act or Dev mode.
+- WebBrain chose this read-only turn from the request; the user did not pick a mode. This section replaces every instruction above that tells the user to switch to Act or Dev mode: never ask the user to switch modes.
 - When the latest request needs browser actions or Dev page work that this turn cannot do, call \`request_action_mode\` alone, before answering, quoting the user's words that ask for it. WebBrain restarts the request with the right tools.
 - When reading, explaining, summarizing, analyzing or drafting text answers the request, answer it here.`;
 
