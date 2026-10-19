@@ -1024,6 +1024,14 @@ for (const build of ['chrome', 'firefox']) {
       guard.resourceMutationDispatches = [{ mutationKind: 'delete', resourceUrl: 'https://mastoturk.org/@owned/1' }];
     }), { summary: 'Deleted the post.', outcome: 'success' }, 'I couldn\'t confirm that the deletion took effect.', `${build} deletion`);
 
+    // With an ordinary form submission also dispatched, the unverified action
+    // may be that submission, so the deletion wording is not used.
+    await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, (guard, h) => {
+      guard.successfulConsequentialToolCalls = 2; guard.successfulTaskToolCalls = 2; guard.evidenceTaskKey = guard.taskKey;
+      guard.resourceMutationDispatches = [{ mutationKind: 'delete', resourceUrl: 'https://mastoturk.org/@owned/1' }];
+      h.agent._completionSubmitStates.set(h.tab, { dispatched: true, taskKey: guard.taskKey });
+    }), { summary: 'Deleted the post and sent the form.', outcome: 'success' }, 'I couldn\'t confirm that the submission went through.', `${build} deletion plus form`);
+
     await refusedOnceThenAccepted(Agent, planCase({ requiresStateChange: true, requiresSubmission: true }, guard => {
       guard.siteWorkflow = { adapterName: 'github', job: { id: 'edit-file-and-commit', template: 'publish', requiresSubmission: true } };
       guard.successfulConsequentialToolCalls = 1; guard.successfulTaskToolCalls = 1; guard.evidenceTaskKey = guard.taskKey;

@@ -107,7 +107,8 @@ for (const browser of ['chrome', 'firefox']) {
     const result = await f.agent._recoverPostActionModelFailure(f.tab, f.messages, f.update, {}, 4);
     assert.equal(result.status, 'done');
     assert.match(result.content, /stopped responding after the submission/);
-    assert.match(result.content, /no later step of the request was attempted/);
+    assert.match(result.content, /verified that submission/);
+    assert.doesNotMatch(result.content, /no later step/, 'a success outcome must not report an unattempted remainder');
     assert.doesNotMatch(result.content, /requested submission completed/);
   });
   test(`${browser}: recovery uses the submitted frame when present`, async () => {

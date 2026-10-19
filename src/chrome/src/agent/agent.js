@@ -5992,10 +5992,11 @@ export class Agent extends LoopDetector {
       add('plan-publication-evidence-missing', false, caveat);
       if (githubFile) add('github-committed-file-verification', false, caveat);
     } else if (flags.missingRequiredSubmission && !flags.missingSocialPublishTargets.length) {
-      // A deletion is not a "submission" to the user who asked for it.
-      const deletions = Array.isArray(state.resourceMutationDispatches) && state.resourceMutationDispatches.length > 0
-        && state.resourceMutationDispatches.every(attempt => attempt?.mutationKind === 'delete');
-      add('plan-submission-evidence-missing', false, deletions
+      // A deletion is not a "submission" to the user who asked for it. The
+      // caller sets missingDeletion only when the run's one dispatched action
+      // was a deletion, so a mixed task with an unverified form submission
+      // keeps the submission wording.
+      add('plan-submission-evidence-missing', false, flags.missingDeletion
         ? 'I couldn\'t confirm that the deletion took effect.'
         : 'I couldn\'t confirm that the submission went through.');
     }
@@ -7796,11 +7797,13 @@ export class Agent extends LoopDetector {
       const pageUrl = await this._currentUrl(tabId);
       if (!current()) return null;
       // WebBrain writes this answer, not the model, so it claims only what it
-      // checked: the one submission on this page. A request with later steps
-      // (another site, more items) did not get them.
+      // checked: the one submission on this page, not that the whole request
+      // is done. It stays a success because the completion check above
+      // established the task's observable requirements; saying here that later
+      // steps were not attempted would contradict that outcome.
       const summary = /^https:\/\/addons\.mozilla\.org\//i.test(pageUrl)
         ? 'The AMO version was submitted for review and the submission confirmation was verified.'
-        : 'The model stopped responding after the submission. WebBrain read the page and verified that submission; no later step of the request was attempted.';
+        : 'The model stopped responding after the submission. WebBrain read the page and verified that submission.';
       const result = await runReadOnly('done', { outcome: 'success', summary });
       if (current() && result?.action === 'return' && !result.status
           && this._completionVerdicts.get(tabId)?.outcome === 'succeeded') {
@@ -40885,10 +40888,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // its note once per run, and the next completion is accepted with a
     // caveat. The one-nudge budget and run-ending statuses below are the
     // strict path.
+    // The unverified action is a deletion only when deletions are all that was
+    // dispatched: an ordinary form submission leaves no resource-mutation
+    // record, but it does leave the current submit receipt.
+    const missingDeletion = missingRequiredSubmission
+      && Array.isArray(state.resourceMutationDispatches) && state.resourceMutationDispatches.length > 0
+      && state.resourceMutationDispatches.every(attempt => attempt?.mutationKind === 'delete')
+      && this._currentCompletionSubmitState(tabId)?.dispatched !== true;
     const advisory = this._planGuardAdvisory(tabId, state, { viaDone, looksPlanOnly, runtimeModeContradiction,
       structuredPlan: structuredPlan
         || (state.allowsPlannerShapedResult !== true && this._isPlannerShapedJson(content)),
-      staleCancellation, missingRequiredSchedulingTool, missingRequiredDownload, missingRequiredSubmission,
+      staleCancellation, missingRequiredSchedulingTool, missingRequiredDownload, missingRequiredSubmission, missingDeletion,
       forbiddenSubmission, missingJobEvidence, missingDraftEvidence, missingRequiredLedger,
       missingSocialPublishTargets, missingEvidence });
     if (advisory === 'accept') return null;
