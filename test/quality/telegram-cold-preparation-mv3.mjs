@@ -111,6 +111,12 @@ try {
   });
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 30000 });
   const id = new URL(worker.url()).host;
+  // The worker can be reported before its extension APIs exist; wait for them
+  // before wrapping chrome.tabs (as the relaxed monitoring harness does).
+  for (let attempt = 0; attempt < 200; attempt++) {
+    if (await worker.evaluate(() => !!(globalThis.chrome?.tabs?.sendMessage && globalThis.chrome?.runtime?.id)).catch(() => false)) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   await worker.evaluate(() => {
     globalThis.coldPreparation = { captures: [], reads: [], clicks: [], feedback: [], scopedTrees: [] };
     let initialOwner = '', initialDocument = '', initialAxDocument = '';
