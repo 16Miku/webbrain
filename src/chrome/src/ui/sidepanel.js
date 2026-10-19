@@ -1895,6 +1895,9 @@ function syncComposerModeForCurrentTab() {
 
 // On startup and tab switches: a reopened panel finds the tab's kept mode.
 function restoreComposerModeForCurrentTab() {
+  // A tab switch supersedes a pick still waiting on its checks, even when the
+  // user comes back to the same tab before they finish.
+  composerModePickGeneration += 1;
   syncComposerModeForCurrentTab();
   const tabId = currentTabId;
   if (isStandaloneWindow || tabId == null) return;
