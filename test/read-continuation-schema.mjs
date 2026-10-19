@@ -216,6 +216,20 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: a returned page-1 restart nested alone is still the read`, () => {
+    // An anchored page-2 read whose revision changed returns a restart for page 1
+    // with the original scope and no revision; nested alone it is the whole call.
+    const agent = new Agent({ getActive: () => null });
+    const restart = { filter: 'interactive', maxDepth: 15, maxChars: 6000, ref_id: 'ref_12', page: 1 };
+    const repaired = agent._repairToolCallArgs('get_accessibility_tree', { continuationArgs: restart });
+    assert.equal(repaired.result, undefined);
+    assert.equal(repaired.args.ref_id, 'ref_12', 'The anchored subtree is kept');
+    assert.equal(repaired.args.filter, 'interactive');
+    assert.equal(repaired.args.maxChars, 6000);
+    const text = agent._repairToolCallArgs('get_accessibility_tree', { continuationArgs: JSON.stringify(restart) });
+    assert.equal(text.args.ref_id, 'ref_12');
+  });
+
   test(`${browser}: oversized declared prose windows are bounded without losing the requested document position`, () => {
     const agent = new Agent({ getActive: () => null });
     const schema = getToolsForMode('act', { tier: 'full' })
