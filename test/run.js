@@ -42624,10 +42624,12 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
     assert.match(panel, /if \(currentTabId !== tabId\) \{[\s\S]*?replaceCachedScheduleComposer\(tabId, form\.dataset\.composerId, \{[\s\S]*?id: res\.jobId,[\s\S]*?scheduledAt: res\.scheduledAt,[\s\S]*?\}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?form\.remove\(\);[\s\S]*?renderScheduledJobCreatedMessage/, `${label}: schedule form should reconcile hidden and visible composer confirmations by job id`);
     assert.match(panel, /catch \(err\) \{[\s\S]*?if \(currentTabId !== tabId\) \{[\s\S]*?updateCachedScheduleComposerError\(tabId, form\.dataset\.composerId, err\.message\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?submit\.disabled = false;[\s\S]*?errorEl\.textContent = err\.message;/, `${label}: schedule form failures should update hidden cached composers instead of leaving disabled forms`);
     assert.match(panel, /renderScheduleComposer\(payload, tabId\)/, `${label}: /schedule should pass the initiating tab into the async composer`);
-    assert.match(panel, /const targetUrl = scheduleUrlFromPrompt\(prefillPrompt\) \|\| initialScheduleUrl;\s*if \(isHttpScheduleUrl\(targetUrl\)\) \{\s*urlInput\.value = targetUrl;/, `${label}: schedule form should prefill URL targets from the prompt, else the active tab`);
+    assert.match(panel, /const targetUrl = scheduleUrlFromPrompt\(prompt\) \|\| initialScheduleUrl;\s*if \(isHttpScheduleUrl\(targetUrl\)\) \{\s*urlInput\.value = targetUrl;[\s\S]*?applyScheduleTarget\(prefillPrompt\);/, `${label}: schedule form should prefill URL targets from the prompt, else the active tab`);
+    assert.match(panel, /promptInput\.addEventListener\('input', \(\) => \{\s*if \(!scheduleTargetChosen\) applyScheduleTarget\(promptInput\.value\);/, `${label}: an unchosen target follows the prompt as it is typed or edited`);
+    assert.match(panel, /urlInput\.addEventListener\('input', \(\) => \{ scheduleTargetChosen = true; \}\);[\s\S]*?targetType\.addEventListener\('change', \(\) => \{ scheduleTargetChosen = true; \}\);/, `${label}: a target the person picked is not overwritten by the prompt`);
     {
       const helpers = vm.createContext({ URL });
-      vm.runInContext(['isHttpScheduleUrl', 'scheduleUrlFromPrompt'].map(name => {
+      vm.runInContext(['isHttpScheduleUrl', 'trimScheduleUrlProse', 'scheduleUrlFromPrompt'].map(name => {
         const start = panel.indexOf(`function ${name}(`);
         return panel.slice(start, panel.indexOf('\n}\n', start) + 2);
       }).join('\n'), helpers);
@@ -42638,6 +42640,9 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
       assert.equal(pick('Check https://example.com/ twice: https://example.com/'), 'https://example.com/');
       assert.equal(pick('Check the open page.'), '');
       assert.equal(pick('Run javascript:alert(1) on ftp://example.com'), '');
+      assert.equal(pick('See https://en.wikipedia.org/wiki/Function_(mathematics) daily.'), 'https://en.wikipedia.org/wiki/Function_(mathematics)', `${label}: a bracket that closes one inside the address stays`);
+      assert.equal(pick('(see https://en.wikipedia.org/wiki/Function_(mathematics)).'), 'https://en.wikipedia.org/wiki/Function_(mathematics)', `${label}: prose punctuation after a balanced address is dropped`);
+      assert.equal(pick('Check [https://example.com/a].'), 'https://example.com/a');
     }
     assert.match(panel, /targetType\.value = 'url'/, `${label}: schedule form should default http(s) pages to URL targets`);
     assert.match(panel, /content\.appendChild\(form\)/, `${label}: schedule form should append after initial target defaults are applied`);

@@ -4373,12 +4373,28 @@ function isHttpScheduleUrl(value) {
   }
 }
 
+// Drops the sentence punctuation and unmatched closing brackets a URL picked
+// up from the prose around it, but keeps a bracket that closes one inside the
+// address (https://en.wikipedia.org/wiki/Function_(mathematics)).
+function trimScheduleUrlProse(raw) {
+  let url = raw;
+  for (;;) {
+    const last = url.slice(-1);
+    const opener = last === ')' ? '(' : last === ']' ? '[' : '';
+    if (/[.,;:!?]/.test(last) || (opener && url.split(last).length > url.split(opener).length)) {
+      url = url.slice(0, -1);
+    } else {
+      return url;
+    }
+  }
+}
+
 // The one http(s) address a task's prompt names, so "check https://example.com/
 // every day" targets that page rather than whatever tab is open.
 function scheduleUrlFromPrompt(prompt) {
   const urls = new Set();
   for (const match of String(prompt || '').matchAll(/https?:\/\/[^\s<>"'`]+/gi)) {
-    const url = match[0].replace(/[)\].,;:!?]+$/, '');
+    const url = trimScheduleUrlProse(match[0]);
     if (isHttpScheduleUrl(url)) urls.add(url);
   }
   return urls.size === 1 ? [...urls][0] : '';
@@ -4654,11 +4670,25 @@ async function renderScheduleComposer(prefillPrompt = '', tabId = currentTabId) 
   urlInput.className = 'schedule-url';
   urlInput.placeholder = 'https://example.com/';
   addScheduleField(form, t('sp.schedule_form.target_url'), urlInput);
-  const targetUrl = scheduleUrlFromPrompt(prefillPrompt) || initialScheduleUrl;
-  if (isHttpScheduleUrl(targetUrl)) {
-    urlInput.value = targetUrl;
-    targetType.value = 'url';
-  }
+  const applyScheduleTarget = (prompt) => {
+    const targetUrl = scheduleUrlFromPrompt(prompt) || initialScheduleUrl;
+    if (isHttpScheduleUrl(targetUrl)) {
+      urlInput.value = targetUrl;
+      targetType.value = 'url';
+    } else {
+      urlInput.value = '';
+      targetType.value = 'current_tab';
+    }
+  };
+  applyScheduleTarget(prefillPrompt);
+  // The target follows the URL the prompt names until the person picks one
+  // themselves, so a prompt typed or edited after /schedule opened is read too.
+  let scheduleTargetChosen = false;
+  urlInput.addEventListener('input', () => { scheduleTargetChosen = true; });
+  targetType.addEventListener('change', () => { scheduleTargetChosen = true; });
+  promptInput.addEventListener('input', () => {
+    if (!scheduleTargetChosen) applyScheduleTarget(promptInput.value);
+  });
 
   const modeInput = document.createElement('select');
   modeInput.className = 'schedule-mode';
