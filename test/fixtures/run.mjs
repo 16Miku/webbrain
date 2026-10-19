@@ -5394,6 +5394,29 @@ for (const browserKind of ['chrome', 'firefox']) {
     }
   });
 
+  test(`click_ax (${browserKind}): a portaled menu item describes the post its menu was opened from`, async (page) => {
+    await setupContentHtml(page, `
+      <style>.dropdown-menu { position: fixed; left: 420px; background: #fff; } button { display: block; }</style>
+      <header><h1>Profile header</h1><a href="/settings/profile">Edit profile</a></header>
+      <article><a href="/@qa/1">1d</a><p>First test toot</p><button aria-expanded="false">More</button></article>
+      <article><a href="/@qa/2">3d</a><p>Second test toot</p><button aria-expanded="true" aria-controls="menu-2">More</button></article>
+      <div id="menu-2"><div class="dropdown-menu" style="top:40px"><ul><li><button>Edit</button></li><li><button>Delete</button></li></ul></div></div>
+      <div class="dropdown-menu" style="top:200px"><ul><li><button>Orphan action</button></li></ul></div>`, browserKind);
+    const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 12, maxChars: 20000 });
+    const ref = name => String(tree?.pageContent || '').match(new RegExp(`button "${name}" \\[(ref_\\d+)\\]`))?.[1];
+    const menuItem = await call(page, 'click_ax', { ref_id: ref('Delete') });
+    const context = menuItem?.targetContext || {};
+    if (!menuItem?.success || !String(context.text || '').includes('Second test toot') || /Profile header|First test toot/.test(String(context.text))
+        || !String(context.href || '').endsWith('/@qa/2')) {
+      throw new Error(`a menu item must be described by the post that opened its menu: ${JSON.stringify(menuItem)}`);
+    }
+    // A menu with no opener is described by itself at most, never by the page around the portal.
+    const orphan = await call(page, 'click_ax', { ref_id: ref('Orphan action') });
+    if (!orphan?.success || /Profile header|test toot/.test(String(orphan.targetContext?.text || ''))) {
+      throw new Error(`a menu without an opener borrowed the page around it: ${JSON.stringify(orphan)}`);
+    }
+  });
+
   test(`resolve_visual_target (${browserKind}): nested SVG resolves semantic button`, async (page) => {
     await setupContentHtml(page, `
       <style>button { position: fixed; left: 40px; top: 30px; width: 120px; height: 60px; }</style>

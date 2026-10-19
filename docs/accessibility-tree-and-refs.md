@@ -197,6 +197,8 @@ Atomically focuses + (optionally clears) + types + (optionally submits). The one
 
 When building the tree, open dialogs, listboxes, menus, and `[aria-expanded=true]` comboboxes are emitted under an `[open overlays]` banner at the top of the tree — before the rest of the page content. This ensures portal-rendered popups (React, Radix, Stripe) survive the 3,000-char soft cap seen by the model.
 
+A portaled popup sits at the end of the body, away from the post or row it acts on. When exactly one expanded control outside the popup names it through `aria-controls` (the popup, a wrapper around it, or an element inside it), the popup is preceded by `(opened by button "More" [ref_A] in article [ref_B])`: the control and the nearest article, list item or row around it, by the refs the rest of the tree uses. Mastodon's post menu is one such popup. Without that relation, or with two candidate controls, no opener is named. A `click_ax` on an item of such a popup describes, in `targetContext`, the record around its opener; a popup with no known opener is described by its own text at most, never by the page around the portal.
+
 ---
 
 ## Accessible Name Resolution Priority

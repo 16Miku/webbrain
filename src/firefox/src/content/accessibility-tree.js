@@ -1347,6 +1347,40 @@
     }
   }
 
+  // The control that opened a detached popup, by its own aria-controls
+  // relation (Mastodon's "More" menu, Radix and Headless UI menus): an
+  // expanded control outside the popup whose controlled element is the popup,
+  // contains it or sits inside it. Only a single match counts. Without it a
+  // portaled menu shows no tie to the post or row it acts on.
+  const POPUP_RECORD_SELECTOR = 'article,[role="article"],li,[role="listitem"],tr,[role="row"]';
+  function popupLauncher(popup) {
+    try {
+      const root = popup?.getRootNode?.() || document;
+      let found = null, scanned = 0;
+      for (const control of root.querySelectorAll('[aria-controls][aria-expanded="true"]')) {
+        if (++scanned > 200) return null;
+        if (isComposedAncestor(popup, control) || !isVisible(control)) continue;
+        const controlled = String(control.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean)
+          .map(id => root.getElementById?.(id) || document.getElementById(id)).filter(Boolean);
+        if (!controlled.some(target => target === popup || target.contains(popup) || popup.contains(target))) continue;
+        if (found) return null;
+        found = control;
+      }
+      return found;
+    } catch (e) { return null; }
+  }
+  function popupLauncherLine(popup) {
+    const launcher = popupLauncher(popup);
+    if (!launcher) return '';
+    const label = el => {
+      const name = String(modelAccessibleName(el) || '').replace(/\s+/g, ' ').substring(0, MAX_NAME_LEN).replace(/"/g, '\\"');
+      return getRole(el) + (name ? ' "' + name + '"' : '') + ' [' + getOrMintRef(el) + ']';
+    };
+    const record = launcher.closest(POPUP_RECORD_SELECTOR);
+    return '(opened by ' + label(launcher) + (record && !isComposedAncestor(record, popup)
+      ? ' in ' + getRole(record) + ' [' + getOrMintRef(record) + ']' : '') + ')';
+  }
+
   // Fresh portals are interaction context for rooted reads as well as
   // full-page reads. Their public inventory uses the same bounded tree and
   // continuation; the underlying article scope does not become a page read.
@@ -1434,6 +1468,8 @@
     if (overlayEls.length) {
       lines.push(opts._emittedRefs ? '[open overlays — current context after requested subtree]' : '[open overlays — rendered first so they survive truncation]');
       for (const n of overlayEls) {
+        const opener = popupLauncherLine(n);
+        if (opener) lines.push(opener);
         if (n.matches('.dropdown-menu')) {
           // Mastodon's native portal has no ARIA menu role and may extend
           // below the viewport. Publish its exact root and rendered action
@@ -2190,6 +2226,7 @@
   window.__wb_ax_model_href = modelHref;
   window.__wb_ax_account_chrome = el => !!accountChromeControl(el);
   window.__wb_ax_role = getRole;
+  window.__wb_ax_popup_launcher = popupLauncher;
   window.__wb_ax_section_purpose = nativeSectionPurpose;
   window.__wb_ax_resolve_visual_target = resolveVisualTargetAtPoint;
   window.__wb_ax_suggest = suggestNearRefs;
