@@ -28459,8 +28459,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresStateChange: approvedRequiresStateChange,
         requiresSubmission: approvedRequiresSubmission,
         readScope: approvedReadScope,
-        deliverables: this._plannerCompletionGateFields(plan).deliverables,
-        multipleDeliverables: this._plannerCompletionGateFields(plan).multipleDeliverables,
+        // The reviewed text is not parsed for deliverables, so an edit drops the
+        // planner's list instead of enforcing what the person may have removed.
+        deliverables: approvedPlanEdited ? [] : this._plannerCompletionGateFields(plan).deliverables,
+        multipleDeliverables: approvedPlanEdited ? false : this._plannerCompletionGateFields(plan).multipleDeliverables,
         siteWorkflowUrl: tabUrl,
         messaging: approvedPlanEdited ? null : plan.messaging,
         requestedMessaging: approvedPlanEdited ? null : plan.requested_messaging,
