@@ -7342,6 +7342,10 @@ export class Agent extends LoopDetector {
     const resultSequence = submit.semanticCommit?.verificationNavigation?.actionSequence
       ?? submit.mastodonPublication?.verificationNavigation?.actionSequence
       ?? submit.actionSequence;
+    // A self-verifying action (a scheduled task, a verified chat send) after
+    // the submission leaves lastAction on the submission but is a later step.
+    const later = Number(this.completionInvariants.get(tabId)?.laterSelfVerifiedSequence || 0);
+    if (later > Number(resultSequence)) return false;
     return Number.isFinite(Number(resultSequence)) && Number(resultSequence) === Number(lastAction.sequence);
   }
 

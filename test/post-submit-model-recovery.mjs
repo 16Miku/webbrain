@@ -151,6 +151,30 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(offer.retryMode, 'resume');
     assert.equal(f.updates.some(x => x.type === 'warning'), false, 'No post-submit inspection notice');
   });
+  test(`${browser}: a later self-verifying action does not make the earlier submission the latest step`, async () => {
+    // The submission left verification debt; scheduling a follow-up then
+    // succeeded and proved itself. lastAction still names the submission, but
+    // the run has moved on, so a model failure must name the earlier submission.
+    const { recordCompletionToolResult } = await import(`../src/${browser}/src/agent/completion-invariant.js`);
+    const f = fixture();
+    f.agent.completionInvariants.set(f.tab, { runToken: 'owned-run', sequence: 2, verificationDebt: true, hadAction: true,
+      lastAction: { name: 'click_ax', sequence: 2, uncertain: false } });
+    f.agent._completionSubmitStates.set(f.tab, { dispatched: true, actionSequence: 2,
+      originatingUrl: 'https://mastoturk.org/home', currentUrl: 'https://mastoturk.org/home' });
+    assert.equal(f.agent._completionSubmissionIsLatestAction(f.tab), true);
+    const after = recordCompletionToolResult(f.agent.completionInvariants.get(f.tab), 'schedule_task', {},
+      { success: true, scheduled: true, jobId: 'job-1', scheduledAt: new Date(Date.now() + 3600e3).toISOString() });
+    assert.equal(after.lastAction.sequence, 2, 'the debt still belongs to the submission');
+    f.agent.completionInvariants.set(f.tab, after);
+    assert.equal(f.agent._completionSubmissionIsLatestAction(f.tab), false);
+    f.agent._currentUrl = async () => 'https://mastoturk.org/home';
+    assert.equal(await f.agent._recoverPostActionModelFailure(f.tab, f.messages, f.update, {}, 7), null);
+    const error = Object.assign(new Error('offscreen proxy timed out'), { code: 'TRANSPORT' });
+    const result = await f.agent._finalModelFailure(f.tab, f.messages, f.update, {}, error, 7);
+    assert.deepEqual(f.operations, []);
+    assert.match(result.content, /A submission on mastoturk\.org was sent earlier in this task/);
+  });
+
   test(`${browser}: a navigation bound to the submission's result still lets WebBrain check it`, async () => {
     const f = fixture();
     f.agent._completionSubmitStates.set(f.tab, { dispatched: true, actionSequence: 2,
