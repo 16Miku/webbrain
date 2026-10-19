@@ -363,8 +363,10 @@ function searchTextForGeneralItem(item) {
   return normalizeGeneralSearchText(`${item.textContent || ''} ${keyedText}`);
 }
 
+// The search hides rows with a class of its own and leaves the hidden
+// attribute to the code that owns each row, so clearing a search cannot bring
+// back a card that is hidden for another reason (a managed CAPTCHA card, say).
 function setGeneralSearchHidden(item, hidden) {
-  item.hidden = hidden;
   item.classList.toggle('general-search-hidden', hidden);
 }
 
@@ -382,7 +384,7 @@ function filterGeneralSettings() {
     const scope = panel.querySelector('[data-search-scope]') || panel;
     let panelMatches = 0;
     for (const item of Array.from(scope.children)) {
-      const matches = !query || searchTextForGeneralItem(item).includes(query);
+      const matches = !query || (!item.hidden && searchTextForGeneralItem(item).includes(query));
       setGeneralSearchHidden(item, !!query && !matches);
       if (matches) panelMatches += 1;
     }
@@ -1929,6 +1931,13 @@ function renderProfileSyncState(state) {
 async function refreshProfileSyncState() { const state = await sendToBackground('profile_sync_state').catch(e => ({ status: 'error', error: e.message })); renderProfileSyncState(state); return state; }
 async function reloadProfileSyncData() { const stored = await browser.storage.local.get(['profileEnabled', 'profileText', 'visionModel', 'transcriptionModel', 'imageGenModel']); if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled; if (profileTextArea) profileTextArea.value = stored.profileText || ''; const vision = stored.visionModel || {}; if (visionBaseUrlInput) { visionBaseUrlInput.value = vision.baseUrl || ''; visionApiKeyInput.value = vision.apiKey || ''; visionModelInput.value = vision.model || ''; } const transcription = stored.transcriptionModel || {}; if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || ''; if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || ''; if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || ''; const imageGen = stored.imageGenModel || {}; if (imageGenApiKeyInput) imageGenApiKeyInput.value = imageGen.apiKey || ''; if (imageGenModelInput) imageGenModelInput.value = imageGen.model || ''; updateMultimodalDetectedProvider('vision'); updateMultimodalDetectedProvider('transcription'); await loadUserMemorySettings(); if (!providersContainer) return; const res = await sendToBackground('get_providers'); providersData = res.providers; activeProviderId = res.active; renderProviders(); }
 async function requestProfileSyncDataConsent() { const permissions = await browser.permissions.getAll(); if (!Object.hasOwn(permissions, 'data_collection')) return window.confirm(t('st.sync.consent.legacy')); return browser.permissions.request({ data_collection: ['personallyIdentifyingInfo', 'authenticationInfo', 'personalCommunications', 'websiteContent', 'technicalAndInteraction'] }); }
+// Profile sync runs from Settings, but what it pulls also fills the Providers
+// page. Settings pages open in other tabs reload what they show, so a Save
+// there cannot write stale values over the synced ones.
+const settingsPagesChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('webbrain-settings-pages') : null;
+settingsPagesChannel?.addEventListener('message', (event) => {
+  if (event.data?.type === 'profile-sync-data-changed') reloadProfileSyncData().catch(() => {});
+});
 function profileSyncButtonRestore(button, pendingLabel) {
   if (!button) return () => {};
   const previousDisabled = button.disabled;
@@ -1942,7 +1951,10 @@ async function profileSyncAction(action, data = {}, options = {}) {
   try {
     if (options.pending) showProfileSyncResult(true, options.pending);
     const result = await sendToBackground(action, data);
-    if (['profile_sync_unlock', 'profile_sync_now', 'profile_sync_reset'].includes(action)) await reloadProfileSyncData();
+    if (['profile_sync_unlock', 'profile_sync_now', 'profile_sync_reset'].includes(action)) {
+      settingsPagesChannel?.postMessage({ type: 'profile-sync-data-changed' });
+      await reloadProfileSyncData();
+    }
     showProfileSyncResult(true, options.success || t('st.sync.result.updated'));
     await refreshProfileSyncState();
     return result;

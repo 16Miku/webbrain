@@ -12551,7 +12551,7 @@ test('trace privacy documentation distinguishes metadata-only and lossless reten
     assert.match(document, /default[\s\S]*(?:omit|omits|omitting)[\s\S]*tool arguments\/results/i, `${label}: default event-payload omission is undocumented`);
     assert.match(document, /default[\s\S]*(?:omit|omits|omitting)[\s\S]*(?:tab URLs\/titles|tab URL\/title)[\s\S]*attachment filename/i, `${label}: sensitive run metadata omission is undocumented`);
     assert.match(document, /default[\s\S]*do(?:es)? not write screenshot blobs/i, `${label}: default screenshot-byte omission is undocumented`);
-    assert.match(document, /lossless[\s\S]*explicit\s+(?:user\s+)?opt-in[\s\S]*screenshot\s+bytes/i, `${label}: lossless content retention is undocumented`);
+    assert.match(document, /lossless[\s\S]*(?:explicit\s+(?:user\s+)?)?opt-in[\s\S]*Record traces[\s\S]*screenshot\s+bytes/i, `${label}: lossless content retention is undocumented`);
     assert.match(document, /historical[\s\S]*(?:not\s+(?:migrated|rewrite|rewritten)|do(?:es)? not rewrite)/i, `${label}: historical trace retention is undocumented`);
   }
 });
@@ -14868,14 +14868,19 @@ test('trace tiers: one Record traces switch sets both tiers and discloses full r
   }
 });
 
-test('trace tiers: a profile with the tiers set apart is lined up once, then left alone', async () => {
-  for (const [label, prefix, apiName] of [['chrome', 'src/chrome', 'chrome'], ['firefox', 'src/firefox', 'browser']]) {
+test('trace tiers: an update lines up tiers set apart once; a new install leaves them to the harness', async () => {
+  for (const [label, prefix, apiName, browserUpdate] of [['chrome', 'src/chrome', 'chrome', 'chrome_update'], ['firefox', 'src/firefox', 'browser', 'browser_update']]) {
     const bg = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     const start = bg.indexOf("const TRACE_TIERS_MERGED_KEY = 'traceTiersMergedV1';");
-    const end = bg.indexOf('mergeTraceTiers().catch(() => {});', start);
+    const marker = '  mergeTraceTiers(reason).catch(() => {});\n});\n';
+    const end = bg.indexOf(marker, start);
     assert.ok(start > -1 && end > start, `${label}: trace tier migration not found`);
-    const migrate = async (stored) => {
+    const block = bg.slice(start, end + marker.length);
+    const settle = () => new Promise(resolve => setImmediate(resolve));
+    const migrate = async (stored, reason) => {
+      let onInstalled = null;
       const api = {
+        runtime: { onInstalled: { addListener: (listener) => { onInstalled = listener; } } },
         storage: {
           local: {
             get: async (keys) => Object.fromEntries(keys.filter(key => key in stored).map(key => [key, stored[key]])),
@@ -14883,17 +14888,27 @@ test('trace tiers: a profile with the tiers set apart is lined up once, then lef
           },
         },
       };
-      await vm.runInNewContext(`(async () => { ${bg.slice(start, end)} await mergeTraceTiers(); })()`, { [apiName]: api });
+      const before = structuredClone(stored);
+      vm.runInNewContext(block, { [apiName]: api });
+      await settle();
+      assert.deepEqual(stored, before, `${label}: nothing changes before the browser says why the extension started`);
+      assert.equal(typeof onInstalled, 'function', `${label}: the merge should wait for onInstalled`);
+      onInstalled({ reason });
+      await settle();
       return stored;
     };
-    assert.deepEqual(await migrate({ tracingEnabled: true }), { tracingEnabled: true, losslessTrace: true, traceTiersMergedV1: true },
+    assert.deepEqual(await migrate({ tracingEnabled: true }, 'update'), { tracingEnabled: true, losslessTrace: true, traceTiersMergedV1: true },
       `${label}: traces without full details should start recording full details`);
-    assert.deepEqual(await migrate({ tracingEnabled: false, losslessTrace: true }), { tracingEnabled: false, losslessTrace: false, traceTiersMergedV1: true },
+    assert.deepEqual(await migrate({ tracingEnabled: false, losslessTrace: true }, 'update'), { tracingEnabled: false, losslessTrace: false, traceTiersMergedV1: true },
       `${label}: full details without traces should be turned off`);
-    assert.deepEqual(await migrate({}), { traceTiersMergedV1: true },
+    assert.deepEqual(await migrate({}, 'update'), { traceTiersMergedV1: true },
       `${label}: a profile that never recorded traces should be left as it is`);
-    assert.deepEqual(await migrate({ tracingEnabled: true, losslessTrace: false, traceTiersMergedV1: true }), { tracingEnabled: true, losslessTrace: false, traceTiersMergedV1: true },
+    assert.deepEqual(await migrate({ tracingEnabled: true, losslessTrace: false, traceTiersMergedV1: true }, 'update'), { tracingEnabled: true, losslessTrace: false, traceTiersMergedV1: true },
       `${label}: tiers set apart after the one-time merge should keep that choice`);
+    assert.deepEqual(await migrate({ tracingEnabled: true, losslessTrace: false }, 'install'), { tracingEnabled: true, losslessTrace: false, traceTiersMergedV1: true },
+      `${label}: a new install only notes the merge, so a harness that sets the tiers apart keeps them`);
+    assert.deepEqual(await migrate({ tracingEnabled: true }, browserUpdate), { tracingEnabled: true },
+      `${label}: a browser update is not an extension update`);
   }
 });
 
@@ -15959,17 +15974,29 @@ test('import_config_patch background handler merges against live provider storag
     assert.equal(stored.themeMode, 'system', `${label}: full import should still restore omitted settings to defaults`);
     assert.equal(stored.providers.webbrain_cloud.baseUrl, 'https://stale-export.example/v1', `${label}: full import intentionally keeps its replace-everything semantics`);
 
-    // Exports carry Record traces only; full request details follow it on a
-    // restore, as they do in Settings, while a provisioning patch sets its own.
-    const traced = JSON.stringify({ schema: 'webbrain-config/1', settings: { tracingEnabled: true } });
+    // Exports carry Record traces only. Full request details follow it on a
+    // restore, as they do in Settings; a provisioning patch can turn both off
+    // but never turns full request details on.
+    const configWith = (settings) => JSON.stringify({ schema: 'webbrain-config/1', settings });
     stored.losslessTrace = false;
-    const tracedResponse = await handler({ action: 'import_config', json: traced }, api, helpers);
+    const tracedResponse = await handler({ action: 'import_config', json: configWith({ tracingEnabled: true }) }, api, helpers);
     assert.equal(tracedResponse.settingCount, configTransfer.CONFIG_STORAGE_KEYS.length, `${label}: the derived trace tier is not an imported setting`);
     assert.equal(stored.tracingEnabled, true, `${label}: a restored export should restore Record traces`);
     assert.equal(stored.losslessTrace, true, `${label}: full request details should follow a restored Record traces`);
+    stored.tracingEnabled = false;
     stored.losslessTrace = false;
-    await handler({ action: 'import_config_patch', json: traced }, api, helpers);
-    assert.equal(stored.losslessTrace, false, `${label}: a provisioning patch keeps its own trace tiers`);
+    const tracedPatch = await handler({ action: 'import_config_patch', json: configWith({ tracingEnabled: true }) }, api, helpers);
+    assert.equal(tracedPatch.settingCount, 1, `${label}: the derived trace tier is not a patched setting`);
+    assert.equal(stored.tracingEnabled, true, `${label}: a provisioning patch can turn Record traces on`);
+    assert.equal(stored.losslessTrace, false, `${label}: a provisioning patch never turns full request details on`);
+    stored.losslessTrace = true;
+    await handler({ action: 'import_config_patch', json: configWith({ tracingEnabled: false }) }, api, helpers);
+    assert.equal(stored.tracingEnabled, false, `${label}: a provisioning patch can turn Record traces off`);
+    assert.equal(stored.losslessTrace, false, `${label}: turning Record traces off by patch turns full request details off too`);
+    stored.tracingEnabled = true;
+    stored.losslessTrace = true;
+    await handler({ action: 'import_config_patch', json: configWith({ verboseMode: false }) }, api, helpers);
+    assert.equal(stored.losslessTrace, true, `${label}: a patch without Record traces leaves both tiers alone`);
   }
   assert.deepEqual(
     { response: results[1].response, stored: results[1].stored },
@@ -16239,7 +16266,7 @@ test('/export --config and /import JSON or --file are wired in both browsers', (
     assert.match(panel, /command\.value === '\/import' && action === 'file'[\s\S]*?requestConfigurationFile\(tabId\)/, `${label}: file config import handler missing`);
     assert.match(panel, /input\.accept = '\.json,application\/json'[\s\S]*?file\.text\(\)/, `${label}: file picker should read JSON files`);
     assert.match(bg, /case 'export_config':[\s\S]*?createConfigExport\(stored/, `${label}: background config export missing`);
-    assert.match(bg, /case 'import_config':[\s\S]*?parseConfigImport\(msg\.json\)[\s\S]*?storage\.local\.set\(msg\.action === 'import_config' && Object\.hasOwn\(settings, 'tracingEnabled'\)[\s\S]*?: settings\);[\s\S]*?providerManager\.load\(\)/, `${label}: background config import and live provider reload missing`);
+    assert.match(bg, /case 'import_config':[\s\S]*?parseConfigImport\(msg\.json\)[\s\S]*?const traceTiers = Object\.hasOwn\(settings, 'tracingEnabled'\)[\s\S]*?storage\.local\.set\(\{ \.\.\.settings, \.\.\.traceTiers \}\);[\s\S]*?providerManager\.load\(\)/, `${label}: background config import and live provider reload missing`);
     assert.match(bg, /case 'import_config_patch':[\s\S]*?parseConfigPatchImport\(msg\.json\)[\s\S]*?mergeConfigPatchSettings/, `${label}: background sparse config import and provider merge missing`);
   }
 });
@@ -47913,7 +47940,9 @@ test('settings search filters rows across General, Budgets, CAPTCHA and Advanced
     const settings = fs.readFileSync(path.join(ROOT, settingsRel), 'utf8');
     assert.match(settings, /const generalSearchInput = document\.getElementById\('input-general-search'\);/, `${label}: the search input should be wired`);
     assert.match(settings, /const searchableNodes = \[item, \.\.\.Array\.from\(item\.querySelectorAll/, `${label}: search should index the root row/card id as well as child controls`);
-    assert.match(settings, /function setGeneralSearchHidden\(item, hidden\) \{[\s\S]*?item\.hidden = hidden;[\s\S]*?item\.classList\.toggle\('general-search-hidden', hidden\);[\s\S]*?\}/, `${label}: search should force-hide filtered DOM nodes with a class`);
+    assert.match(settings, /function setGeneralSearchHidden\(item, hidden\) \{\s*item\.classList\.toggle\('general-search-hidden', hidden\);\s*\}/, `${label}: search should hide filtered DOM nodes with a class of its own`);
+    assert.doesNotMatch(settings, /function setGeneralSearchHidden\(item, hidden\) \{[^}]*item\.hidden/, `${label}: search must leave the hidden attribute to the code that owns each row`);
+    assert.match(settings, /const matches = !query \|\| \(!item\.hidden && searchTextForGeneralItem\(item\)\.includes\(query\)\);/, `${label}: a row hidden for another reason should not count as a match`);
     assert.match(settings, /const searchPanels = Array\.from\(document\.querySelectorAll\('\.tab-panel\[data-search\]'\)\);/, `${label}: search should cover the tabs marked data-search`);
     assert.match(settings, /function filterGeneralSettings\(\) \{[\s\S]*?const query = normalizeGeneralSearchText\(generalSearchInput\.value\);[\s\S]*?document\.body\.classList\.toggle\('settings-searching', !!query\);[\s\S]*?const scope = panel\.querySelector\('\[data-search-scope\]'\) \|\| panel;[\s\S]*?setGeneralSearchHidden\(item, !!query && !matches\);[\s\S]*?setGeneralSearchHidden\(panel, !!query && panelMatches === 0\);[\s\S]*?generalSearchEmpty\.hidden = !query \|\| totalMatches > 0;[\s\S]*?\}/, `${label}: search should filter rows in every covered tab, hide tabs without matches, and report an empty result`);
     assert.match(settings, /generalSearchInput\?\.addEventListener\('input', filterGeneralSettings\);/, `${label}: search should filter as the user types`);

@@ -326,7 +326,7 @@ switch for content they do not want to share.
 
 The extension records a local trace for an opted-in run even if the separate
 Record traces switch is off. The upload projects only metadata from that trace,
-including when the user independently selected local lossless tracing. Research
+even when Record traces also keeps its full request details locally. Research
 shares use a durable, revocable local outbox and are retried after temporary
 delivery failures; the provider's live sharing consent is checked before each
 send. The Compass service admits these records only under explicit
@@ -378,7 +378,7 @@ runs use the metadata-only tier:
   request/response text, tool schemas, tool arguments/results, and error
   messages. Metadata-only traces do not write screenshot blobs or data URLs to
   the `shots` store.
-- **Lossless debug tier (explicit opt-in).** Record traces adds user/final
+- **Lossless debug tier (opt-in, through Record traces).** Record traces adds user/final
   text, bounded request messages and tool schemas, model responses and tool
   calls, tool arguments/results, detailed errors, screenshot bytes, tab
   URL/title, and attachment filename metadata. Lossless payloads have

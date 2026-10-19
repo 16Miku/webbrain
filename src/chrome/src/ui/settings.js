@@ -416,8 +416,10 @@ function searchTextForGeneralItem(item) {
   return normalizeGeneralSearchText(`${item.textContent || ''} ${keyedText}`);
 }
 
+// The search hides rows with a class of its own and leaves the hidden
+// attribute to the code that owns each row, so clearing a search cannot bring
+// back a card that is hidden for another reason (a managed CAPTCHA card, say).
 function setGeneralSearchHidden(item, hidden) {
-  item.hidden = hidden;
   item.classList.toggle('general-search-hidden', hidden);
 }
 
@@ -435,7 +437,7 @@ function filterGeneralSettings() {
     const scope = panel.querySelector('[data-search-scope]') || panel;
     let panelMatches = 0;
     for (const item of Array.from(scope.children)) {
-      const matches = !query || searchTextForGeneralItem(item).includes(query);
+      const matches = !query || (!item.hidden && searchTextForGeneralItem(item).includes(query));
       setGeneralSearchHidden(item, !!query && !matches);
       if (matches) panelMatches += 1;
     }
@@ -2326,6 +2328,13 @@ async function reloadProfileSyncData() {
   activeProviderId = res.active;
   renderProviders();
 }
+// Profile sync runs from Settings, but what it pulls also fills the Providers
+// page. Settings pages open in other tabs reload what they show, so a Save
+// there cannot write stale values over the synced ones.
+const settingsPagesChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('webbrain-settings-pages') : null;
+settingsPagesChannel?.addEventListener('message', (event) => {
+  if (event.data?.type === 'profile-sync-data-changed') reloadProfileSyncData().catch(() => {});
+});
 function profileSyncButtonRestore(button, pendingLabel) {
   if (!button) return () => {};
   const previousDisabled = button.disabled;
@@ -2339,7 +2348,10 @@ async function profileSyncAction(action, data = {}, options = {}) {
   try {
     if (options.pending) showProfileSyncResult(true, options.pending);
     const result = await sendToBackground(action, data);
-    if (['profile_sync_unlock', 'profile_sync_now', 'profile_sync_reset'].includes(action)) await reloadProfileSyncData();
+    if (['profile_sync_unlock', 'profile_sync_now', 'profile_sync_reset'].includes(action)) {
+      settingsPagesChannel?.postMessage({ type: 'profile-sync-data-changed' });
+      await reloadProfileSyncData();
+    }
     showProfileSyncResult(true, options.success || t('st.sync.result.updated'));
     await refreshProfileSyncState();
     return result;

@@ -2,7 +2,8 @@
 // CAPTCHA, Bridge, Advanced), providers.html (LLM and the assistive models)
 // and permissions.html. This drives all three pages in both builds with a
 // stubbed extension API: tab layout, deep links from the old tabs, the
-// cross-tab search, the single Record traces switch and the moved controls.
+// cross-tab search, the single Record traces switch, the moved controls and
+// the Providers page refresh after a profile sync on Settings.
 import { chromium, firefox } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -72,6 +73,7 @@ function stub({ build, lang, seed }) {
     }
     if (msg.action === 'get_user_memory') return { ok: true, enabled: true, records: [] };
     if (msg.action === 'get_webgpu_vision_choice') return { ok: true, choice: 'auto', bonsaiReady: false };
+    if (msg.action === 'profile_sync_state') return window.testProfileSyncState || {};
     return {};
   };
   window.chrome = window.browser = {
@@ -227,6 +229,34 @@ try {
       assert.ok(await visible(providers, '#decision-mode'), `${build}: decision modes on the Decision tab`);
       assert.deepEqual(providerErrors, [], `${build}: providers.html page errors`);
       await providers.close();
+
+      // A profile sync on Settings refreshes a Providers page open in another
+      // tab, so a Save there cannot write stale values over what was pulled.
+      const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+      try {
+        await context.addInitScript(stub, { build, lang: 'en', seed: {} });
+        await context.addInitScript(() => { window.testProfileSyncState = { authenticated: true, enabled: true, unlocked: true, status: 'ready' }; });
+        const syncErrors = [];
+        const synced = await context.newPage();
+        synced.on('pageerror', error => syncErrors.push(error.message));
+        await synced.goto(`${origin}/src/${build}/src/ui/providers.html#vision`);
+        await synced.waitForFunction(() => document.documentElement.dataset.settingsReady === 'true');
+        assert.equal(await synced.locator('#vision-model').inputValue(), '', `${build}: no vision model before the sync`);
+        // Stands in for what the sync writes to storage.
+        await synced.evaluate(() => { window.testStore.visionModel = { baseUrl: 'https://vision.example/v1', apiKey: 'sk-test-synced', model: 'synced-vision' }; });
+        const loads = () => synced.evaluate(() => window.testRequests.filter(msg => msg.action === 'get_providers').length);
+        const loadsBefore = await loads();
+        const syncing = await context.newPage();
+        syncing.on('pageerror', error => syncErrors.push(error.message));
+        await syncing.goto(`${origin}/src/${build}/src/ui/settings.html#memory`);
+        await syncing.waitForFunction(() => document.documentElement.dataset.settingsReady === 'true');
+        await syncing.locator('#btn-profile-sync-now').click();
+        await synced.waitForFunction(() => document.getElementById('vision-model').value === 'synced-vision');
+        assert.ok(await loads() > loadsBefore, `${build}: the Providers page reloads its providers after a sync`);
+        assert.deepEqual(syncErrors, [], `${build}: profile sync refresh errors`);
+      } finally {
+        await context.close();
+      }
 
       const { page: aliased, errors: aliasErrors } = await open(browser, build, 'providers.html#multimodal');
       await aliased.waitForFunction(() => document.querySelector('.tab-btn.active')?.dataset.tab === 'vision');

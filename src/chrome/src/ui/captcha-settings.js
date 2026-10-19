@@ -6,7 +6,16 @@ export async function initCaptchaSettings(storage, sendToBackground, t) {
   const card = document.getElementById('captcha-card');
   if (!card) return;
   card.hidden = managed;
-  if (managed) return;
+  if (managed) {
+    // A managed browser solves through WebBrain Cloud and has no keys to set
+    // here, so its CAPTCHA tab steps aside and a deep link lands on General.
+    const tab = document.querySelector('.tab-btn[data-tab="captcha"]');
+    if (tab) {
+      tab.hidden = true;
+      if (tab.classList.contains('active')) document.querySelector('.tab-btn[data-tab="display"]')?.click();
+    }
+    return;
+  }
   for (const provider of CAPTCHA_PROVIDERS) {
     const id = provider.domId;
     const typeLabels = { recaptcha_v2: 'reCAPTCHA v2', recaptcha_v2_enterprise: 'reCAPTCHA v2 Enterprise',

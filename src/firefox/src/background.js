@@ -531,10 +531,17 @@ loadAutoScreenshot();
 
 // Settings has one Record traces switch for both trace tiers: full request
 // details are recorded whenever traces are. A profile from before the merge
-// can have the two set apart; line them up once so the switch shows what is
-// recorded. Harnesses that set the tiers apart afterwards keep their choice.
+// can have the two set apart, so the update lines them up once and the switch
+// shows what is recorded. A new install has nothing to line up and only notes
+// that, so harnesses that set the tiers apart on a fresh profile keep their
+// choice, as does anyone who sets them apart after the merge.
 const TRACE_TIERS_MERGED_KEY = 'traceTiersMergedV1';
-async function mergeTraceTiers() {
+async function mergeTraceTiers(reason) {
+  if (reason === 'install') {
+    await browser.storage.local.set({ [TRACE_TIERS_MERGED_KEY]: true });
+    return;
+  }
+  if (reason !== 'update') return;
   const stored = await browser.storage.local.get(['tracingEnabled', 'losslessTrace', TRACE_TIERS_MERGED_KEY]);
   if (stored[TRACE_TIERS_MERGED_KEY] === true) return;
   const updates = { [TRACE_TIERS_MERGED_KEY]: true };
@@ -543,7 +550,9 @@ async function mergeTraceTiers() {
   }
   await browser.storage.local.set(updates);
 }
-mergeTraceTiers().catch(() => {});
+browser.runtime.onInstalled.addListener(({ reason }) => {
+  mergeTraceTiers(reason).catch(() => {});
+});
 
 async function loadSiteAdapters() {
   const stored = await browser.storage.local.get('useSiteAdapters');
@@ -3901,11 +3910,14 @@ async function handleMessage(msg, sender) {
           imported.settings,
         )
         : imported.settings;
-      // A restored export carries Record traces only; full request details follow
-      // it, as they do in Settings. Provisioning patches keep their own tiers.
-      await browser.storage.local.set(msg.action === 'import_config' && Object.hasOwn(settings, 'tracingEnabled')
-        ? { ...settings, losslessTrace: settings.tracingEnabled === true }
-        : settings);
+      // Exports carry Record traces only. A restored export brings full request
+      // details along with it, as the Settings switch does. A provisioning
+      // patch can turn both off, but never turns full request details on.
+      const traceTiers = Object.hasOwn(settings, 'tracingEnabled')
+        && (msg.action === 'import_config' || settings.tracingEnabled !== true)
+        ? { losslessTrace: settings.tracingEnabled === true }
+        : {};
+      await browser.storage.local.set({ ...settings, ...traceTiers });
       await providerManager.load();
       await Promise.all([
         loadMaxSteps(),

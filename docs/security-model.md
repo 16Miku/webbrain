@@ -67,8 +67,8 @@ This is a feature (it makes the agent useful with zero setup) but also the most 
 ### Experimental Local D1 Decisions
 
 D1 is an optional finite-decision provider, not a chat generator or browser
-executor. Explicit Settings consent controls download/load; the control handler
-accepts only the extension's Settings sender. Chrome uses its shared offscreen
+executor. Explicit consent on the Providers page controls download/load; the
+control handler accepts only that extension page as the sender. Chrome uses its shared offscreen
 document and a separate Worker; Firefox attempts its background-page Worker only
 when hardware WebGPU and OPFS are available. Software adapters and inadequate
 buffer limits are rejected, but other capable devices are not declared validated.
@@ -80,8 +80,8 @@ Page text/pixels stay untrusted and existing redaction/wrapping remains in place
 Disabling outsourcing or Strict Secret Mode discards the Worker and its GPU
 sessions; cached weights remain until explicitly removed. A caller that stops
 waiting cancels only its own request; the Worker's deadline discards a stalled
-inference session. Neither invents an answer. While the user's Settings Load
-stands, a reload after a restart reads only the verified cache and never
+inference session. Neither invents an answer. While the user's Load on the
+Providers page stands, a reload after a restart reads only the verified cache and never
 downloads. CPU/WASM control/shape
 fallback is disclosed, not represented as pure GPU. A positive experimental D1
 judgment alone cannot establish completion: independent LLM or existing checks
@@ -279,7 +279,7 @@ loop budgets are not guards and keep their behavior. Settings → General →
 ## `/allow-api` Flag
 
 Set per-conversation via the `/allow-api` slash command in the side panel, or
-persistently with **Always allow API mutations** under **Settings → General →
+persistently with **Always allow API mutations** under **Settings →
 Advanced**. The persistent setting is on by default when absent. Read failures
 and non-boolean stored values grant no authorization. When either option is
 active, it waives the permission prompt for **write-method network egress only**:
@@ -346,8 +346,9 @@ messages, tool schemas, tool arguments/results, and detailed error text. Default
 run records also omit full tab URLs/titles and attachment filenames, and default
 traces do not write screenshot blobs or data URLs to the `shots` store.
 
-The separate lossless debug tier is off by default and requires explicit user
-opt-in. A lossless run may retain bounded user/final text, request and response
+The lossless debug tier is off by default and is an opt-in: Record traces
+records it, and an update turns it on once for an install that recorded traces
+without it. A lossless run may retain bounded user/final text, request and response
 payloads, tool schemas/calls/arguments/results, error details, screenshot
 bytes, tab URL/title, and attachment filename metadata. It is visibly marked,
 subject to per-payload, per-run, and aggregate storage bounds, and should be

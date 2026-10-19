@@ -1,4 +1,4 @@
-# Manual test: capability × origin permission gate + Settings UI
+# Manual test: capability × origin permission gate + Permissions page
 
 These two paths can't be covered by `test/run.js` (they need a live browser —
 the 3-option permission card and the Permissions page are DOM/storage
@@ -11,7 +11,7 @@ Load the unpacked extension your usual dev way:
 - **Chrome:** `chrome://extensions` → Developer mode → Load unpacked → `src/chrome`.
 
 Helpers you'll reuse (run in the background/service-worker console, or the
-Settings page console):
+Permissions page console):
 - **Inspect grants:** `await browser.storage.local.get('wb_permissions')`
   (Firefox) / `chrome.storage.local.get('wb_permissions')` (Chrome).
 - **Reset grants:** `browser.storage.local.remove('wb_permissions')`, or
@@ -31,7 +31,7 @@ simple page with a visible clickable button.
    and **NO free-text input** (permission cards are structured — the buttons
    return `once`/`always`/`deny`, not typed text).
 3. **Check layout** — all three buttons visible, not clipped/overlapping/wrapping.
-4. **Localization** — switch the language (Settings → display) to a non-English
+4. **Localization** — switch the language (the side panel's language menu) to a non-English
    locale and trigger the prompt again: the question, the verb, and the three
    buttons should be translated (English is the fallback for unset keys), and
    clicking still works (the returned value is locale-independent).
@@ -73,7 +73,7 @@ Confirms a grant is scoped to exactly one capability+host, not a blanket pass.
 
 **Setup:** grant 2–3 "Always allow" entries across different sites/capabilities.
 
-1. Open Settings (options page) → **Permissions** tab.
+1. Open the Permissions page (**Manage site permissions** in the side panel's ⚠ menu).
 2. **Expect** each grant on its own row — host as bold label,
    **"Allowed to \<verb\>"** beneath (or **"⛔ Blocked from \<verb\>"** for a deny),
    and a **Revoke** button; a **Clear all permissions** button at the bottom.

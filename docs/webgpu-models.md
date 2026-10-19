@@ -349,7 +349,8 @@ Results on the held-out test, RTX 5090, through the extension:
   (Hugging Face commit `b9895bc`, `decision-validation.json`). On the CPU its
   logits and caches are bit-identical to the previous graph
   (`scripts/models/bonsai/check_decision_hidden.py`). Installs that cached
-  the previous graph keep it until the model is downloaded again in Settings;
+  the previous graph keep it until the model is downloaded again on the
+  Providers page;
   until then the provider reports that it needs the updated decoder.
 
 ## Updating a published graph
