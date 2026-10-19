@@ -24118,7 +24118,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // run mode, system prompt, the turn's runtime line and the BiDi run.
   async _settleAutoModeRun(tabId, route, enriched, onUpdate, runOptions = {}) {
     const waitStartedAt = Date.now();
-    const routed = await settleAutoModeRoute(route);
+    let routed = await settleAutoModeRoute(route);
+    // The route read the request and the corrections it was given. One the
+    // user sent while it ran is not covered, so an action route is not
+    // trusted: the turn starts read-only, applies the correction and can
+    // still hand itself off through request_action_mode.
+    const covered = new Set(runOptions?.autoModeRouting?.correctionIds || []);
+    if (routed.mode !== 'ask'
+        && (this._steeringRuns.get(tabId)?.messages || []).some(item => !covered.has(String(item.id)))) {
+      routed = { mode: 'ask', choice: null, source: 'route_corrected', latencyMs: routed.latencyMs };
+    }
     const mode = routed.mode;
     this._autoModeRoutePendingTabs.delete(tabId);
     if (mode !== 'ask') {
@@ -45434,7 +45443,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ({ mode, runOptions } = this._beginAutoModeRun(tabId, userMessage, attachments, runOptions, onUpdate));
       const carried = reroute ? this._takeModeEscalationSteering(tabId) : [];
       if (carried.length && runOptions?.autoModeRouting) {
-        runOptions = { ...runOptions, autoModeRouting: { ...runOptions.autoModeRouting, corrections: carried.map(item => item.text) } };
+        runOptions = { ...runOptions, autoModeRouting: { ...runOptions.autoModeRouting,
+          corrections: carried.map(item => item.text), correctionIds: carried.map(item => item.id) } };
       }
     } else if (runOptions?.modeEscalation && isRunMode(mode)) {
       runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation' } };

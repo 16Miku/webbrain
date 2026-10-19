@@ -458,6 +458,27 @@ for (const build of BUILDS) {
     assert.equal(f.agent._modeEscalationSteering.has(f.tab), false);
   });
 
+  test(`${build}: a correction sent while the route runs keeps the turn read-only until the model reads it`, async () => {
+    const f = fixture(Agent, {
+      decide: (_q, options) => {
+        if (options.mainModel === false) {
+          // A sure Act route, but the user corrects the request meanwhile.
+          f.agent._steeringRuns.get(f.tab).messages.push({ id: 's10', text: 'first inspect the console errors' });
+          return { choice: 'act', source: 'decision_model' };
+        }
+        return { choice: 'dev', source: 'main_model' };
+      },
+      replies: [messages => {
+        assert.ok(messages.some(message => message.role === 'user' && String(message.content).startsWith('first inspect the console errors')));
+        return handoff('dev', 'first inspect the console errors');
+      }],
+    });
+    assert.equal(await f.run('Fix the login button.'), '');
+    assert.deepEqual(runModes(f.updates), [{ mode: 'ask', source: 'route_corrected' }]);
+    assert.ok(f.calls[0].tools.includes('request_action_mode'), 'the turn can still hand itself off');
+    assert.deepEqual(f.agent.takeModeEscalation(f.tab), { mode: 'dev', evidence: 'first inspect the console errors' });
+  });
+
   test(`${build}: corrections checked with the hand-off do not route the restart again`, async () => {
     const f = fixture(Agent, {
       decide: (_q, options) => (options.mainModel === false ? { choice: null, source: 'unavailable' } : { choice: 'act', source: 'main_model' }),
