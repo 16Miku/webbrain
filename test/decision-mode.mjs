@@ -165,8 +165,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(calls, 1);
     await withBonsaiCache(true, async () => {
       const verdict = await run({});
-      if (build === 'chrome') assert.equal(verdict.decision, 'keep', 'Auto checks with the downloaded in-browser model');
-      else assert.equal(verdict.reason, 'disabled', 'Firefox has no in-browser model');
+      assert.equal(verdict.reason, 'disabled', 'a downloaded chat model must not enable decision checks');
       const compassVerdict = await run({}, 'watch', { compass: COMPASS });
       assert.equal(compassVerdict.reason, 'disabled', 'Auto with Compass leaves watches to the main model');
       const compassProviderVerdict = await run({}, 'watch', { provider: { config: { providerName: 'webbrain-cloud', ...COMPASS } } });
@@ -177,16 +176,9 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: the current configuration looks for the in-browser model only when Auto could use it`, async () => {
     await withBonsaiCache(true, async lookups => {
       const auto = await availability.resolveCurrentDecisionConfig({});
-      if (build === 'chrome') {
-        assert.equal(auto.source, 'local_assist'); assert.equal(auto.provider, 'webgpu_chat');
-        assert.equal(auto.model, config.WEBGPU_CHAT_DECISION_MODEL); assert.equal(auto.local, true);
-        assert.equal(auto.supportsVision, true); assert.equal(auto.requiresIndependentSuccessConfirmation, true);
-        assert.deepEqual(auto.features, { ...NO_FEATURES, done: true, watch: true, completion: true },
-          'Auto keeps fast actions and semantic decisions on the main model');
-        assert.equal(lookups.length, 1);
-      } else {
-        assert.equal(auto.enabled, false); assert.equal(lookups.length, 0);
-      }
+      assert.equal(auto.enabled, false);
+      assert.deepEqual(auto.features, NO_FEATURES);
+      assert.equal(lookups.length, 0, 'decision checks do not inspect the chat/vision cache');
       lookups.length = 0;
       await availability.resolveCurrentDecisionConfig({}, COMPASS);
       await availability.resolveCurrentDecisionConfig({ decisionMode: 'off' });

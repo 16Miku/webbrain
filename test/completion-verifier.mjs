@@ -560,6 +560,21 @@ for (const build of ['chrome', 'firefox']) {
       if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor); else delete globalThis.navigator;
     }
   };
+  for (const decisionMode of ['auto', 'on']) {
+    test(`${build}: ${decisionMode} leaves completion with the main model for a saved Ternary selection`, withDecisionRuntime(async () => {
+      let mainCalls = 0, decisionCalls = 0;
+      for (const outcome of ['succeeded', 'failed']) {
+        const agent = stagedFormAgent({ messages: [], guard: { enabled: true, requiresSubmission: false, requiresStateChange: true }, captures: { count: 0 },
+          onDecision: () => { decisionCalls++; throw new Error('Ternary must not be invoked'); },
+          onChat: () => { mainCalls++; return { content: JSON.stringify({ outcome, reason: 'fresh independent evidence' }) }; } });
+        const verdict = await runtime.verifyBrowserCompletion(agent, 1, { pageUrl: 'https://forms.example/signup' });
+        assert.equal(verdict.engine, 'llm');
+        assert.equal(verdict.outcome, outcome, 'the main model retains both positive and negative authority');
+      }
+      assert.equal(mainCalls, 2);
+      assert.equal(decisionCalls, 0, 'disabled Ternary never starts, even before main-model fallback');
+    }, { decisionMode, decisionProvider: 'webgpu_chat', systemOneEnabled: true, systemOneDoneEnabled: true }));
+  }
   test(`${build}: a staged form whose request names a password reaches the active judge intact, and a blind third-party sidecar is not asked`, withDecisionRuntime(async () => {
     const fields = [['ref_1', 'skanlsmds', false], ['ref_2', 'person@example.com', false], ['ref_3', typedPassword, true], ['ref_4', typedPassword, true]];
     const messages = fields.flatMap(([ref, text, sensitive], index) => [

@@ -23745,6 +23745,7 @@ test('vendored PDF.js and multimodal probes remain store-reviewable in both buil
 test('multimodal connection-test assets preserve the prior image and silent WAV bytes', () => {
   const expectedHashes = {
     'vision-connection-test.png': '514fd28946340ea4e7e7bb7817d876ef1679456c635fbf3afc1b978031e30482',
+    'vision-color-connection-test.png': 'c182ee730b7b5a12fec0e8bed430a7822f09e5cc15bfaae3bd754685efbbe676',
     'transcription-connection-test.wav': '56d4af65701c26df20bd4021eda95b6e830348ce3a746086079fe89285548dc9',
   };
   for (const [filename, expectedHash] of Object.entries(expectedHashes)) {
@@ -131437,23 +131438,42 @@ test('multimodal connection tests exercise image and audio routes instead of onl
       assert.equal(visionResult.ok, true, `${label}: real vision probe should pass`);
       assert.equal(visionCalls.length, 1);
       assert.match(visionCalls[0].messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
+      assert.deepEqual(
+        Buffer.from(visionCalls[0].messages[0].content[0].image_url.url.split(',')[1], 'base64'),
+        fs.readFileSync(path.join(ROOT, `src/${label}/assets/vision-connection-test.png`)),
+        `${label}: the code-reading prompt must receive the WB7 image`,
+      );
       assert.equal(visionCalls[0].options.extraBody.reasoning_tokens, 0);
       assert.equal(visionCalls[0].options.webbrainVisionProbe, true);
 
       if (label === 'chrome') {
         visionManager.getVisionOverrideProvider = async () => null;
-        visionManager.getLocalVisionFallbackProvider = async () => ({
-          name: 'webgpu-vision',
-          model: WEBGPU_VISION_MODEL_ID,
-          baseUrl: 'local://webgpu',
-          chat: async (messages, options) => {
-            assert.match(messages[0].content[1].text, /three solid vertical color panels/i);
-            assert.equal(options.webbrainVisionProbe, true);
-            return { content: 'yellow, blue, red' };
-          },
-        });
-        const localVisionResult = await visionManager.testVisionProvider();
-        assert.equal(localVisionResult.ok, true, 'chrome: local color-panel vision probe should pass');
+        for (const [name, model, config] of [
+          ['webgpu-vision', WEBGPU_VISION_MODEL_ID, {}],
+          ['webgpu-vision-bonsai', WEBGPU_VISION_BONSAI_MODEL_ID, { providerName: 'webgpu-vision' }],
+        ]) {
+          let reply = 'yellow, blue, red';
+          visionManager.getLocalVisionFallbackProvider = async () => ({
+            name, model, config,
+            baseUrl: 'local://webgpu',
+            chat: async (messages, options) => {
+              assert.match(messages[0].content[1].text, /three solid vertical color panels/i);
+              assert.equal(options.webbrainVisionProbe, true);
+              assert.deepEqual(
+                Buffer.from(messages[0].content[0].image_url.url.split(',')[1], 'base64'),
+                fs.readFileSync(path.join(ROOT, 'src/chrome/assets/vision-color-connection-test.png')),
+                `${name}: the color prompt must receive the yellow, blue, red panels`,
+              );
+              return { content: reply };
+            },
+          });
+          const localVisionResult = await visionManager.testVisionProvider();
+          assert.equal(localVisionResult.ok, true, `${name}: local color-panel vision probe should pass`);
+          for (reply of ['Black, White, Black', 'red, blue, yellow', 'WB7']) {
+            const wrongColors = await visionManager.testVisionProvider();
+            assert.equal(wrongColors.ok, false, `${name}: incorrect colors or order must fail`);
+          }
+        }
       }
 
       visionManager.getVisionOverrideProvider = async () => ({
