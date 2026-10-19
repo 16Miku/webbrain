@@ -106,7 +106,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
           ${block}
           renderComposerModePicker();
           Object.assign(window, {
-            restoreComposerModeForCurrentTab, setComposerModePinForTab, revalidateComposerModePin,
+            restoreComposerModeForCurrentTab, setComposerModePinForTab, revalidateComposerModePin, restoreComposerModeBeforeSend,
             // What setTabProcessing does for the visible tab.
             setProcessing(value) {
               isProcessing = value;
@@ -398,6 +398,39 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         assert.deepEqual(p.state, { auto: true, agentMode: 'ask', pin: null });
         assert.equal('composerModePin:7' in p.session, false);
       });
+    });
+
+    test('a send waits for a mode pick still being checked', async () => {
+      await fixture(async ({ page }) => {
+        await page.click('#btn-permission-gate');
+        await page.evaluate(() => { window.__release = null; window.__gates.act = new Promise(resolve => { window.__release = resolve; }); });
+        await page.click('.composer-mode-option[data-composer-mode="act"]');
+        await page.evaluate(() => { window.__sent = null; window.restoreComposerModeBeforeSend(7).then(() => { window.__sent = window.modeState(); }); });
+        await page.waitForTimeout(80);
+        assert.equal(await page.evaluate(() => window.__sent), null, 'the send is held while Act is checked');
+        await page.evaluate(() => window.__release());
+        await page.waitForFunction(() => window.__sent !== null);
+        assert.deepEqual(await page.evaluate(() => window.__sent), { auto: false, agentMode: 'act', pin: 'act' }, 'it then goes out in Act');
+      });
+    });
+
+    test('a send waits for a restored mode to be checked against the provider', async () => {
+      await fixture(async ({ page }) => {
+        // Dev was kept, then the provider became Compact while the panel was closed.
+        await page.evaluate(() => {
+          window.__blocked.dev = true;
+          window.__release = null;
+          window.__gates.dev = new Promise(resolve => { window.__release = resolve; });
+          window.restoreComposerModeForCurrentTab();
+          window.__sent = null;
+          window.restoreComposerModeBeforeSend(7).then(() => { window.__sent = window.modeState(); });
+        });
+        await page.waitForTimeout(80);
+        assert.equal(await page.evaluate(() => window.__sent), null, 'the send is held while the restored Dev is checked');
+        await page.evaluate(() => window.__release());
+        await page.waitForFunction(() => window.__sent !== null);
+        assert.deepEqual(await page.evaluate(() => window.__sent), { auto: true, agentMode: 'ask', pin: null }, 'it goes out in Auto, never in a Dev the provider cannot run');
+      }, { storedPin: 'dev' });
     });
 
     test('a kept mode the new provider cannot run goes back to Auto, after the run', async () => {

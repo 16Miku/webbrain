@@ -1848,6 +1848,18 @@ const composerModeOptions = [...document.querySelectorAll('.composer-mode-option
 const composerModeBadge = document.getElementById('composer-mode-badge');
 const composerModeDesc = document.getElementById('composer-mode-desc');
 
+// Mode checks still going (a pick waiting on its Act/Dev check, a restored
+// or changed provider's check). A send waits for them before choosing its mode.
+const composerModeTasks = new Set();
+function trackComposerModeTask(task) {
+  const tracked = Promise.resolve(task).catch(() => {}).finally(() => composerModeTasks.delete(tracked));
+  composerModeTasks.add(tracked);
+  return task;
+}
+async function settleComposerModeTasks() {
+  for (let round = 0; round < 4 && composerModeTasks.size; round += 1) await Promise.allSettled([...composerModeTasks]);
+}
+
 function composerModePinForCurrentTab() {
   return isStandaloneWindow ? null : composerModePins.get(currentTabId);
 }
@@ -1901,11 +1913,11 @@ function restoreComposerModeForCurrentTab() {
   syncComposerModeForCurrentTab();
   const tabId = currentTabId;
   if (isStandaloneWindow || tabId == null) return;
-  void composerModePins.load(tabId).then(() => {
-    if (!sameTabId(currentTabId, tabId)) return;
+  trackComposerModeTask(composerModePins.load(tabId).then(() => {
+    if (!sameTabId(currentTabId, tabId)) return null;
     syncComposerModeForCurrentTab();
-    void revalidateComposerModePin();
-  });
+    return revalidateComposerModePin();
+  }));
 }
 
 async function restoreComposerModeBeforeSend(tabId) {
@@ -1913,6 +1925,8 @@ async function restoreComposerModeBeforeSend(tabId) {
   const before = composerModePins.get(tabId);
   await composerModePins.load(tabId);
   if (sameTabId(currentTabId, tabId) && composerModePins.get(tabId) !== before) syncComposerModeForCurrentTab();
+  // A pick or a provider check still going decides the mode first.
+  await settleComposerModeTasks();
 }
 
 function setComposerModePinForTab(tabId, mode) {
@@ -1929,7 +1943,11 @@ function setComposerModePinForTab(tabId, mode) {
   if (sameTabId(currentTabId, tabId)) syncComposerModeForCurrentTab();
 }
 
-async function pickComposerMode(choice) {
+function pickComposerMode(choice) {
+  return trackComposerModeTask(pickComposerModeNow(choice));
+}
+
+async function pickComposerModeNow(choice) {
   if (isStandaloneWindow || isProcessing) return;
   const tabId = currentTabId;
   if (tabId == null) return;
@@ -1953,7 +1971,11 @@ async function pickComposerMode(choice) {
 // A kept Act or Dev that the active provider cannot run (an in-browser model,
 // or a Compact provider for Dev) goes back to Auto, with the shortcut's notice.
 // During a run the check waits for the run to end.
-async function revalidateComposerModePin() {
+function revalidateComposerModePin() {
+  return trackComposerModeTask(checkComposerModePin());
+}
+
+async function checkComposerModePin() {
   const tabId = currentTabId;
   const pin = composerModePinForCurrentTab();
   if (pin !== 'act' && pin !== 'dev') {
