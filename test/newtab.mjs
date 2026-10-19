@@ -3044,10 +3044,23 @@ test('bulletin: never throws, even with broken storage or no fetch', async () =>
 
 test('bulletin: the frame keeps relative links on webbrain.one, injects a restrictive CSP, and cannot run scripts', () => {
   const framed = bulletin.bulletinDocument('<head></head><p>Hi</p>', new URL('https://webbrain.one/newtab-comm.html'));
-  assert.match(framed, /^<head><base href="https:\/\/webbrain\.one\/newtab-comm\.html" target="_blank"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="[^"]*"><\/head>/);
+  assert.match(framed, /^<base href="https:\/\/webbrain\.one\/newtab-comm\.html" target="_blank"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="[^"]*"><head><\/head><p>Hi<\/p>$/);
   assert.match(framed, /default-src 'none'/);
   assert.match(framed, /style-src 'unsafe-inline'/);
   assert.match(framed, /img-src data:/);
+  // A `<head>` token the publisher hides in a comment, attribute or doctype must not receive the policy.
+  const base = new URL('https://webbrain.one/newtab-comm.html');
+  for (const hostile of [
+    '<!-- <head> --><img src="https://evil.example/pixel">',
+    '<!-- <HEAD lang="x"> --><head></head><img src="https://evil.example/pixel">',
+    '<!doctype html public "x><head>" "y"><img src="https://evil.example/pixel">',
+    '<p title="<head>"><img src="https://evil.example/pixel">',
+  ]) {
+    const doc = bulletin.bulletinDocument(hostile, base);
+    assert.ok(doc.startsWith('<base '), `controls come first: ${hostile}`);
+    assert.equal(doc.indexOf('Content-Security-Policy'), doc.lastIndexOf('Content-Security-Policy'), 'policy injected exactly once');
+    assert.ok(doc.indexOf('Content-Security-Policy') < doc.indexOf('evil.example'), hostile);
+  }
   const headless = bulletin.bulletinDocument('<p>Hi</p>', new URL('https://webbrain.one/newtab-comm.html'));
   assert.match(headless, /^<base href="https:\/\/webbrain\.one\/newtab-comm\.html" target="_blank"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="[^"]*"><p>Hi<\/p>/);
   const view = readFileSync(nt('features/bulletin/Bulletin.jsx'), 'utf8');

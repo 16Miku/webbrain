@@ -82,9 +82,10 @@ export function isPreviewUrl(url, location = globalThis.location) {
 export function bulletinDocument(markup, url) {
   const safeBase = String(url.href).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
   const head = `<base href="${safeBase}" target="_blank"><meta name="referrer" content="no-referrer"><meta http-equiv="Content-Security-Policy" content="${BULLETIN_CSP}">`;
-  if (/<head(?:\s[^>]*)?>/i.test(markup)) {
-    return markup.replace(/<head(?:\s[^>]*)?>/i, (match) => `${match}${head}`);
-  }
+  // The controls go in front of everything the publisher wrote, unconditionally. Searching the markup
+  // for a `<head>` to inject into is unsafe: one inside a comment (or a quoted doctype identifier)
+  // would receive the CSP while the real document stays unprotected. The parser moves leading
+  // metas into the document head, and the notice does not depend on standards mode.
   return `${head}${markup}`;
 }
 
