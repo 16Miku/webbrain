@@ -10992,7 +10992,12 @@ export class Agent extends LoopDetector {
       const allowed = ['filter', 'maxDepth', 'maxChars', 'ref_id', 'page', 'tree_revision'];
       // Two values agree when they are the same once scalar types and the
       // case of a filter are normalized, as the call is repaired below.
-      const normalized = (value, key) => { const scalar = decimal(value); return typeof scalar === 'string' && key === 'filter' ? scalar.trim().toLowerCase() : scalar; };
+      const normalized = (value, key) => {
+        // A page is repaired below from up to four digits ("01" is 1).
+        if (key === 'page' && typeof value === 'string' && /^\s*\d{1,4}\s*$/.test(value)) return Number(value);
+        const scalar = decimal(value);
+        return typeof scalar === 'string' && key === 'filter' ? scalar.trim().toLowerCase() : scalar;
+      };
       const agrees = (key, value) => !Object.hasOwn(next, key) || Object.is(normalized(next[key], key), normalized(value, key));
       // Only a truncated result returns a continuation, and it is always for
       // page 2 or later with a tree revision. One for page 1 without a
