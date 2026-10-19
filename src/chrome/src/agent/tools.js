@@ -885,7 +885,7 @@ export const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          urlFilter: { type: 'string', description: 'Required iframe host or URL substring, for example "airtable.com/embed/".' },
+          urlFilter: { type: 'string', description: 'Required iframe host, optionally followed by more of its URL, for example "airtable.com/embed/". A file name without its host, such as "embed.html", matches no frame.' },
           matchIndex: { type: 'number', description: 'Zero-based matching-frame index. Omit unless promote_iframe reports several candidate frame URLs.' },
           force: { type: 'boolean', description: 'Discard unsaved state on the current page before promotion. Default false; use only when the user explicitly intends to discard it.' },
         },
@@ -1026,7 +1026,7 @@ export const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          urlFilter: { type: 'string', description: 'Optional substring to filter frames by URL (e.g. "stripe.com" to only read Stripe iframes). Omit to read all frames.' },
+          urlFilter: { type: 'string', description: 'Optional iframe host, optionally followed by more of its URL (e.g. "stripe.com" to only read Stripe iframes). A file name without its host matches no frame. Omit to read all frames.' },
           selector: { type: 'string', description: 'Optional CSS selector to extract specific elements within each frame. Omit to get the full body text.' },
           limit: { type: 'number', description: 'Maximum matching elements returned per frame. Default 25; maximum 50.' },
           offset: { type: 'number', description: 'Zero-based index of the first match returned per frame. Continue a truncated inventory by passing the returned nextOffset with the identical selector.' },
@@ -1043,7 +1043,7 @@ export const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          urlFilter: { type: 'string', description: 'Required iframe host or URL substring (e.g. "stripe.com"). This scopes both target resolution and the permission gate.' },
+          urlFilter: { type: 'string', description: 'Required iframe host, optionally followed by more of its URL (e.g. "stripe.com", "airtable.com/embed/"). This scopes both target resolution and the permission gate, so a file name without its host, such as "embed.html", matches no frame.' },
           selector: { type: 'string', description: 'CSS selector for the element to click inside the iframe.' },
           matchIndex: { type: 'number', description: 'Zero-based element index from iframe_read. Omit only when the selector uniquely matches one element across the selected frames.' },
         },
@@ -1059,7 +1059,7 @@ export const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          urlFilter: { type: 'string', description: 'Required iframe host or URL substring. This scopes both target resolution and the permission gate.' },
+          urlFilter: { type: 'string', description: 'Required iframe host, optionally followed by more of its URL. This scopes both target resolution and the permission gate, so a file name without its host, such as "embed.html", matches no frame.' },
           selector: { type: 'string', description: 'CSS selector for the input element inside the iframe.' },
           matchIndex: { type: 'number', description: 'Zero-based element index from iframe_read. Omit only when the selector uniquely matches one element across the selected frames.' },
           text: { type: 'string', description: 'Text to type into the field.' },
@@ -1271,7 +1271,7 @@ export const AGENT_TOOLS = [
           },
           urlFilter: {
             type: 'string',
-            description: 'Optional iframe host or URL substring. When supplied, verifies forms inside matching child frames instead of the top document.',
+            description: 'Optional iframe host, optionally followed by more of its URL (e.g. "stripe.com"). When supplied, verifies forms inside matching child frames instead of the top document. A file name without its host, such as "embed.html", matches no frame.',
           },
         },
         required: [],
@@ -2396,7 +2396,7 @@ IFRAMES — read this:
   - \`iframe_click({urlFilter, selector, matchIndex})\` clicks exactly one element and refuses ambiguous matches.
   - \`iframe_type({urlFilter, selector, matchIndex, text, clear})\` types into exactly one form field and refuses ambiguous matches.
 - If the embedded UI remains unreliable and no fields have been changed, call \`promote_iframe({urlFilter})\` to navigate the current run tab to that frame's standalone URL. After any iframe form edits, call \`verify_form({urlFilter})\` and compare labels/values before done, even when the user will submit later.
-- The \`urlFilter\` parameter is a substring match against the iframe's URL. Use it to disambiguate when multiple iframes are present (e.g. \`urlFilter: "stripe.com"\` to target a Stripe widget specifically).
+- The \`urlFilter\` parameter names the iframe's host, optionally followed by more of its URL (e.g. \`urlFilter: "stripe.com"\` to target a Stripe widget, or \`"airtable.com/embed/"\`); it also scopes the permission check. A file name without its host, such as \`"embed.html"\`, matches no frame. Use it to disambiguate when multiple iframes are present.
 - Coordinate clicks via \`click({x, y, coordinate_space:"screenshot", capture_id:"..."})\` ALSO work inside iframes — they dispatch at the OS level via CDP and don't care about origin boundaries — but selector-based iframe tools are more reliable.
 - DO NOT refuse a task by saying "I can't access cross-origin iframes" or "Stripe's security restrictions prevent this". Those refusals are wrong in this environment. Try the iframe tools instead.
 

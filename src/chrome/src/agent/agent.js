@@ -128,7 +128,7 @@ import {
   normalizeCloudflareManagedChallengeState,
 } from './cloudflare-managed-challenge.js';
 import { getRecordingStateFresh as recorderStateFresh } from '../recorder/host.js';
-import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
+import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, urlFilterHostHint, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
   buildPlannerAlignmentMessages,
@@ -45473,11 +45473,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { success: false, dispatched: false, noDispatch: true, error: 'promote_iframe: matchIndex must be a non-negative integer' };
       }
       if (matches.length === 0) {
+        const hint = urlFilterHostHint(urlFilter, frames.filter(frame => Number(frame?.frameId) !== 0).map(frame => frame?.url));
         return {
           success: false,
           dispatched: false,
           noDispatch: true,
-          error: `promote_iframe: no child frame matched urlFilter "${urlFilter}"`,
+          error: `promote_iframe: no child frame matched urlFilter "${urlFilter}"${hint ? `. ${hint}` : ''}`,
         };
       }
       if (!hasMatchIndex && matches.length > 1) {
@@ -48132,6 +48133,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             .map(item => item?.result ? { frameId: item.frameId, ...item.result } : null)
             .filter(frame => frame && !frame.isTop && frame.frameId !== 0 && frameHostMatches(frame.url, iframeUrlFilter) && frame.url.includes(iframeUrlFilter));
           const verifiedFrames = matchingFrames.filter(frame => frame.found);
+          const noFrameHint = matchingFrames.length ? '' : urlFilterHostHint(iframeUrlFilter,
+            observations.map(item => (item?.result && !item.result.isTop && item.frameId !== 0 ? item.result.url : '')));
           const fields = verifiedFrames.flatMap(frame => frame.fields.map(field => ({
             ...field,
             frameId: frame.frameId,
@@ -48175,6 +48178,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             targetChecks,
             frames: publicFrames,
             ...(matchingFrames.length === 0 ? { error: 'No iframe matched urlFilter' } : {}),
+            ...(noFrameHint ? { hint: noFrameHint } : {}),
             ...(matchingFrames.length > 0 && verifiedFrames.length === 0 ? { error: 'No form found in matching iframe(s)' } : {}),
             ...(verifiedFrames.length === 0 ? unavailableHtmlFormVerification('iframe', matchingFrames.length) : {}),
           };
@@ -48534,11 +48538,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const frames = results
           .map(r => r?.result ? { frameId: r.frameId, ...r.result } : null)
           .filter(r => r && !r.isTop && (!urlFilter || frameHostMatches(r.url, urlFilter) && r.url.includes(urlFilter)));
+        const hint = frames.length ? '' : urlFilterHostHint(urlFilter,
+          results.map(r => (r?.result && !r.result.isTop ? r.result.url : '')));
         return {
           success: true,
           pageUrl: await this._currentUrl(tabId),
           frameCount: frames.length,
           frames,
+          ...(hint ? { hint } : {}),
         };
       } catch (e) {
         return { success: false, error: `Iframe read failed: ${e.message}` };
@@ -48656,7 +48663,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             frameUrls: candidates.map(candidate => candidate.url).slice(0, 10),
             error: targetCount > 1
               ? 'iframe_click matched multiple elements. Call iframe_read and pass the intended matchIndex or narrow urlFilter before clicking.'
-              : 'Element not found in any matching iframe',
+              : urlFilterHostHint(urlFilter, census.map(item => (item?.frameId !== 0 ? item?.result?.url : '')))
+                || 'Element not found in any matching iframe',
           };
         }
         const selected = candidates[0];

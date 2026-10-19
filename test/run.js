@@ -2553,6 +2553,71 @@ test('rich-text frame geometry uses wildcard delivery only for known opaque sand
   }
 });
 
+test('iframe tools say how to name a frame host when urlFilter is only a path', async () => {
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  const frameUrl = 'http://127.0.0.1:47615/iframe-inner.html';
+  try {
+    for (const build of ['chrome', 'firefox']) {
+      const gate = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/permission-gate.js`)).href);
+      const hint = gate.urlFilterHostHint('iframe-inner.html', ['http://127.0.0.1:47615/', frameUrl, 'about:blank', frameUrl]);
+      assert.equal(hint, 'urlFilter "iframe-inner.html" does not name an iframe host, so no frame matched. '
+        + 'Start it with the frame\'s host, for example "127.0.0.1:47615/iframe-inner.html".', `${build}: path-only filter hint`);
+      // The suggested filter matches, so the hint is never a dead end.
+      assert.equal(gate.frameHostMatches(frameUrl, '127.0.0.1:47615/iframe-inner.html') && frameUrl.includes('127.0.0.1:47615/iframe-inner.html'), true);
+      assert.match(gate.urlFilterHostHint('embed', ['https://forms.example/embed/v2']), /for example "forms\.example\/embed\/v2"/);
+      for (const name of ['checkout.cfm', 'order.action', 'frame.shtml', 'handler.ashx', 'pay.jspx']) {
+        assert.match(gate.urlFilterHostHint(name, [`https://shop.example/x/${name}`]), new RegExp(`for example "shop\\.example/x/${name.replace('.', '\\.')}"`), `${build}: ${name} is a file name, not a host`);
+      }
+      for (const filter of ['https://payments/path', '//stripe.com/pay', 'http://intranet:8080/x']) {
+        assert.equal(gate.urlFilterHostHint(filter, ['https://evil.example/?next=' + filter]), '', `${build}: ${filter} is an explicit address`);
+      }
+      for (const filter of ['stripe.com.', 'https://stripe.com./pay', 'stripe.com.:8443']) {
+        assert.equal(gate.urlFilterHostHint(filter, ['https://evil.example/?next=' + filter]), '', `${build}: ${filter} is a fully qualified host`);
+      }
+      assert.equal(gate.urlFilterHostHint('shop.do', ['https://evil.example/?next=shop.do']), '', `${build}: .do is a country domain, so shop.do names a host`);
+      // No hint when the filter names a host (even one no frame has: a page
+      // cannot steer "stripe.com" to its own frame that mentions it), when
+      // nothing contains the filter, or without a filter.
+      for (const [filter, urls] of [['127.0.0.1:47615', [frameUrl]], ['missing.html', [frameUrl]], ['', [frameUrl]],
+        ['stripe.com', ['https://evil.example/?next=stripe.com', 'https://evil.example/stripe.com/pay']],
+        ['localhost:3000', ['https://evil.example/localhost:3000']], ['[::1]', ['https://evil.example/[::1]']]]) {
+        assert.equal(gate.urlFilterHostHint(filter, urls), '', `${build}: ${filter || '(empty)'}`);
+      }
+      // iframe_type answers a path-only filter with the same hint, before anything is typed.
+      const execute = async () => (build === 'chrome'
+        ? [{ frameId: 0, result: { ok: true, url: 'http://127.0.0.1:47615/', isTop: true, matchCount: 0 } },
+          { frameId: 9, result: { ok: true, url: frameUrl, isTop: false, matchCount: 1 } }]
+        : [{ ok: true, url: frameUrl, matchCount: 1 }]);
+      globalThis.chrome = build === 'chrome' ? { scripting: { executeScript: execute } } : originalChrome;
+      globalThis.browser = build === 'firefox'
+        ? { webNavigation: { getAllFrames: async () => [{ frameId: 0, parentFrameId: -1, url: 'http://127.0.0.1:47615/' },
+          { frameId: 9, parentFrameId: 0, url: frameUrl }] }, tabs: { executeScript: execute } }
+        : originalBrowser;
+      const { RichTextToolbarProbe } = await import(`${pathToFileURL(path.join(ROOT, `src/${build}/src/agent/rich-text-toolbar-probe.js`)).href}?url-filter-hint=${build}`);
+      const typed = await new RichTextToolbarProbe({}).legacyIframeTypeAllFrames(77, {
+        selector: '#ref', text: 'WB-QA-B2', clear: true, urlFilter: 'iframe-inner.html',
+      }, { beforeDispatch: async () => assert.fail(`${build}: nothing may be typed`) });
+      assert.equal(typed.success, false);
+      assert.equal(typed.noDispatch, true);
+      assert.match(typed.error, /does not name an iframe host[\s\S]*"127\.0\.0\.1:47615\/iframe-inner\.html"/, `${build}: iframe_type hint`);
+    }
+    for (const build of ['chrome', 'firefox']) {
+      const agent = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
+      assert.match(agent, /: urlFilterHostHint\(urlFilter, [^\n]+\)\n\s*\|\| 'Element not found in any matching iframe',/, `${build}: iframe_click hint`);
+      assert.match(agent, /const hint = urlFilterHostHint\(urlFilter, frames\.filter\(frame => Number\(frame\?\.frameId\) !== 0\)\.map\(frame => frame\?\.url\)\);[\s\S]{0,240}promote_iframe: no child frame matched urlFilter "\$\{urlFilter\}"\$\{hint \? `\. \$\{hint\}` : ''\}`/, `${build}: promote_iframe hint`);
+      assert.match(agent, /const hint = frames\.length \? '' : urlFilterHostHint\(urlFilter,[\s\S]{0,400}\.\.\.\(hint \? \{ hint \} : \{\}\),/, `${build}: iframe_read hint`);
+      const tools = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/tools.js`), 'utf8');
+      assert.doesNotMatch(tools, /urlFilter[^\n]*(?:host or URL substring|substring to filter frames|substring match against the iframe)/, `${build}: no tool still calls urlFilter a plain substring`);
+    }
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
+
 test('legacy iframe typing marks background dispatch only for its mutation phase', async () => {
   const originalChrome = globalThis.chrome;
   const originalBrowser = globalThis.browser;
@@ -112245,6 +112310,43 @@ test('verify_form returns semantic iframe-scoped field evidence', async () => {
       ['WebBrain', 'WebBrain', 7],
       ['Website URL', 'https://webbrain.app', 7],
     ]);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('verify_form names the frame host when a path-only urlFilter matches no iframe', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const frameUrl = 'https://forms.example/embed/iframe-inner.html';
+  const frame = { found: true, url: frameUrl, fieldCount: 1, fields: [{ matchIndex: 0, label: 'Name', value: 'x' }] };
+  const expected = 'urlFilter "iframe-inner.html" does not name an iframe host, so no frame matched. '
+    + 'Start it with the frame\'s host, for example "forms.example/embed/iframe-inner.html".';
+  try {
+    globalThis.chrome = {
+      tabs: { get: async () => ({ id: 42, url: 'https://host.example/form-page' }) },
+      scripting: { executeScript: async () => [{ frameId: 0, result: { found: false, url: 'https://host.example/form-page', isTop: true } },
+        { frameId: 7, result: { ...frame, isTop: false } }] },
+    };
+    const chromeResult = await new AgentCh({}).executeTool(42, 'verify_form', { urlFilter: 'iframe-inner.html' });
+    assert.equal(chromeResult.success, false);
+    assert.equal(chromeResult.error, 'No iframe matched urlFilter');
+    assert.equal(chromeResult.hint, expected);
+    globalThis.browser = {
+      webNavigation: { getAllFrames: async () => [{ frameId: 0, url: 'https://host.example/form-page' }, { frameId: 7, url: frameUrl }] },
+      tabs: { get: async () => ({ id: 42, url: 'https://host.example/form-page' }), executeScript: async () => [frame] },
+    };
+    const firefoxResult = await new AgentFx({}).executeTool(42, 'verify_form', { urlFilter: 'iframe-inner.html' });
+    assert.equal(firefoxResult.error, 'No iframe matched urlFilter');
+    assert.equal(firefoxResult.hint, expected);
+    for (const build of ['chrome', 'firefox']) {
+      const tools = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/tools.js`)).href);
+      const schema = tools.AGENT_TOOLS.find(tool => tool.function.name === 'verify_form').function.parameters.properties.urlFilter;
+      assert.match(schema.description, /A file name without its host, such as "embed\.html", matches no frame/, `${build}: verify_form schema`);
+    }
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
