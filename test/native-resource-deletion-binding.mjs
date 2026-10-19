@@ -341,6 +341,29 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await f.page.close(); }
       });
 
+      // The same text nodes, laid out differently (a line break appears), read
+      // as another version of the post.
+      await t.test('an edit that only changes where the post breaks lines is another post', async () => {
+        const f = await fixture();
+        try {
+          const request = `Delete only ${resource}.`;
+          const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+          agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+          agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+          await f.page.evaluate(() => {
+            document.querySelector('#record-200 .status__content__text--visible p').innerHTML
+              = '<span id="first-part">Exact owned</span><span id="second-part"> post 200</span>';
+          });
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          assert.equal(detected.actionResource.url, resource);
+          const key = found => agent._resourceMutationActionKey(1, 'click', { selector: '#confirm' }, found);
+          assert.equal(key(await f.probe('#confirm')), key(detected), 'Unchanged layout is the same post');
+          await f.page.evaluate(() => { document.getElementById('second-part').style.display = 'block'; });
+          assert.notEqual(key(await f.probe('#confirm')), key(detected), 'A new line break is another version');
+        } finally { await f.page.close(); }
+      });
+
       await t.test('a relative time with nested markup ticking over keeps the same post', async () => {
         const f = await fixture();
         try {

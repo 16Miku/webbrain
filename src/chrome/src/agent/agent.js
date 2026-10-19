@@ -33925,22 +33925,43 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // datetime, not as the relative time it renders ("8 min" turns into
     // "9 min" by itself while a deletion waits on WebBrain's card), so a
     // ticking timestamp does not make the same post another one.
-    const stableText = node => {
+    // Where the page breaks a line (a block box, a <br>) is part of what the
+    // text reads as: it is kept as a separator, so an edit that only changes
+    // the layout of the same text nodes is still another version of the post.
+    const stableText = (node, breaks = new WeakMap()) => {
+      const breaksLine = element => {
+        if (element.tagName === 'BR') return true;
+        if (!breaks.has(element)) {
+          let display = 'inline';
+          try { display = doc.defaultView.getComputedStyle(element).display || 'inline'; } catch { /* keep inline */ }
+          breaks.set(element, display !== 'inline' && display !== 'contents' && display !== 'none');
+        }
+        return breaks.get(element);
+      };
       let text = '';
       const pending = [node];
       while (pending.length) {
         const current = pending.pop();
-        if (current.nodeType === 3) text += current.data;
+        if (typeof current === 'string') text += current;
+        else if (current.nodeType === 3) text += current.data;
         else if (current.nodeType === 1 && current.matches('time[datetime]')) text += `\u0000${current.getAttribute('datetime')}\u0000`;
-        else if (current.nodeType === 1) for (let index = current.childNodes.length - 1; index >= 0; index -= 1) pending.push(current.childNodes[index]);
+        else if (current.nodeType === 1) {
+          const separator = breaksLine(current) ? '\n' : '';
+          if (separator) pending.push(separator);
+          for (let index = current.childNodes.length - 1; index >= 0; index -= 1) pending.push(current.childNodes[index]);
+          if (separator) text += separator;
+        }
       }
       return text;
     };
     // A node inside a <time datetime> is part of the timestamp that node already
     // stands for, so it adds no text of its own (<time><span>8 min</span></time>).
-    const stableTexts = nodes => [...new Set(nodes
-      .filter(node => !node.parentElement?.closest('time[datetime]'))
-      .map(stableText).filter(value => value.length <= 25000))];
+    const stableTexts = nodes => {
+      const breaks = new WeakMap();
+      return [...new Set(nodes
+        .filter(node => !node.parentElement?.closest('time[datetime]'))
+        .map(node => stableText(node, breaks)).filter(value => value.length <= 25000))];
+    };
     const nativeResourceProofs = () => {
       if (args.__wbNativeResourceAdapter !== 'mastodon') return [];
       const signedIn = nativeSignedInAccount();
