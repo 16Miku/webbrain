@@ -50062,7 +50062,7 @@ test('settings async test controls surface rejected background results', () => {
     );
     assert.match(
       settings,
-      /async function detectProviderContextWindowForModel\(id, model\) \{[\s\S]*?sendToBackground\('detect_provider_context_window', \{ providerId: id, model: value \}\);[\s\S]*?applyProviderContextWindow\(id, res\.contextWindow\);[\s\S]*?\}/,
+      /async function detectProviderContextWindowForModel\(id, model\) \{[\s\S]*?sendToBackground\('detect_provider_context_window', \{ providerId: id, model: value \}\);[\s\S]*?applyProviderContextWindow\(id, res\.contextWindow, snapshot\);[\s\S]*?\}/,
       `${label}: selected-model context detection should update the provider context field`,
     );
     assert.match(
@@ -73072,6 +73072,20 @@ test('Local OpenAI-compatible Proxy context window: model card, live props, mode
         assert.equal(config().contextWindow, 128000);
       }
 
+      // 5e'. Re-entering the auto-filled number as a manual choice drops the auto provenance, so a
+      // later name-based detection cannot enlarge the deliberate cap.
+      {
+        const { mgr, config } = setup(async () => new Response('missing', { status: 404 }), {
+          model: 'claude-sonnet-4-5', contextWindow: 65536, autoContextWindow: 65536,
+        });
+        await mgr.updateProvider('local_openai_proxy', { contextWindow: 65536, manualContextWindow: true });
+        assert.equal(config().manualContextWindow, true, `${label}: explicit manual flag is kept for an unchanged number`);
+        assert.equal(config().autoContextWindow, undefined, `${label}: explicit manual flag clears the auto provenance`);
+        const result = await mgr.detectProviderContextWindow('local_openai_proxy', 'claude-sonnet-4-5');
+        assert.equal(result.contextWindow, undefined, `${label}: a deliberate 64k is not replaced by the name-based 128k`);
+        assert.equal(config().contextWindow, 65536);
+      }
+
       // 5f. Settings UI: edits made while detection is pending are preserved
       {
         const settingsSource = fs.readFileSync(path.join(ROOT, label === 'chrome' ? 'src/chrome/src/ui/settings.js' : 'src/firefox/src/ui/settings.js'), 'utf8');
@@ -73113,6 +73127,47 @@ test('Local OpenAI-compatible Proxy context window: model card, live props, mode
         assert.equal(inputEl.value, '128000', `${label}: untouched input is updated by detection`);
         assert.equal(inputEl.dataset.manuallyEdited, 'false');
         assert.equal(providersData.local_openai_proxy.contextWindow, 128000);
+
+        // Case C: a manual value saved earlier and left alone while detection runs still takes the
+        // window the background stored (a live shrink), so the next Save cannot write the old value back.
+        inputEl.value = '131072';
+        inputEl.dataset.manuallyEdited = 'true';
+        providersData.local_openai_proxy = { contextWindow: 131072, manualContextWindow: true };
+        markProviderContextDetectionStart('local_openai_proxy');
+        applyProviderContextWindow('local_openai_proxy', 32768);
+        assert.equal(inputEl.value, '32768', `${label}: an untouched saved manual value follows the stored live window`);
+        assert.equal(inputEl.dataset.manuallyEdited, 'false');
+        assert.equal(providersData.local_openai_proxy.contextWindow, 32768);
+        assert.equal(providersData.local_openai_proxy.manualContextWindow, false);
+
+        // Case D: overlapping requests keep separate snapshots; an edit made after the first one
+        // started is still protected when the first one answers last.
+        inputEl.value = '65536';
+        inputEl.dataset.manuallyEdited = 'false';
+        providersData.local_openai_proxy = { contextWindow: 65536, manualContextWindow: false };
+        const first = markProviderContextDetectionStart('local_openai_proxy');
+        inputEl.value = '24576';
+        inputEl.dataset.manuallyEdited = 'true';
+        inputEl.dataset.editVersion = '1';
+        const second = markProviderContextDetectionStart('local_openai_proxy');
+        applyProviderContextWindow('local_openai_proxy', 131072, second);
+        assert.equal(inputEl.value, '131072', `${label}: the later request saw the edit as its starting point`);
+        inputEl.value = '24576';
+        inputEl.dataset.manuallyEdited = 'true';
+        providersData.local_openai_proxy = { contextWindow: 65536, manualContextWindow: false };
+        applyProviderContextWindow('local_openai_proxy', 131072, first);
+        assert.equal(inputEl.value, '24576', `${label}: the earlier request cannot overwrite an edit made after it started`);
+        assert.equal(providersData.local_openai_proxy.contextWindow, 65536);
+
+        // Case E: re-typing the same number is still an edit (value unchanged, version bumped).
+        inputEl.value = '65536';
+        inputEl.dataset.manuallyEdited = 'false';
+        inputEl.dataset.editVersion = '5';
+        const retyped = markProviderContextDetectionStart('local_openai_proxy');
+        inputEl.dataset.editVersion = '6';
+        inputEl.dataset.manuallyEdited = 'true';
+        applyProviderContextWindow('local_openai_proxy', 131072, retyped);
+        assert.equal(inputEl.value, '65536', `${label}: re-entering the same number counts as a user edit`);
       }
 
       // 6. A manual override is never enlarged by a name or the fallback...

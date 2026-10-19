@@ -1632,6 +1632,11 @@ export class ProviderManager {
     if (Object.hasOwn(updates, 'autoContextWindow') && updates.autoContextWindow == null) {
       delete merged.autoContextWindow;
     }
+    // Explicitly re-entering the auto-filled number is still a user choice: it must stop being
+    // replaceable by later detection (e.g. a deliberate 64k cap enlarged to 128k by model name).
+    if (updates.manualContextWindow === true) {
+      delete merged.autoContextWindow;
+    }
     if (this._providerDefinitionId(id, current) === 'ollama') {
       merged.visionMode = OLLAMA_VISION_MODES.has(merged.visionMode) ? merged.visionMode : 'auto';
       delete merged.supportsVision;

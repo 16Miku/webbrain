@@ -3426,6 +3426,7 @@ function renderProviders() {
       markProviderDirty(input.dataset.provider);
       if (input.dataset.key === 'contextWindow') {
         input.dataset.manuallyEdited = 'true';
+        input.dataset.editVersion = String((Number(input.dataset.editVersion) || 0) + 1);
       }
     });
   });
@@ -3722,37 +3723,48 @@ function applyProviderBaseUrl(id, baseUrl) {
 
 const providerContextPendingSnapshots = new Map();
 
+// What the context field looked like when a background request started. The
+// request returns the window the background already stored, so the field must
+// show it unless the user touched the field in the meantime. Each request keeps
+// its own snapshot, so overlapping Test connection / Load models / model picks
+// cannot consume or replace one another's.
 function markProviderContextDetectionStart(id) {
   const input = document.querySelector(`input[data-provider="${id}"][data-key="contextWindow"]`);
-  if (!input) return;
-  providerContextPendingSnapshots.set(id, {
+  if (!input) return undefined;
+  const snapshot = {
     value: input.value,
     manuallyEdited: input.dataset.manuallyEdited === 'true',
-  });
+    editVersion: Number(input.dataset.editVersion) || 0,
+  };
+  providerContextPendingSnapshots.set(id, snapshot);
+  return snapshot;
 }
 
-function clearProviderContextDetectionStart(id) {
-  providerContextPendingSnapshots.delete(id);
+function clearProviderContextDetectionStart(id, snapshot) {
+  if (snapshot === undefined || providerContextPendingSnapshots.get(id) === snapshot) {
+    providerContextPendingSnapshots.delete(id);
+  }
 }
 
-function applyProviderContextWindow(id, contextWindow) {
+function providerContextEditedSince(input, snapshot) {
+  return input.value !== snapshot.value
+    || (input.dataset.manuallyEdited === 'true') !== snapshot.manuallyEdited
+    || (Number(input.dataset.editVersion) || 0) !== snapshot.editVersion;
+}
+
+function applyProviderContextWindow(id, contextWindow, snapshot = providerContextPendingSnapshots.get(id)) {
   const n = Number(contextWindow);
+  clearProviderContextDetectionStart(id, snapshot);
   if (!Number.isFinite(n) || n <= 0) return;
   const input = document.querySelector(`input[data-provider="${id}"][data-key="contextWindow"]`);
-  const snapshot = providerContextPendingSnapshots.get(id);
-  providerContextPendingSnapshots.delete(id);
   if (input) {
-    if (snapshot) {
-      const isCurrentlyEdited = input.dataset.manuallyEdited === 'true';
-      if (input.value !== snapshot.value || isCurrentlyEdited !== snapshot.manuallyEdited) {
-        return;
-      }
-    }
-    if (input.dataset.manuallyEdited === 'true') return;
+    // Only an edit made after the request started wins. A manual value that
+    // was saved earlier and left alone is still replaced by a window the
+    // background decided to store (a live shrink, say), or the next Save would
+    // write the stale larger value back.
+    if (snapshot && providerContextEditedSince(input, snapshot)) return;
     if (input.value !== String(n)) input.value = String(n);
     input.dataset.manuallyEdited = 'false';
-  } else if (providersData[id]?.manualContextWindow === true) {
-    return;
   }
   if (providersData[id]) {
     providersData[id].contextWindow = n;
@@ -3763,17 +3775,17 @@ function applyProviderContextWindow(id, contextWindow) {
 async function detectProviderContextWindowForModel(id, model) {
   const value = String(model || '').trim();
   if (!value) return;
-  if (typeof markProviderContextDetectionStart === 'function') {
-    markProviderContextDetectionStart(id);
-  }
+  const snapshot = typeof markProviderContextDetectionStart === 'function'
+    ? markProviderContextDetectionStart(id)
+    : undefined;
   try {
     const res = await sendToBackground('detect_provider_context_window', { providerId: id, model: value });
-    if (res?.ok) applyProviderContextWindow(id, res.contextWindow);
+    if (res?.ok) applyProviderContextWindow(id, res.contextWindow, snapshot);
   } catch {
     // Model picking should still succeed if the backend cannot report a window.
   } finally {
     if (typeof clearProviderContextDetectionStart === 'function') {
-      clearProviderContextDetectionStart(id);
+      clearProviderContextDetectionStart(id, snapshot);
     }
   }
 }
@@ -3836,29 +3848,30 @@ async function loadProviderModels(id) {
 
   if (!isCurrent()) return;
   setProviderLoadModelsStatus(id, t('st.providers.loading'));
-  if (typeof markProviderContextDetectionStart === 'function') markProviderContextDetectionStart(id);
+  const contextSnapshot = typeof markProviderContextDetectionStart === 'function'
+    ? markProviderContextDetectionStart(id)
+    : undefined;
+  const releaseContextSnapshot = () => {
+    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id, contextSnapshot);
+  };
   let res;
   try {
     res = await sendToBackground('list_provider_models', { providerId: id });
   } catch (e) {
-    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id);
+    releaseContextSnapshot();
     if (!isCurrent()) return;
     setProviderLoadModelsStatus(id, providerModelLoadErrorMessage(e.message), 'var(--danger, #c33)');
     return;
   }
 
-  if (!isCurrent()) {
-    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id);
-    return;
-  }
+  // The snapshot travels with this request (passed to apply below); the shared slot is free again.
+  releaseContextSnapshot();
+  if (!isCurrent()) return;
   datalistEl = document.getElementById(`models-${id}`);
-  if (!datalistEl) {
-    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id);
-    return;
-  }
+  if (!datalistEl) return;
   if (res?.ok) {
     applyProviderBaseUrl(id, res.baseUrl);
-    applyProviderContextWindow(id, res.contextWindow);
+    applyProviderContextWindow(id, res.contextWindow, contextSnapshot);
     const loadedDialogEl = document.querySelector(`.loaded-model-dialog[data-loaded-models-for="${id}"]`);
     datalistEl.innerHTML = res.models
       .map((m) => `<option value="${escapeHtml(m)}"></option>`)
@@ -3975,12 +3988,14 @@ async function testProvider(id) {
 
   if (!setProviderTestResult(id, '', t('st.providers.testing'), 'var(--text2)')) return;
 
-  if (typeof markProviderContextDetectionStart === 'function') markProviderContextDetectionStart(id);
+  const contextSnapshot = typeof markProviderContextDetectionStart === 'function'
+    ? markProviderContextDetectionStart(id)
+    : undefined;
   try {
     const res = await sendToBackground('test_provider', { providerId: id });
     if (res.ok) {
       applyProviderBaseUrl(id, res.baseUrl);
-      applyProviderContextWindow(id, res.contextWindow);
+      applyProviderContextWindow(id, res.contextWindow, contextSnapshot);
       setProviderTestResult(id, 'ok', t('st.providers.connected', { model: res.model || t('st.providers.unknown_model') }));
     } else {
       setProviderTestResult(id, 'fail', t('st.providers.failed', { error: res.error }));
@@ -3988,7 +4003,7 @@ async function testProvider(id) {
   } catch (e) {
     setProviderTestResult(id, 'fail', t('st.providers.failed', { error: e.message }));
   } finally {
-    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id);
+    if (typeof clearProviderContextDetectionStart === 'function') clearProviderContextDetectionStart(id, contextSnapshot);
   }
 }
 

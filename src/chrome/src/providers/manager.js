@@ -2051,6 +2051,11 @@ export class ProviderManager {
     if (Object.hasOwn(updates, 'autoContextWindow') && updates.autoContextWindow == null) {
       delete merged.autoContextWindow;
     }
+    // Explicitly re-entering the auto-filled number is still a user choice: it must stop being
+    // replaceable by later detection (e.g. a deliberate 64k cap enlarged to 128k by model name).
+    if (updates.manualContextWindow === true) {
+      delete merged.autoContextWindow;
+    }
     if (id === 'webgpu' && Object.hasOwn(updates, 'model')) {
       merged.model = normalizeWebgpuModelId(merged.model);
       const preset = webgpuModelPreset(merged.model);
