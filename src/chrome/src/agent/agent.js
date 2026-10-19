@@ -1359,6 +1359,8 @@ export class Agent extends LoopDetector {
   }
 
   async _beginReadCompleteness(tabId, userMessage, runOptions = {}) {
+    // A limitation text remembered for an earlier run is not this run's.
+    this._runtimeAskLimitations?.delete(tabId);
     this._readCompletenessRunCounter += 1;
     const token = `read_${tabId}_${Date.now()}_${this._readCompletenessRunCounter}`;
     if (this._isStandaloneChatRun(runOptions)) {
@@ -1378,6 +1380,7 @@ export class Agent extends LoopDetector {
     if (!state) return;
     if (runToken && state.runToken !== runToken) return;
     this.readCompletenessStates.delete(tabId);
+    this._runtimeAskLimitations?.delete(tabId);
   }
 
 
@@ -2045,10 +2048,24 @@ export class Agent extends LoopDetector {
   }
 
   _readCompletenessLimitation(tabId) {
-    return readCompletenessLimitation(
+    const limitation = readCompletenessLimitation(
       this.readCompletenessStates.get(tabId),
       this._effectiveRunMode(tabId),
     );
+    // Every path that substitutes this fixed text for the model's answer (the
+    // done tool and the plain-final branches alike) asks here first, so it is
+    // remembered once, for _maybeEmitAskModeHandoff.
+    if (limitation) this._rememberRuntimeAskLimitation(tabId, limitation);
+    return limitation;
+  }
+
+  // The texts the runtime itself puts in an Ask answer for a limit only Act
+  // mode lifts, as a set: the fixed limitation and the advisory caveat.
+  _rememberRuntimeAskLimitation(tabId, text) {
+    if (!text) return;
+    const known = (this._runtimeAskLimitations ||= new Map());
+    if (!known.has(tabId)) known.set(tabId, new Set());
+    known.get(tabId).add(text);
   }
 
   // The status texts an observation showed after a submit: the accessibility
@@ -5864,12 +5881,16 @@ export class Agent extends LoopDetector {
     const state = this.readCompletenessStates.get(tabId);
     const expansionUnverified = state?.requiresExpansionEvidence === true
       && state.treeCoverageComplete === true && state.expansionConfirmed !== true;
+    const caveat = !expansionUnverified ? 'Not every part of the conversation was confirmed as read.'
+      : this._isActionMode(this._effectiveRunMode(tabId))
+        ? 'Some Gmail messages may have stayed collapsed, so the whole conversation was not confirmed as read.'
+        : 'Ask mode cannot expand collapsed Gmail messages, so some messages in the conversation may be missing.';
+    // Only Act mode expands the messages, so an automatic Ask turn that ends
+    // with this caveat is offered the switch (see _maybeEmitAskModeHandoff).
+    if (expansionUnverified && !this._isActionMode(this._effectiveRunMode(tabId))) this._rememberRuntimeAskLimitation(tabId, caveat);
     return this._guardRefusesOnce(tabId, 'read-coverage-incomplete', {
       decided: !expansionUnverified,
-      caveat: !expansionUnverified ? 'Not every part of the conversation was confirmed as read.'
-        : this._isActionMode(this._effectiveRunMode(tabId))
-          ? 'Some Gmail messages may have stayed collapsed, so the whole conversation was not confirmed as read.'
-          : 'Ask mode cannot expand collapsed Gmail messages, so some messages in the conversation may be missing.',
+      caveat,
     });
   }
 
@@ -21736,6 +21757,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!tabPending) return false;
     const entry = tabPending.get(clarifyId);
     if (!entry) return false;
+    // The time the user took to answer one of WebBrain's own cards does not
+    // age the page observation the pending action was decided on.
+    this._noteClarifyHeld(tabId, entry);
     this._settleClarification(entry, { answer, source });
     return true;
   }
@@ -22141,6 +22165,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!entry?.timer) return;
     try { clearTimeout(entry.timer); } catch {}
     entry.timer = null;
+  }
+
+  // The time a card waited, whether the user answered or its own timeout chose,
+  // does not age the page observation the pending action was decided on.
+  _noteClarifyHeld(tabId, entry) {
+    if (tabId != null && entry && !entry.settled && Number.isFinite(entry.ts)) {
+      this._notePageFeedbackUserDecision?.(tabId, Date.now() - entry.ts);
+    }
   }
 
   /**
@@ -27293,7 +27325,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _maybeEmitAskModeHandoff(tabId, mode, userMessage, finalResponse, onUpdate, runOptions = {}) {
+    // An automatically routed turn could hand itself to Act, and the user's
+    // next message is routed again ("yes" to an offer included), so it is
+    // not offered a one-click switch to a mode the user never picked.
+    // The runtime's own limitation text (a Gmail thread it could not expand)
+    // is not a conversational offer: the model cannot hand it off, and a retry
+    // in Act is the recovery, so a routed turn keeps the one-click switch for it.
+    const runtimeLimitation = typeof finalResponse === 'string' && finalResponse !== ''
+      && [...(this._runtimeAskLimitations?.get(tabId) || [])].some(text => finalResponse.includes(text));
     if (mode !== 'ask'
+        || (runOptions?.autoModeRouting && !runtimeLimitation)
         || runOptions?.cloudRun
         || this._isStandaloneChatRun(runOptions)
         || typeof finalResponse !== 'string'
@@ -27301,6 +27342,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || this._checkAbort(tabId)
         || isSelectionSourceGrounding(runOptions?.sourceGrounding)
         || this.selectionGroundingScopes.has(tabId)) {
+      return;
+    }
+    // Nothing the user asked is unfulfilled here, so the classifier would
+    // rightly answer "none" for a read-only request: the runtime itself says
+    // a retry in Act is the recovery, and offers it directly.
+    if (runOptions?.autoModeRouting && runtimeLimitation) {
+      onUpdate('ask_mode_handoff', { value: 'act' });
       return;
     }
     const handoffContext = this.systemOneContext(tabId);
@@ -31893,6 +31941,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           entry.timer = null;
           try { onUpdate('clarify_auto', { clarifyId, answer: timedAnswer, source, timeoutSec: waitSec }); }
           catch { /* UI emit must never break the run */ }
+          this._noteClarifyHeld(tabId, entry);
           this._settleClarification(entry, { answer: timedAnswer, source });
         };
         if (timeoutSec === 0) {
@@ -35003,12 +35052,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (mode === 'dev') {
       prompt += `\n\n${SYSTEM_PROMPT_DEV_APPENDIX.trim()}`;
     }
-    if (mode === 'ask' && tabId != null && this._autoModeEscalationTabs.has(tabId)) {
-      prompt += `\n\n${AUTO_MODE_ASK_NOTE}`;
-    }
     if (this.webMcpEnabled && !lean && (!this._isActionMode(mode) || tier !== 'compact')) {
       const webMcpPrompt = this._isActionMode(mode) ? SYSTEM_PROMPT_WEBMCP_ACT : SYSTEM_PROMPT_WEBMCP_ASK;
       prompt += `\n\n${webMcpPrompt}`;
+    }
+    // Last among the mode guidance, so it also overrides the WebMCP text above.
+    if (mode === 'ask' && tabId != null && this._autoModeEscalationTabs.has(tabId)) {
+      prompt += `\n\n${AUTO_MODE_ASK_NOTE}`;
     }
 
     // Universal cookie/paywall guidance. Always relevant for http(s)
@@ -45210,6 +45260,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 });
               }
             } catch { /* UI emit must never break the run */ }
+            this._noteClarifyHeld(tabId, entry);
             this._settleClarification(entry, { answer, source: autoSource });
           };
           entry.restartTimeout = () => {
@@ -55296,6 +55347,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
+      // The model's thinking time does not age its page observation.
+      this._notePageFeedbackModelResponse(tabId);
       const feedbackCalls = result?.toolCalls?.length ? result.toolCalls
         : !this._containsProviderReplayState(result?.responseItems) ? this._tryParseToolCallsFromText(result?.content || '', allowedToolNames) : [];
       // A pending correction supersedes this response anyway; do not first
@@ -56782,6 +56835,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           toolCalls: streamedToolCalls,
         }));
 
+        // The model's thinking time does not age its page observation.
+        this._notePageFeedbackModelResponse(tabId);
         const feedbackCalls = streamedToolCalls?.length ? streamedToolCalls
           : !this._containsProviderReplayState(responseItems) ? this._tryParseToolCallsFromText(fullText || '', allowedToolNames) : [];
         // A pending correction supersedes this response anyway; do not first
