@@ -2388,15 +2388,15 @@ export class ProviderManager {
     const provider = await this.getVisionOverrideProvider()
       || await this.getLocalVisionFallbackProvider();
     if (!provider) return { ok: false, error: 'Vision model not configured' };
+    // Both in-browser readers get matching color panels; small local models
+    // misread the tiny glyphs in the remote providers' WB7 probe.
+    const isLocalWebgpu = provider.name === 'webgpu-vision' || provider.config?.providerName === 'webgpu-vision';
     let imageDataUrl;
     try {
-      imageDataUrl = await loadVisionConnectionTestImage(chrome.runtime);
+      imageDataUrl = await loadVisionConnectionTestImage(chrome.runtime, { colorPanels: isLocalWebgpu });
     } catch (error) {
       return { ok: false, error: error.message };
     }
-    // Both in-browser readers (WebBrain VL 2 450M and Ternary Bonsai 2 2B
-    // Vision) get the colour probe; small local models misread tiny glyphs.
-    const isLocalWebgpu = provider.name === 'webgpu-vision' || provider.config?.providerName === 'webgpu-vision';
     const probePrompt = isLocalWebgpu
       ? 'The image contains three solid vertical color panels. Name their colors from left to right. Reply with only the three color names, in English.'
       : 'Read the three-character black code centered in the attached image. Reply with only that code.';
