@@ -85956,8 +85956,9 @@ test('a local Ask run keeps API mutations off even with the API-mutations settin
     agent._skipPermissionGate = true;
     agent.alwaysAllowApiMutations = true;
     agent.setApiMutationsAllowed(tabId, true);
-    const send = async (mode) => {
-      agent.conversationModes.set(tabId, mode);
+    const send = async (mode, conversationMode = mode) => {
+      agent._runModeOverrides.set(tabId, mode);
+      agent.conversationModes.set(tabId, conversationMode);
       const messages = [];
       const updates = [];
       await agent._executeToolBatch(
@@ -85990,6 +85991,13 @@ test('a local Ask run keeps API mutations off even with the API-mutations settin
 
     await send('act');
     assert.equal(executed, 1, `${AgentClass.name}: Act still honors the API-mutations setting`);
+
+    // A side panel opened mid-run may set the conversation's mode; the run's
+    // own mode decides.
+    await send('ask', 'act');
+    assert.equal(executed, 1, `${AgentClass.name}: an Ask run sent a POST after the conversation mode changed`);
+    await send('act', 'ask');
+    assert.equal(executed, 2, `${AgentClass.name}: an Act run was blocked by the conversation mode`);
   }
 });
 

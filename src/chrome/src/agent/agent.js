@@ -15772,8 +15772,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Ask is read-only, including a turn that automatic mode starts in Ask:
     // a POST/PUT/PATCH/DELETE request changes something on the server, so
     // neither /allow-api nor the API-mutations setting lets one out of Ask.
+    // The run's own mode decides; a side panel opening mid-run can change
+    // the conversation's mode without changing the run's.
     const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true
-      || this.conversationModes.get(tabId) === 'ask';
+      || this._effectiveRunMode(tabId, '') === 'ask';
     const apiMutationsAllowedForRun = () =>
       !apiMutationsDeniedForRun && this.isApiMutationsAllowed(tabId);
     const promptTier = this._resolvePromptTier(provider);
