@@ -6,6 +6,9 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+### Changed
+- Settings → Skills now opens with your enabled skills, followed by the packaged skills you can enable. The form for importing a skill from a URL or pasting its text stays closed until you click **Add skill** (or **Edit** on an enabled skill), and closes again after you add or save a skill or click **Cancel**.
+
 ## [42.2.0] - 2026-10-20
 
 ### Added

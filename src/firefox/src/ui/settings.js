@@ -144,6 +144,9 @@ const btnAddSkillUrl = document.getElementById('btn-add-skill-url');
 const btnAddSkillText = document.getElementById('btn-add-skill-text');
 const btnClearSkillForm = document.getElementById('btn-clear-skill-form');
 const skillsResult = document.getElementById('skills-result');
+const skillAddForm = document.getElementById('skill-add-form');
+const btnShowSkillForm = document.getElementById('btn-show-skill-form');
+const btnCancelSkillForm = document.getElementById('btn-cancel-skill-form');
 const skillsList = document.getElementById('skills-list');
 const packagedSkillsList = document.getElementById('packaged-skills-list');
 const skillPreviewDialog = document.getElementById('skill-preview-dialog');
@@ -1088,6 +1091,7 @@ function renderSkills() {
     btn.addEventListener('click', async () => {
       if (editingSkillId === btn.dataset.skillId) {
         cancelSkillEdit();
+        closeSkillForm();
       }
       const removedSkill = customSkills.find((skill) => skill.id === btn.dataset.skillId);
       await saveCustomSkills(
@@ -1131,7 +1135,27 @@ async function addPackagedSkill(skillId, button) {
   }
 }
 
+// The add-skill form stays closed until Add skill (or Edit on an enabled
+// skill) opens it, so the enabled and available skills come first. Results
+// show outside it, so Enable and Remove are confirmed while it is closed.
+function setSkillFormOpen(open) {
+  if (skillAddForm) skillAddForm.hidden = !open;
+  if (btnShowSkillForm) btnShowSkillForm.hidden = open;
+}
+
+function openSkillForm() {
+  setSkillFormOpen(true);
+  skillNameInput?.focus?.();
+}
+
+function closeSkillForm() {
+  const focusInForm = !!skillAddForm?.contains?.(document.activeElement);
+  setSkillFormOpen(false);
+  if (focusInForm) btnShowSkillForm?.focus?.();
+}
+
 function startSkillEdit(skill) {
+  setSkillFormOpen(true);
   editingSkillId = skill.id;
   if (skillNameInput) skillNameInput.value = skill.name || '';
   if (skillTextArea) skillTextArea.value = skill.content || '';
@@ -1174,6 +1198,7 @@ async function addSkillFromText() {
       const next = customSkills.map((s) => (s.id === editingSkillId ? updated : s));
       await saveCustomSkills(next);
       cancelSkillEdit();
+      closeSkillForm();
       flashSkillsResult('ok', t('st.providers.saved'));
       return;
     }
@@ -1186,6 +1211,7 @@ async function addSkillFromText() {
     });
     if (skillNameInput) skillNameInput.value = '';
     if (skillTextArea) skillTextArea.value = '';
+    closeSkillForm();
     flashSkillsResult('ok', t('st.skills.added'));
   } catch (e) {
     flashSkillsResult('fail', e.message || t('st.skills.error.add_failed'));
@@ -1232,6 +1258,7 @@ async function addSkillFromUrl() {
     });
     if (skillNameInput) skillNameInput.value = '';
     if (skillUrlInput) skillUrlInput.value = '';
+    closeSkillForm();
     flashSkillsResult('ok', t('st.skills.added'));
   } catch (e) {
     flashSkillsResult('fail', e.message || t('st.skills.error.add_failed'));
@@ -1245,6 +1272,14 @@ async function addSkillFromUrl() {
 
 btnAddSkillText?.addEventListener('click', addSkillFromText);
 btnAddSkillUrl?.addEventListener('click', addSkillFromUrl);
+btnShowSkillForm?.addEventListener('click', openSkillForm);
+btnCancelSkillForm?.addEventListener('click', () => {
+  cancelSkillEdit();
+  if (skillNameInput) skillNameInput.value = '';
+  if (skillUrlInput) skillUrlInput.value = '';
+  if (skillTextArea) skillTextArea.value = '';
+  closeSkillForm();
+});
 btnClearSkillForm?.addEventListener('click', () => {
   cancelSkillEdit();
   if (skillNameInput) skillNameInput.value = '';

@@ -915,6 +915,8 @@ export default {
   'st.skills.add_url': "यूआरएल से आयात करें",
   'st.skills.add_text': "कच्चा पाठ जोड़ें",
   'st.skills.clear_form': "स्पष्ट रूप",
+  'st.skills.add_skill': "कौशल जोड़ें",
+  'st.skills.cancel': "रद्द करें",
   'st.skills.loading_url': "आयात किया जा रहा है...",
   'st.skills.added': "कौशल जोड़ा गया.",
   'st.skills.removed': "कौशल हटा दिया गया.",

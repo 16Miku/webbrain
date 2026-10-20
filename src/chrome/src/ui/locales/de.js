@@ -1086,6 +1086,8 @@ export default {
   'st.skills.add_url': 'Von URL importieren',
   'st.skills.add_text': 'Rohtext hinzufügen',
   'st.skills.clear_form': 'Formular leeren',
+  'st.skills.add_skill': 'Skill hinzufügen',
+  'st.skills.cancel': 'Abbrechen',
   'st.skills.loading_url': 'Importieren...',
   'st.skills.added': 'Skill hinzugefügt.',
   'st.skills.removed': 'Skill entfernt.',

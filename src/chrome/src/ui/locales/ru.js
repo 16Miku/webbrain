@@ -882,6 +882,8 @@ export default {
   'st.skills.add_url': 'Импортировать из URL',
   'st.skills.add_text': 'Добавить сырой текст',
   'st.skills.clear_form': 'Очистить форму',
+  'st.skills.add_skill': 'Добавить навык',
+  'st.skills.cancel': 'Отмена',
   'st.skills.loading_url': 'Импортируется...',
   'st.skills.added': 'Навык добавлен.',
   'st.skills.removed': 'Навык удалён.',

@@ -123,6 +123,8 @@ export default {
   'st.skills.add_url': 'URL\'den içe aktar',
   'st.skills.add_text': 'Ham metni ekle',
   'st.skills.clear_form': 'Formu temizle',
+  'st.skills.add_skill': 'Skill ekle',
+  'st.skills.cancel': 'İptal',
   'st.skills.loading_url': 'İçe aktarılıyor...',
   'st.skills.added': 'Skill eklendi.',
   'st.skills.removed': 'Skill kaldırıldı.',
