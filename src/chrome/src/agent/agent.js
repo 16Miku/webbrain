@@ -33777,6 +33777,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const frameHost = host.toLowerCase();
         if (filter && !frameUrl.includes(filter) && !frameHost.includes(filter.replace(/^https?:\/\//, ''))) return null;
         if (args.selector) {
+          // The tool acts on the matchIndex-th match in its frame (content.js
+          // safeIndexedQuerySelector), so the submit check reads that same
+          // element, and none when the frame has no such match: the card
+          // never describes another control, or one the call cannot reach.
+          if (args.matchIndex !== undefined && args.matchIndex !== null) {
+            const index = Number(args.matchIndex);
+            if (!Number.isInteger(index) || index < 0) return null;
+            let matches = null;
+            try { matches = Array.from(doc.querySelectorAll(args.selector)); } catch { matches = null; }
+            if (matches) return matches[index] || null;
+            return index === 0 ? deepQuerySelector(doc, args.selector) : null;
+          }
           return deepQuerySelector(doc, args.selector);
         }
         if (args.text) {
