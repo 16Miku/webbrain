@@ -82766,9 +82766,11 @@ test('a field holding its own placeholder text is not submitted', async () => {
     assert.equal(prompts, 6, `${AgentClass.name}: a whole card answer was refused`);
 
     // A framework can copy the typed value into the field's default, so the
-    // probe sees no edit; WebBrain's own write in this run still counts.
+    // probe sees no edit; WebBrain's own write in this task still counts.
+    // Tracing is off here: there is no trace run ID, only the task token.
     agent.conversations.set(tabId, [...task]);
-    agent.currentRunId.set(tabId, 'placeholder-run');
+    agent.currentRunId.delete(tabId);
+    agent._taskTokens.set(tabId, 'task_placeholder');
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
     agent._rememberPlaceholderWrite(tabId, 'set_field', { ref_id: 'ref_101', text: 'you@example.com' },
       { success: true, value: 'you@example.com', fieldMeta: { type: 'email', name: 'email', id: null, placeholder: 'you@example.com' } });
@@ -82778,11 +82780,24 @@ test('a field holding its own placeholder text is not submitted', async () => {
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_202', name: 'email', id: '' };
     await submit('other-field');
     assert.equal(prompts, 7, `${AgentClass.name}: a write to one field counted for another`);
+    // The typing tools add to what a field holds unless clear is true: the
+    // receipt's result is what the field then holds, not the typed text.
+    agent._taskTokens.set(tabId, 'task_append');
+    const appendMeta = { type: 'email', name: 'email', id: null, placeholder: 'you@example.com' };
+    const appendField = { ref: '', name: 'email', id: '' };
+    agent._rememberPlaceholderWrite(tabId, 'type_text', { text: 'you@example.com' },
+      { success: true, value: 'xyou@example.com', fieldMeta: appendMeta });
+    assert.equal(agent._placeholderWritten(tabId, appendField, 'you@example.com'), false,
+      `${AgentClass.name}: an append was read as replacing the value`);
+    agent._rememberPlaceholderWrite(tabId, 'type_text', { text: 'example.com' },
+      { success: true, value: 'you@example.com', fieldMeta: appendMeta });
+    assert.equal(agent._placeholderWritten(tabId, appendField, 'you@example.com'), true,
+      `${AgentClass.name}: an append that left the placeholder was missed`);
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
     // A long typed value is matched by the first 200 characters the probe
     // reports, though the write's receipt shortens what it read back.
     const longText = `Tell us about your project ${'in as much detail as you can '.repeat(8)}`.trim();
-    agent.currentRunId.set(tabId, 'long-run');
+    agent._taskTokens.set(tabId, 'task_long');
     agent._rememberPlaceholderWrite(tabId, 'set_field', { ref_id: 'ref_303', text: longText },
       { success: true, value: longText.slice(0, 100), fieldMeta: { type: 'textarea', name: 'about', id: null, placeholder: longText } });
     field = { label: 'About', placeholder: longText.slice(0, 200), value: longText.slice(0, 200), fullValue: longText, complete: true,
@@ -82802,9 +82817,17 @@ test('a field holding its own placeholder text is not submitted', async () => {
     assert.equal((await submit('too-long')).placeholderValue, true, `${AgentClass.name}: a value too long to return was matched`);
     agent.conversations.set(tabId, [...task]);
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
-    agent.currentRunId.set(tabId, 'next-run');
+    agent._taskTokens.set(tabId, 'task_next');
     await submit('next-run');
-    assert.equal(prompts, 9, `${AgentClass.name}: a write from another run still counted`);
+    assert.equal(prompts, 9, `${AgentClass.name}: a write from another task still counted`);
+    // Without a task, nothing is kept.
+    agent._taskTokens.delete(tabId);
+    agent._rememberPlaceholderWrite(tabId, 'set_field', { ref_id: 'ref_101', text: 'you@example.com' },
+      { success: true, value: 'you@example.com', fieldMeta: { type: 'email', name: 'email', id: null, placeholder: 'you@example.com' } });
+    assert.equal(agent._placeholderWrites.get(tabId)?.task, 'task_long', `${AgentClass.name}: a write outside a task was kept`);
+    // A cleared conversation takes the writes along.
+    agent._cleanupTab(tabId, { preserveRunGuard: true });
+    assert.equal(agent._placeholderWrites.has(tabId), false, `${AgentClass.name}: tab cleanup kept placeholder writes`);
 
     // An earlier, unrelated turn cannot supply the value for the current task.
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };

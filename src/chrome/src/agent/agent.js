@@ -33007,7 +33007,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // too, for the agent's own comparisons.
             const whole = text => String(text ?? '').replace(/\s+/g, ' ').trim();
             const placeholder = whole(el.getAttribute?.('placeholder'));
-            const value = whole(pendingEl && el === pendingEl ? pendingValue : el.value);
+            // set_field({submit, clear:false}) appends to what the field holds.
+            const typed = pendingEl && el === pendingEl
+              ? (toolName === 'set_field' && args?.clear === false ? String(el.value ?? '') : '') + String(pendingValue ?? '')
+              : el.value;
+            const value = whole(typed);
             const changed = el === pendingEl || (!!value && value !== whole(el.defaultValue ?? el.getAttribute?.('value')));
             return placeholder && value.toLowerCase() === placeholder.toLowerCase()
               ? [{ label: labelFor(el), value: compact(value, 200), placeholder: compact(placeholder, 200), changed,
@@ -36352,6 +36356,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // A cleared conversation or closed tab takes its filled credentials along.
     this._knownCredentialValues?.delete(tabId);
     this._restoredCredentialScrubs?.delete(tabId);
+    this._placeholderWrites?.delete(tabId);
     // A conversation clear preserves the run guard while the document (and
     // possibly landed text) is unchanged: document-scoped mutation debt and
     // its recent-document backlog survive, or the next run could duplicate
@@ -52461,7 +52466,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // when the user did not give that value as an answer on one of the
   // current task's cards: the page's example typed in as the user's. A
   // field counts as edited when the probe saw it differ from its default or
-  // WebBrain's own write put that value into that same field in this run (a
+  // WebBrain's own write put that value into that same field in this task (a
   // framework may copy a typed value into defaultValue). The probe's
   // complete list is read when it sent one; the summary's changed fields
   // stop at eight. A placeholder without a letter, or shorter than three
@@ -52500,8 +52505,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // A value WebBrain typed into a field that equals the field's own
-  // placeholder, from the write's receipt, kept for the current run with the
-  // field it went into: its accessibility ref, and its name and id.
+  // placeholder, from the write's receipt, kept for the current task with the
+  // field it went into: its accessibility ref, and its name and id. The
+  // task token scopes it, as it does task proofs: a trace run ID is missing
+  // when tracing is off, and a trusted continuation keeps the token.
   _rememberPlaceholderWrite(tabId, toolName, args, response) {
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName) || response?.success !== true) return;
     const meta = response.fieldMeta;
@@ -52509,28 +52516,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const whole = text => String(text ?? '').replace(/\s+/g, ' ').trim();
     const normalize = text => whole(text).toLowerCase();
     const placeholder = normalize(meta.placeholder);
-    // The typed text, whole; an append (clear:false) reads the field's
-    // result instead, which the receipt reports shortened.
-    const appended = args?.clear === false && typeof response.value === 'string';
-    const typed = whole(appended ? response.value : (typeof args?.text === 'string' ? args.text : response.value));
+    // The typed text, whole, when the write replaced the value: set_field
+    // replaces it unless clear is false, the typing tools only with
+    // clear:true. An append reads the field's result instead, which the
+    // receipt reports shortened.
+    const result = this._textMutationReplacesValue(toolName, args || {}) && typeof args?.text === 'string'
+      ? args.text : response.value;
+    if (typeof result !== 'string') return;
+    const typed = whole(result);
     if (!placeholder || normalize(typed) !== placeholder) return;
     const ref = [args?.ref_id, response.ref_id].map(value => String(value || '')).find(value => /^ref_\d+$/.test(value)) || '';
     // Kept as the probe returns a whole value: its first 4,000 characters,
     // cut before the case is folded, as the probe cuts it.
     const write = { value: normalize(typed.slice(0, 4000)), ref, name: String(meta.name || ''), id: String(meta.id || '') };
     if (!write.ref && !write.name && !write.id) return;
-    const runId = this.currentRunId.get(tabId) || null;
+    const task = this._taskTokens.get(tabId);
+    if (!task) return;
     this._placeholderWrites ??= new Map();
     const entry = this._placeholderWrites.get(tabId);
-    const writes = entry?.runId === runId ? entry.writes : [];
-    this._placeholderWrites.set(tabId, { runId, writes: [...writes, write].slice(-64) });
+    const writes = entry?.task === task ? entry.writes : [];
+    this._placeholderWrites.set(tabId, { task, writes: [...writes, write].slice(-64) });
   }
 
-  // Whether WebBrain's own write in this run put `value` into this probed
+  // Whether WebBrain's own write in this task put `value` into this probed
   // field: the same ref when both have one, otherwise the same name and id.
   _placeholderWritten(tabId, field, value) {
     const entry = this._placeholderWrites?.get(tabId);
-    if (!entry || entry.runId !== (this.currentRunId.get(tabId) || null)) return false;
+    const task = this._taskTokens.get(tabId);
+    if (!entry || !task || entry.task !== task) return false;
     const ref = String(field?.ref || '');
     const name = String(field?.name || '');
     const id = String(field?.id || '');

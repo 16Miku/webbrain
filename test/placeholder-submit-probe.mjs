@@ -55,6 +55,12 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(result.placeholderFields?.[0]?.value, 'you@example.com');
           const own = await probe('set_field', { ref_id: 'ref_email', text: 'reader@example.org', submit: true });
           assert.deepEqual(own.placeholderFields, []);
+          // clear:false appends to what the field already holds.
+          await page.evaluate(() => { document.querySelector('#email').value = 'you@'; });
+          const appended = await probe('set_field', { ref_id: 'ref_email', text: 'example.com', clear: false, submit: true });
+          assert.equal(appended.placeholderFields?.[0]?.fullValue, 'you@example.com', 'the field ends up holding its placeholder');
+          const replaced = await probe('set_field', { ref_id: 'ref_email', text: 'example.com', submit: true });
+          assert.deepEqual(replaced.placeholderFields, [], 'set_field replaces the value by default');
         });
 
         await t.test('untouched matches cannot push an edited field out of the list', async () => {
