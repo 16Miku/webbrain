@@ -98,6 +98,22 @@ for (const build of ['chrome', 'firefox']) {
           await page.evaluate(() => { document.querySelector('#extra').disabled = true; });
           assert.notEqual((await probe('click', { selector: '#go' })).submissionIdentity, enabled, 'a disabled field');
         });
+
+        await t.test('selected values keep their boundaries, and an image button is never remembered', async () => {
+          await page.setContent('<form method="post" action="/tags"><select id="tags" name="tags" multiple aria-label="Tags">'
+            + '<option value="a|b">a|b</option><option value="a">a</option><option value="b">b</option></select>'
+            + '<button id="go">Save</button><input id="map" type="image" name="map" alt="Pick on map" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></form>');
+          const select = values => page.evaluate(chosen => {
+            for (const option of document.querySelector('#tags').options) option.selected = chosen.includes(option.value);
+          }, values);
+          await select(['a|b']);
+          const joined = (await probe('click', { selector: '#go' })).submissionIdentity;
+          await select(['a', 'b']);
+          assert.notEqual((await probe('click', { selector: '#go' })).submissionIdentity, joined, 'one option a|b is not options a and b');
+          const image = await probe('click', { selector: '#map' });
+          assert.equal(image?.isSubmit, true);
+          assert.equal(image.submissionIdentity, '', 'an image button sends its click position');
+        });
       } finally {
         await browser.close();
       }

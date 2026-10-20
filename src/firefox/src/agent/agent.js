@@ -30308,6 +30308,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const submitter = owner && !typedField
           ? (owner.closest?.('button,input,[role="button"]') || owner)
           : defaultButton();
+        // An image button also sends where it was clicked, which is not
+        // known here: such a submission is never remembered.
+        if (String(submitter?.tagName || '').toUpperCase() === 'INPUT' && String(submitter.type || '').toLowerCase() === 'image') return '';
         const controls = (() => {
           try {
             return String(form?.tagName || '').toUpperCase() === 'FORM'
@@ -30322,10 +30325,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const existing = el?.isContentEditable && !('value' in el) ? String(el.textContent || '') : String(el?.value ?? '');
             return appended ? existing + String(pendingValue) : String(pendingValue);
           }
+          // Arrays, not joined strings: a value may hold any separator.
           const type = String(el?.type || '').toLowerCase();
-          if (type === 'checkbox' || type === 'radio') return `${el.checked ? 1 : 0}:${el.value ?? ''}`;
-          if (type === 'file') return Array.from(el.files || []).map(file => [file.name, file.size, file.lastModified, file.type].join(':')).join('|');
-          if (type === 'select-multiple') return Array.from(el.selectedOptions || []).map(option => option.value).join('|');
+          if (type === 'checkbox' || type === 'radio') return [el.checked === true, String(el.value ?? '')];
+          if (type === 'file') return Array.from(el.files || []).map(file => [file.name, file.size, file.lastModified, file.type]);
+          if (type === 'select-multiple') return Array.from(el.selectedOptions || []).map(option => option.value);
           if (el?.isContentEditable && !('value' in el)) return String(el.textContent || '');
           return String(el?.value ?? '');
         };
