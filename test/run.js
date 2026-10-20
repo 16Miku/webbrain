@@ -82577,6 +82577,70 @@ test('agent requires fresh submit confirmation across modes and prompt sources',
   }
 });
 
+test('submit confirmation honors scheduled and global gate bypasses', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    for (const scenario of [
+      { label: 'global gate disabled', skipGate: true },
+      { label: 'scheduled confirmations disabled', scheduledBypass: true },
+    ]) {
+      const agent = new AgentClass({ getVisionProvider: async () => null });
+      const tabId = 5108 + (scenario.skipGate ? 1 : 2);
+      let executed = false;
+      let submitProbeCalls = 0;
+      const messages = [];
+
+      agent._ensureGateSetting = async () => { };
+      agent._skipPermissionGate = !!scenario.skipGate;
+      agent._currentUrl = async () => 'https://host.com/form';
+      agent._recordProgressObservation = async () => null;
+      agent._autoRecordProgressAction = () => null;
+      agent._progressWarningForAction = () => '';
+      agent._persist = () => { };
+      if (scenario.scheduledBypass) {
+        agent.setScheduledRunPolicy(tabId, {
+          requireConsequentialConfirmation: false,
+          autoApprovePlanReview: true,
+        });
+      }
+      agent._detectLikelySubmitAction = async () => {
+        submitProbeCalls += 1;
+        return {
+          isSubmit: true,
+          host: 'host.com',
+          tool: 'click_ax',
+          reason: 'submit button/control activation',
+        };
+      };
+      agent._promptSubmitConfirmation = async () => {
+        throw new Error(`${AgentClass.name} ${scenario.label}: submit prompt should be bypassed`);
+      };
+      agent.executeTool = async () => {
+        executed = true;
+        return { success: true, submitted: true };
+      };
+
+      await agent._executeToolBatch(
+        tabId,
+        [{
+          id: `tool_submit_bypass_${scenario.label}`,
+          function: { name: 'click_ax', arguments: '{"ref_id":"ref_submit"}' },
+        }],
+        messages,
+        () => { },
+        { supportsVision: false },
+        '',
+        new Set(['click_ax']),
+        1,
+      );
+
+      assert.equal(submitProbeCalls, 1, `${AgentClass.name} ${scenario.label}: validation preflight should run even when the submit prompt is bypassed`);
+      assert.equal(executed, true, `${AgentClass.name} ${scenario.label}: bypassed submit tool should execute`);
+      assert.equal(messages.length, 1, `${AgentClass.name} ${scenario.label}: expected one tool result`);
+      assert.equal(JSON.parse(agent._unwrapUntrusted(messages[0].content)).success, true, `${AgentClass.name} ${scenario.label}: tool result should be successful`);
+    }
+  }
+});
+
 test('a field holding its own placeholder text is not submitted', async () => {
   // The refusal is page-derived tool output, wrapped as untrusted content.
   const toolJson = content => {
@@ -82591,7 +82655,8 @@ test('a field holding its own placeholder text is not submitted', async () => {
     let field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };
     let completeList = null;
     const updates = [];
-    const task = [{ role: 'user', content: 'Sign me up for the newsletter on this page.' }];
+    const system = { role: 'system', content: 'You are WebBrain.' };
+    const task = [system, { role: 'user', content: 'Sign me up for the newsletter on this page.' }];
 
     agent.conversationModes.set(tabId, 'act');
     agent.conversations.set(tabId, [...task]);
@@ -82671,7 +82736,7 @@ test('a field holding its own placeholder text is not submitted', async () => {
     agent.conversations.set(tabId, [...task, { role: 'user', content: 'Use YOU@example.com for it.' }]);
     await submit('user-message');
     assert.equal(prompts, 2, `${AgentClass.name}: a value from the user's message was refused`);
-    agent.conversations.set(tabId, [{ ...task[0], webbrainTaskClarifications: [{ question: 'Which email?', answer: 'you@example.com', source: 'text' }] }]);
+    agent.conversations.set(tabId, [system, { ...task[1], webbrainTaskClarifications: [{ question: 'Which email?', answer: 'you@example.com', source: 'text' }] }]);
     await submit('user-answer');
     assert.equal(prompts, 3, `${AgentClass.name}: a value from the user's card answer was refused`);
 
@@ -82688,10 +82753,10 @@ test('a field holding its own placeholder text is not submitted', async () => {
 
     // Naming a plain word in the request does not supply it as the value; a
     // whole card answer does.
-    agent.conversations.set(tabId, [{ role: 'user', content: 'Sign me up for email updates.' }]);
+    agent.conversations.set(tabId, [system, { role: 'user', content: 'Sign me up for email updates.' }]);
     field = { label: 'Email', placeholder: 'Email', value: 'Email', changed: true };
     assert.equal((await submit('named-word')).placeholderValue, true, `${AgentClass.name}: a word the request only named exempted the field`);
-    agent.conversations.set(tabId, [{ role: 'user', content: 'Sign me up for email updates.',
+    agent.conversations.set(tabId, [system, { role: 'user', content: 'Sign me up for email updates.',
       webbrainTaskClarifications: [{ question: 'What should the email field say?', answer: 'Email', source: 'text' }] }]);
     await submit('answered-word');
     assert.equal(prompts, 7, `${AgentClass.name}: a whole card answer was refused`);
@@ -82700,78 +82765,26 @@ test('a field holding its own placeholder text is not submitted', async () => {
     // probe sees no edit; WebBrain's own write in this run still counts.
     agent.conversations.set(tabId, [...task]);
     agent.currentRunId.set(tabId, 'placeholder-run');
-    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false };
-    agent._rememberPlaceholderWrite(tabId, 'set_field', { text: 'you@example.com' },
-      { success: true, value: 'you@example.com', fieldMeta: { type: 'email', placeholder: 'you@example.com' } });
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
+    agent._rememberPlaceholderWrite(tabId, 'set_field', { ref_id: 'ref_101', text: 'you@example.com' },
+      { success: true, value: 'you@example.com', fieldMeta: { type: 'email', name: 'email', id: null, placeholder: 'you@example.com' } });
     assert.equal((await submit('framework-default')).placeholderValue, true, `${AgentClass.name}: WebBrain's own write was missed`);
+    // The write belongs to that field: another field with the same
+    // placeholder, holding it as its page default, is not one WebBrain wrote.
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_202', name: 'email', id: '' };
+    await submit('other-field');
+    assert.equal(prompts, 8, `${AgentClass.name}: a write to one field counted for another`);
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
     agent.currentRunId.set(tabId, 'next-run');
     await submit('next-run');
-    assert.equal(prompts, 8, `${AgentClass.name}: a write from another run still counted`);
+    assert.equal(prompts, 9, `${AgentClass.name}: a write from another run still counted`);
+
+    // An earlier, unrelated turn cannot supply the value for the current task.
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };
+    agent.conversations.set(tabId, [system, { role: 'user', content: 'Do not use you@example.com anywhere.' },
+      { role: 'assistant', content: 'Understood.' }, { role: 'user', content: 'Sign me up for the newsletter on this page.' }]);
+    assert.equal((await submit('earlier-turn')).placeholderValue, true, `${AgentClass.name}: an earlier turn supplied the value`);
     assert.equal(executed, 0, `${AgentClass.name}: a refused or declined submission ran`);
-  }
-});
-
-test('submit confirmation honors scheduled and global gate bypasses', async () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    for (const scenario of [
-      { label: 'global gate disabled', skipGate: true },
-      { label: 'scheduled confirmations disabled', scheduledBypass: true },
-    ]) {
-      const agent = new AgentClass({ getVisionProvider: async () => null });
-      const tabId = 5108 + (scenario.skipGate ? 1 : 2);
-      let executed = false;
-      let submitProbeCalls = 0;
-      const messages = [];
-
-      agent._ensureGateSetting = async () => { };
-      agent._skipPermissionGate = !!scenario.skipGate;
-      agent._currentUrl = async () => 'https://host.com/form';
-      agent._recordProgressObservation = async () => null;
-      agent._autoRecordProgressAction = () => null;
-      agent._progressWarningForAction = () => '';
-      agent._persist = () => { };
-      if (scenario.scheduledBypass) {
-        agent.setScheduledRunPolicy(tabId, {
-          requireConsequentialConfirmation: false,
-          autoApprovePlanReview: true,
-        });
-      }
-      agent._detectLikelySubmitAction = async () => {
-        submitProbeCalls += 1;
-        return {
-          isSubmit: true,
-          host: 'host.com',
-          tool: 'click_ax',
-          reason: 'submit button/control activation',
-        };
-      };
-      agent._promptSubmitConfirmation = async () => {
-        throw new Error(`${AgentClass.name} ${scenario.label}: submit prompt should be bypassed`);
-      };
-      agent.executeTool = async () => {
-        executed = true;
-        return { success: true, submitted: true };
-      };
-
-      await agent._executeToolBatch(
-        tabId,
-        [{
-          id: `tool_submit_bypass_${scenario.label}`,
-          function: { name: 'click_ax', arguments: '{"ref_id":"ref_submit"}' },
-        }],
-        messages,
-        () => { },
-        { supportsVision: false },
-        '',
-        new Set(['click_ax']),
-        1,
-      );
-
-      assert.equal(submitProbeCalls, 1, `${AgentClass.name} ${scenario.label}: validation preflight should run even when the submit prompt is bypassed`);
-      assert.equal(executed, true, `${AgentClass.name} ${scenario.label}: bypassed submit tool should execute`);
-      assert.equal(messages.length, 1, `${AgentClass.name} ${scenario.label}: expected one tool result`);
-      assert.equal(JSON.parse(agent._unwrapUntrusted(messages[0].content)).success, true, `${AgentClass.name} ${scenario.label}: tool result should be successful`);
-    }
   }
 });
 

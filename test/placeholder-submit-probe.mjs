@@ -38,10 +38,11 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(result?.isSubmit, true);
           assert.equal(result.changedFields.length, 8, 'the summary stops at eight');
           assert.ok(!result.changedFields.some(field => field.label === 'Email'), 'the email field is past the summary');
-          assert.deepEqual(result.placeholderFields, [
-            { label: 'Email', value: 'you@example.com', placeholder: 'you@example.com', changed: true },
-            { label: 'City', value: 'Istanbul', placeholder: 'Istanbul', changed: false },
-          ], 'the edited email field, and the page default marked unchanged; never the password');
+          const shown = result.placeholderFields.map(({ label, value, placeholder, changed, name, id }) => ({ label, value, placeholder, changed, name, id }));
+          assert.deepEqual(shown, [
+            { label: 'Email', value: 'you@example.com', placeholder: 'you@example.com', changed: true, name: 'email', id: 'email' },
+            { label: 'City', value: 'Istanbul', placeholder: 'Istanbul', changed: false, name: 'city', id: 'city' },
+          ], 'the edited email field first, then the page default marked unchanged; never the password');
         });
 
         await t.test('a value set_field is about to type and submit is checked too', async () => {
@@ -54,6 +55,17 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(result.placeholderFields?.[0]?.value, 'you@example.com');
           const own = await probe('set_field', { ref_id: 'ref_email', text: 'reader@example.org', submit: true });
           assert.deepEqual(own.placeholderFields, []);
+        });
+
+        await t.test('untouched matches cannot push an edited field out of the list', async () => {
+          await page.setContent('<form method="post" action="/many">'
+            + Array.from({ length: 600 }, (_, i) => `<input name="d${i}" placeholder="Example" value="Example">`).join('')
+            + '<input id="email" name="email" aria-label="Email" placeholder="you@example.com"><button id="go">Save</button></form>');
+          await page.evaluate(() => { document.querySelector('#email').value = 'you@example.com'; });
+          const result = await probe('click', { selector: '#go' });
+          assert.equal(result?.isSubmit, true);
+          assert.equal(result.placeholderFields[0]?.name, 'email', 'the edited field comes first');
+          assert.equal(result.placeholderFields[0]?.changed, true);
         });
       } finally {
         await browser.close();
