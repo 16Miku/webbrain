@@ -1389,7 +1389,8 @@ export const pageFeedbackMethods = {
           ...(typeof response.reason === 'string' && ['target_changed', 'target_unresolved', 'target_ambiguous', 'target_uncovered',
             'focus_changed', 'intervention_changed', 'model_snapshot_invalid', 'model_snapshot_expired',
             'pending_feedback', 'target_hidden', 'target_disabled', 'target_detached', 'parent_changed', 'form_changed',
-            'relaxed_grant_expired', 'relaxed_target_changed', 'target_not_actionable'].includes(response.reason) ? { predicate: response.reason } : {}),
+            'relaxed_grant_expired', 'relaxed_target_changed', 'target_not_actionable', 'semantic_binding_changed',
+            'target_hit_changed'].includes(response.reason) ? { predicate: response.reason } : {}),
         });
         if (retry && !valid && response.uncertified !== true) this._invalidateMonitoringRetry(tabId, 'target_changed');
       }

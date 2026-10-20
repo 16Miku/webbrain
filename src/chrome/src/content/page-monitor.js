@@ -1822,8 +1822,11 @@
     const current = operationBinding(op);
     if (!inputContinuationBindingMatches(op, current)) return false;
     const target = op.preparedBinding.target;
+    // A password field is a text field here too: its typed value is checked
+    // in this realm and never leaves it, so a login's username, password and
+    // button can run in one batch.
     if (target.tagName !== 'TEXTAREA' && !(target.tagName === 'INPUT'
-        && !['password', 'file', 'hidden', 'checkbox', 'radio', 'button', 'submit', 'reset', 'image'].includes(target.type))) return false;
+        && !['file', 'hidden', 'checkbox', 'radio', 'button', 'submit', 'reset', 'image'].includes(target.type))) return false;
     const originalField = preparedBindingFor(op.preparedBinding).nodes.find(item => item.node === target);
     const originalValue = originalField && JSON.parse(originalField.value)[12];
     const expectedValue = params.batchInputClear === true ? params.batchInputText : originalValue + params.batchInputText;
