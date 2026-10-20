@@ -91,12 +91,6 @@ h1 a {
 }
 .support-link:hover { color: var(--accent); border-color: var(--accent); }
 .support-link svg { width: 14px; height: 14px; flex-shrink: 0; }
-.apocalypse-icon { color: var(--warning); font-size: 15px; line-height: 1; }
-.apocalypse-link[data-enabled="true"] {
-  color: var(--warning);
-  border-color: var(--warning);
-  background: rgba(255, 200, 112, 0.08);
-}
 .visually-hidden {
   position: absolute;
   width: 1px;
