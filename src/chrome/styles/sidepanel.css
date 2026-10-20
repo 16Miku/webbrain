@@ -1187,8 +1187,7 @@ html[dir="rtl"] .permission-gate-input:checked + .permission-gate-switch::before
   position: relative;
   min-width: 0;
   max-width: 200px;
-  /* Grow to content only — stretching here pushed the online/offline
-     status-dot away from the select and toward the language button. */
+  /* Grow to content only: the toolbar's spacer takes the free room. */
   flex: 0 1 auto;
 }
 
@@ -3530,6 +3529,28 @@ html[data-ui-scale="175"] .conversation-action-label {
   flex: 0 0 auto;
 }
 
+/* The connection dot is a badge on the engine's lower corner, inside the
+   button: it reads as the model's status, and clicking it opens the menu like
+   the rest of the button. A ring in the button's background keeps it clear of
+   the icon's strokes. */
+.provider-picker-engine {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.provider-picker-engine .status-dot {
+  position: absolute;
+  bottom: -1px;
+  inset-inline-end: -2px;
+  width: 7px;
+  height: 7px;
+}
+
+.provider-picker-engine .status-dot:is(.online, .offline, .connecting) {
+  box-shadow: 0 0 0 2px var(--status-dot-ring, var(--bg-input));
+}
+
 .composer-toolbar .provider-picker-label {
   display: none;
 }
@@ -3539,6 +3560,7 @@ html[data-ui-scale="175"] .conversation-action-label {
   background: var(--bg-secondary);
   border-color: var(--border);
   color: var(--text-primary);
+  --status-dot-ring: var(--bg-secondary);
 }
 
 .composer-toolbar .provider-picker-menu {

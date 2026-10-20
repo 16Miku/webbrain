@@ -6,6 +6,9 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+### Changed
+- The green or red dot that shows whether your chat model answers now sits on the corner of the composer's engine icon, inside the model menu button. It used to sit after the menu's arrow, where it looked like part of the menu but did nothing when clicked; clicking it now opens the model menu. Screen readers hear the connection status as the button's description.
+
 ## [42.3.0] - 2026-10-20
 
 ### Changed

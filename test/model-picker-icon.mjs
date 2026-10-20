@@ -16,8 +16,10 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: the closed model picker is an engine icon`, () => {
     const html = read(build, 'src/ui/sidepanel.html');
     const button = html.match(/<button type="button" id="provider-picker-btn"[\s\S]*?<\/button>/)[0];
-    assert.match(button, /<svg class="provider-picker-icon"[^>]*aria-hidden="true">[\s\S]*?<\/svg>\s*<span class="provider-picker-label" id="provider-picker-label"><\/span>/,
-      'the icon comes first, hidden from assistive technology');
+    assert.match(button, /<span class="provider-picker-engine">\s*<svg class="provider-picker-icon"[^>]*aria-hidden="true">[\s\S]*?<\/svg>\s*<span id="status-dot" class="status-dot offline" data-i18n-title="sp\.status\.disconnected"><\/span>\s*<\/span>\s*<span class="provider-picker-label" id="provider-picker-label"><\/span>/,
+      'the icon comes first, hidden from assistive technology, with the connection dot on it');
+    assert.match(button, /aria-describedby="status-dot"/, 'the connection status describes the button');
+    assert.equal(html.match(/id="status-dot"/g).length, 1, 'the dot is no longer a separate toolbar item');
     const css = read(build, 'styles/sidepanel.css');
     assert.match(css, /\.composer-toolbar \.provider-picker-label \{\s*display: none;\s*\}/, 'the name is not shown in the composer');
     assert.doesNotMatch(css, /\.composer-toolbar \.provider-picker \{\s*\/\* 100% minus/, 'the picker no longer claims a whole row at large scales');
