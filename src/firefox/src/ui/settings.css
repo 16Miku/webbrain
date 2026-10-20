@@ -1363,12 +1363,32 @@ button:active { transform: scale(0.97); }
 .captcha-advanced input { max-width: 140px; }
 
 /* Settings search spans General, Budgets, Captcha and Advanced. While a query
-   is active those tabs show their matches together, each under its tab name;
-   clearing the query returns to the tab you were on. */
+   is active those tabs show their matches together, each under its tab name,
+   and no tab is marked as the current one. A tab name opens that tab; picking
+   a tab or clearing the query ends the search. */
 .search-panel-heading { display: none; }
 body.settings-searching .tab-panel[data-search] { display: block; }
 body.settings-searching .tab-panel:not([data-search]) { display: none; }
 body.settings-searching .tab-panel .search-panel-heading { display: block; margin: 22px 0 10px; }
+body.settings-searching .tab-btn.active { background: transparent; color: var(--text2); }
+body.settings-searching .tab-btn.active:hover { color: var(--text); }
+.search-panel-link {
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.search-panel-link::after { content: ' ›'; }
+[dir="rtl"] .search-panel-link::after { content: ' ‹'; }
+.search-panel-link:hover,
+.search-panel-link:focus-visible { color: var(--accent); }
+.search-panel-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.search-panel-link:active { transform: none; }
 .settings-group { margin-bottom: 10px; }
 .settings-group > .setting-row:last-child { margin-bottom: 0; }
 .settings-group > .info-box { margin: 0 0 10px; }

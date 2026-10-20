@@ -6,6 +6,9 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+### Fixed
+- Settings search no longer looks as if its results belong to the tab you searched from. Searching "budget" on the CAPTCHA tab showed the Budgets settings while CAPTCHA was still highlighted. While a search shows its results, which can come from General, Budgets, CAPTCHA and Advanced, no tab is highlighted now, and the tab name above each group of results opens that tab.
+
 ## [42.2.0] - 2026-10-20
 
 ### Added
