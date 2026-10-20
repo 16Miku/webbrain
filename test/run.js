@@ -38171,9 +38171,15 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
     const tabsStart = settingsHtml.indexOf('<nav class="tabs"', headerStart);
     assert.ok(headerStart >= 0 && apocalypseLink > headerStart && supportLink > apocalypseLink && tabsStart > supportLink,
       `${prefix}: Apocalypse Mode must appear beside and before Support in the top header`);
-    assert.match(settingsHtml.slice(apocalypseLink, supportLink), /☢/, `${prefix}: Apocalypse Mode header link is missing its radioactive icon`);
+    // A line icon like Providers and Support, without a highlight of its own.
+    const apocalypseHeaderLink = settingsHtml.slice(apocalypseLink, supportLink);
+    assert.match(apocalypseHeaderLink, /<svg class="apocalypse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"/,
+      `${prefix}: Apocalypse Mode header link is missing its radiation line icon`);
+    assert.doesNotMatch(apocalypseHeaderLink, /☢/, `${prefix}: Apocalypse Mode header link still uses the colored emoji icon`);
+    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.css'), 'utf8'), /\.apocalypse-(?:icon|link)\b[^{]*\{[^}]*var\(--warning\)/,
+      `${prefix}: the Apocalypse Mode header link is highlighted unlike Providers and Support`);
     assert.match(pageHtml, /<header><span class="apocalypse-icon" aria-hidden="true">☢<\/span>/,
-      `${prefix}: Apocalypse Mode page header does not match the radioactive settings gateway icon`);
+      `${prefix}: Apocalypse Mode page header lost its radioactive icon`);
     assert.match(pageHtml, /class="header-copy"[\s\S]*?data-i18n="ap\.title"[\s\S]*?data-i18n="ap\.subtitle"/,
       `${prefix}: Apocalypse Mode title and offline slogan are not grouped in the page header`);
     assert.match(apocalypseCopy, /'ap\.subtitle': 'WebBrain, ready when the internet isn’t\.'/,

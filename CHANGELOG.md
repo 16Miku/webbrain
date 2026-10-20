@@ -6,6 +6,9 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+### Changed
+- The Apocalypse Mode button at the top of Settings now looks like the Providers and Support buttons beside it: a plain line icon instead of the yellow ☢, and no yellow outline while Apocalypse Mode is on. Hovering it still shows whether Apocalypse Mode is on.
+
 ## [42.2.0] - 2026-10-20
 
 ### Added
