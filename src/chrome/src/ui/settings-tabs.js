@@ -66,6 +66,18 @@
     });
   });
 
+  // During a search each tab's matches sit under its name, and the name opens
+  // that tab. Focus moves to its tab button, as if it had been picked.
+  document.querySelectorAll('[data-search-tab]').forEach((link) => {
+    link.addEventListener('click', () => {
+      const tab = Array.from(buttons).find((b) => b.dataset.tab === link.dataset.searchTab);
+      if (!tab) return;
+      tab.click();
+      tab.focus();
+      window.scrollTo({ top: 0 });
+    });
+  });
+
   // Restore the last-viewed tab so the page doesn't snap back to the default
   // every reload — makes iterating on a single section less annoying.
   let initial = DEFAULT_TAB;

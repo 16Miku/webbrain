@@ -48053,7 +48053,7 @@ test('settings tabs validate saved and hash tab names without selector interpola
     const malformed = runSettingsTabsScript(script, settingsHtml, { saved: 'display"] .boom', hash: '#bad"]' });
     assert.equal(malformed.activeButton, 'display', `${label}: malformed tab values should fall back to General`);
     assert.equal(malformed.activePanel, 'display', `${label}: malformed tab values should activate the General panel`);
-    assert.deepEqual(malformed.selectorCalls, ['nav.tabs', '.tab-btn', '.tab-panel'], `${label}: dynamic tab values must not be interpolated into selectors`);
+    assert.deepEqual(malformed.selectorCalls, ['nav.tabs', '.tab-btn', '.tab-panel', '[data-search-tab]'], `${label}: dynamic tab values must not be interpolated into selectors`);
     assert.equal(malformed.storageKey, 'webbrainSettingsTab', `${label}: Settings remembers its own last tab`);
 
     for (const tab of ['budgets', 'captcha', 'advanced']) {
@@ -48116,7 +48116,7 @@ test('settings organizes General, Budgets, CAPTCHA and Advanced tabs while keepi
     const captcha = settingsPanelHtml(html, 'captcha');
     const advanced = settingsPanelHtml(html, 'advanced');
     for (const [name, panel] of [['General', general], ['Budgets', budgets], ['CAPTCHA', captcha], ['Advanced', advanced]]) {
-      assert.match(panel, /<h2 class="search-panel-heading" data-i18n="st\.tab\.[a-z]+"><\/h2>\s*<div id="[a-z-]+" data-search-scope>/, `${label}: ${name} rows sit in one search scope under the tab name`);
+      assert.match(panel, /<h2 class="search-panel-heading"><button type="button" class="search-panel-link" data-search-tab="([a-z]+)" data-i18n="st\.tab\.\1"><\/button><\/h2>\s*<div id="[a-z-]+" data-search-scope>/, `${label}: ${name} rows sit in one search scope under the tab name, which opens that tab`);
     }
 
     const searchStart = html.indexOf('id="input-general-search"');
@@ -48128,6 +48128,7 @@ test('settings organizes General, Budgets, CAPTCHA and Advanced tabs while keepi
     assert.match(css, /\.general-search-hidden \{ display: none !important; \}/, `${label}: search should force-hide filtered rows/cards`);
     assert.match(css, /body\.settings-searching \.tab-panel\[data-search\] \{ display: block; \}/, `${label}: a search shows every searchable tab at once`);
     assert.match(css, /body\.settings-searching \.tab-panel:not\(\[data-search\]\) \{ display: none; \}/, `${label}: a search hides the tabs it does not cover`);
+    assert.match(css, /body\.settings-searching \.tab-btn\.active \{ background: transparent; color: var\(--text2\); \}/, `${label}: no tab looks current while a search shows several tabs`);
 
     // General keeps everyday preferences; the side panel picks the language and zoom.
     for (const id of ['select-theme', 'input-download-directory', 'select-plan-before-act-mode', 'select-auto-screenshot']) {
