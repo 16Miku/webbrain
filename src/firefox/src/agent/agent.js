@@ -23368,7 +23368,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // A plan the user reads (a review card, a plan-only answer) in a language
   // other than English, when the planner left out its localized copy: one
   // small request translates the display fields. Execution keeps the English
-  // plan, and if the translation fails the user sees the English text.
+  // plan, and if the translation fails or is incomplete the user sees the
+  // English text.
   async _localizedPlanForDisplay(tabId, plan, provider, costState, runId = null, runtimeMode = 'act') {
     if (plan?.localized?.missing !== true || !provider?.chat) return plan;
     const messages = buildPlanLocalizationMessages(plan);

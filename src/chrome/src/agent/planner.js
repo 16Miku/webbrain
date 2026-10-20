@@ -1490,8 +1490,8 @@ export function buildPlanLocalizationMessages(plan) {
 }
 
 // The plan with the translation in `content` as its localized copy, or null
-// when `content` has no translated summary. A step or risk the translation
-// left out keeps its English text, as in normalizePlan.
+// unless `content` translates the summary, every step (matched by id) and
+// every risk: the user reads the plan in one language, never a mix.
 export function localizePlanFromContent(plan, content) {
   const obj = extractFirstJsonObject(content);
   const summary = sanitizeText(obj?.summary, 400);
@@ -1499,13 +1499,11 @@ export function localizePlanFromContent(plan, content) {
   const translatedSteps = new Map((Array.isArray(obj.steps) ? obj.steps : [])
     .map(step => [sanitizeText(step?.id, 20), sanitizeText(step?.action, 300)]));
   const translatedRisks = Array.isArray(obj.risks) ? obj.risks : [];
+  const steps = (plan.steps || []).map(({ id }) => ({ id, action: translatedSteps.get(id) || '' }));
+  const risks = (plan.risks || []).map((_, index) => sanitizeText(translatedRisks[index], 200));
+  if (steps.some(step => !step.action) || risks.some(risk => !risk)) return null;
   return {
     ...plan,
-    localized: {
-      locale: plan.localized?.locale || normalizePlannerLocale(obj.locale),
-      summary,
-      steps: (plan.steps || []).map(({ id, action }) => ({ id, action: translatedSteps.get(id) || action })),
-      risks: (plan.risks || []).map((risk, index) => sanitizeText(translatedRisks[index], 200) || risk),
-    },
+    localized: { locale: plan.localized?.locale || normalizePlannerLocale(obj.locale), summary, steps, risks },
   };
 }

@@ -272,9 +272,16 @@ for (const build of BUILDS) {
     assert.deepEqual(translated.localized, { locale: 'tr', summary: 'Adresi abone et.',
       steps: [{ id: '1', action: 'E-posta alanını doldur.' }, { id: '2', action: 'Gönder ve onayı oku.' }], risks: ['Form gönderilir.'] });
     assert.deepEqual([translated.summary, translated.steps, translated.risks], [plan.summary, plan.steps, plan.risks], 'execution keeps the English plan');
-    const partial = planner.localizePlanFromContent(plan, JSON.stringify({ summary: 'Adresi abone et.', steps: [{ id: '1', action: 'Doldur.' }], risks: [] }));
-    assert.deepEqual(partial.localized.steps.map(step => step.action), ['Doldur.', plan.steps[1].action]);
-    assert.deepEqual(partial.localized.risks, plan.risks);
+    // An incomplete translation is not used: the plan is read in one language.
+    const complete = { summary: 'Adresi abone et.', steps: [{ id: '1', action: 'Doldur.' }, { id: '2', action: 'Gönder.' }], risks: ['Form gönderilir.'] };
+    assert.ok(planner.localizePlanFromContent(plan, JSON.stringify(complete)));
+    for (const incomplete of [
+      { ...complete, steps: [{ id: '1', action: 'Doldur.' }] },
+      { ...complete, steps: [{ id: '1', action: 'Doldur.' }, { id: '3', action: 'Gönder.' }] },
+      { ...complete, steps: [{ id: '1', action: 'Doldur.' }, { id: '2', action: '  ' }] },
+      { ...complete, risks: [] },
+      { ...complete, summary: '' },
+    ]) assert.equal(planner.localizePlanFromContent(plan, JSON.stringify(incomplete)), null, JSON.stringify(incomplete));
     assert.equal(planner.localizePlanFromContent(plan, '{"steps": []}'), null);
     assert.equal(planner.localizePlanFromContent(plan, 'Sorry.'), null);
   });
@@ -330,8 +337,9 @@ for (const build of BUILDS) {
     }
   });
 
-  test(`${build}: a failed translation shows the English plan instead`, async () => {
-    for (const translation of [new Error('provider unavailable'), 'not json']) {
+  test(`${build}: a failed or incomplete translation shows the English plan instead`, async () => {
+    const incomplete = JSON.stringify({ locale: 'tr', summary: 'Adresi bültene abone et.', steps: [{ id: '1', action: 'E-posta alanını doldur.' }], risks: [] });
+    for (const translation of [new Error('provider unavailable'), 'not json', incomplete]) {
       const f = displayFixture({ translation });
       const gate = await f.gate();
       assert.equal(gate.proceed, true);
