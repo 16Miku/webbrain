@@ -38171,9 +38171,15 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
     const tabsStart = settingsHtml.indexOf('<nav class="tabs"', headerStart);
     assert.ok(headerStart >= 0 && apocalypseLink > headerStart && supportLink > apocalypseLink && tabsStart > supportLink,
       `${prefix}: Apocalypse Mode must appear beside and before Support in the top header`);
-    assert.match(settingsHtml.slice(apocalypseLink, supportLink), /☢/, `${prefix}: Apocalypse Mode header link is missing its radioactive icon`);
+    // A line icon like Providers and Support, without a highlight of its own.
+    const apocalypseHeaderLink = settingsHtml.slice(apocalypseLink, supportLink);
+    assert.match(apocalypseHeaderLink, /<svg class="apocalypse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"/,
+      `${prefix}: Apocalypse Mode header link is missing its radiation line icon`);
+    assert.doesNotMatch(apocalypseHeaderLink, /☢/, `${prefix}: Apocalypse Mode header link still uses the colored emoji icon`);
+    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.css'), 'utf8'), /\.apocalypse-(?:icon|link)\b[^{]*\{[^}]*var\(--warning\)/,
+      `${prefix}: the Apocalypse Mode header link is highlighted unlike Providers and Support`);
     assert.match(pageHtml, /<header><span class="apocalypse-icon" aria-hidden="true">☢<\/span>/,
-      `${prefix}: Apocalypse Mode page header does not match the radioactive settings gateway icon`);
+      `${prefix}: Apocalypse Mode page header lost its radioactive icon`);
     assert.match(pageHtml, /class="header-copy"[\s\S]*?data-i18n="ap\.title"[\s\S]*?data-i18n="ap\.subtitle"/,
       `${prefix}: Apocalypse Mode title and offline slogan are not grouped in the page header`);
     assert.match(apocalypseCopy, /'ap\.subtitle': 'WebBrain, ready when the internet isn’t\.'/,
@@ -48287,7 +48293,7 @@ test('settings tabs validate saved and hash tab names without selector interpola
     const malformed = runSettingsTabsScript(script, settingsHtml, { saved: 'display"] .boom', hash: '#bad"]' });
     assert.equal(malformed.activeButton, 'display', `${label}: malformed tab values should fall back to General`);
     assert.equal(malformed.activePanel, 'display', `${label}: malformed tab values should activate the General panel`);
-    assert.deepEqual(malformed.selectorCalls, ['nav.tabs', '.tab-btn', '.tab-panel'], `${label}: dynamic tab values must not be interpolated into selectors`);
+    assert.deepEqual(malformed.selectorCalls, ['nav.tabs', '.tab-btn', '.tab-panel', '[data-search-tab]'], `${label}: dynamic tab values must not be interpolated into selectors`);
     assert.equal(malformed.storageKey, 'webbrainSettingsTab', `${label}: Settings remembers its own last tab`);
 
     for (const tab of ['budgets', 'captcha', 'advanced']) {
@@ -48350,7 +48356,7 @@ test('settings organizes General, Budgets, CAPTCHA and Advanced tabs while keepi
     const captcha = settingsPanelHtml(html, 'captcha');
     const advanced = settingsPanelHtml(html, 'advanced');
     for (const [name, panel] of [['General', general], ['Budgets', budgets], ['CAPTCHA', captcha], ['Advanced', advanced]]) {
-      assert.match(panel, /<h2 class="search-panel-heading" data-i18n="st\.tab\.[a-z]+"><\/h2>\s*<div id="[a-z-]+" data-search-scope>/, `${label}: ${name} rows sit in one search scope under the tab name`);
+      assert.match(panel, /<h2 class="search-panel-heading"><button type="button" class="search-panel-link" data-search-tab="([a-z]+)" data-i18n="st\.tab\.\1"><\/button><\/h2>\s*<div id="[a-z-]+" data-search-scope>/, `${label}: ${name} rows sit in one search scope under the tab name, which opens that tab`);
     }
 
     const searchStart = html.indexOf('id="input-general-search"');
@@ -48362,6 +48368,7 @@ test('settings organizes General, Budgets, CAPTCHA and Advanced tabs while keepi
     assert.match(css, /\.general-search-hidden \{ display: none !important; \}/, `${label}: search should force-hide filtered rows/cards`);
     assert.match(css, /body\.settings-searching \.tab-panel\[data-search\] \{ display: block; \}/, `${label}: a search shows every searchable tab at once`);
     assert.match(css, /body\.settings-searching \.tab-panel:not\(\[data-search\]\) \{ display: none; \}/, `${label}: a search hides the tabs it does not cover`);
+    assert.match(css, /body\.settings-searching \.tab-btn\.active \{ background: transparent; color: var\(--text2\); \}/, `${label}: no tab looks current while a search shows several tabs`);
 
     // General keeps everyday preferences; the side panel picks the language and zoom.
     for (const id of ['select-theme', 'input-download-directory', 'select-plan-before-act-mode', 'select-auto-screenshot']) {
@@ -82817,6 +82824,135 @@ test('agent requires fresh submit confirmation across modes and prompt sources',
   }
 });
 
+test('a declined submission is not asked again in the same turn', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = 5107;
+    let prompts = 0;
+    let executed = 0;
+    let email = 'you@example.com';
+    // The form and button the page probe identified, as it reports them.
+    let elements = 'form-1/subscribe';
+    const updates = [];
+
+    agent.conversationModes.set(tabId, 'act');
+    agent._ensureGateSetting = async () => { };
+    agent._skipPermissionGate = false;
+    agent._currentUrl = async () => 'https://host.com/newsletter';
+    agent._recordProgressObservation = async () => null;
+    agent._autoRecordProgressAction = () => null;
+    agent._progressWarningForAction = () => '';
+    agent._persist = () => { };
+    agent._detectLikelySubmitAction = async (_tabId, name) => ({
+      isSubmit: true,
+      host: 'host.com',
+      tool: name,
+      method: 'GET',
+      actionUrl: 'https://host.com/newsletter',
+      reason: 'submit button/control activation',
+      summary: `Changed/filled fields: Email: ${email}.`,
+      changedFields: [{ label: 'Email', value: email, changed: true }],
+      submissionIdentity: elements,
+    });
+    agent._promptSubmitConfirmation = async () => {
+      prompts += 1;
+      return 'deny';
+    };
+    agent.executeTool = async () => {
+      executed += 1;
+      return { success: true };
+    };
+    const submit = async (id) => {
+      const messages = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{ id, function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: 'ref_subscribe' }) } }],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision: false },
+        '',
+        new Set(['click_ax']),
+        1,
+      );
+      return JSON.parse(messages[0].content);
+    };
+
+    const first = await submit('first');
+    assert.equal(prompts, 1, `${AgentClass.name}: the first submission asks`);
+    assert.equal(first.denied, true, `${AgentClass.name}: the first denial is reported`);
+    assert.equal(first.alreadyDeclined, undefined, `${AgentClass.name}: the first denial is the user's answer`);
+
+    const repeat = await submit('repeat');
+    assert.equal(prompts, 1, `${AgentClass.name}: the same submission is not asked again`);
+    assert.equal(repeat.denied, true, `${AgentClass.name}: the repeat is refused`);
+    assert.equal(repeat.alreadyDeclined, true, `${AgentClass.name}: the repeat says the user already declined`);
+    assert.match(repeat.error, /already declined this exact form submission/, `${AgentClass.name}: the model is told not to retry`);
+    assert.ok(updates.some(update => /Not asked again/.test(update.data?.message || '')), `${AgentClass.name}: the user sees why nothing was asked`);
+
+    const timeoutEntry = { resolve: () => { }, ts: Date.now() };
+    agent._pendingClarifications.set(tabId, new Map([['timed', timeoutEntry]]));
+    agent.submitClarifyResponse(tabId, 'timed', 'Yes, submit it', 'timeout');
+    await submit('after-timeout');
+    assert.equal(prompts, 1, `${AgentClass.name}: a timed-out answer is not the user changing their mind`);
+
+    email = 'webbrain-qa@example.com';
+    await submit('changed');
+    assert.equal(prompts, 2, `${AgentClass.name}: a changed value asks again`);
+
+    email = 'you@example.com';
+    const userEntry = { resolve: () => { }, ts: Date.now() };
+    agent._pendingClarifications.set(tabId, new Map([['asked', userEntry]]));
+    // The side panel sends the source of the user's answer: an option, text,
+    // a slash command or a Cloud API answer.
+    agent.submitClarifyResponse(tabId, 'asked', 'Yes, submit it', 'option');
+    await submit('after-user-answer');
+    assert.equal(prompts, 3, `${AgentClass.name}: the user's own answer on a later card asks again`);
+
+    agent.permissions.beginTurn(tabId);
+    await submit('new-turn');
+    assert.equal(prompts, 4, `${AgentClass.name}: a new turn asks again`);
+
+    // Another form with the same fields and action (a per-row form told
+    // apart only by a hidden ID), or another button of the same form, is a
+    // different submission and asks on its own card.
+    elements = 'form-2/subscribe';
+    await submit('other-form');
+    assert.equal(prompts, 5, `${AgentClass.name}: a declined form refused another form with the same fields`);
+    elements = 'form-1/unsubscribe';
+    await submit('other-button');
+    assert.equal(prompts, 6, `${AgentClass.name}: a declined button refused another button of the form`);
+    // A submission whose form and button the probe did not identify is never
+    // remembered: it asks every time.
+    elements = '';
+    await submit('unidentified-1');
+    await submit('unidentified-2');
+    assert.equal(prompts, 8, `${AgentClass.name}: an unidentified submission skipped its card`);
+    assert.equal(executed, 0, `${AgentClass.name}: nothing declined was submitted`);
+
+    // A script has no form identity: each run of one asks on its own card.
+    agent._detectLikelySubmitAction = async () => agent._fallbackSubmitConfirmationInfo('host.com', 'execute_js', 'execute_js can run page JavaScript');
+    const script = async (id, code) => {
+      const messages = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{ id, function: { name: 'execute_js', arguments: JSON.stringify({ code }) } }],
+        messages,
+        () => { },
+        { supportsVision: false },
+        '',
+        new Set(['execute_js']),
+        1,
+      );
+      return messages;
+    };
+    agent.conversationModes.set(tabId, 'dev');
+    const before = prompts;
+    await script('script-1', 'document.forms[0].submit()');
+    await script('script-2', 'document.forms[1].submit()');
+    assert.equal(prompts, before + 2, `${AgentClass.name}: a declined script made a different script skip its card`);
+  }
+});
+
 test('submit confirmation honors scheduled and global gate bypasses', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     for (const scenario of [
@@ -82878,6 +83014,267 @@ test('submit confirmation honors scheduled and global gate bypasses', async () =
       assert.equal(messages.length, 1, `${AgentClass.name} ${scenario.label}: expected one tool result`);
       assert.equal(JSON.parse(agent._unwrapUntrusted(messages[0].content)).success, true, `${AgentClass.name} ${scenario.label}: tool result should be successful`);
     }
+  }
+});
+
+test('a field holding its own placeholder text is not submitted', async () => {
+  // The refusal is page-derived tool output, wrapped as untrusted content.
+  const toolJson = content => {
+    const text = String(content || '');
+    return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+  };
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = 5108;
+    let prompts = 0;
+    let executed = 0;
+    let field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };
+    let completeList = null;
+    const updates = [];
+    const system = { role: 'system', content: 'You are WebBrain.' };
+    const task = [system, { role: 'user', content: 'Sign me up for the newsletter on this page.' }];
+
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [...task]);
+    agent._ensureGateSetting = async () => { };
+    agent._skipPermissionGate = false;
+    agent._currentUrl = async () => 'https://host.com/newsletter';
+    agent._recordProgressObservation = async () => null;
+    agent._autoRecordProgressAction = () => null;
+    agent._progressWarningForAction = () => '';
+    agent._persist = () => { };
+    agent._detectLikelySubmitAction = async (_tabId, name) => ({
+      isSubmit: true,
+      host: 'host.com',
+      tool: name,
+      method: 'POST',
+      actionUrl: 'https://host.com/subscribe',
+      reason: 'submit button/control activation',
+      summary: `Changed/filled fields: ${field.label}: ${field.value}.`,
+      fields: [field],
+      changedFields: [field],
+      ...(completeList ? { placeholderFields: completeList } : {}),
+    });
+    agent._promptSubmitConfirmation = async () => {
+      prompts += 1;
+      return 'deny';
+    };
+    agent.executeTool = async () => {
+      executed += 1;
+      return { success: true };
+    };
+    const submit = async (id) => {
+      const messages = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{ id, function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: 'ref_subscribe' }) } }],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision: false },
+        '',
+        new Set(['click_ax']),
+        1,
+      );
+      return toolJson(messages[0].content);
+    };
+
+    const refused = await submit('placeholder');
+    assert.equal(prompts, 0, `${AgentClass.name}: the page's example value reached a submit card`);
+    assert.equal(refused.denied, true, `${AgentClass.name}: the placeholder submission is refused`);
+    assert.equal(refused.placeholderValue, true, `${AgentClass.name}: the refusal names the placeholder`);
+    assert.equal(refused.placeholderFieldCount, 1, `${AgentClass.name}: the refusal counts the field`);
+    assert.match(refused.error, /placeholder text/, `${AgentClass.name}: the model is told why`);
+    assert.match(refused.error, /Ask the user/, `${AgentClass.name}: the model is told to ask`);
+    assert.ok(updates.some(update => update.type === 'warning' && /placeholder text/.test(update.data?.message || '')),
+      `${AgentClass.name}: the user sees why nothing was asked`);
+
+    // Turning confirmations off, globally or for a scheduled run, does not
+    // let the page's example through.
+    agent._skipPermissionGate = true;
+    assert.equal((await submit('gate-off')).placeholderValue, true, `${AgentClass.name}: confirmations off submitted the placeholder`);
+    agent._skipPermissionGate = false;
+    agent.scheduledRunPolicies.set(tabId, { requireConsequentialConfirmation: false });
+    assert.equal((await submit('scheduled')).placeholderValue, true, `${AgentClass.name}: a scheduled run submitted the placeholder`);
+    agent.scheduledRunPolicies.delete(tabId);
+
+    // The probe's complete list covers a field past the summary's first
+    // eight changed fields.
+    field = { label: 'Name', placeholder: 'Your name', value: 'Ada', changed: true };
+    completeList = [{ label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true }];
+    assert.equal((await submit('past-summary')).placeholderValue, true, `${AgentClass.name}: a field past the summary was missed`);
+    completeList = [];
+    await submit('complete-list-clean');
+    assert.equal(prompts, 1, `${AgentClass.name}: an empty complete list still refused`);
+    completeList = null;
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };
+
+    // Words in a request do not supply the value, whether they give it or
+    // refuse it; a whole answer on one of the task's cards does.
+    agent.conversations.set(tabId, [...task, { role: 'user', content: 'Use YOU@example.com for it.' }]);
+    assert.equal((await submit('user-message')).placeholderValue, true, `${AgentClass.name}: a request's words supplied the value`);
+    agent.conversations.set(tabId, [...task, { role: 'user', content: 'Do not use you@example.com; use another address.' }]);
+    assert.equal((await submit('refused-in-request')).placeholderValue, true, `${AgentClass.name}: a refused value was submitted`);
+    agent.conversations.set(tabId, [system, { ...task[1], webbrainTaskClarifications: [{ question: 'Which email?', answer: 'you@example.com', source: 'text' }] }]);
+    await submit('user-answer');
+    assert.equal(prompts, 2, `${AgentClass.name}: a value from the user's card answer was refused`);
+    agent.conversations.set(tabId, [system, { ...task[1], webbrainTaskClarifications: [{ question: 'Which email?', answer: 'Not you@example.com', source: 'text' }] }]);
+    assert.equal((await submit('refused-in-answer')).placeholderValue, true, `${AgentClass.name}: an answer refusing the value supplied it`);
+
+    // Another value, a page default WebBrain did not change, and a placeholder
+    // that is only a number ask as usual.
+    agent.conversations.set(tabId, [...task]);
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'reader@example.org', changed: true };
+    await submit('own-value');
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false };
+    await submit('page-default');
+    field = { label: 'Quantity', placeholder: '1', value: '1', changed: true };
+    await submit('number');
+    assert.equal(prompts, 5, `${AgentClass.name}: an ordinary value skipped its card`);
+
+    // A plain word the request names is no answer either; a whole card
+    // answer is.
+    agent.conversations.set(tabId, [system, { role: 'user', content: 'Sign me up for email updates.' }]);
+    field = { label: 'Email', placeholder: 'Email', value: 'Email', changed: true };
+    assert.equal((await submit('named-word')).placeholderValue, true, `${AgentClass.name}: a word the request only named exempted the field`);
+    agent.conversations.set(tabId, [system, { role: 'user', content: 'Sign me up for email updates.',
+      webbrainTaskClarifications: [{ question: 'What should the email field say?', answer: 'Email', source: 'text' }] }]);
+    await submit('answered-word');
+    assert.equal(prompts, 6, `${AgentClass.name}: a whole card answer was refused`);
+
+    // A framework can copy the typed value into the field's default, so the
+    // probe sees no edit; WebBrain's own write in this task still counts.
+    // Tracing is off here: there is no trace run ID, only the task token.
+    agent.conversations.set(tabId, [...task]);
+    agent.currentRunId.delete(tabId);
+    agent._taskTokens.set(tabId, 'task_placeholder');
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
+    agent._rememberPlaceholderWrite(tabId, 'set_field', { ref_id: 'ref_101', text: 'you@example.com' },
+      { success: true, value: 'you@example.com', fieldMeta: { type: 'email', name: 'email', id: null, placeholder: 'you@example.com' } });
+    assert.equal((await submit('framework-default')).placeholderValue, true, `${AgentClass.name}: WebBrain's own write was missed`);
+    // The write belongs to that field: another field with the same
+    // placeholder, holding it as its page default, is not one WebBrain wrote.
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_202', name: 'email', id: '' };
+    await submit('other-field');
+    assert.equal(prompts, 7, `${AgentClass.name}: a write to one field counted for another`);
+    // The typing tools add to what a field holds unless clear is true: the
+    // receipt's result is what the field then holds, not the typed text. A
+    // write by selector or focus is kept by the ref its target check
+    // resolved.
+    agent._taskTokens.set(tabId, 'task_append');
+    const appendMeta = { type: 'email', name: 'email', id: null, placeholder: 'you@example.com' };
+    const appendField = { ref: 'ref_404', name: 'email', id: '' };
+    agent._rememberPlaceholderWrite(tabId, 'type_text', { text: 'you@example.com' },
+      { success: true, value: 'xyou@example.com', fieldMeta: appendMeta }, 'ref_404');
+    assert.equal(agent._placeholderWritten(tabId, appendField, 'you@example.com'), false,
+      `${AgentClass.name}: an append was read as replacing the value`);
+    agent._rememberPlaceholderWrite(tabId, 'type_text', { text: 'example.com' },
+      { success: true, value: 'you@example.com', fieldMeta: appendMeta }, 'ref_404');
+    assert.equal(agent._placeholderWritten(tabId, appendField, 'you@example.com'), true,
+      `${AgentClass.name}: an append that left the placeholder was missed`);
+    // An append whose result does not report the value, as type_ax's
+    // default append does not, or reports it possibly cut short, leaves
+    // the value unknown: the receipt counts for whatever the field holds.
+    agent._rememberPlaceholderWrite(tabId, 'type_ax', { ref_id: 'ref_606', text: 'example.com' },
+      { success: true, fieldMeta: appendMeta });
+    assert.equal(agent._placeholderWritten(tabId, { ref: 'ref_606' }, 'you@example.com'), true,
+      `${AgentClass.name}: an append without a reported value was missed`);
+    agent._rememberPlaceholderWrite(tabId, 'type_text', { text: 'more' },
+      { success: true, value: 'x'.repeat(100), fieldMeta: appendMeta }, 'ref_707');
+    assert.equal(agent._placeholderWritten(tabId, { ref: 'ref_707' }, 'you@example.com'), true,
+      `${AgentClass.name}: an append with a cut-short value was missed`);
+    // A replacing write that did not put the placeholder there has no receipt.
+    agent._rememberPlaceholderWrite(tabId, 'type_ax', { ref_id: 'ref_808', text: 'reader@example.org', clear: true },
+      { success: true, fieldMeta: appendMeta });
+    assert.equal(agent._placeholderWritten(tabId, { ref: 'ref_808' }, 'you@example.com'), false,
+      `${AgentClass.name}: a write of another value counted`);
+    // A name and id are not the field: another field (another form, page
+    // or frame) can have the same ones. Only the ref counts, and a write
+    // without one is not kept.
+    assert.equal(agent._placeholderWritten(tabId, { ref: 'ref_505', name: 'email', id: '' }, 'you@example.com'), false,
+      `${AgentClass.name}: a write counted for another field with the same name`);
+    agent._taskTokens.set(tabId, 'task_no_ref');
+    agent._rememberPlaceholderWrite(tabId, 'type_text', { text: 'you@example.com', clear: true },
+      { success: true, value: 'you@example.com', fieldMeta: appendMeta });
+    assert.equal(agent._placeholderWrites.get(tabId)?.task, 'task_append', `${AgentClass.name}: a write without a ref was kept`);
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
+    // A long typed value is matched by the first 200 characters the probe
+    // reports, though the write's receipt shortens what it read back.
+    const longText = `Tell us about your project ${'in as much detail as you can '.repeat(8)}`.trim();
+    agent._taskTokens.set(tabId, 'task_long');
+    agent._rememberPlaceholderWrite(tabId, 'set_field', { ref_id: 'ref_303', text: longText },
+      { success: true, value: longText.slice(0, 100), fieldMeta: { type: 'textarea', name: 'about', id: null, placeholder: longText } });
+    field = { label: 'About', placeholder: longText.slice(0, 200), value: longText.slice(0, 200), fullValue: longText, complete: true,
+      changed: false, ref: 'ref_303', name: 'about', id: '' };
+    assert.equal((await submit('long-write')).placeholderValue, true, `${AgentClass.name}: a long write was missed`);
+    // An answer has to be the whole value: the first 200 characters the
+    // probe shows are not it, and a value too long to return is never
+    // matched.
+    field = { ...field, changed: true };
+    agent.conversations.set(tabId, [system, { ...task[1], webbrainTaskClarifications: [{ question: 'About?', answer: longText.slice(0, 200), source: 'text' }] }]);
+    assert.equal((await submit('prefix-answer')).placeholderValue, true, `${AgentClass.name}: a prefix answered a long value`);
+    agent.conversations.set(tabId, [system, { ...task[1], webbrainTaskClarifications: [{ question: 'About?', answer: longText, source: 'text' }] }]);
+    const beforeWholeAnswer = prompts;
+    await submit('whole-answer');
+    assert.equal(prompts, beforeWholeAnswer + 1, `${AgentClass.name}: the whole answer was refused`);
+    field = { ...field, complete: false };
+    assert.equal((await submit('too-long')).placeholderValue, true, `${AgentClass.name}: a value too long to return was matched`);
+    agent.conversations.set(tabId, [...task]);
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
+    agent._taskTokens.set(tabId, 'task_next');
+    await submit('next-run');
+    assert.equal(prompts, 9, `${AgentClass.name}: a write from another task still counted`);
+    // Without a task, nothing is kept.
+    agent._taskTokens.delete(tabId);
+    agent._rememberPlaceholderWrite(tabId, 'set_field', { ref_id: 'ref_101', text: 'you@example.com' },
+      { success: true, value: 'you@example.com', fieldMeta: { type: 'email', name: 'email', id: null, placeholder: 'you@example.com' } });
+    assert.equal(agent._placeholderWrites.get(tabId)?.task, 'task_long', `${AgentClass.name}: a write outside a task was kept`);
+    // A cleared conversation takes the writes along.
+    agent._cleanupTab(tabId, { preserveRunGuard: true });
+    assert.equal(agent._placeholderWrites.has(tabId), false, `${AgentClass.name}: tab cleanup kept placeholder writes`);
+
+    // A worker restart keeps the conversation but loses the receipts kept in
+    // memory and the task token: the fill calls and results in the task's own
+    // history count, and an earlier task's do not.
+    agent._placeholderWrites = new Map();
+    agent._taskTokens.delete(tabId);
+    const fillCall = (id, name, args) => ({ role: 'assistant', content: '',
+      tool_calls: [{ id, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+    const fillResult = (id, result) => ({ role: 'tool', tool_call_id: id, content: JSON.stringify(result) });
+    const emailMeta = { type: 'email', name: 'email', id: null, placeholder: 'you@example.com' };
+    agent.conversations.set(tabId, [...task,
+      fillCall('call_fill', 'set_field', { ref_id: 'ref_101', text: 'you@example.com' }),
+      fillResult('call_fill', { success: true, value: 'you@example.com', fieldMeta: emailMeta })]);
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
+    const beforeRestored = prompts;
+    assert.equal((await submit('restored-write')).placeholderValue, true, `${AgentClass.name}: a write in the task's history was missed`);
+    // A write by selector names its field in its own result.
+    const typedResult = { success: true, value: 'you@example.com', fieldMeta: emailMeta };
+    agent._taskTokens.set(tabId, 'task_typed');
+    agent._rememberPlaceholderWrite(tabId, 'type_text', { selector: '#email', text: 'you@example.com', clear: true }, typedResult, 'ref_404');
+    assert.equal(typedResult.writtenFieldRef, 'ref_404', `${AgentClass.name}: the result does not name the field it went into`);
+    agent._placeholderWrites = new Map();
+    agent._taskTokens.delete(tabId);
+    agent.conversations.set(tabId, [...task,
+      fillCall('call_typed', 'type_text', { selector: '#email', text: 'you@example.com', clear: true }),
+      fillResult('call_typed', typedResult)]);
+    field = { ...field, ref: 'ref_404' };
+    assert.equal((await submit('restored-typed')).placeholderValue, true, `${AgentClass.name}: a stored selector write was missed`);
+    assert.equal(prompts, beforeRestored, `${AgentClass.name}: a restored write reached a card`);
+    // An earlier task's writes are not this task's.
+    agent.conversations.set(tabId, [system, { role: 'user', content: 'Fill in the form with the example.' },
+      fillCall('call_old', 'set_field', { ref_id: 'ref_101', text: 'you@example.com' }),
+      fillResult('call_old', { success: true, value: 'you@example.com', fieldMeta: emailMeta }),
+      { role: 'assistant', content: 'Done.' }, { role: 'user', content: 'Now sign me up for the newsletter.' }]);
+    field = { ...field, ref: 'ref_101' };
+    await submit('earlier-task-write');
+    assert.equal(prompts, beforeRestored + 1, `${AgentClass.name}: an earlier task's write counted`);
+
+    // An earlier, unrelated turn cannot supply the value for the current task.
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };
+    agent.conversations.set(tabId, [system, { role: 'user', content: 'Do not use you@example.com anywhere.' },
+      { role: 'assistant', content: 'Understood.' }, { role: 'user', content: 'Sign me up for the newsletter on this page.' }]);
+    assert.equal((await submit('earlier-turn')).placeholderValue, true, `${AgentClass.name}: an earlier turn supplied the value`);
+    assert.equal(executed, 0, `${AgentClass.name}: a refused or declined submission ran`);
   }
 });
 
@@ -86181,6 +86578,64 @@ test('cloud Ask dispatch blocks API mutations even with an existing conversation
   assert.equal(denied.requiresApiAllow, false);
   assert.match(denied.error, /not allowed in Ask mode/);
   assert.ok(updates.some(update => /Ask mode is read-only/.test(update.data?.message || '')));
+});
+
+test('a local Ask run keeps API mutations off even with the API-mutations setting on', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = 4907;
+    let executed = 0;
+    agent.executeTool = async () => {
+      executed += 1;
+      return { success: true };
+    };
+    agent._ensureGateSetting = async () => { };
+    agent._skipPermissionGate = true;
+    agent.alwaysAllowApiMutations = true;
+    agent.setApiMutationsAllowed(tabId, true);
+    const send = async (mode, conversationMode = mode) => {
+      agent._runModeOverrides.set(tabId, mode);
+      agent.conversationModes.set(tabId, conversationMode);
+      const messages = [];
+      const updates = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{
+          id: `${mode}_mutation`,
+          function: {
+            name: 'fetch_url',
+            arguments: JSON.stringify({ url: 'https://mastodon.example/api/v1/statuses', method: 'POST', body: '{"status":"hi"}' }),
+          },
+        }],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision: false },
+        '',
+        new Set(['fetch_url']),
+        1,
+      );
+      return { messages, updates };
+    };
+
+    const ask = await send('ask');
+    assert.equal(executed, 0, `${AgentClass.name}: an Ask run sent a POST`);
+    const denied = JSON.parse(ask.messages[0].content);
+    assert.equal(denied.denied, true, `${AgentClass.name}: the POST was not refused`);
+    assert.equal(denied.requiresApiAllow, false, `${AgentClass.name}: /allow-api cannot open Ask`);
+    assert.match(denied.error, /not allowed in Ask mode/);
+    assert.ok(ask.updates.some(update => /Ask mode is read-only/.test(update.data?.message || '')));
+    assert.equal(agent.isApiMutationsAllowed(tabId), true, `${AgentClass.name}: the user's grant stays for Act`);
+
+    await send('act');
+    assert.equal(executed, 1, `${AgentClass.name}: Act still honors the API-mutations setting`);
+
+    // A side panel opened mid-run may set the conversation's mode; the run's
+    // own mode decides.
+    await send('ask', 'act');
+    assert.equal(executed, 1, `${AgentClass.name}: an Ask run sent a POST after the conversation mode changed`);
+    await send('act', 'ask');
+    assert.equal(executed, 2, `${AgentClass.name}: an Act run was blocked by the conversation mode`);
+  }
 });
 
 test('agent counts failed API mutation batch as one loop strategy', async () => {
@@ -90538,6 +90993,63 @@ test('chrome CDP submit selector treats default buttons as strong native submits
     cdpClientCh.attach = originals.attach;
     cdpClientCh.resolveSelector = originals.resolveSelector;
     cdpClientCh.describeNode = originals.describeNode;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('chrome CDP submit selector scans its form for placeholder values', async () => {
+  const previousChrome = globalThis.chrome;
+  const originals = {
+    attach: cdpClientCh.attach,
+    resolveSelector: cdpClientCh.resolveSelector,
+    describeNode: cdpClientCh.describeNode,
+    sendCommand: cdpClientCh.sendCommand,
+    callFunctionOn: cdpClientCh.callFunctionOn,
+  };
+  try {
+    globalThis.chrome = { ...(previousChrome || {}), debugger: {} };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.resolveSelector = async () => ({ found: true, nodeId: 41 });
+    cdpClientCh.describeNode = async () => ({ node: { nodeName: 'BUTTON', attributes: [] } });
+    const released = [];
+    cdpClientCh.sendCommand = async (_tabId, method, params = {}) => {
+      if (method === 'DOM.resolveNode') return params.nodeId === 41 ? { object: { objectId: 'button-41' } } : {};
+      if (method === 'Runtime.releaseObject') released.push(params.objectId);
+      return {};
+    };
+    // The scan runs on the control, as the debugger runs it in the page.
+    const input = (attrs, value, defaultValue = '') => ({
+      tagName: 'INPUT', type: attrs.type || 'text', value, defaultValue,
+      getAttribute: name => attrs[name] ?? null, matches: () => false,
+    });
+    // Any number of controls the scan skips comes before the edited field.
+    const control = { form: { elements: [
+      ...Array.from({ length: 6000 }, (_, i) => input({ name: `h${i}`, type: 'hidden', placeholder: 'x' }, 'x')),
+      input({ name: 'email', type: 'email', placeholder: 'you@example.com' }, 'you@example.com'),
+      input({ name: 'pass', type: 'password', placeholder: 'Password' }, 'Password'),
+      input({ name: 'city', placeholder: 'Istanbul', value: 'Istanbul' }, 'Istanbul', 'Istanbul'),
+    ] } };
+    let scannedOn = '';
+    cdpClientCh.callFunctionOn = async (_tabId, source, objectId) => {
+      scannedOn = objectId;
+      return { result: { value: (0, eval)(`(${source})`).call(control) } };
+    };
+    const agent = new AgentCh({ getVisionProvider: async () => null });
+    const detected = await agent._detectCdpSubmitSelector(23, '#shadow-submit', 'example.com');
+    assert.equal(scannedOn, 'button-41', 'the scan runs on the resolved control');
+    assert.deepEqual(released, ['button-41'], 'the control handle is released');
+    assert.deepEqual(detected?.placeholderFields?.map(field => [field.name, field.changed, field.ref]),
+      [['email', true, ''], ['city', false, '']], 'the edited field first; never the password; no refs');
+    agent.conversations.set(23, [{ role: 'system', content: 'You are WebBrain.' }, { role: 'user', content: 'Join the list.' }]);
+    assert.equal(agent._placeholderSubmitBlock(23, 'click', detected)?.placeholderValue, true, 'the placeholder is not submitted');
+    // A scan that cannot run leaves the fallback as it was.
+    cdpClientCh.callFunctionOn = async () => { throw new Error('detached'); };
+    const unscanned = await agent._detectCdpSubmitSelector(23, '#shadow-submit', 'example.com');
+    assert.equal(unscanned?.isSubmit, true);
+    assert.equal('placeholderFields' in unscanned, false);
+  } finally {
+    Object.assign(cdpClientCh, originals);
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
   }
