@@ -1197,10 +1197,12 @@ export function normalizePlan(obj, opts = {}) {
     : [];
   const requestedLocale = normalizePlannerLocale(opts.locale || localizedInput.locale);
   const englishLocale = requestedLocale === 'en' || requestedLocale.startsWith('en-');
-  // The copy is in the requested language and covers the summary, every step
-  // and every risk.
+  // The copy names the requested language and covers the summary, every step
+  // and every risk. A copy without a locale tag proves no language (output
+  // without schema enforcement can leave it out).
   const localizedCopyComplete = Boolean(localizedSummary)
-    && (!localizedInput.locale || localeLanguage(localizedInput.locale) === localeLanguage(requestedLocale))
+    && localeLanguage(localizedInput.locale) !== ''
+    && localeLanguage(localizedInput.locale) === localeLanguage(requestedLocale)
     && steps.every(step => localizedStepsById.get(step.id)?.action)
     && riskEntries.every(entry => sanitizeText(providedLocalizedRisks[entry.sourceIndex], 200));
   if (opts.requireIntent) {

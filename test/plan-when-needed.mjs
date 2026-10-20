@@ -311,6 +311,7 @@ for (const build of BUILDS) {
     assert.equal('missing' in parse(englishPlan({ risks: ['The form is submitted.'], localized: { ...copy, risks: ['Form gönderilir.'] } }), { locale: 'tr' }).localized, false);
     // A copy in another language is no copy in the user's.
     assert.equal(parse(englishPlan({ localized: { ...copy, locale: 'en' } }), { locale: 'tr' }).localized.missing, true);
+    assert.equal(parse(englishPlan({ localized: { ...copy, locale: undefined } }), { locale: 'tr' }).localized.missing, true, 'a copy that names no language proves none');
     assert.equal('missing' in parse(englishPlan({ localized: { ...copy, locale: 'tr-TR' } }), { locale: 'tr' }).localized, false);
   });
 
