@@ -32994,8 +32994,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return compact(el.defaultValue ?? el.getAttribute?.('value') ?? '', 120);
     };
+    // The placeholder guard's scan: every text control in `owned` whose
+    // whole value equals its own placeholder, edited ones first. A value
+    // `set_field` is about to type and submit counts as the field's value.
+    const placeholderScan = (owned, pendingEl = null, pendingValue = null) => {
+      // Every control is checked, however many there are: only the matches
+      // are kept, and their list is capped below.
+      const matches = owned.filter(el => /^(?:INPUT|TEXTAREA)$/i.test(String(el?.tagName || ''))).flatMap(el => {
+        const type = String(el.type || '').toLowerCase();
+        if (['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio', 'file', 'password'].includes(type)) return [];
+        // A disabled control, its own or its fieldset's, is not sent.
+        try { if (el.matches?.(':disabled')) return []; } catch { return []; }
+        // Whole values decide; only what is returned for display is
+        // shortened. The whole value (up to 4,000 characters) is returned
+        // too, for the agent's own comparisons.
+        const whole = text => String(text ?? '').replace(/\s+/g, ' ').trim();
+        const placeholder = whole(el.getAttribute?.('placeholder'));
+        // set_field({submit, clear:false}) appends to what the field holds.
+        const typed = pendingEl && el === pendingEl
+          ? (toolName === 'set_field' && args?.clear === false ? String(el.value ?? '') : '') + String(pendingValue ?? '')
+          : el.value;
+        const value = whole(typed);
+        const changed = el === pendingEl || (!!value && value !== whole(el.defaultValue ?? el.getAttribute?.('value')));
+        return placeholder && value.toLowerCase() === placeholder.toLowerCase()
+          ? [{ label: labelFor(el), value: compact(value, 200), placeholder: compact(placeholder, 200), changed,
+            fullValue: value.slice(0, 4000), complete: value.length <= 4000,
+            ref: typeof window.__wb_ax_ref === 'function' ? String(window.__wb_ax_ref(el) || '') : '',
+            name: compact(el.getAttribute?.('name') || '', 120), id: compact(el.getAttribute?.('id') || '', 120) }] : [];
+      });
+      // Edited fields first, so no number of untouched matches can push
+      // one out of the list.
+      return [...matches.filter(field => field.changed), ...matches.filter(field => !field.changed)].slice(0, 500);
+    };
     const summarizeForm = (form, pendingEl = null, pendingValue = null) => {
-      if (!form) return { summary: '', fields: [], changedFields: [] };
+      // Without a form, a field that set_field({submit:true}) types into and
+      // commits with Enter is still checked for the placeholder guard.
+      if (!form) {
+        const placeholderFields = (() => {
+          try { return pendingEl ? placeholderScan([pendingEl], pendingEl, pendingValue) : []; } catch { return []; }
+        })();
+        return { summary: '', fields: [], changedFields: [], ...(placeholderFields.length ? { placeholderFields } : {}) };
+      }
       const method = compact(form.getAttribute('method') || form.method || 'GET', 20).toUpperCase();
       const actionUrl = (() => {
         try {
@@ -33066,33 +33105,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // only what it contains.
           const owned = String(form.tagName || '').toUpperCase() === 'FORM' && form.elements
             ? Array.from(form.elements) : Array.from(form.querySelectorAll('input, textarea'));
-          // Every control is checked, however many the form has: only the
-          // matches are kept, and their list is capped below.
-          const matches = owned.filter(el => /^(?:INPUT|TEXTAREA)$/i.test(String(el?.tagName || ''))).flatMap(el => {
-            const type = String(el.type || '').toLowerCase();
-            if (['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio', 'file', 'password'].includes(type)) return [];
-            // A disabled control, its own or its fieldset's, is not sent.
-            try { if (el.matches?.(':disabled')) return []; } catch { return []; }
-            // Whole values decide; only what is returned for display is
-            // shortened. The whole value (up to 4,000 characters) is returned
-            // too, for the agent's own comparisons.
-            const whole = text => String(text ?? '').replace(/\s+/g, ' ').trim();
-            const placeholder = whole(el.getAttribute?.('placeholder'));
-            // set_field({submit, clear:false}) appends to what the field holds.
-            const typed = pendingEl && el === pendingEl
-              ? (toolName === 'set_field' && args?.clear === false ? String(el.value ?? '') : '') + String(pendingValue ?? '')
-              : el.value;
-            const value = whole(typed);
-            const changed = el === pendingEl || (!!value && value !== whole(el.defaultValue ?? el.getAttribute?.('value')));
-            return placeholder && value.toLowerCase() === placeholder.toLowerCase()
-              ? [{ label: labelFor(el), value: compact(value, 200), placeholder: compact(placeholder, 200), changed,
-                fullValue: value.slice(0, 4000), complete: value.length <= 4000,
-                ref: typeof window.__wb_ax_ref === 'function' ? String(window.__wb_ax_ref(el) || '') : '',
-                name: compact(el.getAttribute?.('name') || '', 120), id: compact(el.getAttribute?.('id') || '', 120) }] : [];
-          });
-          // Edited fields first, so no number of untouched matches can push
-          // one out of the list.
-          return [...matches.filter(field => field.changed), ...matches.filter(field => !field.changed)].slice(0, 500);
+          return placeholderScan(owned, pendingEl, pendingValue);
         } catch {
           return [];
         }

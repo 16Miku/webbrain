@@ -63,6 +63,16 @@ for (const build of ['chrome', 'firefox']) {
           assert.deepEqual(replaced.placeholderFields, [], 'set_field replaces the value by default');
         });
 
+        await t.test('a form-less field set_field types into and commits is checked too', async () => {
+          await page.setContent('<div><input id="email" name="email" aria-label="Email" placeholder="you@example.com"></div>');
+          await page.evaluate(() => { window.__wb_ax_lookup = ref => (ref === 'ref_email' ? document.querySelector('#email') : null); });
+          const result = await probe('set_field', { ref_id: 'ref_email', text: 'you@example.com', submit: true });
+          assert.equal(result?.isSubmit, true);
+          assert.deepEqual(result.placeholderFields?.map(field => [field.name, field.changed]), [['email', true]]);
+          const own = await probe('set_field', { ref_id: 'ref_email', text: 'reader@example.org', submit: true });
+          assert.equal(own.placeholderFields, undefined, 'another value lists nothing');
+        });
+
         await t.test('untouched matches cannot push an edited field out of the list', async () => {
           await page.setContent('<form method="post" action="/many">'
             + Array.from({ length: 600 }, (_, i) => `<input name="d${i}" placeholder="Example" value="Example">`).join('')
