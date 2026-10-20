@@ -15454,6 +15454,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               promptTier,
               guardAdvisories: callState.guardAdvisories,
               dispatchBinding: pipelineToolbarPreflight.probe?.dispatchBinding || null,
+              // The typing target's ref, for a write by selector or focus.
+              typingTargetRef: String(pipelineToolbarPreflight.probe?.refId || ''),
               ...messageRecipientExecutionContext,
               iframeTargetUnresolved: pipelineToolbarPreflight.iframeTargetUnresolved === true,
               richTextToolbarWrongTargetAdvised: pipelineToolbarPreflight.wrongTargetAdvised === true,
@@ -45521,7 +45523,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._annotateCredentialField(name, response, tabId);
       this._rememberFilledCredential(tabId, name, args, response);
-      this._rememberPlaceholderWrite(tabId, name, args, response);
+      this._rememberPlaceholderWrite(tabId, name, args, response, dispatchContext.typingTargetRef);
       if (name === 'read_page') {
         response = applyReadPageWindow(response, args);
       }
@@ -45589,7 +45591,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._annotateCredentialField(name, response, tabId);
       this._rememberFilledCredential(tabId, name, args, response);
-      this._rememberPlaceholderWrite(tabId, name, args, response);
+      this._rememberPlaceholderWrite(tabId, name, args, response, dispatchContext.typingTargetRef);
         if (name === 'read_page') {
           response = applyReadPageWindow(response, args);
         }
@@ -45776,10 +45778,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // A value WebBrain typed into a field that equals the field's own
   // placeholder, from the write's receipt, kept for the current task with the
-  // field it went into: its accessibility ref, and its name and id. The
-  // task token scopes it, as it does task proofs: a trace run ID is missing
+  // field it went into, by its accessibility ref: the call's own ref_id, or
+  // for a write by selector or focus, the ref its target check resolved
+  // (`targetRef`). A ref names one element in one document and route, which
+  // a name or id does not; a write without one is not kept. The task token
+  // scopes the receipts, as it does task proofs: a trace run ID is missing
   // when tracing is off, and a trusted continuation keeps the token.
-  _rememberPlaceholderWrite(tabId, toolName, args, response) {
+  _rememberPlaceholderWrite(tabId, toolName, args, response, targetRef = '') {
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName) || response?.success !== true) return;
     const meta = response.fieldMeta;
     if (!meta || String(meta.type || '').toLowerCase() === 'password') return;
@@ -45795,11 +45800,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (typeof result !== 'string') return;
     const typed = whole(result);
     if (!placeholder || normalize(typed) !== placeholder) return;
-    const ref = [args?.ref_id, response.ref_id].map(value => String(value || '')).find(value => /^ref_\d+$/.test(value)) || '';
+    const ref = [args?.ref_id, response.ref_id, targetRef].map(value => String(value || '')).find(value => /^ref_\d+$/.test(value)) || '';
+    if (!ref) return;
     // Kept as the probe returns a whole value: its first 4,000 characters,
     // cut before the case is folded, as the probe cuts it.
-    const write = { value: normalize(typed.slice(0, 4000)), ref, name: String(meta.name || ''), id: String(meta.id || '') };
-    if (!write.ref && !write.name && !write.id) return;
+    const write = { value: normalize(typed.slice(0, 4000)), ref };
     const task = this._taskTokens.get(tabId);
     if (!task) return;
     this._placeholderWrites ??= new Map();
@@ -45809,16 +45814,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // Whether WebBrain's own write in this task put `value` into this probed
-  // field: the same ref when both have one, otherwise the same name and id.
+  // field, the one with the same ref.
   _placeholderWritten(tabId, field, value) {
     const entry = this._placeholderWrites?.get(tabId);
     const task = this._taskTokens.get(tabId);
     if (!entry || !task || entry.task !== task) return false;
     const ref = String(field?.ref || '');
-    const name = String(field?.name || '');
-    const id = String(field?.id || '');
-    return entry.writes.some(write => write.value === value && (write.ref && ref ? write.ref === ref
-      : (write.name || write.id) && write.name === name && write.id === id));
+    return !!ref && entry.writes.some(write => write.value === value && write.ref === ref);
   }
 
   // Adds values to the tab's known credentials, keeping the most recent 64.

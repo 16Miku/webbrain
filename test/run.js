@@ -82781,18 +82781,29 @@ test('a field holding its own placeholder text is not submitted', async () => {
     await submit('other-field');
     assert.equal(prompts, 7, `${AgentClass.name}: a write to one field counted for another`);
     // The typing tools add to what a field holds unless clear is true: the
-    // receipt's result is what the field then holds, not the typed text.
+    // receipt's result is what the field then holds, not the typed text. A
+    // write by selector or focus is kept by the ref its target check
+    // resolved.
     agent._taskTokens.set(tabId, 'task_append');
     const appendMeta = { type: 'email', name: 'email', id: null, placeholder: 'you@example.com' };
-    const appendField = { ref: '', name: 'email', id: '' };
+    const appendField = { ref: 'ref_404', name: 'email', id: '' };
     agent._rememberPlaceholderWrite(tabId, 'type_text', { text: 'you@example.com' },
-      { success: true, value: 'xyou@example.com', fieldMeta: appendMeta });
+      { success: true, value: 'xyou@example.com', fieldMeta: appendMeta }, 'ref_404');
     assert.equal(agent._placeholderWritten(tabId, appendField, 'you@example.com'), false,
       `${AgentClass.name}: an append was read as replacing the value`);
     agent._rememberPlaceholderWrite(tabId, 'type_text', { text: 'example.com' },
-      { success: true, value: 'you@example.com', fieldMeta: appendMeta });
+      { success: true, value: 'you@example.com', fieldMeta: appendMeta }, 'ref_404');
     assert.equal(agent._placeholderWritten(tabId, appendField, 'you@example.com'), true,
       `${AgentClass.name}: an append that left the placeholder was missed`);
+    // A name and id are not the field: another field (another form, page
+    // or frame) can have the same ones. Only the ref counts, and a write
+    // without one is not kept.
+    assert.equal(agent._placeholderWritten(tabId, { ref: 'ref_505', name: 'email', id: '' }, 'you@example.com'), false,
+      `${AgentClass.name}: a write counted for another field with the same name`);
+    agent._taskTokens.set(tabId, 'task_no_ref');
+    agent._rememberPlaceholderWrite(tabId, 'type_text', { text: 'you@example.com', clear: true },
+      { success: true, value: 'you@example.com', fieldMeta: appendMeta });
+    assert.equal(agent._placeholderWrites.get(tabId)?.task, 'task_append', `${AgentClass.name}: a write without a ref was kept`);
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
     // A long typed value is matched by the first 200 characters the probe
     // reports, though the write's receipt shortens what it read back.
