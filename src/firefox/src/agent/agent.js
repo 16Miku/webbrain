@@ -13,8 +13,8 @@ import { installPageFeedback, beforePageAgentDispatch, hasPageAgentDispatchOwner
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText, systemOneStateBytes } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
-import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, carriesUntrustedText, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
-import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
+import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, autoModePlanForChoice, carriesUntrustedText, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
+import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticDataComplete, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
@@ -133,7 +133,11 @@ import {
   PLANNER_INTENT_RESPONSE_JSON_SCHEMA,
   READ_SCOPE_RESPONSE_JSON_SCHEMA,
   ASK_MODE_HANDOFF_RESPONSE_JSON_SCHEMA,
+  PLAN_LOCALIZATION_RESPONSE_JSON_SCHEMA,
   buildAskModeHandoffMessages,
+  buildPlanLocalizationMessages,
+  canonicalPlanDisplay,
+  localizePlanFromContent,
   parsePlanFromContent,
   parseReadScopeFromContent,
   parseAskModeHandoffFromContent,
@@ -8924,29 +8928,58 @@ export class Agent extends LoopDetector {
    * only, for a check that is not worth a call to the chat model.
    * `retryChoices` are answers that do not settle this question when they come
    * from the cache or the decision model; the active model is asked instead.
+   * `alongside` lists other questions about the same request and data, asked
+   * in the same decision-model request (run_mode with plan_need). Their sure
+   * answers come back as `alongside: { kind: choice | null }` and are
+   * remembered on their own; the active model never answers them. An
+   * authorizing answer among them needs the whole request and data: when
+   * either was cut to fit the decision model, it is not used.
    */
-  async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, retryChoices = [] } = {}) {
+  async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, retryChoices = [], alongside = [] } = {}) {
     const spec = semanticQuestion(kind);
     // Relationship decisions must read the entire latest user message. A
     // prefix-only verdict can mistake a correction or a new task at its end.
-    const trusted = kind === 'user_turn_kind' ? String(request ?? '') : String(request ?? '').slice(0, 6000);
+    const requestText = String(request ?? '');
+    const trusted = kind === 'user_turn_kind' ? requestText : requestText.slice(0, 6000);
     const data = boundedSemanticData(page);
-    const cacheKey = this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, kind, trusted, data]));
+    // Whether a model reads all of it: the request is cut to 6,000 characters
+    // above, and boundedSemanticData shortens long data (an earlier task).
+    const inputComplete = trusted.length === requestText.length && semanticDataComplete(page);
+    // Keyed by the whole request, not the part a model reads, and by whether
+    // the data was cut: inputs that share a cut-off start are different.
+    const keyFor = question => this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, question, requestText, data, inputComplete]));
+    const cacheKey = keyFor(kind);
+    const extraKinds = [...new Set(Array.isArray(alongside) ? alongside : [])].filter(extra => extra !== kind && semanticQuestion(extra));
     this._semanticDecisionCache ??= new Map();
-    const cached = await this._semanticCacheHit(tabId, provider, this._semanticDecisionCache.get(cacheKey));
-    if (cached && !retryChoices.includes(cached.choice)) return { ...cached, source: 'cache' };
     let decisionKey = '';
-    const remember = result => {
-      this._semanticDecisionCache.set(cacheKey, { choice: result.choice, evidence: result.evidence, answeredBy: result.source, decisionKey: result.source === 'decision_model' ? decisionKey : '' });
+    const store = (key, result) => {
+      this._semanticDecisionCache.set(key, { choice: result.choice, evidence: result.evidence, answeredBy: result.source, decisionKey: result.source === 'decision_model' ? decisionKey : '' });
       while (this._semanticDecisionCache.size > 256) this._semanticDecisionCache.delete(this._semanticDecisionCache.keys().next().value);
-      return result;
+    };
+    const extraAnswers = {};
+    const withAlongside = result => (extraKinds.length ? { ...result, alongside: { ...extraAnswers } } : result);
+    for (const extra of extraKinds) {
+      const hit = await this._semanticCacheHit(tabId, provider, this._semanticDecisionCache.get(keyFor(extra)));
+      extraAnswers[extra] = hit?.choice ?? null;
+    }
+    const cached = await this._semanticCacheHit(tabId, provider, this._semanticDecisionCache.get(cacheKey));
+    // A cached answer settles the question, whatever is known about the
+    // questions asked alongside it.
+    if (cached && !retryChoices.includes(cached.choice)) return withAlongside({ ...cached, source: 'cache' });
+    const remember = result => {
+      store(cacheKey, result);
+      return withAlongside(result);
     };
     const runSignal = signal || this._runAbortSignal(tabId);
     const context = this.systemOneContext(tabId);
     try {
       const settings = await this._jevSettings(tabId, provider);
       decisionKey = this._semanticDecisionKey(settings);
-      const decisionText = redactSystemOneText(JSON.stringify({ request: trusted, page: data }));
+      const plainText = JSON.stringify({ request: trusted, page: data });
+      const decisionText = redactSystemOneText(plainText);
+      // What the decision model reads: the input above, with credential lines
+      // and URL queries redacted, then cut to the decision state's budget.
+      const partialInput = !inputComplete || decisionText !== plainText || systemOneStateBytes(decisionText) > 12000;
       // Keep the existing bounded fast route, but use the full-text main
       // model directly when a relationship question cannot fit in it.
       const decisionFits = kind !== 'user_turn_kind' || systemOneStateBytes(decisionText) <= 12000;
@@ -8954,8 +8987,20 @@ export class Agent extends LoopDetector {
         const verdict = await this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 2500, maxRetries: 0 }), {
           config: settings.decisionConfig, apiKey: settings.typesafeApiKey, signal: runSignal,
           state: { context: wrapSystemOneData(boundedSystemOneText(decisionText, 12000)) },
-          questions: { [kind]: semanticSystemOneQuestion(kind) },
+          questions: Object.fromEntries([kind, ...extraKinds].map(question => [question, semanticSystemOneQuestion(question)])),
         }, context);
+        for (const extra of extraKinds) {
+          const extraAnswer = verdict.answers?.[extra];
+          const authorizing = semanticQuestion(extra).authorizing.includes(extraAnswer?.choice);
+          // A part of the input cannot authorize skipping anything the rest
+          // of it might need (plan_need: a payment after the cut).
+          if (authorizing && partialInput) continue;
+          const extraChoice = confidentChoice(extraAnswer, authorizing ? 0.85 : 0.7);
+          if (extraChoice) {
+            extraAnswers[extra] = extraChoice;
+            store(keyFor(extra), { choice: extraChoice, evidence: '', source: 'decision_model' });
+          }
+        }
         const answer = verdict.answers?.[kind];
         const choice = confidentChoice(answer, spec.authorizing.includes(answer?.choice) ? 0.85 : 0.7);
         this.recordSystemOneVerdict(tabId, { decision: choice ? 'semantic' : 'fallback', reason: choice ? kind : `${kind}_low_confidence`,
@@ -8968,7 +9013,7 @@ export class Agent extends LoopDetector {
       if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
       this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `${kind}_${systemOneFailureReason(error)}` }, context);
     }
-    if (!mainModel || !provider?.chat || this._checkAbort(tabId)) return { choice: null, evidence: '', source: 'unavailable' };
+    if (!mainModel || !provider?.chat || this._checkAbort(tabId)) return withAlongside({ choice: null, evidence: '', source: 'unavailable' });
     try {
       const messages = semanticDecisionMessages(kind, trusted, data, text => this._wrapUntrusted('read_page', text));
       const response = await withCompletionTimeout(async completionSignal => {
@@ -8982,7 +9027,7 @@ export class Agent extends LoopDetector {
     } catch (error) {
       if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
     }
-    return { choice: null, evidence: '', source: 'unavailable' };
+    return withAlongside({ choice: null, evidence: '', source: 'unavailable' });
   }
 
   /**
@@ -23326,6 +23371,45 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  // The review settings as the planner prompt states them, so the model
+  // writes its localized copy only for a plan the user will see. A scheduled
+  // run that approves its plans unattended shows none.
+  _plannerReviewPromptPolicy(tabId) {
+    if (this.scheduledRunPolicies?.get?.(tabId)?.autoApprovePlanReview === true) return { mode: 'never' };
+    const mode = this._normalizePlanReviewMode(this.planReviewMode);
+    return mode === 'confidence'
+      ? { mode, threshold: this._normalizePlanReviewConfidenceThreshold(this.planReviewConfidenceThreshold) }
+      : { mode };
+  }
+
+  // A plan the user reads (a review card, a plan-only answer) in a language
+  // other than English, when the planner left out its localized copy: one
+  // small request translates the display fields. Execution keeps the English
+  // plan, and if the translation fails or is incomplete the user sees the
+  // English plan, never what was left of a partial copy.
+  async _localizedPlanForDisplay(tabId, plan, provider, costState, runId = null, runtimeMode = 'act') {
+    if (plan?.localized?.missing !== true) return plan;
+    if (!provider?.chat) return canonicalPlanDisplay(plan);
+    const messages = buildPlanLocalizationMessages(plan);
+    const chatOptions = { ...this._plannerChatOptions(provider, false, false, 'localize'), temperature: 0 };
+    await this._tracePlannerAttemptRequest(runId, 0, provider, messages, 'planner_localize', 1, runtimeMode, chatOptions);
+    const startedAt = Date.now();
+    try {
+      const result = await this._chatWithCostAllowance(provider, messages, chatOptions, costState,
+        { tabId, generationName: 'planner_localize' });
+      await this._tracePlannerAttemptResponse(runId, 0, provider, result, 'planner_localize', 1, startedAt, chatOptions);
+      return localizePlanFromContent(plan, result?.content) || canonicalPlanDisplay(plan);
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
+      // The translation is optional. Any failure, a spent cost allowance
+      // included, leaves the valid plan to show in English; the next paid
+      // request still meets the allowance.
+      const costLimit = this._isCostAllowanceError(error);
+      await this._tracePlannerAttemptFailure(runId, 'planner_localize', 1, error, costLimit ? 'cost_limit' : undefined);
+      return canonicalPlanDisplay(plan);
+    }
+  }
+
   _shouldReviewPlan(plan) {
     const mode = this._normalizePlanReviewMode(this.planReviewMode);
     if (mode === 'always') return true;
@@ -23339,6 +23423,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const mode = this._normalizePlanBeforeActMode(this.planBeforeActMode);
     if (mode === 'off' || this.planBeforeAct === false) return 'off';
     return mode;
+  }
+
+  // Try mode skips the planner for an Act or Dev turn the decision model
+  // routed and was sure is a direct task (plan_need, asked with run_mode).
+  // Strict mode, "always review" and a steering revision keep planning.
+  _routedDirectTask(plannerMode, runOptions = {}) {
+    return plannerMode === 'try'
+      && this._normalizePlanReviewMode(this.planReviewMode) !== 'always'
+      && runOptions?.modeRoute?.plan === 'direct'
+      && runOptions?.steeringRevision == null;
   }
 
   _plannerIsEnabled() {
@@ -23535,7 +23629,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const plannerMode = this._isActionMode(mode) && runOptions?.cloudRun !== true && !standaloneChatRun
       ? this._plannerMode()
       : 'off';
-    const runPlanner = plannerMode !== 'off';
+    // A turn the decision model routed as a direct task skips the planner; the
+    // intent check below still sets the task contract.
+    const directTask = this._routedDirectTask(plannerMode, runOptions);
+    const runPlanner = plannerMode !== 'off' && !directTask;
     const cloudIntent = this._isActionMode(mode) && runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
       && runOptions?.apiMutationsDenied !== true;
     const runIntent = this._isActionMode(mode) && !standaloneChatRun
@@ -23638,6 +23735,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
     } else {
       this.plannerFollowUpSkipTabs.delete(tabId);
+      if (directTask && runId) {
+        try { trace.recordNote(runId, 0, 'planner_skipped', { reason: 'direct_task', plannerMode }); } catch {}
+      }
       gate = runPlanner
         ? await this._runPlannerGate(
           tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, plannerMode, mode, runOptions, followUpContext,
@@ -23776,7 +23876,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _plannerChatOptions(provider, retry = false, intentOnly = false, schemaKind = null, portable = false) {
     const kind = schemaKind || (intentOnly ? 'intent' : 'planner');
-    const plannerBudget = kind === 'alignment' ? (retry ? 4096 : 2048) : (intentOnly ? 2048 : 4096);
+    const plannerBudget = kind === 'alignment' ? (retry ? 4096 : 2048) : (intentOnly || kind === 'localize' ? 2048 : 4096);
     const opts = {
       temperature: retry ? 0.1 : 0.3,
       maxTokens: Math.min(this._providerMaxOutputTokens(provider), plannerBudget),
@@ -23784,6 +23884,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!portable) {
       const schema = kind === 'alignment'
         ? PLANNER_ALIGNMENT_RESPONSE_JSON_SCHEMA
+        : kind === 'localize'
+        ? PLAN_LOCALIZATION_RESPONSE_JSON_SCHEMA
         : kind === 'read_scope'
         ? READ_SCOPE_RESPONSE_JSON_SCHEMA
         : (kind === 'ask_mode_handoff'
@@ -24308,7 +24410,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     this._autoModeEscalationTabs.add(tabId);
     this._autoModeRoutePendingTabs.add(tabId);
-    return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode, ...(continuation ? { continuedTask } : {}) } } };
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+    return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode, ...(continuation ? { continuedTask } : {}),
+      ...(hasAttachments ? { hasAttachments } : {}) } } };
+  }
+
+  // plan_need's answer as the planner gate may use it. "direct" counts only
+  // when the question held everything the task is about: attached files (a
+  // CSV of contacts to import) and a continued run's earlier work are not in
+  // it, so those turns keep the planner.
+  _routePlanSignal(choice, { hasAttachments = false, continuation = false } = {}) {
+    const plan = autoModePlanForChoice(choice);
+    return plan === 'direct' && (hasAttachments || continuation) ? null : plan;
   }
 
   // The user's own words of the task a continuation resumes: its request and
@@ -24340,19 +24453,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  // The decision model's `run_mode` answer for a routed turn. It never asks
-  // the main model and never rejects: without a sure answer the turn starts
-  // read-only.
+  // The decision model's `run_mode` answer for a routed turn, and in the same
+  // request its `plan_need` answer (whether an action turn needs the planner).
+  // It never asks the main model and never rejects: without a sure answer the
+  // turn starts read-only.
   async _routeAutoRunMode(tabId, question) {
     const startedAt = Date.now();
     try {
-      const verdict = await this._semanticDecision(tabId, 'run_mode', question, { mainModel: false });
+      const verdict = await this._semanticDecision(tabId, 'run_mode', question, { mainModel: false, alongside: ['plan_need'] });
       const tier = this._resolvePromptTier(this._activeProvider(tabId));
+      const plan = autoModePlanForChoice(verdict.alongside?.plan_need);
       return {
         mode: autoModeForChoice(verdict.choice, { tier }),
         choice: verdict.choice || null,
         source: verdict.choice ? verdict.source : 'ask_first',
         latencyMs: Date.now() - startedAt,
+        ...(plan ? { plan } : {}),
       };
     } catch {
       return { mode: 'ask', choice: null, source: 'ask_first', latencyMs: Date.now() - startedAt };
@@ -24400,6 +24516,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           choice: routed.choice ?? null,
           routeMs: Number.isFinite(routed.latencyMs) ? routed.latencyMs : null,
           waitedMs: Date.now() - waitStartedAt,
+          // plan_need for an action turn (_routedDirectTask).
+          ...(() => {
+            const plan = mode === 'ask' ? null : this._routePlanSignal(routed.plan, {
+              hasAttachments: runOptions?.autoModeRouting?.hasAttachments === true,
+              continuation: runOptions?.trustedContinuation === true,
+            });
+            return plan ? { plan } : {};
+          })(),
         },
       },
     };
@@ -24445,7 +24569,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const base = question || { request, page: {} };
     const asked = corrections.length ? { ...base, request: corrected(corrections) } : base;
     // A sure "answer" from routing settles it; an "unclear" one asks again.
-    const verdict = await this._semanticDecision(tabId, 'run_mode', asked, { provider, retryChoices: ['unclear'] });
+    // plan_need rides along for the action run the hand-off restarts.
+    const verdict = await this._semanticDecision(tabId, 'run_mode', asked, { provider, retryChoices: ['unclear'], alongside: ['plan_need'] });
     const latest = this._autoModeTurnCorrections(tabId, messages, snapshot);
     if (latest.length !== corrections.length || latest.some((item, index) => item.id !== corrections[index].id)) {
       return { superseded: true };
@@ -24454,7 +24579,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!mode) {
       return { refusal: 'request_action_mode was refused: read on its own, the user\'s request does not ask for browser actions. Answer it read-only.' };
     }
-    return { accepted: { mode, evidence: requested.evidence }, corrections };
+    const plan = autoModePlanForChoice(verdict.alongside?.plan_need);
+    return { accepted: { mode, evidence: requested.evidence, ...(plan ? { plan } : {}) }, corrections };
   }
 
   // The conversation and per-tab turn state before a routed turn gathers its
@@ -24754,8 +24880,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // A scheduled task run executes an already scheduled task: the planner is
     // told so, and its scheduling tag must not turn into a state-change
     // requirement (see the planner).
+    // The compact intent check writes no steps for execute work (planner.js).
     const plannerParseOptions = {
-      requireIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true,
+      requireIntent: true, compactIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true,
       scheduledTask: runOptions?.scheduledRun === true && runOptions?.scheduledResume !== true,
     };
     const recheckOnly = runOptions?.plannerIntentRecheckOnly === true;
@@ -24893,9 +25020,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       if (plan.request_kind !== 'execute') {
+        // The user reads this answer: in their language.
+        const shown = await this._localizedPlanForDisplay(tabId, plan, provider, costState, runId, runtimeMode);
+        if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
+        // A correction sent while the translation ran is applied, not answered.
+        if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+          return { proceed: false, steeringSuperseded: true };
+        }
         return {
           proceed: false,
-          message: this._plannerTerminalMessage(plan),
+          message: this._plannerTerminalMessage(shown),
           reason: plan.request_kind,
           requestKind: plan.request_kind,
           plannerClarification: plan.request_kind === 'clarify',
@@ -25049,6 +25183,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       plannerClarification: followUpContext.plannerClarification,
       researchEscalationEnabled: this.researchEscalationEnabled,
       siteWorkflow: this._adapterWorkflowRoutingForUrl(tabUrl),
+      planReview: this._plannerReviewPromptPolicy(tabId),
     });
     const plannerStep = 0;
 
@@ -25179,7 +25314,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
         return { proceed: false, steeringSuperseded: true };
       }
-      const routeNonExecutionPlan = candidate => {
+      const routeNonExecutionPlan = async candidate => {
         if (candidate.request_kind === 'respond') {
           return {
             proceed: true,
@@ -25190,9 +25325,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         }
         if (candidate.request_kind !== 'execute') {
+          // The user reads this answer: in their language.
+          const shown = await this._localizedPlanForDisplay(tabId, candidate, provider, costState, runId, runtimeMode);
+          if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+          // A correction sent while the translation ran is applied, not answered.
+          if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+            return { proceed: false, steeringSuperseded: true };
+          }
           return {
             proceed: false,
-            message: this._plannerTerminalMessage(candidate),
+            message: this._plannerTerminalMessage(shown),
             reason: candidate.request_kind,
             requestKind: candidate.request_kind,
             plannerClarification: candidate.request_kind === 'clarify',
@@ -25227,7 +25369,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._tracePlannerCompletionRequirementCorrection(runId, plan, 'planner');
       const initialIntentGate = await recheckReadOnlyFollowUpIntent(plan);
       if (initialIntentGate) return initialIntentGate;
-      const initialNonExecutionGate = routeNonExecutionPlan(plan);
+      const initialNonExecutionGate = await routeNonExecutionPlan(plan);
       if (initialNonExecutionGate) return initialNonExecutionGate;
 
       // History helps legitimate follow-ups, but a high confidence score cannot
@@ -25359,7 +25501,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             alignmentReplanned = true;
             // A validated correction can remove execution entirely. Preserve
             // its normal terminal route without pinning or approving a plan.
-            const correctedNonExecutionGate = routeNonExecutionPlan(plan);
+            const correctedNonExecutionGate = await routeNonExecutionPlan(plan);
             if (correctedNonExecutionGate) return correctedNonExecutionGate;
           }
         } catch (alignmentError) {
@@ -25443,12 +25585,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       plan.skill_ids = (plan.skill_ids || []).filter((skillId) => eligibleSkillIds.has(skillId));
 
       const planId = `plan_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const scheduledPolicy = this.scheduledRunPolicies.get(tabId);
+      const scheduledAutoApprove = scheduledPolicy?.autoApprovePlanReview === true;
+      const reviewPlan = !scheduledAutoApprove && this._shouldReviewPlan(plan);
+      if (reviewPlan) {
+        // The review card is read in the user's language.
+        plan = await this._localizedPlanForDisplay(tabId, plan, provider, costState, runId, runtimeMode);
+        if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+      }
       const markdown = formatPlanMarkdown(plan, { localized: true });
       const verboseMarkdown = formatPlanMarkdown(plan, { verbose: true, localized: true });
       const canonicalVerboseMarkdown = formatPlanMarkdown(plan, { verbose: true });
-      const scheduledPolicy = this.scheduledRunPolicies.get(tabId);
-      const scheduledAutoApprove = scheduledPolicy?.autoApprovePlanReview === true;
-      if (scheduledAutoApprove || !this._shouldReviewPlan(plan)) {
+      if (!reviewPlan) {
         // Confidence-gated skips leave a visible trace in the conversation so
         // the run isn't silent; scheduled runs stay quiet as before.
         if (!scheduledAutoApprove) {
@@ -46295,7 +46443,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           corrections: carried.map(item => item.text), correctionIds: carried.map(item => item.id) } };
       }
     } else if (runOptions?.modeEscalation && isRunMode(mode)) {
-      runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation' } };
+      const plan = this._routePlanSignal(runOptions.modeEscalation.plan, {
+        hasAttachments: Array.isArray(attachments) && attachments.length > 0,
+        continuation: runOptions?.trustedContinuation === true,
+      });
+      runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation', ...(plan ? { plan } : {}) } };
       onUpdate('run_mode', { mode, source: 'escalation' });
       this._takeModeEscalationSteering(tabId);
     } else {

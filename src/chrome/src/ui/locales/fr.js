@@ -955,7 +955,7 @@ export default {
   'st.display.openai_ask_streaming.label': "Diffuser les r?ponses en mode Ask",
   'st.display.openai_ask_streaming.desc': "Afficher les r?ponses du fournisseur au fil de leur arriv?e en mode Ask. Les appels d?outils attendent un ?v?nement terminal du flux ; Act, Dev, les ex?cutions planifi?es, cloud et Continue restent sans diffusion. Activ? par d?faut.",
   'st.display.plan_before_act.label': 'Planifier avant d\'agir',
-  'st.display.plan_before_act.desc': "Les modes Act et Dev effectuent toujours une vérification structurée de l’intention avant les outils. Essai (par défaut) crée aussi des plans complets, mais peut réutiliser un plan récemment approuvé pour un bref suivi ; Strict crée un plan complet à chaque tour. Essai retente une fois puis, si l’intention ou le plan reste invalide, continue en mode Act avec un avertissement ; Strict s’arrête avant les outils.",
+  'st.display.plan_before_act.desc': "Les modes Act et Dev effectuent toujours une vérification structurée de l’intention avant les outils. Essai (par défaut) crée aussi des plans complets, mais peut réutiliser un plan récemment approuvé pour un bref suivi ; Strict crée un plan complet à chaque tour. Essai retente une fois puis, si l’intention ou le plan reste invalide, continue en mode Act avec un avertissement ; Strict s’arrête avant les outils. Quand Auto choisit Act ou Dev pour un message et est sûr qu’il s’agit d’une tâche courte et directe, Essai saute le plan complet.",
   'st.display.plan_before_act.try': 'Essayer la planification (par défaut)',
   'st.display.plan_before_act.strict': 'Planification stricte',
   'st.display.plan_before_act.off': 'Désactivé',

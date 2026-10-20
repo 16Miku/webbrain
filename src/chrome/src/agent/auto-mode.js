@@ -11,7 +11,9 @@
 //      Ask; and a video attachment, which can only be uploaded, needs Act.
 //   2. Otherwise the decision model answers the `run_mode` question while the
 //      page context is gathered. The turn waits for it at most
-//      AUTO_MODE_ROUTE_GRACE_MS after that context is ready.
+//      AUTO_MODE_ROUTE_GRACE_MS after that context is ready. The same request
+//      asks `plan_need`: a turn routed to Act or Dev that it is sure is a
+//      direct task skips the planner in Try mode (agent._routedDirectTask).
 //   3. Without a sure answer the turn starts in Ask, read-only. The main
 //      model can call `request_action_mode`, quoting the user's own words.
 //      Because that model has read the page, the hand-off counts only when
@@ -72,6 +74,12 @@ export function autoModeHardRoute({
 export function autoModeForChoice(choice, { tier = '' } = {}) {
   if (choice === 'act' || choice === 'dev') return actionModeForTier(choice, tier);
   return 'ask';
+}
+
+// What a sure `plan_need` answer (asked with `run_mode`) says about an action
+// turn: "direct" needs no planner, "plan" does; null when it was not sure.
+export function autoModePlanForChoice(choice) {
+  return choice === 'direct' || choice === 'plan' ? choice : null;
 }
 
 // Waits for the route until `graceMs` have passed, then goes on read-only.

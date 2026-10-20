@@ -3570,7 +3570,7 @@ async function handleMessage(msg, sender) {
             const readOnly = reroute && restarts >= 2;
             result = await agent.processMessage(tabId, msg.text, publishUpdate, reroute ? 'auto' : escalation.mode, msg.attachments, {
               ...runOptions,
-              modeEscalation: { mode: escalation.mode, ...(reroute ? { reroute: true } : {}), ...(readOnly ? { readOnly: true } : {}) },
+              modeEscalation: { mode: escalation.mode, ...(escalation.plan ? { plan: escalation.plan } : {}), ...(reroute ? { reroute: true } : {}), ...(readOnly ? { readOnly: true } : {}) },
             });
             escalation = reroute && !readOnly ? agent.takeModeEscalation(tabId) : null;
           }
@@ -3740,7 +3740,7 @@ async function handleMessage(msg, sender) {
           const readOnly = reroute && restarts >= 2;
           result = await agent.continueProcessing(tabId, publishUpdate, reroute ? 'auto' : escalation.mode, {
             ...runOptions,
-            modeEscalation: { mode: escalation.mode, ...(reroute ? { reroute: true } : {}), ...(readOnly ? { readOnly: true } : {}) },
+            modeEscalation: { mode: escalation.mode, ...(escalation.plan ? { plan: escalation.plan } : {}), ...(reroute ? { reroute: true } : {}), ...(readOnly ? { readOnly: true } : {}) },
           });
           escalation = reroute && !readOnly ? agent.takeModeEscalation(tabId) : null;
         }

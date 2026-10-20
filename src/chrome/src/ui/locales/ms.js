@@ -955,7 +955,7 @@ export default {
   'st.display.openai_ask_streaming.label': "Strim respons dalam mod Ask",
   'st.display.openai_ask_streaming.desc': "Paparkan respons penyedia sebaik sahaja diterima dalam mod Ask. Panggilan alat menunggu peristiwa akhir strim; tugas Act, Dev, berjadual, awan dan Continue kekal tanpa penstriman. Dihidupkan secara lalai.",
   'st.display.plan_before_act.label': 'Rancang sebelum Bertindak',
-  'st.display.plan_before_act.desc': "Mod Act dan Dev sentiasa menjalankan semakan niat berstruktur sebelum alatan. Cuba (lalai) turut membina rancangan penuh tetapi boleh menggunakan semula rancangan yang baru diluluskan untuk susulan ringkas; Ketat membina rancangan penuh setiap giliran. Cuba mengulang sekali, kemudian meneruskan dalam mod Act dengan amaran jika niat atau rancangan masih tidak sah; Ketat berhenti sebelum alatan.",
+  'st.display.plan_before_act.desc': "Mod Act dan Dev sentiasa menjalankan semakan niat berstruktur sebelum alatan. Cuba (lalai) turut membina rancangan penuh tetapi boleh menggunakan semula rancangan yang baru diluluskan untuk susulan ringkas; Ketat membina rancangan penuh setiap giliran. Cuba mengulang sekali, kemudian meneruskan dalam mod Act dengan amaran jika niat atau rancangan masih tidak sah; Ketat berhenti sebelum alatan. Apabila Auto memilih Act atau Dev untuk sesuatu mesej dan pasti ia tugas ringkas yang terus, Cuba melangkau rancangan penuh.",
   'st.display.plan_before_act.try': 'Cuba perancangan (lalai)',
   'st.display.plan_before_act.strict': 'Perancangan ketat',
   'st.display.plan_before_act.off': 'Mati',

@@ -931,7 +931,7 @@ export default {
   'st.display.openai_ask_streaming.label': '在 Ask 模式中流式显示回复',
   'st.display.openai_ask_streaming.desc': '对于支持的提供商，在 Ask 模式中随内容到达显示文本。中断的流会显示提示，并自动以非流式方式重试一次；提供商/API 错误仍会显示。工具调用会等待流完成；Act、Dev、计划任务、云端和 Continue 运行保持非流式。默认开启。',
   'st.display.plan_before_act.label': '在执行前规划',
-  'st.display.plan_before_act.desc': "Act 和 Dev 模式在使用工具前始终执行结构化意图检查。尝试（默认）还会生成完整计划，但在简短跟进中可复用最近批准的计划；严格模式每轮都生成完整计划。如果意图或计划仍无效，尝试模式会再试一次，然后显示警告并继续以 Act 模式运行；严格模式会在使用工具前停止。",
+  'st.display.plan_before_act.desc': "Act 和 Dev 模式在使用工具前始终执行结构化意图检查。尝试（默认）还会生成完整计划，但在简短跟进中可复用最近批准的计划；严格模式每轮都生成完整计划。如果意图或计划仍无效，尝试模式会再试一次，然后显示警告并继续以 Act 模式运行；严格模式会在使用工具前停止。当自动为某条消息选择 Act 或 Dev，并确定这是一个简短、直接的任务时，尝试模式会跳过完整计划。",
   'st.display.plan_before_act.try': '尝试规划（默认）',
   'st.display.plan_before_act.strict': '严格规划',
   'st.display.plan_before_act.off': '关闭',

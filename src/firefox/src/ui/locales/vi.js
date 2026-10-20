@@ -778,7 +778,7 @@ export default {
   'st.display.openai_ask_streaming.label': "Truy?n tr?c tuy?n c?u tr? l?i ? ch? ?? Ask",
   'st.display.openai_ask_streaming.desc': "Hi?n th? c?u tr? l?i c?a nh? cung c?p ngay khi nh?n ???c trong ch? ?? Ask. L?nh g?i c?ng c? ch? s? ki?n k?t th?c lu?ng; c?c l?n ch?y Act, Dev, theo l?ch, ??m m?y v? Continue v?n kh?ng ph?t tr?c tuy?n. B?t theo m?c ??nh.",
   'st.display.plan_before_act.label': "Lập kế hoạch trước khi hành động",
-  'st.display.plan_before_act.desc': "Chế độ Act và Dev luôn kiểm tra ý định có cấu trúc trước khi dùng công cụ. Thử (mặc định) cũng tạo kế hoạch đầy đủ nhưng có thể dùng lại kế hoạch vừa được phê duyệt cho một lượt theo dõi ngắn; Nghiêm ngặt tạo kế hoạch đầy đủ ở mỗi lượt. Thử sẽ thử lại một lần rồi tiếp tục ở chế độ Act kèm cảnh báo nếu ý định hoặc kế hoạch vẫn không hợp lệ; Nghiêm ngặt dừng trước khi dùng công cụ.",
+  'st.display.plan_before_act.desc': "Chế độ Act và Dev luôn kiểm tra ý định có cấu trúc trước khi dùng công cụ. Thử (mặc định) cũng tạo kế hoạch đầy đủ nhưng có thể dùng lại kế hoạch vừa được phê duyệt cho một lượt theo dõi ngắn; Nghiêm ngặt tạo kế hoạch đầy đủ ở mỗi lượt. Thử sẽ thử lại một lần rồi tiếp tục ở chế độ Act kèm cảnh báo nếu ý định hoặc kế hoạch vẫn không hợp lệ; Nghiêm ngặt dừng trước khi dùng công cụ. Khi Tự động chọn Act hoặc Dev cho một tin nhắn và chắc chắn đó là một việc ngắn, trực tiếp, Thử sẽ bỏ qua kế hoạch đầy đủ.",
   'st.display.plan_before_act.try': "Hãy thử lập kế hoạch (mặc định)",
   'st.display.plan_before_act.strict': "Quy hoạch chặt chẽ",
   'st.display.plan_before_act.off': "Tắt",

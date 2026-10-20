@@ -761,7 +761,7 @@ export default {
   'st.display.openai_ask_streaming.label': 'Ask-antwoorden streamen',
   'st.display.openai_ask_streaming.desc': 'Toon tekst van ondersteunde providers zodra deze binnenkomt in Ask-modus. Onderbroken streams tonen een melding en worden eenmaal opnieuw geprobeerd zonder streaming. Toolaanroepen wachten op het einde van de stream; Act-, Dev-, geplande, cloud- en Continue-runs blijven niet-streamend. Standaard ingeschakeld.',
   'st.display.plan_before_act.label': 'Plannen voor Handelen',
-  'st.display.plan_before_act.desc': "Act en Dev voeren vóór tools altijd een gestructureerde intentiecontrole uit. Proberen (standaard) maakt ook volledige plannen, maar kan bij een korte vervolgvraag een onlangs goedgekeurd plan hergebruiken; Strikt maakt elke beurt een volledig plan. Proberen probeert het één keer opnieuw en gaat daarna met een waarschuwing verder in Act als de intentie of planning nog ongeldig is; Strikt stopt vóór de tools.",
+  'st.display.plan_before_act.desc': "Act en Dev voeren vóór tools altijd een gestructureerde intentiecontrole uit. Proberen (standaard) maakt ook volledige plannen, maar kan bij een korte vervolgvraag een onlangs goedgekeurd plan hergebruiken; Strikt maakt elke beurt een volledig plan. Proberen probeert het één keer opnieuw en gaat daarna met een waarschuwing verder in Act als de intentie of planning nog ongeldig is; Strikt stopt vóór de tools. Als Auto voor een bericht Act of Dev kiest en zeker weet dat het een korte, directe taak is, slaat Proberen het volledige plan over.",
   'st.display.plan_before_act.try': 'Probeer plannen (standaard)',
   'st.display.plan_before_act.strict': 'Strikte planning',
   'st.display.plan_before_act.off': 'Uit',

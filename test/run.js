@@ -114399,7 +114399,11 @@ test('planner: canonical fields recover missing and partial localization without
       steps: [],
       risks: [],
     }), { requireIntent: true, locale: 'tr' });
-    assert.equal(malformedClarification, null, `${label}: clarification without the actual localized question bypassed repair`);
+    // Kept and marked for translation: the agent translates the question
+    // before asking it (agent._localizedPlanForDisplay), instead of failing
+    // the plan and continuing in Act.
+    assert.equal(malformedClarification?.request_kind, 'clarify', `${label}: clarification without its localized question was discarded`);
+    assert.equal(malformedClarification?.localized.missing, true, `${label}: clarification without its localized question is not marked for translation`);
 
   }
 });
@@ -115356,7 +115360,7 @@ test('planner: prompt treats page context as untrusted data', () => {
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /How should I respond to this open email\?.*execute/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /respond must not include steps that need page, browser, network, memory, or scheduling tools/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /Do not speculate that required personal information is missing/i);
-  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /classify execute and make the need to clarify after inspection explicit/i);
+  assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /Otherwise classify execute; the agent asks after inspection when the value is still missing/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT, /clarify pauses execution.*done is terminal.*never be used to request information/i);
   assert.match(PLANNER_SYSTEM_PROMPT_FX, /lacks usable timing or cadence.*clarify/i);
   assert.match(PLANNER_INTENT_SYSTEM_PROMPT_FX, /Calendar\/cron recurrence.*unsupported/i);
