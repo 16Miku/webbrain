@@ -930,7 +930,7 @@ export default {
   "st.display.strict_guards.label": "Katı denetimler",
   "st.display.strict_guards.desc": "Kapalı (varsayılan): bir eylemi yalnızca WebBrain’in veri silme, para harcama, kimlik bilgileri, yanlış alıcı ve istemediğiniz bir şeyi yayınlama ile ilgili denetimleri durdurabilir; diğer denetimler görevler takılmasın diye modele not olarak iletilir. Açık: önceden olduğu gibi her denetim, eylemi doğrulayamadığında durdurur.",
   "st.display.lean_mode.label": "Yalın mod",
-  "st.display.lean_mode.desc": "Güçlü modeller için: daha az araç, daha kısa bir istem ve yazılanların ya da biten görevlerin otomatik denetimi yok; model kendi işini kendisi kontrol eder. Aynı izin ve güvenlik sınırları geçerli kalır: mesajın alıcısı, veri silme, para harcama, kimlik bilgileri, istemediğiniz bir şeyi yayınlama ve site izinleri. Otomatik (varsayılan), güçlü bulut modellerinde açar; yerel ve daha küçük modellerde kapalı tutar. Yalnızca “Uygula” modunda geçerlidir; açıkken “Katı denetimler” uygulanmaz.",
+  "st.display.lean_mode.desc": "Güçlü modeller için: yazılanların ya da biten görevlerin otomatik denetimi yok; model kendi işini kendisi kontrol eder. Aynı izin ve güvenlik sınırları geçerli kalır: mesajın alıcısı, veri silme, para harcama, kimlik bilgileri, istemediğiniz bir şeyi yayınlama ve site izinleri. Otomatik (varsayılan), güçlü bulut modellerinde açar; yerel ve daha küçük modellerde kapalı tutar. Yalnızca “Uygula” modunda geçerlidir; açıkken “Katı denetimler” uygulanmaz.",
   "st.display.lean_mode.auto": "Otomatik",
   "st.display.lean_mode.on": "Açık",
   "st.display.lean_mode.off": "Kapalı",

@@ -18,7 +18,7 @@ import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer,
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
-import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_ACT_LEAN, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
+import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
 import { validateToolArguments } from './tool-arguments.js';
@@ -63,7 +63,7 @@ import { buildGithubStargazerProgressItems } from './observers/github-stargazers
 import { analyzeMastodonPage, isMastodonPageUrl, mastodonHandoffInstruction, mastodonPageLabels, mastodonProgressGuard, mastodonTaskDomains } from './observers/mastodon.js';
 import { PROGRESS_ACTIONS, isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, didCompletionActionExecute, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, isCompletionActionTool, publicationDetailResource, publicationReplyParent, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
-import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, isGmailChatRoute, isNativeChatClientUrl, isPublicComposerRoute, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
+import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, isGmailChatRoute, isPublicComposerRoute, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
 import {
   invalidateWorkflowInventoryCompleteness,
@@ -722,7 +722,7 @@ export class Agent extends LoopDetector {
     this._guardRunStates = new Map();
     // Settings → Advanced → "Lean mode": 'auto' (default) | 'on' | 'off'. A run
     // resolves it once at its start (_beginLeanRun) and keeps the answer in
-    // _leanRuns, so its tools, prompt and guards agree. See lean-mode.js.
+    // _leanRuns, so its prompt note and guards agree. See lean-mode.js.
     this.leanMode = 'auto';
     this._leanRuns = new Map();
     // Advisory lists a run's calls carry, by owning tab, so a guard that is
@@ -12430,9 +12430,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _captchaToolsAvailable(tabId, mode = this._effectiveRunMode(tabId, 'act'), tier = this._resolvePromptTier()) {
-    // Lean mode offers no CAPTCHA tools: a challenge goes to the user, as on
-    // the Compact tier.
-    return this._isActionMode(mode) && ['mid', 'full'].includes(tier) && !this._leanRunActive(tabId);
+    // Lean mode keeps the tier's tools, the CAPTCHA tools included.
+    return this._isActionMode(mode) && ['mid', 'full'].includes(tier);
   }
 
   _captchaGateForTools(tabId, gate) {
@@ -32381,12 +32380,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return `${SYSTEM_PROMPT_ACT}\n\n${this.imageGenConfigured ? SYSTEM_PROMPT_GENERATIVE_MEDIA : GENERATIVE_MEDIA_SETUP_NOTE}`;
   }
 
-  // Lean mode's Act prompt. Image generation guidance is added only when
-  // generate_image is offered; the full prompt's setup note is not.
-  _getLeanActPrompt() {
-    return this.imageGenConfigured ? `${SYSTEM_PROMPT_ACT_LEAN}\n\n${SYSTEM_PROMPT_GENERATIVE_MEDIA}` : SYSTEM_PROMPT_ACT_LEAN;
-  }
-
   setBrowserBatchEnabled(enabled) {
     const next = enabled !== false;
     if (this.browserBatchEnabled === next) return;
@@ -32513,13 +32506,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let provider = null;
     try { provider = this._activeProvider(tabId); } catch {}
     const tier = this._resolvePromptTier(provider);
-    // Lean mode (Act only) swaps in its short prompt and drops the guidance
-    // for tools it does not offer (batching, WebMCP, research escalation,
-    // CAPTCHA solving).
-    const lean = this._leanPromptActive(tabId, mode, provider);
-    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK
-      : lean ? this._getLeanActPrompt() : this._getActPrompt(provider);
-    if (tier !== 'compact' && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled, lean })
+    // Lean mode (Act only) keeps the tier's prompt and tools. WebBrain skips
+    // its quality checks in a lean run, so one note asks the model to check
+    // its own work.
+    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK : this._getActPrompt(provider);
+    if (this._isActionMode(mode) && this._leanPromptActive(tabId, mode, provider)) prompt += `\n\n${SYSTEM_PROMPT_LEAN_NOTE}`;
+    if (tier !== 'compact' && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
         .some(tool => tool.function.name === 'browser_batch')) prompt += `\n\n${SYSTEM_PROMPT_BATCHING}`;
     const botMemory = tabId == null ? null : this._botMemorySessions.get(tabId);
     if (botMemory) prompt += `\n\n${botMemory.systemNote()}\n\n${this._wrapUntrusted('bot_memory_observe', botMemory.contextData())}`;
@@ -32552,7 +32544,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
-    if (this.researchEscalationEnabled && !lean) {
+    if (this.researchEscalationEnabled) {
       // Ask's clarify is only the ChatGPT consent card, so its note must not
       // send the model there for an ordinary missing-constraint question.
       prompt += `\n\n${researchEscalationSystemNote(this._isActionMode(mode) ? 'act' : 'ask')}`;
@@ -32574,7 +32566,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const memoryPrompt = formatUserMemoryPrompt(this.userMemoryRecords, this.userMemoryMaxPromptChars);
       if (memoryPrompt) prompt += `\n\n${memoryPrompt}`;
     }
-    if (this.captchaSolverEnabled && !lean && this._captchaToolsAvailable(tabId, mode, tier)) {
+    if (this.captchaSolverEnabled && this._captchaToolsAvailable(tabId, mode, tier)) {
       prompt += `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. Enabled coverage: ${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'recaptcha_v2')) ? 'reCAPTCHA v2/v3 including Enterprise, Turnstile, and image CAPTCHAs. ' : ''}${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'hcaptcha')) ? 'hCaptcha via NopeCHA or NoneCap. ' : 'hCaptcha requires manual completion. '} For other CAPTCHA families, call get_captcha_capabilities, inspect the chosen method schemas, and supply providerTasks to solve_captcha with inject:false. All documented token, recognition, cookie, and structured-answer methods are available through that route. Supply observed inputs for each compatible enabled provider so weight-based fallback can run. Apply the answer with apply_captcha_solution. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If neither automatic nor native inputs can be obtained, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha. These limits apply per challenge: a new CAPTCHA that appears later, such as after a submit or on a newly loaded page, is a separate challenge. Read the page and solve it once with solve_captcha before asking the user.]`;
     }
     // Ordinary turns get the one-line rendering; the full block is reserved for
@@ -46969,8 +46961,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const sourceBoundAttachments = selectionOnly ? [] : attachments;
     if (sourceBoundAttachments && sourceBoundAttachments.length) {
       const attachmentToolNames = new Set(
-        getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled, tier: provider.promptTier, imageGenConfigured: this.imageGenConfigured,
-          lean: this._leanRunActive(tabId) })
+        getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled, tier: provider.promptTier, imageGenConfigured: this.imageGenConfigured })
           .map(tool => tool?.function?.name)
           .filter(Boolean),
       );
@@ -47088,7 +47079,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
     const cloudRunContext = this.cloudRunContexts.get(tabId) || null;
     let tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
-      lean: this._leanRunActive(tabId),
       strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
       tier,
       imageGenConfigured: this.imageGenConfigured,
@@ -47101,7 +47091,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
-      nativeChatTools: isNativeChatClientUrl(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
       autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
     });
@@ -47367,7 +47356,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
       tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
-        lean: this._leanRunActive(tabId),
         strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
         tier,
         imageGenConfigured: this.imageGenConfigured,
@@ -47380,7 +47368,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
         carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
-        nativeChatTools: isNativeChatClientUrl(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
         autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
       });
@@ -48584,7 +48571,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
     const cloudRunContext = this.cloudRunContexts.get(tabId) || null;
     let tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
-      lean: this._leanRunActive(tabId),
       strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
       tier,
       imageGenConfigured: this.imageGenConfigured,
@@ -48597,7 +48583,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
       carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
-      nativeChatTools: isNativeChatClientUrl(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
     });
     // Match the non-streaming path: selection-grounded turns are tool-free so
@@ -48699,7 +48684,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
       tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
-        lean: this._leanRunActive(tabId),
         strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
         tier,
         imageGenConfigured: this.imageGenConfigured,
@@ -48712,7 +48696,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         watchBeep: this.scheduledRunPolicies.get(tabId)?.watch?.beep === true,
         carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
-        nativeChatTools: isNativeChatClientUrl(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
       });
       tools = this._botMemoryRunTools(tabId, tools);

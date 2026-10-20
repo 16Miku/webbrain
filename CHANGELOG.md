@@ -6,8 +6,11 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+## [42.3.1] - 2026-10-20
+
 ### Changed
 - The green or red dot that shows whether your chat model answers now sits on the corner of the composer's engine icon, inside the model menu button. It used to sit after the menu's arrow, where it looked like part of the menu but did nothing when clicked; clicking it now opens the model menu. Screen readers hear the connection status, or that it is being checked, as the button's description.
+- Lean mode now only turns off WebBrain's checks of the model's work. A lean Act run keeps its tier's tools and prompt, with one added note asking the model to check its own work. Before, it also cut the tools to a short list with no way to download a file, so a lean run could not attach a file it first had to download, such as release assets on GitHub, and it had no batching, WebMCP, research escalation or CAPTCHA solver. The Settings description no longer mentions fewer tools or a shorter prompt.
 
 ## [42.3.0] - 2026-10-20
 
