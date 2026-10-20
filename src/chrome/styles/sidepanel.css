@@ -2699,13 +2699,15 @@ html[dir="rtl"] .language-picker-menu {
   }
 }
 
-.activity-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+/* The working indicator (activity-brain.js) draws into a 22px canvas. The
+   negative margin leaves it the old 14px spinner's footprint, so the bar keeps
+   its height and the label stays where it was. */
+.activity-brain {
+  display: block;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin: -4px;
 }
 
 @keyframes spin {
