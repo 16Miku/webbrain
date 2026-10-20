@@ -82779,6 +82779,15 @@ test('a field holding its own placeholder text is not submitted', async () => {
     await submit('other-field');
     assert.equal(prompts, 7, `${AgentClass.name}: a write to one field counted for another`);
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
+    // A long typed value is matched by the first 200 characters the probe
+    // reports, though the write's receipt shortens what it read back.
+    const longText = `Tell us about your project ${'in as much detail as you can '.repeat(8)}`.trim();
+    agent.currentRunId.set(tabId, 'long-run');
+    agent._rememberPlaceholderWrite(tabId, 'set_field', { ref_id: 'ref_303', text: longText },
+      { success: true, value: longText.slice(0, 100), fieldMeta: { type: 'textarea', name: 'about', id: null, placeholder: longText } });
+    field = { label: 'About', placeholder: longText.slice(0, 200), value: longText.slice(0, 200), changed: false, ref: 'ref_303', name: 'about', id: '' };
+    assert.equal((await submit('long-write')).placeholderValue, true, `${AgentClass.name}: a long write was missed`);
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
     agent.currentRunId.set(tabId, 'next-run');
     await submit('next-run');
     assert.equal(prompts, 8, `${AgentClass.name}: a write from another run still counted`);

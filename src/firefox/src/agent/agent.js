@@ -29904,11 +29904,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const matches = owned.filter(el => /^(?:INPUT|TEXTAREA)$/i.test(String(el?.tagName || ''))).slice(0, 5000).flatMap(el => {
             const type = String(el.type || '').toLowerCase();
             if (['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio', 'file', 'password'].includes(type)) return [];
-            const placeholder = compact(el.getAttribute?.('placeholder') || '', 200);
-            const value = pendingEl && el === pendingEl ? compact(pendingValue, 200) : compact(el.value || '', 200);
-            const changed = el === pendingEl || (!!value && value !== defaultValue(el));
+            // Whole values decide; only what is returned is shortened.
+            const whole = text => String(text ?? '').replace(/\s+/g, ' ').trim();
+            const placeholder = whole(el.getAttribute?.('placeholder'));
+            const value = whole(pendingEl && el === pendingEl ? pendingValue : el.value);
+            const changed = el === pendingEl || (!!value && value !== whole(el.defaultValue ?? el.getAttribute?.('value')));
             return placeholder && value.toLowerCase() === placeholder.toLowerCase()
-              ? [{ label: labelFor(el), value, placeholder, changed,
+              ? [{ label: labelFor(el), value: compact(value, 200), placeholder: compact(placeholder, 200), changed,
                 ref: typeof window.__wb_ax_ref === 'function' ? String(window.__wb_ax_ref(el) || '') : '',
                 name: compact(el.getAttribute?.('name') || '', 120), id: compact(el.getAttribute?.('id') || '', 120) }] : [];
           });
@@ -45764,10 +45766,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!meta || String(meta.type || '').toLowerCase() === 'password') return;
     const normalize = text => String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
     const placeholder = normalize(meta.placeholder);
-    const written = normalize(typeof response.value === 'string' ? response.value : args?.text);
+    // The typed text, whole; an append (clear:false) reads the field's
+    // result instead, which the receipt reports shortened.
+    const appended = args?.clear === false && typeof response.value === 'string';
+    const written = normalize(appended ? response.value : (typeof args?.text === 'string' ? args.text : response.value));
     if (!placeholder || written !== placeholder) return;
     const ref = [args?.ref_id, response.ref_id].map(value => String(value || '')).find(value => /^ref_\d+$/.test(value)) || '';
-    const write = { value: written, ref, name: String(meta.name || ''), id: String(meta.id || '') };
+    // Kept in the form the submit probe reports a value: its first 200
+    // characters.
+    const write = { value: normalize(written.slice(0, 200)), ref, name: String(meta.name || ''), id: String(meta.id || '') };
     if (!write.ref && !write.name && !write.id) return;
     const runId = this.currentRunId.get(tabId) || null;
     this._placeholderWrites ??= new Map();

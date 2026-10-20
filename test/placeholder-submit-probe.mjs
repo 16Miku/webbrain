@@ -77,6 +77,21 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(result.placeholderFields?.[0]?.name, 'email');
           assert.equal(result.placeholderFields?.[0]?.changed, true);
         });
+
+        await t.test('a long prefilled placeholder value the page shipped is not counted as edited', async () => {
+          const long = `Describe your request in detail ${'and include every relevant date '.repeat(6)}`.trim();
+          await page.setContent('<form method="post" action="/ticket">'
+            + `<textarea id="note" name="note" aria-label="Note" placeholder="${long}">${long}</textarea>`
+            + `<input id="title" name="title" aria-label="Title" placeholder="${long}" value="${long}"><button id="go">Send</button></form>`);
+          const result = await probe('click', { selector: '#go' });
+          assert.equal(result?.isSubmit, true);
+          assert.ok(long.length > 120);
+          assert.deepEqual(result.placeholderFields.map(field => [field.name, field.changed]), [['note', false], ['title', false]]);
+          await page.evaluate(text => { document.querySelector('#title').value = `${text} more`; }, long);
+          const edited = await probe('click', { selector: '#go' });
+          assert.deepEqual(edited.placeholderFields.map(field => [field.name, field.changed]), [['note', false]],
+            'a changed long value no longer equals its placeholder');
+        });
       } finally {
         await browser.close();
       }
