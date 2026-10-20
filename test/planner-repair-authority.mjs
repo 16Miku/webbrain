@@ -761,9 +761,11 @@ for (const browser of ['chrome', 'firefox']) {
       steps: [{ id: '2', action: 'Doğrulamadan sonra bitir.' }], risks: ['Yeni ileti gönderme.'] } });
     const original = JSON.stringify(raw);
     const plan = planner.normalizePlan(raw, { requireIntent: true, locale: 'tr-TR' });
+    // The step the copy left out shows in English, and the copy is marked
+    // incomplete so a plan the user reads is translated first.
     assert.deepEqual(plan.localized, { locale: 'tr-tr', summary: raw.localized.summary,
       steps: [{ id: '1', action: plan.steps[0].action }, { id: '2', action: raw.localized.steps[0].action }],
-      risks: raw.localized.risks });
+      risks: raw.localized.risks, missing: true });
     assert.equal(JSON.stringify(raw), original);
   });
 

@@ -9232,7 +9232,9 @@ export class Agent extends LoopDetector {
     const requestText = String(request ?? '');
     const trusted = kind === 'user_turn_kind' ? requestText : requestText.slice(0, 6000);
     const data = boundedSemanticData(page);
-    const keyFor = question => this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, question, trusted, data]));
+    // Keyed by the whole request, not the part a model reads: two requests
+    // that share a cut-off start are different requests.
+    const keyFor = question => this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, question, requestText, data]));
     const cacheKey = keyFor(kind);
     const extraKinds = [...new Set(Array.isArray(alongside) ? alongside : [])].filter(extra => extra !== kind && semanticQuestion(extra));
     this._semanticDecisionCache ??= new Map();

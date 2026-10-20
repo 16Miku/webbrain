@@ -126,6 +126,15 @@ for (const build of BUILDS) {
     assert.equal('plan' in await wide.agent._routeAutoRunMode(6, { ...question, request: 'あ'.repeat(4500) }), false);
   });
 
+  test(`${build}: a remembered answer belongs to the whole request, not to its first 6,000 characters`, async () => {
+    const start = 'Read this paragraph. '.repeat(300).slice(0, 6000);
+    const { agent, requests } = decisionAgent({ run_mode: sure('act'), plan_need: sure('direct') });
+    assert.equal((await agent._routeAutoRunMode(7, { ...question, request: start })).plan, 'direct', 'a request read whole');
+    const longer = await agent._routeAutoRunMode(7, { ...question, request: `${start} Then pay the open invoice.` });
+    assert.equal(requests.length, 2, 'the longer request is a new question');
+    assert.equal('plan' in longer, false);
+  });
+
   // ── The gate ──────────────────────────────────────────────────────────
 
   function gateFixture({ planMode = 'try', review = 'confidence' } = {}) {
@@ -271,8 +280,13 @@ for (const build of BUILDS) {
     assert.equal('missing' in parse(englishPlan(), { locale: 'en' }).localized, false);
     const planOnly = englishPlan({ request_kind: 'plan_only', read_scope: 'none' });
     assert.equal('missing' in parse(planOnly, { locale: 'en-GB' }).localized, false);
-    const written = parse(englishPlan({ localized: { locale: 'tr', summary: 'Abone ol.', steps: [], risks: [] } }), { locale: 'tr' });
-    assert.equal('missing' in written.localized, false, 'a copy the planner wrote is kept');
+    const copy = { locale: 'tr', summary: 'Abone ol.', steps: [{ id: '1', action: 'Doldur.' }, { id: '2', action: 'Gönder.' }], risks: [] };
+    const written = parse(englishPlan({ localized: copy }), { locale: 'tr' });
+    assert.equal('missing' in written.localized, false, 'a complete copy the planner wrote is kept');
+    // A copy that leaves out a step or a risk is incomplete: the plan the user reads is translated.
+    assert.equal(parse(englishPlan({ localized: { ...copy, steps: copy.steps.slice(0, 1) } }), { locale: 'tr' }).localized.missing, true);
+    assert.equal(parse(englishPlan({ risks: ['The form is submitted.'], localized: copy }), { locale: 'tr' }).localized.missing, true);
+    assert.equal('missing' in parse(englishPlan({ risks: ['The form is submitted.'], localized: { ...copy, risks: ['Form gönderilir.'] } }), { locale: 'tr' }).localized, false);
   });
 
   test(`${build}: the translation request carries only the display fields, and its answer replaces them`, () => {
@@ -344,7 +358,8 @@ for (const build of BUILDS) {
       ['English', { locale: 'en' }],
       ['not reviewed', { review: 'never' }],
       ['confident enough', { review: 'confidence', plan: englishPlan({ confidence: 0.95 }) }],
-      ['copy written', { plan: englishPlan({ confidence: 0.5, localized: { locale: 'tr', summary: 'Abone ol.', steps: [], risks: [] } }) }],
+      ['copy written', { plan: englishPlan({ confidence: 0.5, localized: { locale: 'tr', summary: 'Abone ol.',
+        steps: [{ id: '1', action: 'Doldur.' }, { id: '2', action: 'Gönder.' }], risks: [] } }) }],
     ]) {
       const f = displayFixture(options);
       const gate = await f.gate();

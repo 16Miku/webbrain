@@ -1192,6 +1192,10 @@ export function normalizePlan(obj, opts = {}) {
     : [];
   const requestedLocale = normalizePlannerLocale(opts.locale || localizedInput.locale);
   const englishLocale = requestedLocale === 'en' || requestedLocale.startsWith('en-');
+  // The copy covers the summary, every step and every risk.
+  const localizedCopyComplete = Boolean(localizedSummary)
+    && steps.every(step => localizedStepsById.get(step.id)?.action)
+    && riskEntries.every(entry => sanitizeText(providedLocalizedRisks[entry.sourceIndex], 200));
   if (opts.requireIntent) {
     // English needs no localized copy: summary is the question.
     if (requestKind === 'clarify' && !localizedSummary && !englishLocale) return null;
@@ -1207,10 +1211,10 @@ export function normalizePlan(obj, opts = {}) {
     risks: riskEntries.map(({ sourceIndex, text: risk }) => (
       sanitizeText(providedLocalizedRisks[sourceIndex], 200) || risk
     )),
-    // No copy in the user's language, so the fields above are English. The
-    // agent translates them when the user reads this plan
-    // (agent._localizedPlanForDisplay).
-    ...(!englishLocale && !localizedSummary ? { missing: true } : {}),
+    // No complete copy in the user's language, so some or all of the fields
+    // above are English. The agent translates them when the user reads this
+    // plan (agent._localizedPlanForDisplay).
+    ...(!englishLocale && !localizedCopyComplete ? { missing: true } : {}),
   };
   const responseLanguage = normalizeResponseLanguagePolicy(obj.response_language, requestedLocale);
   const submissionBearingPlan = executablePlan || requestKind === 'clarify';
