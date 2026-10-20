@@ -270,12 +270,31 @@ export function filledCredentialValue(toolName, args, result) {
  * @returns {string[]}
  */
 export function filledCredentialValuesFromHistory(messages, unwrap = content => content) {
+  return fillCallsFromHistory(messages, unwrap)
+    .map(({ name, args, result }) => filledCredentialValue(name, args, result))
+    .filter(Boolean);
+}
+
+/**
+ * The fill tool calls of a saved conversation with their results, oldest
+ * first: each call's tool name and arguments, and the result object its tool
+ * message starts with (null for a result cut short when stored). A result
+ * pairs with a call of the assistant turn just before it, as providers pair
+ * them, and is read from the JSON object its message starts with, before any
+ * note the run loop appended.
+ *
+ * @param {object[]} messages the conversation
+ * @param {(content: string) => string} unwrap strips the agent's
+ *   untrusted-content wrapper from a tool result
+ * @returns {{name: string, args: object|null, result: object|null}[]}
+ */
+export function fillCallsFromHistory(messages, unwrap = content => content) {
   const parse = value => {
     if (value && typeof value === 'object') return value;
     try { return JSON.parse(String(value ?? '')); } catch { return null; }
   };
   const parseResult = value => (value && typeof value === 'object' ? value : leadingJsonObject(value));
-  const values = [];
+  const fills = [];
   let calls = new Map();
   for (const message of Array.isArray(messages) ? messages : []) {
     if (message?.role !== 'tool') {
@@ -288,10 +307,9 @@ export function filledCredentialValuesFromHistory(messages, unwrap = content => 
     const call = calls.get(message.tool_call_id);
     if (!call) continue;
     calls.delete(message.tool_call_id);
-    const value = filledCredentialValue(call.name, parse(call.arguments), parseResult(unwrap(message.content)));
-    if (value) values.push(value);
+    fills.push({ name: call.name, args: parse(call.arguments), result: parseResult(unwrap(message.content)) });
   }
-  return values;
+  return fills;
 }
 
 /**

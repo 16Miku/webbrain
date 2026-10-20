@@ -118,6 +118,37 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(result.placeholderFields[0].complete, true);
           assert.equal(result.placeholderFields[0].value.length, 200, 'the display value is shortened');
         });
+        if (build === 'chrome') {
+          await t.test('a form in a closed shadow root is scanned in the page, as the debugger runs it', async () => {
+            const scan = Agent._placeholderFieldScan.toString();
+            await page.setContent('<div id="host"></div>');
+            const fields = await page.evaluate(source => {
+              const root = document.querySelector('#host').attachShadow({ mode: 'closed' });
+              root.innerHTML = '<form method="post" action="/join">'
+                + '<input id="email" name="email" aria-label="Email" placeholder="you@example.com">'
+                + '<input id="city" name="city" placeholder="Istanbul" value="Istanbul">'
+                + '<input id="pass" name="pass" type="password" placeholder="Password">'
+                + '<input id="off" name="off" placeholder="you@example.com" disabled>'
+                + '<button id="go">Join</button></form>';
+              root.querySelector('#email').value = 'you@example.com';
+              root.querySelector('#pass').value = 'Password';
+              root.querySelector('#off').value = 'you@example.com';
+              return (0, eval)(`(${source})`).call(root.querySelector('#go'));
+            }, scan);
+            assert.deepEqual(fields.map(field => [field.name, field.changed, field.ref]), [['email', true, ''], ['city', false, '']],
+              'the edited field first, the page default marked unchanged; never the password or a disabled field');
+            // With no form, the shadow root's own fields are read.
+            const formless = await page.evaluate(source => {
+              const host = document.createElement('div');
+              document.body.append(host);
+              const root = host.attachShadow({ mode: 'closed' });
+              root.innerHTML = '<input id="email" name="email" placeholder="you@example.com"><div role="button" id="go">Join</div>';
+              root.querySelector('#email').value = 'you@example.com';
+              return (0, eval)(`(${source})`).call(root.querySelector('#go'));
+            }, scan);
+            assert.deepEqual(formless.map(field => field.name), ['email']);
+          });
+        }
       } finally {
         await browser.close();
       }

@@ -82840,6 +82840,43 @@ test('a field holding its own placeholder text is not submitted', async () => {
     agent._cleanupTab(tabId, { preserveRunGuard: true });
     assert.equal(agent._placeholderWrites.has(tabId), false, `${AgentClass.name}: tab cleanup kept placeholder writes`);
 
+    // A worker restart keeps the conversation but loses the receipts kept in
+    // memory and the task token: the fill calls and results in the task's own
+    // history count, and an earlier task's do not.
+    agent._placeholderWrites = new Map();
+    agent._taskTokens.delete(tabId);
+    const fillCall = (id, name, args) => ({ role: 'assistant', content: '',
+      tool_calls: [{ id, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+    const fillResult = (id, result) => ({ role: 'tool', tool_call_id: id, content: JSON.stringify(result) });
+    const emailMeta = { type: 'email', name: 'email', id: null, placeholder: 'you@example.com' };
+    agent.conversations.set(tabId, [...task,
+      fillCall('call_fill', 'set_field', { ref_id: 'ref_101', text: 'you@example.com' }),
+      fillResult('call_fill', { success: true, value: 'you@example.com', fieldMeta: emailMeta })]);
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
+    const beforeRestored = prompts;
+    assert.equal((await submit('restored-write')).placeholderValue, true, `${AgentClass.name}: a write in the task's history was missed`);
+    // A write by selector names its field in its own result.
+    const typedResult = { success: true, value: 'you@example.com', fieldMeta: emailMeta };
+    agent._taskTokens.set(tabId, 'task_typed');
+    agent._rememberPlaceholderWrite(tabId, 'type_text', { selector: '#email', text: 'you@example.com', clear: true }, typedResult, 'ref_404');
+    assert.equal(typedResult.writtenFieldRef, 'ref_404', `${AgentClass.name}: the result does not name the field it went into`);
+    agent._placeholderWrites = new Map();
+    agent._taskTokens.delete(tabId);
+    agent.conversations.set(tabId, [...task,
+      fillCall('call_typed', 'type_text', { selector: '#email', text: 'you@example.com', clear: true }),
+      fillResult('call_typed', typedResult)]);
+    field = { ...field, ref: 'ref_404' };
+    assert.equal((await submit('restored-typed')).placeholderValue, true, `${AgentClass.name}: a stored selector write was missed`);
+    assert.equal(prompts, beforeRestored, `${AgentClass.name}: a restored write reached a card`);
+    // An earlier task's writes are not this task's.
+    agent.conversations.set(tabId, [system, { role: 'user', content: 'Fill in the form with the example.' },
+      fillCall('call_old', 'set_field', { ref_id: 'ref_101', text: 'you@example.com' }),
+      fillResult('call_old', { success: true, value: 'you@example.com', fieldMeta: emailMeta }),
+      { role: 'assistant', content: 'Done.' }, { role: 'user', content: 'Now sign me up for the newsletter.' }]);
+    field = { ...field, ref: 'ref_101' };
+    await submit('earlier-task-write');
+    assert.equal(prompts, beforeRestored + 1, `${AgentClass.name}: an earlier task's write counted`);
+
     // An earlier, unrelated turn cannot supply the value for the current task.
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };
     agent.conversations.set(tabId, [system, { role: 'user', content: 'Do not use you@example.com anywhere.' },
@@ -90506,6 +90543,61 @@ test('chrome CDP submit selector treats default buttons as strong native submits
     cdpClientCh.attach = originals.attach;
     cdpClientCh.resolveSelector = originals.resolveSelector;
     cdpClientCh.describeNode = originals.describeNode;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('chrome CDP submit selector scans its form for placeholder values', async () => {
+  const previousChrome = globalThis.chrome;
+  const originals = {
+    attach: cdpClientCh.attach,
+    resolveSelector: cdpClientCh.resolveSelector,
+    describeNode: cdpClientCh.describeNode,
+    sendCommand: cdpClientCh.sendCommand,
+    callFunctionOn: cdpClientCh.callFunctionOn,
+  };
+  try {
+    globalThis.chrome = { ...(previousChrome || {}), debugger: {} };
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.resolveSelector = async () => ({ found: true, nodeId: 41 });
+    cdpClientCh.describeNode = async () => ({ node: { nodeName: 'BUTTON', attributes: [] } });
+    const released = [];
+    cdpClientCh.sendCommand = async (_tabId, method, params = {}) => {
+      if (method === 'DOM.resolveNode') return params.nodeId === 41 ? { object: { objectId: 'button-41' } } : {};
+      if (method === 'Runtime.releaseObject') released.push(params.objectId);
+      return {};
+    };
+    // The scan runs on the control, as the debugger runs it in the page.
+    const input = (attrs, value, defaultValue = '') => ({
+      tagName: 'INPUT', type: attrs.type || 'text', value, defaultValue,
+      getAttribute: name => attrs[name] ?? null, matches: () => false,
+    });
+    const control = { form: { elements: [
+      input({ name: 'email', type: 'email', placeholder: 'you@example.com' }, 'you@example.com'),
+      input({ name: 'pass', type: 'password', placeholder: 'Password' }, 'Password'),
+      input({ name: 'city', placeholder: 'Istanbul', value: 'Istanbul' }, 'Istanbul', 'Istanbul'),
+    ] } };
+    let scannedOn = '';
+    cdpClientCh.callFunctionOn = async (_tabId, source, objectId) => {
+      scannedOn = objectId;
+      return { result: { value: (0, eval)(`(${source})`).call(control) } };
+    };
+    const agent = new AgentCh({ getVisionProvider: async () => null });
+    const detected = await agent._detectCdpSubmitSelector(23, '#shadow-submit', 'example.com');
+    assert.equal(scannedOn, 'button-41', 'the scan runs on the resolved control');
+    assert.deepEqual(released, ['button-41'], 'the control handle is released');
+    assert.deepEqual(detected?.placeholderFields?.map(field => [field.name, field.changed, field.ref]),
+      [['email', true, ''], ['city', false, '']], 'the edited field first; never the password; no refs');
+    agent.conversations.set(23, [{ role: 'system', content: 'You are WebBrain.' }, { role: 'user', content: 'Join the list.' }]);
+    assert.equal(agent._placeholderSubmitBlock(23, 'click', detected)?.placeholderValue, true, 'the placeholder is not submitted');
+    // A scan that cannot run leaves the fallback as it was.
+    cdpClientCh.callFunctionOn = async () => { throw new Error('detached'); };
+    const unscanned = await agent._detectCdpSubmitSelector(23, '#shadow-submit', 'example.com');
+    assert.equal(unscanned?.isSubmit, true);
+    assert.equal('placeholderFields' in unscanned, false);
+  } finally {
+    Object.assign(cdpClientCh, originals);
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
   }
