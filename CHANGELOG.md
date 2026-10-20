@@ -10,6 +10,9 @@ This changelog was generated from the repository Git history and release tags. V
 - Settings → Skills now opens with your enabled skills, followed by the packaged skills you can enable. The form for importing a skill from a URL or pasting its text stays closed until you click **Add skill** (or **Edit** on an enabled skill), and closes again after you add or save a skill or click **Cancel**.
 - The Apocalypse Mode button at the top of Settings now looks like the Providers and Support buttons beside it: a plain line icon instead of the yellow ☢, and no yellow outline while Apocalypse Mode is on. Hovering it still shows whether Apocalypse Mode is on.
 
+### Fixed
+- Settings search no longer looks as if its results belong to the tab you searched from. Searching "budget" on the CAPTCHA tab showed the Budgets settings while CAPTCHA was still highlighted. While a search shows its results, which can come from General, Budgets, CAPTCHA and Advanced, no tab is highlighted now, and the tab name above each group of results opens that tab.
+
 ## [42.2.0] - 2026-10-20
 
 ### Added
