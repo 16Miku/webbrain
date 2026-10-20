@@ -29896,7 +29896,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Passwords and other fields without a typed value are left out.
       const placeholderFields = (() => {
         try {
-          const matches = Array.from(form.querySelectorAll('input, textarea')).slice(0, 5000).flatMap(el => {
+          // A form's own controls include ones outside it that name it with
+          // form="…", which the browser sends too; a form-less composer has
+          // only what it contains.
+          const owned = String(form.tagName || '').toUpperCase() === 'FORM' && form.elements
+            ? Array.from(form.elements) : Array.from(form.querySelectorAll('input, textarea'));
+          const matches = owned.filter(el => /^(?:INPUT|TEXTAREA)$/i.test(String(el?.tagName || ''))).slice(0, 5000).flatMap(el => {
             const type = String(el.type || '').toLowerCase();
             if (['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio', 'file', 'password'].includes(type)) return [];
             const placeholder = compact(el.getAttribute?.('placeholder') || '', 200);

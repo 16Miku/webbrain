@@ -67,6 +67,16 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(result.placeholderFields[0]?.name, 'email', 'the edited field comes first');
           assert.equal(result.placeholderFields[0]?.changed, true);
         });
+
+        await t.test('a field outside the form that names it with form= is checked too', async () => {
+          await page.setContent('<form id="signup" method="post" action="/signup"><button id="go">Sign up</button></form>'
+            + '<input id="email" form="signup" name="email" aria-label="Email" placeholder="you@example.com">');
+          await page.evaluate(() => { document.querySelector('#email').value = 'you@example.com'; });
+          const result = await probe('click', { selector: '#go' });
+          assert.equal(result?.isSubmit, true);
+          assert.equal(result.placeholderFields?.[0]?.name, 'email');
+          assert.equal(result.placeholderFields?.[0]?.changed, true);
+        });
       } finally {
         await browser.close();
       }
