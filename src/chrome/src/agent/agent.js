@@ -26344,8 +26344,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._tracePlannerAttemptResponse(runId, 0, provider, result, 'planner_localize', 1, startedAt, chatOptions);
       return localizePlanFromContent(plan, result?.content) || canonicalPlanDisplay(plan);
     } catch (error) {
-      if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
-      await this._tracePlannerAttemptFailure(runId, 'planner_localize', 1, error);
+      if (this._checkAbort(tabId)) throw error;
+      // The translation is optional. Any failure, a spent cost allowance
+      // included, leaves the valid plan to show in English; the next paid
+      // request still meets the allowance.
+      const costLimit = this._isCostAllowanceError(error);
+      await this._tracePlannerAttemptFailure(runId, 'planner_localize', 1, error, costLimit ? 'cost_limit' : undefined);
       return canonicalPlanDisplay(plan);
     }
   }

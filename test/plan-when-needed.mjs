@@ -401,8 +401,9 @@ for (const build of BUILDS) {
     const incomplete = JSON.stringify({ locale: 'tr', summary: 'Adresi bültene abone et.', steps: [{ id: '1', action: 'E-posta alanını doldur.' }], risks: [] });
     // The planner's own partial copy is not shown either: one language, never a mix.
     const partialCopy = englishPlan({ confidence: 0.5, localized: { locale: 'tr', summary: 'Bültene abone ol.', steps: [{ id: '1', action: 'Doldur.' }], risks: [] } });
+    const spent = Object.assign(new Error('Cost allowance reached.'), { code: 'WB_COST_ALLOWANCE' });
     for (const plan of [englishPlan({ confidence: 0.5 }), partialCopy]) {
-      for (const translation of [new Error('provider unavailable'), 'not json', incomplete]) {
+      for (const translation of [new Error('provider unavailable'), 'not json', incomplete, spent]) {
         const f = displayFixture({ plan, translation });
         const gate = await f.gate();
         assert.equal(gate.proceed, true);
