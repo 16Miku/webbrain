@@ -82577,6 +82577,90 @@ test('agent requires fresh submit confirmation across modes and prompt sources',
   }
 });
 
+test('a field holding its own placeholder text is not submitted', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = 5108;
+    let prompts = 0;
+    let executed = 0;
+    let field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };
+    const updates = [];
+    const task = [{ role: 'user', content: 'Sign me up for the newsletter on this page.' }];
+
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [...task]);
+    agent._ensureGateSetting = async () => { };
+    agent._skipPermissionGate = false;
+    agent._currentUrl = async () => 'https://host.com/newsletter';
+    agent._recordProgressObservation = async () => null;
+    agent._autoRecordProgressAction = () => null;
+    agent._progressWarningForAction = () => '';
+    agent._persist = () => { };
+    agent._detectLikelySubmitAction = async (_tabId, name) => ({
+      isSubmit: true,
+      host: 'host.com',
+      tool: name,
+      method: 'POST',
+      actionUrl: 'https://host.com/subscribe',
+      reason: 'submit button/control activation',
+      summary: `Changed/filled fields: ${field.label}: ${field.value}.`,
+      fields: [field],
+      changedFields: [field],
+    });
+    agent._promptSubmitConfirmation = async () => {
+      prompts += 1;
+      return 'deny';
+    };
+    agent.executeTool = async () => {
+      executed += 1;
+      return { success: true };
+    };
+    const submit = async (id) => {
+      const messages = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{ id, function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: 'ref_subscribe' }) } }],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision: false },
+        '',
+        new Set(['click_ax']),
+        1,
+      );
+      return JSON.parse(messages[0].content);
+    };
+
+    const refused = await submit('placeholder');
+    assert.equal(prompts, 0, `${AgentClass.name}: the page's example value reached a submit card`);
+    assert.equal(refused.denied, true, `${AgentClass.name}: the placeholder submission is refused`);
+    assert.equal(refused.placeholderValue, true, `${AgentClass.name}: the refusal names the placeholder`);
+    assert.equal(refused.placeholderFieldCount, 1, `${AgentClass.name}: the refusal counts the field`);
+    assert.match(refused.error, /placeholder text/, `${AgentClass.name}: the model is told why`);
+    assert.match(refused.error, /Ask the user/, `${AgentClass.name}: the model is told to ask`);
+    assert.ok(updates.some(update => /example text/.test(update.data?.message || '')), `${AgentClass.name}: the user sees why nothing was asked`);
+
+    // A value the user gave, in a message or in a card answer, asks as usual.
+    agent.conversations.set(tabId, [...task, { role: 'user', content: 'Use YOU@example.com for it.' }]);
+    await submit('user-message');
+    assert.equal(prompts, 1, `${AgentClass.name}: a value from the user's message was refused`);
+    agent.conversations.set(tabId, [{ ...task[0], webbrainTaskClarifications: [{ question: 'Which email?', answer: 'you@example.com', source: 'text' }] }]);
+    await submit('user-answer');
+    assert.equal(prompts, 2, `${AgentClass.name}: a value from the user's card answer was refused`);
+
+    // Another value, a page default WebBrain did not change, and a placeholder
+    // that is only a number ask as usual.
+    agent.conversations.set(tabId, [...task]);
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'reader@example.org', changed: true };
+    await submit('own-value');
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false };
+    await submit('page-default');
+    field = { label: 'Quantity', placeholder: '1', value: '1', changed: true };
+    await submit('number');
+    assert.equal(prompts, 5, `${AgentClass.name}: an ordinary value skipped its card`);
+    assert.equal(executed, 0, `${AgentClass.name}: a refused or declined submission ran`);
+  }
+});
+
 test('submit confirmation honors scheduled and global gate bypasses', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     for (const scenario of [

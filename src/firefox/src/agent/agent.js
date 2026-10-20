@@ -14797,6 +14797,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const submitRisk = classifySubmitRisk(submitConfirmation, submitConfirmation.url);
           const canGroupSearch = submitRisk.risk === SubmitRisk.LOW_RISK_SEARCH
             && ['click', 'click_ax', 'press_keys'].includes(fnName);
+          // A field that still holds the page's own placeholder text, which
+          // no message or card answer from the user gave, is the page's
+          // example typed in as a value ("you@example.com" in an email box).
+          // Nothing is submitted, no card is shown, and the model is told to
+          // ask the user for the value. Grouped searches keep their approval.
+          const placeholderFields = canGroupSearch ? [] : this._placeholderValueFields(tabId, submitConfirmation);
+          if (placeholderFields.length) {
+            messages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: JSON.stringify({
+                success: false,
+                denied: true,
+                placeholderValue: true,
+                placeholderFieldCount: placeholderFields.length,
+                error: `Nothing was submitted on ${submitConfirmation.host || 'this site'}: ${placeholderFields.length === 1 ? 'a field still holds its' : 'fields still hold their'} `
+                  + 'own placeholder text, an example the page shows, not a value the user gave. Ask the user for the real value with clarify '
+                  + '(require_explicit_answer:true for personal values) and type that instead. Do NOT submit the placeholder.',
+              }),
+            });
+            onUpdate('warning', { message: 'Not submitted: a field holds the page\'s example text, not a value you gave.' });
+            predispatchBlocked('submitConfirmationMs');
+            if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+            continue;
+          }
           let choice = null;
           if (canGroupSearch) {
             const intentKey = submitActionKey(submitConfirmation, submitConfirmation.url);
@@ -29409,6 +29434,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (next) return next;
     if (Array.isArray(advisories)) advisories.push(guardAdvisory(ask.guardId, this._unverifiedStepNote(ask.guardId, receipt.source)));
     return null;
+  }
+
+  // The changed fields of a submission that hold their own placeholder text
+  // when none of the user's messages or card answers gave that value: the
+  // page's example typed in as the user's. A placeholder without a letter,
+  // or shorter than three characters (a "1" in a quantity box), is not an
+  // example of this kind.
+  _placeholderValueFields(tabId, submitInfo) {
+    const normalize = text => String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const fields = (Array.isArray(submitInfo?.changedFields) ? submitInfo.changedFields : []).filter(field => {
+      const value = normalize(field?.value);
+      return field?.changed === true && value.length >= 3 && /\p{L}/u.test(value) && value === normalize(field?.placeholder);
+    });
+    if (!fields.length) return [];
+    const userText = (this.conversations.get(tabId) || [])
+      .filter(message => message?.role === 'user' && !this._isAgentInjectedUserMessage(message))
+      .flatMap(message => [this._plannerUserAuthoredText(message),
+        ...(Array.isArray(message.webbrainTaskClarifications) ? message.webbrainTaskClarifications.map(item => item?.answer) : [])])
+      .map(normalize).join('\n');
+    return fields.filter(field => !userText.includes(normalize(field.value)));
   }
 
   _fallbackSubmitConfirmationInfo(host, tool, reason, summary = '') {
