@@ -86072,6 +86072,64 @@ test('cloud Ask dispatch blocks API mutations even with an existing conversation
   assert.ok(updates.some(update => /Ask mode is read-only/.test(update.data?.message || '')));
 });
 
+test('a local Ask run keeps API mutations off even with the API-mutations setting on', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = 4907;
+    let executed = 0;
+    agent.executeTool = async () => {
+      executed += 1;
+      return { success: true };
+    };
+    agent._ensureGateSetting = async () => { };
+    agent._skipPermissionGate = true;
+    agent.alwaysAllowApiMutations = true;
+    agent.setApiMutationsAllowed(tabId, true);
+    const send = async (mode, conversationMode = mode) => {
+      agent._runModeOverrides.set(tabId, mode);
+      agent.conversationModes.set(tabId, conversationMode);
+      const messages = [];
+      const updates = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{
+          id: `${mode}_mutation`,
+          function: {
+            name: 'fetch_url',
+            arguments: JSON.stringify({ url: 'https://mastodon.example/api/v1/statuses', method: 'POST', body: '{"status":"hi"}' }),
+          },
+        }],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision: false },
+        '',
+        new Set(['fetch_url']),
+        1,
+      );
+      return { messages, updates };
+    };
+
+    const ask = await send('ask');
+    assert.equal(executed, 0, `${AgentClass.name}: an Ask run sent a POST`);
+    const denied = JSON.parse(ask.messages[0].content);
+    assert.equal(denied.denied, true, `${AgentClass.name}: the POST was not refused`);
+    assert.equal(denied.requiresApiAllow, false, `${AgentClass.name}: /allow-api cannot open Ask`);
+    assert.match(denied.error, /not allowed in Ask mode/);
+    assert.ok(ask.updates.some(update => /Ask mode is read-only/.test(update.data?.message || '')));
+    assert.equal(agent.isApiMutationsAllowed(tabId), true, `${AgentClass.name}: the user's grant stays for Act`);
+
+    await send('act');
+    assert.equal(executed, 1, `${AgentClass.name}: Act still honors the API-mutations setting`);
+
+    // A side panel opened mid-run may set the conversation's mode; the run's
+    // own mode decides.
+    await send('ask', 'act');
+    assert.equal(executed, 1, `${AgentClass.name}: an Ask run sent a POST after the conversation mode changed`);
+    await send('act', 'ask');
+    assert.equal(executed, 2, `${AgentClass.name}: an Act run was blocked by the conversation mode`);
+  }
+});
+
 test('agent counts failed API mutation batch as one loop strategy', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
