@@ -16,10 +16,13 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: the closed model picker is an engine icon`, () => {
     const html = read(build, 'src/ui/sidepanel.html');
     const button = html.match(/<button type="button" id="provider-picker-btn"[\s\S]*?<\/button>/)[0];
-    assert.match(button, /<span class="provider-picker-engine">\s*<svg class="provider-picker-icon"[^>]*aria-hidden="true">[\s\S]*?<\/svg>\s*<span id="status-dot" class="status-dot offline" data-i18n-title="sp\.status\.disconnected"><\/span>\s*<\/span>\s*<span class="provider-picker-label" id="provider-picker-label"><\/span>/,
+    assert.match(button, /<span class="provider-picker-engine">\s*<svg class="provider-picker-icon"[^>]*aria-hidden="true">[\s\S]*?<\/svg>\s*<span id="status-dot" class="status-dot offline"><\/span>\s*<\/span>\s*<span class="provider-picker-label" id="provider-picker-label"><\/span>/,
       'the icon comes first, hidden from assistive technology, with the connection dot on it');
     assert.match(button, /aria-describedby="status-dot"/, 'the connection status describes the button');
     assert.equal(html.match(/id="status-dot"/g).length, 1, 'the dot is no longer a separate toolbar item');
+    // applyDOMTranslations would reset a data-i18n-title to its first value on
+    // every language change; the live status is rendered by sidepanel.js.
+    assert.doesNotMatch(button, /id="status-dot"[^>]*data-i18n/, 'the dot title is not a fixed translation');
     const css = read(build, 'styles/sidepanel.css');
     assert.match(css, /\.composer-toolbar \.provider-picker-label \{\s*display: none;\s*\}/, 'the name is not shown in the composer');
     assert.doesNotMatch(css, /\.composer-toolbar \.provider-picker \{\s*\/\* 100% minus/, 'the picker no longer claims a whole row at large scales');
@@ -40,6 +43,8 @@ for (const build of ['chrome', 'firefox']) {
       providerPickerModelById: new Map([['openrouter', 'openai/gpt-6-luna'], ['local', 'gpt-6-luna']]),
       providerPickerBtn: { title: '', setAttribute(k, v) { attributes[k] = v; } },
       providerPickerMenu: { querySelectorAll: () => options },
+      statusDot: { title: '' },
+      statusDotTitle: () => en['sp.status.connecting'],
     });
     vm.runInContext(extract(panel, 'syncProviderPickerButton'), context);
     context.syncProviderPickerButton();
@@ -80,7 +85,7 @@ for (const build of ['chrome', 'firefox']) {
       sendToBackground: async () => new Promise((resolve) => { answer = resolve; }),
       markSelectedProviderUntested() { throw new Error('openrouter is tested'); },
     });
-    vm.runInContext(extract(panel, 'testConnection'), context);
+    vm.runInContext(extract(panel, 'setStatusDot') + extract(panel, 'testConnection'), context);
     const pending = context.testConnection();
     assert.equal(context.statusDot.className, 'status-dot connecting');
     assert.equal(context.statusDot.title, 'Checking connection…');
@@ -88,6 +93,49 @@ for (const build of ['chrome', 'firefox']) {
     await pending;
     assert.equal(context.statusDot.className, 'status-dot online');
     assert.equal(context.statusDot.title, 'Connected (gpt-6-luna)');
+  });
+
+  test(`${build}: a language change says the live status again, not "Disconnected"`, async () => {
+    const dicts = {
+      en: (await import(`../src/${build}/src/ui/locales/en.js`)).default,
+      tr: (await import(`../src/${build}/src/ui/locales/tr.js`)).default,
+    };
+    const panel = read(build, 'src/ui/sidepanel.js');
+    let locale = 'en';
+    let answer;
+    const context = vm.createContext({
+      t: (key, params = {}) => String(dicts[locale][key] || key).replace(/\{(\w+)\}/g, (_, k) => params[k] ?? ''),
+      providerSelect: { value: 'openrouter', selectedOptions: [{ textContent: 'OpenRouter — Active' }] },
+      providerTestRequestId: 0,
+      providerPickerLabel: { textContent: '' },
+      providerPickerLabelById: new Map([['openrouter', 'OpenRouter']]),
+      providerPickerModelById: new Map(),
+      providerPickerBtn: { title: '', setAttribute() {} },
+      providerPickerMenu: null,
+      statusDot: { className: 'status-dot offline', title: '' },
+      sendToBackground: async () => new Promise((resolve) => { answer = resolve; }),
+    });
+    vm.runInContext(['setStatusDot', 'testConnection', 'syncProviderPickerButton', 'markSelectedProviderFailed', 'markSelectedProviderUntested']
+      .map((name) => extract(panel, name)).join('\n'), context);
+    const relabel = (code) => { locale = code; context.syncProviderPickerButton(); return context.statusDot.title; };
+
+    const pending = context.testConnection();
+    assert.equal(relabel('tr'), dicts.tr['sp.status.connecting'], 'checking, in the new language');
+    answer({ ok: true, model: 'gpt-6-luna' });
+    await pending;
+    assert.equal(context.statusDot.title, 'Bağlı (gpt-6-luna)');
+    assert.equal(relabel('en'), 'Connected (gpt-6-luna)');
+    assert.equal(context.statusDot.className, 'status-dot online', 'the state is kept');
+
+    context.markSelectedProviderFailed(new Error('401 Unauthorized'));
+    assert.equal(relabel('tr'), 'Hata: 401 Unauthorized');
+    context.markSelectedProviderFailed(null);
+    assert.equal(relabel('en'), 'Error: Connection failed');
+    assert.equal(relabel('tr'), 'Hata: Bağlantı başarısız');
+
+    context.markSelectedProviderUntested();
+    assert.equal(context.statusDot.className, 'status-dot');
+    assert.equal(relabel('en'), 'OpenRouter — Active', 'untested: the provider row, as before');
   });
 }
 

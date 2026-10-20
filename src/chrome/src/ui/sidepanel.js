@@ -730,6 +730,12 @@ const languagePickerBtn = document.getElementById('language-picker-btn');
 const languagePickerMenu = document.getElementById('language-picker-menu');
 const MORE_PROVIDERS_OPTION_VALUE = '__more_providers__';
 const statusDot = document.getElementById('status-dot');
+// The dot's title is also the model button's accessible description. It is
+// kept as a function of the language (setStatusDot), so a language change
+// says the live status again (syncProviderPickerButton) instead of a fixed
+// first value.
+let statusDotTitle = () => t('sp.status.disconnected');
+if (statusDot) statusDot.title = statusDotTitle();
 // Short labels for the closed picker button (menu rows keep the longer status text).
 const providerPickerLabelById = new Map();
 // The configured model of each provider, for the picker's tooltip and name.
@@ -8356,6 +8362,9 @@ function syncProviderPickerButton() {
     providerPickerBtn.title = label;
     providerPickerBtn.setAttribute('aria-label', label);
   }
+  // The dot's title is the button's description: a language change renders the
+  // name again here, so it says the live status again too.
+  if (statusDot) statusDot.title = statusDotTitle();
   if (providerPickerMenu) {
     providerPickerMenu.querySelectorAll('.provider-picker-option').forEach((btn) => {
       btn.setAttribute('aria-selected', btn.dataset.value === id ? 'true' : 'false');
@@ -8715,14 +8724,12 @@ function isWebBrainCloudProviderSelected() {
 }
 
 function markSelectedProviderUntested() {
-  statusDot.className = 'status-dot';
-  statusDot.title = providerSelect?.selectedOptions?.[0]?.textContent || providerSelect?.value || '';
+  setStatusDot('', () => providerSelect?.selectedOptions?.[0]?.textContent || providerSelect?.value || '');
 }
 
 function markSelectedProviderFailed(error) {
-  const msg = error?.message || t('sp.status.failed');
-  statusDot.className = 'status-dot offline';
-  statusDot.title = t('sp.status.error', { msg });
+  const reason = error?.message;
+  setStatusDot('offline', () => t('sp.status.error', { msg: reason || t('sp.status.failed') }));
 }
 
 async function testConnection(options = {}) {
@@ -8734,26 +8741,32 @@ async function testConnection(options = {}) {
     }
     return;
   }
-  statusDot.className = 'status-dot connecting';
-  // The dot's title is the picker button's description: replace the last
-  // result while the check runs.
-  statusDot.title = t('sp.status.connecting');
+  // The title says so too: it is the picker button's description, which must
+  // not repeat the last result while the check runs.
+  setStatusDot('connecting', () => t('sp.status.connecting'));
   try {
     const res = await sendToBackground('test_provider', {
       providerId,
     });
     if (requestId !== providerTestRequestId || providerSelect.value !== providerId) return;
-    statusDot.className = `status-dot ${res.ok ? 'online' : 'offline'}`;
-    statusDot.title = res.ok
-      ? t('sp.status.connected', { model: res.model || providerId })
-      : t('sp.status.error', { msg: res.error });
+    setStatusDot(res.ok ? 'online' : 'offline', res.ok
+      ? () => t('sp.status.connected', { model: res.model || providerId })
+      : () => t('sp.status.error', { msg: res.error }));
     return res;
   } catch (error) {
     if (requestId !== providerTestRequestId || providerSelect.value !== providerId) return;
-    statusDot.className = 'status-dot offline';
-    statusDot.title = t('sp.status.failed');
+    setStatusDot('offline', () => t('sp.status.failed'));
     return { ok: false, error: error?.message || t('sp.status.failed') };
   }
+}
+
+// Sets the connection dot's state ('' while untested) and its title, which is
+// kept as a function so syncProviderPickerButton can say it again after a
+// language change.
+function setStatusDot(state, title) {
+  statusDot.className = state ? `status-dot ${state}` : 'status-dot';
+  statusDotTitle = title;
+  statusDot.title = title();
 }
 
 function getSlashAutocompleteContext() {

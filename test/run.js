@@ -50363,17 +50363,17 @@ test('sidepanel drops stale provider selection and connection checks', () => {
     const managedCloudSkipIdx = testBody.indexOf("['webbrain_cloud', 'webbrain_cloud_max'].includes(providerId)");
     const sendIdx = testBody.indexOf("sendToBackground('test_provider'");
     const staleGuardIdx = testBody.indexOf('if (requestId !== providerTestRequestId || providerSelect.value !== providerId) return;');
-    const statusIdx = testBody.indexOf("statusDot.className = `status-dot ${res.ok ? 'online' : 'offline'}`;");
+    const statusIdx = testBody.indexOf("setStatusDot(res.ok ? 'online' : 'offline', res.ok");
     assert.notEqual(captureIdx, -1, `${label}: provider test should capture the intended provider`);
     assert.notEqual(requestIdx, -1, `${label}: provider test should increment a request sequence`);
     assert.notEqual(managedCloudSkipIdx, -1, `${label}: startup connection tests should skip both managed cloud profiles`);
     assert.notEqual(sendIdx, -1, `${label}: provider test background request missing`);
     assert.notEqual(staleGuardIdx, -1, `${label}: stale provider test results should be dropped`);
     assert.notEqual(statusIdx, -1, `${label}: provider status update missing`);
-    assert.match(testBody, /statusDot\.className = 'status-dot connecting';[\s\S]*?statusDot\.title = t\('sp\.status\.connecting'\);[\s\S]*?sendToBackground\('test_provider'/, `${label}: a check in progress replaces the last result in the dot's title (the picker's description)`);
+    assert.match(testBody, /setStatusDot\('connecting', \(\) => t\('sp\.status\.connecting'\)\);[\s\S]*?sendToBackground\('test_provider'/, `${label}: a check in progress replaces the last result in the dot's title (the picker's description)`);
     assert.equal(captureIdx < requestIdx && requestIdx < sendIdx && sendIdx < staleGuardIdx && staleGuardIdx < statusIdx, true, `${label}: provider test stale guard must run after the async request and before status updates`);
     assert.doesNotMatch(testBody, /providerId: providerSelect\.value/, `${label}: provider test should not read the mutable selection after async delay`);
-    assert.match(panel, /function markSelectedProviderFailed\(error\) \{[\s\S]*?const msg = error\?\.message \|\| t\('sp\.status\.failed'\);[\s\S]*?statusDot\.className = 'status-dot offline';[\s\S]*?statusDot\.title = t\('sp\.status\.error', \{ msg \}\);[\s\S]*?\}/, `${label}: provider activation failures should surface on the selected provider`);
+    assert.match(panel, /function markSelectedProviderFailed\(error\) \{[\s\S]*?const reason = error\?\.message;[\s\S]*?setStatusDot\('offline', \(\) => t\('sp\.status\.error', \{ msg: reason \|\| t\('sp\.status\.failed'\) \}\)\);[\s\S]*?\}/, `${label}: provider activation failures should surface on the selected provider`);
 
     const changeStart = panel.indexOf("providerSelect.addEventListener('change', async () => {");
     assert.notEqual(changeStart, -1, `${label}: provider change handler missing`);
