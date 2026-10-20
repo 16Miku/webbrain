@@ -165,8 +165,10 @@ Navigation also stops unless only trailing observations remain. Mid's usual
 single-action boundary is suspended inside a batch but still applies after it.
 Coordinate clicks after an earlier mutation are rejected during validation.
 
-Verified `set_field`/`type_ax`/`type_text` edits to native input and textarea controls can
-continue within the same batch using updated evidence for those exact values.
+Verified `set_field`/`type_ax`/`type_text` edits to native input and textarea controls,
+password fields included, can continue within the same batch using updated
+evidence for those exact values, so a login's username, password and button can
+run in one batch.
 Element identities, labels, surrounding form/recipient bindings, other control
 values and user-interaction checks remain fixed. A sibling call or another
 batch cannot reuse that exception. Selects, contenteditable editors and clicks

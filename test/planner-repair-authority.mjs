@@ -761,9 +761,11 @@ for (const browser of ['chrome', 'firefox']) {
       steps: [{ id: '2', action: 'Doğrulamadan sonra bitir.' }], risks: ['Yeni ileti gönderme.'] } });
     const original = JSON.stringify(raw);
     const plan = planner.normalizePlan(raw, { requireIntent: true, locale: 'tr-TR' });
+    // The step the copy left out shows in English, and the copy is marked
+    // incomplete so a plan the user reads is translated first.
     assert.deepEqual(plan.localized, { locale: 'tr-tr', summary: raw.localized.summary,
       steps: [{ id: '1', action: plan.steps[0].action }, { id: '2', action: raw.localized.steps[0].action }],
-      risks: raw.localized.risks });
+      risks: raw.localized.risks, missing: true });
     assert.equal(JSON.stringify(raw), original);
   });
 
@@ -791,7 +793,16 @@ for (const browser of ['chrome', 'firefox']) {
       assert.equal(plan.request_kind, request_kind);
       assert.equal(plan.requires_submission, false);
       if (request_kind === 'clarify') {
-        assert.equal(planner.normalizePlan({ ...raw, localized: {} }, { requireIntent: true, locale: 'en' }), null);
+        // The summary is the question. English needs no localized copy; in
+        // another language the question is marked for translation before it
+        // is asked, rather than rejected.
+        for (const localized of [null, {}]) {
+          const english = planner.normalizePlan({ ...raw, localized }, { requireIntent: true, locale: 'en' });
+          assert.equal(english.localized.summary, english.summary);
+          const turkish = planner.normalizePlan({ ...raw, localized }, { requireIntent: true, locale: 'tr' });
+          assert.equal(turkish.request_kind, 'clarify');
+          assert.equal(turkish.localized.missing, true);
+        }
         assert.equal(planner.normalizePlan({ ...raw, read_scope: 'visible_page' }, { requireIntent: true, locale: 'en' }), null);
       }
     }

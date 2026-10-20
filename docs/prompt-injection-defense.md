@@ -140,8 +140,10 @@ the first action; neither allowlist membership nor a valid earlier action
 authorizes a later malformed or unavailable tool.
 
 The page monitor permits a narrow continuation after verified `set_field`,
-`type_ax`, or `type_text` input into a native input/textarea: only the completed control's value
-evidence changes, bound to the original snapshot and the same parent batch.
+`type_ax`, or `type_text` input into a native input/textarea, password fields
+included: only the completed control's value evidence changes, bound to the
+original snapshot and the same parent batch. The typed value is compared in the
+monitor's isolated world and never leaves it.
 Node identities, labels, ancestors, form/recipient identity, all other values
 and human-interaction authority remain checked. Other batches and top-level
 sibling calls cannot borrow that evidence. No new model snapshot is captured

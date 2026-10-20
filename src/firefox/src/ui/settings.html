@@ -24,7 +24,7 @@
         <span data-i18n="st.tab.providers"></span>
       </a>
       <a id="apocalypse-mode-link" class="support-link apocalypse-link" href="apocalypse-mode.html" target="_blank" rel="noopener" aria-describedby="apocalypse-mode-status">
-        <span class="apocalypse-icon" aria-hidden="true">☢</span>
+        <svg class="apocalypse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><path d="M16.75 20.23A9.5 9.5 0 0 1 7.25 20.23L10 15.46A4 4 0 0 0 14 15.46Z"/><path d="M2.5 12A9.5 9.5 0 0 1 7.25 3.77L10 8.54A4 4 0 0 0 8 12Z"/><path d="M16.75 3.77A9.5 9.5 0 0 1 21.5 12L16 12A4 4 0 0 0 14 8.54Z"/></svg>
         <span data-i18n="st.display.apocalypse_mode.label"></span>
       </a>
       <a class="support-link" href="https://webbrain.one/docs" target="_blank" rel="noopener noreferrer">
@@ -51,7 +51,7 @@
   <div class="general-search-empty" id="general-search-empty" hidden data-i18n="st.display.search.empty"></div>
 
   <section class="tab-panel active" data-panel="display" role="tabpanel" data-search>
-    <h2 class="search-panel-heading" data-i18n="st.tab.display"></h2>
+    <h2 class="search-panel-heading"><button type="button" class="search-panel-link" data-search-tab="display" data-i18n="st.tab.display"></button></h2>
     <div id="display-settings" data-search-scope>
       <div class="setting-row">
         <div class="setting-info">
@@ -148,7 +148,7 @@
   </section>
 
   <section class="tab-panel" data-panel="budgets" role="tabpanel" data-search>
-    <h2 class="search-panel-heading" data-i18n="st.tab.budgets"></h2>
+    <h2 class="search-panel-heading"><button type="button" class="search-panel-link" data-search-tab="budgets" data-i18n="st.tab.budgets"></button></h2>
     <div id="budget-settings" data-search-scope>
       <div class="setting-row">
         <div class="setting-info">
@@ -404,36 +404,44 @@
   <section class="tab-panel" data-panel="skills" role="tabpanel">
     <div class="provider-card" id="skills-card">
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.skills.desc_html"></div>
-      <div class="field">
-        <label data-i18n="st.skills.name.label"></label>
-        <input type="text" id="skill-name" data-i18n-placeholder="st.skills.name.placeholder">
+      <!-- The form opens from Add skill (and from Edit on an enabled skill);
+           the lists of enabled and available skills come first. -->
+      <div class="btn-row skills-toolbar">
+        <button type="button" class="btn-primary" id="btn-show-skill-form" aria-controls="skill-add-form" data-i18n="st.skills.add_skill"></button>
       </div>
-      <div class="field">
-        <label data-i18n="st.skills.url.label"></label>
-        <input type="url" id="skill-url" placeholder="https://example.com/skill.md">
-      </div>
-      <div class="btn-row">
-        <button class="btn-primary" id="btn-add-skill-url" data-i18n="st.skills.add_url"></button>
-      </div>
-      <div class="field" style="margin-top:16px;">
-        <label data-i18n="st.skills.text.label"></label>
-        <textarea id="skill-text" rows="10" data-i18n-placeholder="st.skills.text.placeholder"></textarea>
-      </div>
-      <div class="btn-row">
-        <button class="btn-primary" id="btn-add-skill-text" data-i18n="st.skills.add_text"></button>
-        <button class="btn-secondary" id="btn-clear-skill-form" data-i18n="st.skills.clear_form"></button>
+      <div class="skill-add-form" id="skill-add-form" hidden>
+        <div class="field">
+          <label for="skill-name" data-i18n="st.skills.name.label"></label>
+          <input type="text" id="skill-name" data-i18n-placeholder="st.skills.name.placeholder">
+        </div>
+        <div class="field">
+          <label for="skill-url" data-i18n="st.skills.url.label"></label>
+          <input type="url" id="skill-url" placeholder="https://example.com/skill.md">
+        </div>
+        <div class="btn-row">
+          <button class="btn-primary" id="btn-add-skill-url" data-i18n="st.skills.add_url"></button>
+        </div>
+        <div class="field" style="margin-top:16px;">
+          <label for="skill-text" data-i18n="st.skills.text.label"></label>
+          <textarea id="skill-text" rows="10" data-i18n-placeholder="st.skills.text.placeholder"></textarea>
+        </div>
+        <div class="btn-row">
+          <button class="btn-primary" id="btn-add-skill-text" data-i18n="st.skills.add_text"></button>
+          <button class="btn-secondary" id="btn-clear-skill-form" data-i18n="st.skills.clear_form"></button>
+          <button type="button" class="btn-secondary" id="btn-cancel-skill-form" data-i18n="st.skills.cancel"></button>
+        </div>
       </div>
       <div class="test-result" id="skills-result"></div>
-    </div>
-
-    <div class="provider-card" id="packaged-skills-card">
-      <div class="setting-label" style="margin-bottom:10px;" data-i18n="st.skills.available.heading"></div>
-      <div id="packaged-skills-list"></div>
     </div>
 
     <div class="provider-card" id="skills-list-card">
       <div class="setting-label" style="margin-bottom:10px;" data-i18n="st.skills.list.heading"></div>
       <div id="skills-list"></div>
+    </div>
+
+    <div class="provider-card" id="packaged-skills-card">
+      <div class="setting-label" style="margin-bottom:10px;" data-i18n="st.skills.available.heading"></div>
+      <div id="packaged-skills-list"></div>
     </div>
 
     <div class="info-box" data-i18n-html="st.skills.security_html"></div>
@@ -461,7 +469,7 @@
   </section>
 
   <section class="tab-panel" data-panel="captcha" role="tabpanel" data-search>
-    <h2 class="search-panel-heading" data-i18n="st.tab.captcha"></h2>
+    <h2 class="search-panel-heading"><button type="button" class="search-panel-link" data-search-tab="captcha" data-i18n="st.tab.captcha"></button></h2>
     <div id="captcha-settings" data-search-scope>
       <div class="provider-card" id="captcha-card" aria-labelledby="captcha-heading">
         <h3 id="captcha-heading" data-i18n="st.captcha.heading"></h3>
@@ -702,7 +710,7 @@
   </section>
 
   <section class="tab-panel" data-panel="advanced" role="tabpanel" data-search>
-    <h2 class="search-panel-heading" data-i18n="st.tab.advanced"></h2>
+    <h2 class="search-panel-heading"><button type="button" class="search-panel-link" data-search-tab="advanced" data-i18n="st.tab.advanced"></button></h2>
     <div id="advanced-settings" data-search-scope>
       <div class="setting-row">
         <div class="setting-info">

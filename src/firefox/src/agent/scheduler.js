@@ -1712,7 +1712,7 @@ export class ScheduledJobManager {
       || null;
     const compass = runMeta.compass
       ?? (String(activeProvider?.config?.providerName || '').trim().toLowerCase() === 'webbrain-cloud' ? activeProvider.config : null);
-    const config = runMeta.decisionConfig || await resolveCurrentDecisionConfig(settings, compass);
+    const config = runMeta.decisionConfig || await resolveCurrentDecisionConfig(settings, compass, { feature: isWatch ? 'watch' : 'completion' });
     if (!this.systemOneJudge || !decisionFeatureEnabled(config, isWatch ? 'watch' : 'completion')) return skip('disabled');
     if (settings.strictSecretMode || runMeta.sidecarAllowed === false || runMeta.signal?.aborted) return skip('unavailable');
     const state = systemOneEvidenceState(job.prompt || job.resumeInstruction || job.reason || '', runMeta.evidence, isWatch ? job.watch?.systemOneBaseline : null);

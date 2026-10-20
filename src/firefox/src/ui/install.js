@@ -224,27 +224,39 @@ export async function pointWebgpuProviderAtModel(modelId, { runtime = globalThis
 }
 
 // ── D1, the on-device decision model ─────────────────────────────────────
-// The same button downloads D1, WebBrain's experimental decision model, next
-// to the chat model. D1 has its own worker, so both downloads run at once, and
-// D1 loads when its files are in. The click is the consent the note asks for.
-// The guide writes no decision settings: Auto uses a downloaded D1 for its
-// checks while Compass is not the chat provider (decision-availability.js).
+// The same button downloads D1, WebBrain's experimental decision model, and
+// then the chat model: D1 first, in its own worker, and the chat model once
+// D1's download is over. The background queues the chat model with D1's
+// download, so it follows even after this page is closed
+// (providers/install-download-queue.js); when D1 cannot download here, the
+// chat model starts at once. D1 loads when its files are in. The click is the
+// consent the note asks for. The guide writes no decision settings: once D1 is
+// downloaded, Auto, the default mode, uses it for its checks, whatever the
+// chat provider (decision-availability.js).
 
 const D1_POLL_MS = 1500;
 const D1_POLLING_STATUSES = new Set(['checking', 'downloading']);
+// D1's download is under way: checking the GPU, transferring or paused.
+const D1_TRANSFER_STATUSES = new Set(['checking', 'downloading', 'paused']);
+// Chat model states in which a D1 transfer has the button: the chat model is
+// not downloading, so D1 goes first.
+const D1_FIRST_CHAT_STATUSES = new Set(['not-downloaded', 'error', 'busy', 'paused']);
 
 export function normalizeD1Snapshot(snapshot = {}) {
   const raw = String(snapshot?.status || '');
   const progress = Math.max(0, Math.min(100, Math.round(Number(snapshot?.progress) || 0)));
   const usedForDecisions = snapshot?.usedForDecisions === true;
-  if (snapshot?.loaded === true || raw === 'ready') return { status: 'ready', progress: 100, error: '', usedForDecisions };
+  // The background still holds the chat model's download for after D1's.
+  const chatModelQueued = snapshot?.chatModelQueued === true;
+  const shared = { usedForDecisions, chatModelQueued };
+  if (snapshot?.loaded === true || raw === 'ready') return { status: 'ready', progress: 100, error: '', ...shared };
   // Downloaded and verified but not loaded: a decision loads it again.
-  if (raw === 'cached' || snapshot?.cached === true) return { status: 'saved', progress: 100, error: '', usedForDecisions };
-  if (raw === 'checking') return { status: 'checking', progress: 0, error: '', usedForDecisions };
-  if (['downloading', 'loading'].includes(raw)) return { status: 'downloading', progress, error: '', usedForDecisions };
-  if (raw === 'stopped') return { status: 'paused', progress, error: '', usedForDecisions };
-  if (raw === 'error') return { status: 'error', progress: 0, error: String(snapshot?.error || ''), usedForDecisions };
-  return { status: 'idle', progress: 0, error: '', usedForDecisions };
+  if (raw === 'cached' || snapshot?.cached === true) return { status: 'saved', progress: 100, error: '', ...shared };
+  if (raw === 'checking') return { status: 'checking', progress: 0, error: '', ...shared };
+  if (['downloading', 'loading'].includes(raw)) return { status: 'downloading', progress, error: '', ...shared };
+  if (raw === 'stopped') return { status: 'paused', progress, error: '', ...shared };
+  if (raw === 'error') return { status: 'error', progress: 0, error: String(snapshot?.error || ''), ...shared };
+  return { status: 'idle', progress: 0, error: '', ...shared };
 }
 
 /** The D1 line for one normalized state; nothing while D1 was never started. */
@@ -254,6 +266,8 @@ export function d1View(state = {}) {
     case 'downloading': return { statusKey: 'install.local_model.d1_downloading', progress: state.progress };
     case 'paused': return { statusKey: 'install.local_model.d1_paused', progress: state.progress };
     // Saved but not loaded yet, D1 loads for the next decision it answers.
+    // A profile that turned decisions Off or chose another model under On is
+    // only told that D1 is on this device.
     case 'ready': case 'saved': return { statusKey: state.usedForDecisions ? 'install.local_model.d1_ready' : 'install.local_model.d1_saved' };
     case 'unsupported': return { statusKey: 'install.local_model.d1_unsupported' };
     case 'error': return { statusKey: 'install.local_model.d1_error', isError: true };
@@ -262,13 +276,25 @@ export function d1View(state = {}) {
 }
 
 /**
- * The shared button: the chat model's, until that model is ready and needs
- * nothing more. Then the same button finishes D1's download, so a D1 that is
- * not downloaded yet, was paused or stopped with an error can still be
- * started, resumed or retried from the guide.
+ * The shared button. D1 downloads first: while its download is under way and
+ * the chat model is not downloading, the button and the progress bar follow
+ * D1 (`displayState` is what the block shows), and the chat model's own line
+ * keeps its own progress (`statusProgress`). Then the button is the chat
+ * model's, until that model is ready and needs nothing more; the same button
+ * then finishes D1's download, so a D1 that is not downloaded yet, was paused
+ * or stopped with an error can still be started, resumed or retried.
  */
 export function localModelButtonView(view, chatStatus, d1State) {
-  if (chatStatus !== 'ready' || !d1State) return view;
+  if (!d1State) return view;
+  if (D1_FIRST_CHAT_STATUSES.has(chatStatus) && D1_TRANSFER_STATUSES.has(d1State.status)) {
+    const d1 = { statusProgress: view.progress, progress: Math.round(Number(d1State.progress) || 0) };
+    switch (d1State.status) {
+      case 'checking': return { ...view, ...d1, labelKey: 'install.local_model.download', action: null, progress: null, displayState: 'checking' };
+      case 'downloading': return { ...view, ...d1, labelKey: 'install.local_model.pause', action: 'd1-pause', displayState: 'downloading' };
+      default: return { ...view, ...d1, labelKey: 'install.local_model.resume', action: 'd1-start', displayState: 'paused' };
+    }
+  }
+  if (chatStatus !== 'ready') return view;
   switch (d1State.status) {
     case 'idle': return { ...view, labelKey: 'install.local_model.download', action: 'd1-start' };
     case 'paused': return { ...view, labelKey: 'install.local_model.resume', action: 'd1-start' };
@@ -289,7 +315,7 @@ export function initializeD1Download({
 } = {}) {
   const line = documentLike?.getElementById?.('local-model-d1');
   if (!line || !runtime?.sendMessage) return null;
-  let state = { status: 'idle', progress: 0, error: '', usedForDecisions: false };
+  let state = { status: 'idle', progress: 0, error: '', usedForDecisions: false, chatModelQueued: false };
   let timer = null;
   let disposed = false;
   let starting = false;
@@ -307,7 +333,7 @@ export function initializeD1Download({
     if (!disposed && D1_POLLING_STATUSES.has(state.status)) timer = setTimeout(() => { void refresh(); }, pollMs);
   };
   const setState = (next) => {
-    state = { progress: 0, error: '', usedForDecisions: false, ...next };
+    state = { progress: 0, error: '', usedForDecisions: false, chatModelQueued: false, ...next };
     render();
     schedule();
     onChange?.();
@@ -323,9 +349,12 @@ export function initializeD1Download({
     }
   }
 
-  async function start() {
-    if (starting || ['checking', 'downloading', 'ready', 'saved'].includes(state.status)) return;
+  // `chatModel`: the chat model to download once D1's download is over.
+  // Resolves to whether this call queued it behind a D1 download it started.
+  async function start({ chatModel = '' } = {}) {
+    if (starting || ['checking', 'downloading', 'ready', 'saved'].includes(state.status)) return false;
     starting = true;
+    let queued = false;
     try {
       setState({ status: 'checking' });
       try {
@@ -333,19 +362,21 @@ export function initializeD1Download({
       } catch (error) {
         // No GPU D1 can run on: the chat model may still fit.
         setState({ status: 'unsupported', error: error?.message || String(error) });
-        return;
+        return false;
       }
       try {
-        const response = await command('download', { consent: true, consentVersion: D1_CONSENT_VERSION });
+        const response = await command('download', { consent: true, consentVersion: D1_CONSENT_VERSION, ...(chatModel ? { chatModel } : {}) });
         setState(normalizeD1Snapshot({ status: 'checking', ...response?.result }));
+        queued = !!chatModel && response?.result?.chatModelQueued === true;
       } catch (error) {
         setState({ status: 'error', error: error?.message || String(error) });
-        return;
+        return false;
       }
     } finally {
       starting = false;
     }
     await refresh();
+    return queued;
   }
 
   async function pause() {
@@ -386,18 +417,32 @@ export function initializeLocalModelDownload({
   let pollTimer = null;
   let disposed = false;
   let rendered = false;
-  // D1's own changes redraw the button once this controller has drawn it.
-  const d1 = initializeD1Download({ documentLike, runtime, translate, pollMs, onChange: () => { if (rendered) render(); } });
+  // Whether the background held the chat model's download for after D1's.
+  let chatModelQueued = false;
+  // D1's own changes redraw the button once this controller has drawn it. When
+  // the background lets go of the queued chat model, it has started it (or
+  // found it already downloading or ready), so its state is read again.
+  const d1 = initializeD1Download({
+    documentLike, runtime, translate, pollMs,
+    onChange: () => {
+      if (rendered) render();
+      const queued = d1?.getState().chatModelQueued === true;
+      if (chatModelQueued && !queued && !inFlight) void refresh();
+      chatModelQueued = queued;
+    },
+  });
   const buttonView = () => localModelButtonView(localModelView(state), state.status, d1?.getState());
 
   const render = () => {
     rendered = true;
     const view = buttonView();
-    root.dataset.state = state.status;
+    root.dataset.state = view.displayState || state.status;
     if (label) label.textContent = translate(view.labelKey);
     if (button) {
       button.disabled = inFlight || !view.action;
-      const d1Busy = state.status === 'ready' && ['checking', 'downloading'].includes(d1?.getState().status);
+      const d1Status = d1?.getState().status;
+      const d1Busy = ['checking', 'downloading'].includes(d1Status)
+        && (state.status === 'ready' || D1_FIRST_CHAT_STATUSES.has(state.status));
       if (inFlight || d1Busy || ['checking', 'downloading', 'stopping'].includes(state.status)) button.setAttribute('aria-busy', 'true');
       else button.removeAttribute('aria-busy');
     }
@@ -407,7 +452,7 @@ export function initializeLocalModelDownload({
       bar.style?.setProperty?.('--local-model-progress', `${view.progress ?? 0}%`);
     }
     if (statusLine) {
-      statusLine.textContent = view.statusKey ? translate(view.statusKey, { progress: view.progress ?? 0, error: state.error || '' }) : '';
+      statusLine.textContent = view.statusKey ? translate(view.statusKey, { progress: view.statusProgress ?? view.progress ?? 0, error: state.error || '' }) : '';
       statusLine.classList?.toggle?.('is-error', view.isError === true);
     }
   };
@@ -436,15 +481,34 @@ export function initializeLocalModelDownload({
     }
   }
 
+  // The chat model now: D1 has nothing to download here (no D1, already
+  // saved, or a GPU it cannot use, or its download did not start).
+  async function startChatModel() {
+    inFlight = true;
+    render();
+    try {
+      await backgroundCommand(runtime, 'start_webgpu_download', { model: modelId });
+    } catch (error) {
+      inFlight = false;
+      setState({ status: 'error', error: error?.message || String(error) });
+      return;
+    }
+    inFlight = false;
+    await refresh();
+  }
+
   button?.addEventListener('click', async () => {
     const view = buttonView();
     if (!view.action || inFlight) return;
     inFlight = true;
     if (view.action === 'd1-start' || view.action === 'd1-pause') {
-      // The chat model is ready; only D1 is downloaded, paused or resumed.
+      // Only D1 is downloaded, paused or resumed: before the chat model while
+      // D1 goes first, which keeps the chat model queued behind it, or after
+      // it once the chat model is ready.
       render();
       try {
-        await (view.action === 'd1-start' ? d1.start() : d1.pause());
+        if (view.action === 'd1-pause') await d1.pause();
+        else await d1.start(state.status !== 'ready' ? { chatModel: modelId } : {});
       } finally {
         inFlight = false;
         render();
@@ -456,33 +520,44 @@ export function initializeLocalModelDownload({
         render();
         void d1?.pause();
         await backgroundCommand(runtime, 'pause_webgpu_download');
+      } else if (view.action === 'resume') {
+        render();
+        // D1 still to download goes first; the paused chat model resumes
+        // after it. A D1 that is done, or cannot download here, leaves the
+        // chat model to resume now.
+        const queued = d1 && ['idle', 'error'].includes(d1.getState().status) ? await d1.start({ chatModel: modelId }) : false;
+        if (!queued) await backgroundCommand(runtime, 'start_webgpu_download', { model: modelId });
       } else {
-        if (view.action === 'start') {
-          state = { status: 'checking', progress: 0, error: '' };
-          render();
-          // A browser without hardware WebGPU could download the files but never
-          // run them, so check the adapter first (no weights are fetched).
-          const probe = await backgroundCommand(runtime, 'test_provider', { providerId: 'webgpu' });
-          if (probe?.ok === false) {
-            inFlight = false;
-            setState({ status: 'unsupported', error: String(probe.error || '') });
-            return;
-          }
-          try {
-            await pointWebgpuProviderAtModel(modelId, { runtime });
-          } catch {
-            // Only cosmetic for Settings; the download itself does not need it.
-          }
-        } else {
-          render();
+        state = { status: 'checking', progress: 0, error: '' };
+        render();
+        // A browser without hardware WebGPU could download the files but never
+        // run them, so check the adapter first (no weights are fetched).
+        const probe = await backgroundCommand(runtime, 'test_provider', { providerId: 'webgpu' });
+        if (probe?.ok === false) {
+          inFlight = false;
+          setState({ status: 'unsupported', error: String(probe.error || '') });
+          return;
         }
-        // D1 downloads alongside, in its own worker; its line reports it. The
-        // button stays busy until both downloads have started, so a Pause
-        // always finds D1's transfer to stop.
-        await Promise.all([
-          d1?.start(),
-          backgroundCommand(runtime, 'start_webgpu_download', { model: modelId }),
-        ]);
+        try {
+          await pointWebgpuProviderAtModel(modelId, { runtime });
+        } catch {
+          // Only cosmetic for Settings; the download itself does not need it.
+        }
+        // D1 downloads first; its line reports it, and the background starts
+        // the chat model once D1's download is over. The button stays busy
+        // until D1's download has started, so a Pause always finds D1's
+        // transfer to stop.
+        let queued = false;
+        if (d1) {
+          state = { status: 'not-downloaded', progress: 0, error: '' };
+          render();
+          queued = await d1.start({ chatModel: modelId });
+        }
+        if (!queued) {
+          inFlight = false;
+          await startChatModel();
+          return;
+        }
       }
     } catch (error) {
       inFlight = false;
