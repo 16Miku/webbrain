@@ -141,7 +141,10 @@ import {
   PLANNER_INTENT_RESPONSE_JSON_SCHEMA,
   READ_SCOPE_RESPONSE_JSON_SCHEMA,
   ASK_MODE_HANDOFF_RESPONSE_JSON_SCHEMA,
+  PLAN_LOCALIZATION_RESPONSE_JSON_SCHEMA,
   buildAskModeHandoffMessages,
+  buildPlanLocalizationMessages,
+  localizePlanFromContent,
   parsePlanFromContent,
   parseReadScopeFromContent,
   parseAskModeHandoffFromContent,
@@ -26306,6 +26309,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : { mode };
   }
 
+  // A plan the user reads (a review card, a plan-only answer) in a language
+  // other than English, when the planner left out its localized copy: one
+  // small request translates the display fields. Execution keeps the English
+  // plan, and if the translation fails the user sees the English text.
+  async _localizedPlanForDisplay(tabId, plan, provider, costState, runId = null, runtimeMode = 'act') {
+    if (plan?.localized?.missing !== true || !provider?.chat) return plan;
+    const messages = buildPlanLocalizationMessages(plan);
+    const chatOptions = { ...this._plannerChatOptions(provider, false, false, 'localize'), temperature: 0 };
+    await this._tracePlannerAttemptRequest(runId, 0, provider, messages, 'planner_localize', 1, runtimeMode, chatOptions);
+    const startedAt = Date.now();
+    try {
+      const result = await this._chatWithCostAllowance(provider, messages, chatOptions, costState,
+        { tabId, generationName: 'planner_localize' });
+      await this._tracePlannerAttemptResponse(runId, 0, provider, result, 'planner_localize', 1, startedAt, chatOptions);
+      return localizePlanFromContent(plan, result?.content) || plan;
+    } catch (error) {
+      if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+      await this._tracePlannerAttemptFailure(runId, 'planner_localize', 1, error);
+      return plan;
+    }
+  }
+
   _shouldReviewPlan(plan) {
     const mode = this._normalizePlanReviewMode(this.planReviewMode);
     if (mode === 'always') return true;
@@ -26781,7 +26806,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _plannerChatOptions(provider, retry = false, intentOnly = false, schemaKind = null, portable = false) {
     const kind = schemaKind || (intentOnly ? 'intent' : 'planner');
-    const plannerBudget = kind === 'alignment' ? (retry ? 4096 : 2048) : (intentOnly ? 2048 : 4096);
+    const plannerBudget = kind === 'alignment' ? (retry ? 4096 : 2048) : (intentOnly || kind === 'localize' ? 2048 : 4096);
     const opts = {
       temperature: retry ? 0.1 : 0.3,
       maxTokens: Math.min(this._providerMaxOutputTokens(provider), plannerBudget),
@@ -26789,6 +26814,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!portable) {
       const schema = kind === 'alignment'
         ? PLANNER_ALIGNMENT_RESPONSE_JSON_SCHEMA
+        : kind === 'localize'
+        ? PLAN_LOCALIZATION_RESPONSE_JSON_SCHEMA
         : kind === 'read_scope'
         ? READ_SCOPE_RESPONSE_JSON_SCHEMA
         : (kind === 'ask_mode_handoff'
@@ -27917,9 +27944,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       if (plan.request_kind !== 'execute') {
+        // The user reads this answer: in their language.
+        const shown = await this._localizedPlanForDisplay(tabId, plan, provider, costState, runId, runtimeMode);
+        if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
         return {
           proceed: false,
-          message: this._plannerTerminalMessage(plan),
+          message: this._plannerTerminalMessage(shown),
           reason: plan.request_kind,
           requestKind: plan.request_kind,
           plannerClarification: plan.request_kind === 'clarify',
@@ -28208,7 +28238,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
         return { proceed: false, steeringSuperseded: true };
       }
-      const routeNonExecutionPlan = candidate => {
+      const routeNonExecutionPlan = async candidate => {
         if (candidate.request_kind === 'respond') {
           return {
             proceed: true,
@@ -28219,9 +28249,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         }
         if (candidate.request_kind !== 'execute') {
+          // The user reads this answer: in their language.
+          const shown = await this._localizedPlanForDisplay(tabId, candidate, provider, costState, runId, runtimeMode);
+          if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
           return {
             proceed: false,
-            message: this._plannerTerminalMessage(candidate),
+            message: this._plannerTerminalMessage(shown),
             reason: candidate.request_kind,
             requestKind: candidate.request_kind,
             plannerClarification: candidate.request_kind === 'clarify',
@@ -28256,7 +28289,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._tracePlannerCompletionRequirementCorrection(runId, plan, 'planner');
       const initialIntentGate = await recheckReadOnlyFollowUpIntent(plan);
       if (initialIntentGate) return initialIntentGate;
-      const initialNonExecutionGate = routeNonExecutionPlan(plan);
+      const initialNonExecutionGate = await routeNonExecutionPlan(plan);
       if (initialNonExecutionGate) return initialNonExecutionGate;
 
       // History helps legitimate follow-ups, but a high confidence score cannot
@@ -28388,7 +28421,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             alignmentReplanned = true;
             // A validated correction can remove execution entirely. Preserve
             // its normal terminal route without pinning or approving a plan.
-            const correctedNonExecutionGate = routeNonExecutionPlan(plan);
+            const correctedNonExecutionGate = await routeNonExecutionPlan(plan);
             if (correctedNonExecutionGate) return correctedNonExecutionGate;
           }
         } catch (alignmentError) {
@@ -28472,12 +28505,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       plan.skill_ids = (plan.skill_ids || []).filter((skillId) => eligibleSkillIds.has(skillId));
 
       const planId = `plan_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const scheduledPolicy = this.scheduledRunPolicies.get(tabId);
+      const scheduledAutoApprove = scheduledPolicy?.autoApprovePlanReview === true;
+      const reviewPlan = !scheduledAutoApprove && this._shouldReviewPlan(plan);
+      if (reviewPlan) {
+        // The review card is read in the user's language.
+        plan = await this._localizedPlanForDisplay(tabId, plan, provider, costState, runId, runtimeMode);
+        if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+      }
       const markdown = formatPlanMarkdown(plan, { localized: true });
       const verboseMarkdown = formatPlanMarkdown(plan, { verbose: true, localized: true });
       const canonicalVerboseMarkdown = formatPlanMarkdown(plan, { verbose: true });
-      const scheduledPolicy = this.scheduledRunPolicies.get(tabId);
-      const scheduledAutoApprove = scheduledPolicy?.autoApprovePlanReview === true;
-      if (scheduledAutoApprove || !this._shouldReviewPlan(plan)) {
+      if (!reviewPlan) {
         // Confidence-gated skips leave a visible trace in the conversation so
         // the run isn't silent; scheduled runs stay quiet as before.
         if (!scheduledAutoApprove) {

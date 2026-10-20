@@ -26,6 +26,9 @@ call to the same configured provider before any browser tools run. That call
 contains the user's task, sanitized page URL/title, a short recent-conversation
 digest, and the planner system prompt. Image blocks are dropped before the
 planner call; any screenshot text description is treated as untrusted context.
+When a plan the user will read (a review card or a plan-only answer) comes back
+without its copy in the user's language, one more call to the same provider
+sends that plan's English summary, steps and risks to be translated.
 
 When **User Memory auto-learn** is enabled, successful chat or continue turns may
 make a best-effort background extractor call to the same configured provider

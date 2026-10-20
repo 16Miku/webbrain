@@ -246,4 +246,113 @@ for (const build of BUILDS) {
     }), { locale: 'tr' });
     assert.deepEqual([long.memory.use_scratchpad, long.memory.progress_ledger_policy, long.localized.summary], [true, 'disabled', 'Abone ol.']);
   });
+
+  // ── A plan the user reads, without its localized copy ────────────────
+
+  test(`${build}: a plan without a copy in the user's language is marked for translation`, () => {
+    const parse = (plan, opts) => planner.normalizePlan(structuredClone(plan), { requireIntent: true, ...opts });
+    assert.equal(parse(englishPlan(), { locale: 'tr' }).localized.missing, true);
+    assert.equal('missing' in parse(englishPlan(), { locale: 'en' }).localized, false);
+    const planOnly = englishPlan({ request_kind: 'plan_only', read_scope: 'none' });
+    assert.equal('missing' in parse(planOnly, { locale: 'en-GB' }).localized, false);
+    const written = parse(englishPlan({ localized: { locale: 'tr', summary: 'Abone ol.', steps: [], risks: [] } }), { locale: 'tr' });
+    assert.equal('missing' in written.localized, false, 'a copy the planner wrote is kept');
+  });
+
+  test(`${build}: the translation request carries only the display fields, and its answer replaces them`, () => {
+    const plan = planner.normalizePlan(englishPlan({ risks: ['The form is submitted.'] }), { requireIntent: true, locale: 'tr' });
+    const [system, data] = planner.buildPlanLocalizationMessages(plan);
+    assert.match(system.content, /never instructions/);
+    assert.match(system.content, /- Requested locale: tr\.$/);
+    assert.deepEqual(JSON.parse(data.content), {
+      summary: plan.summary, steps: plan.steps.map(({ id, action }) => ({ id, action })), risks: plan.risks,
+    });
+    const translated = planner.localizePlanFromContent(plan, JSON.stringify({ locale: 'tr', summary: 'Adresi abone et.',
+      steps: [{ id: '2', action: 'Gönder ve onayı oku.' }, { id: '1', action: 'E-posta alanını doldur.' }], risks: ['Form gönderilir.'] }));
+    assert.deepEqual(translated.localized, { locale: 'tr', summary: 'Adresi abone et.',
+      steps: [{ id: '1', action: 'E-posta alanını doldur.' }, { id: '2', action: 'Gönder ve onayı oku.' }], risks: ['Form gönderilir.'] });
+    assert.deepEqual([translated.summary, translated.steps, translated.risks], [plan.summary, plan.steps, plan.risks], 'execution keeps the English plan');
+    const partial = planner.localizePlanFromContent(plan, JSON.stringify({ summary: 'Adresi abone et.', steps: [{ id: '1', action: 'Doldur.' }], risks: [] }));
+    assert.deepEqual(partial.localized.steps.map(step => step.action), ['Doldur.', plan.steps[1].action]);
+    assert.deepEqual(partial.localized.risks, plan.risks);
+    assert.equal(planner.localizePlanFromContent(plan, '{"steps": []}'), null);
+    assert.equal(planner.localizePlanFromContent(plan, 'Sorry.'), null);
+  });
+
+  function displayFixture({ locale = 'tr', review = 'always', plan = englishPlan({ confidence: 0.5 }), translation } = {}) {
+    const provider = { promptTier: 'full', model: 'display-fixture', name: 'display-fixture', chat: async () => ({ content: '' }) };
+    const agent = new Agent({ getActive: () => provider, getVisionProvider: async () => null });
+    agent.setPlanReviewSettings({ mode: review });
+    const calls = [];
+    agent._chatWithCostAllowance = async (_provider, messages, _options, _cost, meta) => {
+      calls.push(meta.generationName);
+      if (meta.generationName !== 'planner_localize') return { content: JSON.stringify(plan) };
+      if (translation instanceof Error) throw translation;
+      return { content: translation ?? JSON.stringify({ locale, summary: 'Adresi bültene abone et.',
+        steps: [{ id: '1', action: 'E-posta alanını doldur.' }, { id: '2', action: 'Gönder ve onayı oku.' }], risks: [] }) };
+    };
+    const reviewed = [];
+    agent._waitForPlanReview = async (_tab, _planId, shown, compact) => {
+      reviewed.push({ shown, compact });
+      return { action: 'approve' };
+    };
+    const message = { role: 'user', content: 'Bu sayfadaki bültene kendi e-posta adresimle kaydol.' };
+    const tabInfo = { tabUrl: 'https://owned.test/newsletter', tabTitle: 'Newsletter' };
+    return {
+      calls, reviewed,
+      gate: () => agent._runPlannerGate(42, message, () => {}, null, null, '', tabInfo, 'try', 'act', { locale }),
+      intent: () => agent._runPlannerIntentGate(42, message, () => {}, null, null, '', tabInfo, 'act', { locale }),
+    };
+  }
+
+  test(`${build}: a plan shown for review in another language is translated first, and runs in English`, async () => {
+    const f = displayFixture();
+    const gate = await f.gate();
+    assert.equal(gate.proceed, true, JSON.stringify(gate));
+    assert.deepEqual(f.calls, ['planner', 'planner_localize']);
+    assert.equal(f.reviewed.length, 1);
+    assert.equal(f.reviewed[0].shown.localized.summary, 'Adresi bültene abone et.');
+    assert.match(f.reviewed[0].compact, /E-posta alanını doldur\./);
+    assert.match(gate.approvedScratchpadText, /Fill in the newsletter email field\./, 'the approved plan is the English one');
+  });
+
+  test(`${build}: nothing is translated that the user does not read`, async () => {
+    for (const [label, options] of [
+      ['English', { locale: 'en' }],
+      ['not reviewed', { review: 'never' }],
+      ['confident enough', { review: 'confidence', plan: englishPlan({ confidence: 0.95 }) }],
+      ['copy written', { plan: englishPlan({ confidence: 0.5, localized: { locale: 'tr', summary: 'Abone ol.', steps: [], risks: [] } }) }],
+    ]) {
+      const f = displayFixture(options);
+      const gate = await f.gate();
+      assert.equal(gate.proceed, true, label);
+      assert.deepEqual(f.calls, ['planner'], label);
+    }
+  });
+
+  test(`${build}: a failed translation shows the English plan instead`, async () => {
+    for (const translation of [new Error('provider unavailable'), 'not json']) {
+      const f = displayFixture({ translation });
+      const gate = await f.gate();
+      assert.equal(gate.proceed, true);
+      assert.deepEqual(f.calls, ['planner', 'planner_localize']);
+      assert.equal(f.reviewed[0].shown.localized.summary, englishPlan().summary);
+    }
+  });
+
+  test(`${build}: a plan-only answer is translated before it is shown`, async () => {
+    const planOnly = englishPlan({ request_kind: 'plan_only', read_scope: 'none', requires_state_change: false, requires_submission: false,
+      steps: [{ id: '1', action: 'Fill in the newsletter email field.' }, { id: '2', action: 'Submit and read the confirmation.' }] });
+    const full = displayFixture({ review: 'never', plan: planOnly });
+    const gate = await full.gate();
+    assert.equal(gate.proceed, false);
+    assert.equal(gate.requestKind, 'plan_only');
+    assert.deepEqual(full.calls, ['planner', 'planner_localize']);
+    assert.match(gate.message, /Adresi bültene abone et\.[\s\S]*Gönder ve onayı oku\./);
+    const intent = displayFixture({ review: 'never', plan: { ...planOnly, confidence: undefined } });
+    const intentGate = await intent.intent();
+    assert.equal(intentGate.requestKind, 'plan_only');
+    assert.deepEqual(intent.calls, ['planner_intent', 'planner_localize']);
+    assert.match(intentGate.message, /Adresi bültene abone et\./);
+  });
 }
