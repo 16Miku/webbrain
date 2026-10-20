@@ -1,9 +1,10 @@
 // A submission the user declined is remembered for the rest of the turn by
-// the page elements it goes through, as the submit probe identifies them:
-// the form and its button. Per-row forms that post the same visible fields to
-// one endpoint, told apart only by hidden IDs, and two buttons of one form are
-// different submissions. The same form and button, clicked again or reached
-// by an Enter in the form's field, is the same submission.
+// what the submit probe identifies it by: the form, its button, and a
+// fingerprint of every value the form would send. Per-row forms that post the
+// same visible fields to one endpoint, told apart only by hidden IDs, two
+// buttons of one form, and the same form with any value changed are different
+// submissions. The same form, button and values, clicked again or reached by
+// an Enter in the form's field, is the same submission.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
@@ -53,6 +54,26 @@ for (const build of ['chrome', 'firefox']) {
           const enter = await probe('press_keys', { keys: 'Enter' });
           assert.equal(enter?.isSubmit, true);
           assert.equal(enter.submissionIdentity, save.submissionIdentity, 'an Enter in the field submits through the first button');
+        });
+
+        await t.test('any value the form sends changes the fingerprint, and none is shown', async () => {
+          await page.setContent('<form method="post" action="/profile">'
+            + Array.from({ length: 10 }, (_, i) => `<input name="f${i}" aria-label="Field ${i}" value="v${i}">`).join('')
+            + '<input type="password" name="pw" aria-label="Password" value="first-secret">'
+            + '<input type="hidden" name="record" value="41"><button id="go">Save</button></form>');
+          const before = await probe('click', { selector: '#go' });
+          assert.equal(before?.isSubmit, true);
+          assert.match(before.submissionIdentity, /^[a-z0-9]+\.\d+\/[a-z0-9]+\.\d+\/[a-z0-9]+$/, 'element identities and an opaque fingerprint');
+          assert.equal((await probe('click', { selector: '#go' })).submissionIdentity, before.submissionIdentity, 'nothing changed');
+          // A tenth field (past the summary's first eight), a password and a
+          // hidden record ID each make it a different submission.
+          for (const [selector, value] of [['[name=f9]', 'changed'], ['[name=pw]', 'second-secret'], ['[name=record]', '42']]) {
+            const previous = (await probe('click', { selector: '#go' })).submissionIdentity;
+            await page.evaluate(([target, text]) => { document.querySelector(target).value = text; }, [selector, value]);
+            const after = await probe('click', { selector: '#go' });
+            assert.notEqual(after.submissionIdentity, previous, `a change to ${selector}`);
+            assert.equal(after.submissionIdentity.split('/').slice(0, 2).join('/'), previous.split('/').slice(0, 2).join('/'), 'the same form and button');
+          }
         });
       } finally {
         await browser.close();

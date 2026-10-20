@@ -29439,8 +29439,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // control whose form, fields and action it could not read, or one whose
   // form and button the page probe did not identify. Two forms can post
   // the same visible fields to one endpoint (per-row forms told apart only
-  // by hidden IDs), and one form can have several buttons, so the key
-  // also names the frame and the form and button elements.
+  // by hidden IDs), one form can have several buttons, and the summary of
+  // changed fields leaves values out, so the key also names the frame, the
+  // form and button elements, and the probe's fingerprint of every value
+  // the form would send.
   _declinableSubmissionKey(toolName, submitInfo) {
     if (!submitInfo || toolName === 'execute_js' || toolName === 'execute_webmcp_tool') return '';
     const resolved = (Array.isArray(submitInfo.changedFields) && submitInfo.changedFields.length > 0)
@@ -30266,17 +30268,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     const transactionOrderSite = /(?:^|\.)12306\.cn$/i.test(host);
     // The form and the button a submission goes through, as identities of
-    // the elements this frame holds. A declined submission is remembered by
-    // them, so another form or button with the same fields and action
-    // (per-row forms told apart only by hidden IDs, Reject beside Approve)
-    // still gets its own card. An Enter in a field, or set_field({submit}),
-    // submits through the form's default button.
-    const submissionIdentity = (form, submitControl) => {
+    // the elements this frame holds, and every value the form would send, as
+    // a fingerprint keyed by a secret that never leaves this frame. A
+    // declined submission is remembered by them, so another form or button
+    // with the same fields and action (per-row forms told apart only by
+    // hidden IDs, Reject beside Approve), or the same form with any value
+    // changed (a field past the summary's first eight, a password, another
+    // file, a hidden record ID), still gets its own card. An Enter in a
+    // field, or set_field({submit}), submits through the form's default
+    // button.
+    const submissionIdentity = (form, submitControl, pendingEl = null, pendingValue = null) => {
       try {
         if (!(window.__wbSubmissionIdentities instanceof WeakMap)) {
           window.__wbSubmissionIdentities = new WeakMap();
           window.__wbSubmissionIdentityPrefix = Math.random().toString(36).slice(2, 10);
           window.__wbSubmissionIdentityCount = 0;
+        }
+        if (typeof window.__wbSubmissionValueKey !== 'string' || !window.__wbSubmissionValueKey) {
+          window.__wbSubmissionValueKey = `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
         }
         const identities = window.__wbSubmissionIdentities;
         const identityOf = el => {
@@ -30299,9 +30308,40 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const submitter = owner && !typedField
           ? (owner.closest?.('button,input,[role="button"]') || owner)
           : defaultButton();
+        const controls = (() => {
+          try {
+            return String(form?.tagName || '').toUpperCase() === 'FORM'
+              ? Array.from(form.elements || [])
+              : Array.from(form?.querySelectorAll?.('input, textarea, select, [contenteditable="true"]') || []);
+          } catch { return []; }
+        })();
+        const valueOf = el => {
+          if (el === pendingEl && pendingValue != null) return String(pendingValue);
+          const type = String(el?.type || '').toLowerCase();
+          if (type === 'checkbox' || type === 'radio') return `${el.checked ? 1 : 0}:${el.value ?? ''}`;
+          if (type === 'file') return Array.from(el.files || []).map(file => [file.name, file.size, file.lastModified, file.type].join(':')).join('|');
+          if (type === 'select-multiple') return Array.from(el.selectedOptions || []).map(option => option.value).join('|');
+          if (el?.isContentEditable && !('value' in el)) return String(el.textContent || '');
+          return String(el?.value ?? '');
+        };
+        const sent = window.__wbSubmissionValueKey + JSON.stringify(controls.map(el => [
+          String(el?.getAttribute?.('name') || ''), String(el?.type || el?.tagName || ''), valueOf(el)]));
+        // cyrb53, a 53-bit string hash; the frame's key makes it opaque.
+        let h1 = 0xdeadbeef;
+        let h2 = 0x41c6ce57;
+        for (let i = 0; i < sent.length; i += 1) {
+          const code = sent.charCodeAt(i);
+          h1 = Math.imul(h1 ^ code, 2654435761);
+          h2 = Math.imul(h2 ^ code, 1597334677);
+        }
+        h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+        h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+        h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+        h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+        const values = (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
         const formIdentity = identityOf(form);
         const submitterIdentity = identityOf(submitter);
-        return formIdentity || submitterIdentity ? `${formIdentity}/${submitterIdentity}` : '';
+        return formIdentity || submitterIdentity ? `${formIdentity}/${submitterIdentity}/${values}` : '';
       } catch {
         return '';
       }
@@ -30360,7 +30400,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         reason,
         validationSubmitEvidence,
         frameDocumentIdentity: [url, performance.timeOrigin].join('|'),
-        submissionIdentity: submissionIdentity(form, submitControl),
+        submissionIdentity: submissionIdentity(form, submitControl, pendingEl, pendingValue),
         semanticCommit: nativeConfirmationCommit(control),
         actionResource: resourceProofFor(control),
         resourceBaseline: resourceProofs().map(resource => resource.url),
