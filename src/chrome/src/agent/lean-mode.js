@@ -1,11 +1,12 @@
 // Lean mode: Settings → Advanced → "Lean mode" ('auto' | 'on' | 'off').
 //
 // A strong model does not need WebBrain's verification scaffolding: the
-// extra tools, readbacks, completion judges and forced re-check turns that
-// help small local models slow it down and can strand a run that was going
-// fine. Lean mode gives an Act run a thin tool list and a short prompt and
-// skips every guard of class `quality` (guard-policy.js). The hard classes,
-// permission gates, host checks, budgets and user control stay.
+// readbacks, completion judges and forced re-check turns that help small
+// local models slow it down and can strand a run that was going fine. Lean
+// mode skips every guard of class `quality` (guard-policy.js) in an Act run;
+// the run keeps its tier's tools and prompt, plus one note asking the model to
+// check its own work. The hard classes, permission gates, host checks, budgets
+// and user control stay.
 //
 // This module decides when Auto turns lean mode on. It is shared verbatim by
 // the Chrome and Firefox builds (test/lean-mode.mjs checks that).

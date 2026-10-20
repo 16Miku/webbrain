@@ -18349,21 +18349,6 @@ export function getMessageRecipientGuardPolicy(url) {
 }
 
 /**
- * Native chat clients whose recipient guard confirms a contact and reads the
- * latest messages through the chat tools (chat_observe, chat_send). Lean mode
- * keeps that guard, so it offers those two tools on these pages.
- */
-export function isNativeChatClientUrl(url) {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'https:' && (parsed.hostname === 'web.whatsapp.com'
-      || /^(?:web|webk|weba|webz|k)\.telegram\.org$/i.test(parsed.hostname));
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Get a printable list of all registered adapters (for settings UI / docs).
  */
 export function listAdapters() {
