@@ -110,6 +110,22 @@ for (const build of BUILDS) {
     assert.equal(other.alongside.plan_need, 'direct');
   });
 
+  test(`${build}: a request cut to fit the decision model never skips the planner`, async () => {
+    // More than the 6,000 characters it reads, with the payment after the cut.
+    const long = { ...question, request: `${'Read this paragraph. '.repeat(300)}Then pay the open invoice.` };
+    const direct = decisionAgent({ run_mode: sure('act'), plan_need: sure('direct') });
+    const routed = await direct.agent._routeAutoRunMode(6, long);
+    assert.equal(routed.mode, 'act');
+    assert.equal('plan' in routed, false);
+    const again = await direct.agent._semanticDecision(6, 'run_mode', long, { mainModel: false, alongside: ['plan_need'] });
+    assert.equal(again.alongside.plan_need, null, 'a cut answer is not remembered either');
+    const planned = decisionAgent({ run_mode: sure('act'), plan_need: sure('plan') });
+    assert.equal((await planned.agent._routeAutoRunMode(6, long)).plan, 'plan', 'a plan answer still counts');
+    // Bytes count too: 4,500 three-byte characters exceed the decision state's budget.
+    const wide = decisionAgent({ run_mode: sure('act'), plan_need: sure('direct') });
+    assert.equal('plan' in await wide.agent._routeAutoRunMode(6, { ...question, request: 'あ'.repeat(4500) }), false);
+  });
+
   // ── The gate ──────────────────────────────────────────────────────────
 
   function gateFixture({ planMode = 'try', review = 'confidence' } = {}) {

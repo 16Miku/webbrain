@@ -9221,13 +9221,16 @@ export class Agent extends LoopDetector {
    * `alongside` lists other questions about the same request and data, asked
    * in the same decision-model request (run_mode with plan_need). Their sure
    * answers come back as `alongside: { kind: choice | null }` and are
-   * remembered on their own; the active model never answers them.
+   * remembered on their own; the active model never answers them. An
+   * authorizing answer among them needs the whole request: when the request
+   * was cut to fit the decision model, it is not used.
    */
   async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, retryChoices = [], alongside = [] } = {}) {
     const spec = semanticQuestion(kind);
     // Relationship decisions must read the entire latest user message. A
     // prefix-only verdict can mistake a correction or a new task at its end.
-    const trusted = kind === 'user_turn_kind' ? String(request ?? '') : String(request ?? '').slice(0, 6000);
+    const requestText = String(request ?? '');
+    const trusted = kind === 'user_turn_kind' ? requestText : requestText.slice(0, 6000);
     const data = boundedSemanticData(page);
     const keyFor = question => this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, question, trusted, data]));
     const cacheKey = keyFor(kind);
@@ -9258,6 +9261,9 @@ export class Agent extends LoopDetector {
       const settings = await this._jevSettings(tabId, provider);
       decisionKey = this._semanticDecisionKey(settings);
       const decisionText = redactSystemOneText(JSON.stringify({ request: trusted, page: data }));
+      // What the decision model reads of the request: cut to 6,000 characters
+      // above, then to the decision state's budget below.
+      const partialRequest = trusted.length < requestText.length || systemOneStateBytes(decisionText) > 12000;
       // Keep the existing bounded fast route, but use the full-text main
       // model directly when a relationship question cannot fit in it.
       const decisionFits = kind !== 'user_turn_kind' || systemOneStateBytes(decisionText) <= 12000;
@@ -9269,7 +9275,11 @@ export class Agent extends LoopDetector {
         }, context);
         for (const extra of extraKinds) {
           const extraAnswer = verdict.answers?.[extra];
-          const extraChoice = confidentChoice(extraAnswer, semanticQuestion(extra).authorizing.includes(extraAnswer?.choice) ? 0.85 : 0.7);
+          const authorizing = semanticQuestion(extra).authorizing.includes(extraAnswer?.choice);
+          // A part of the request cannot authorize skipping anything the rest
+          // of it might need (plan_need: a payment after the cut).
+          if (authorizing && partialRequest) continue;
+          const extraChoice = confidentChoice(extraAnswer, authorizing ? 0.85 : 0.7);
           if (extraChoice) {
             extraAnswers[extra] = extraChoice;
             store(keyFor(extra), { choice: extraChoice, evidence: '', source: 'decision_model' });
