@@ -82685,6 +82685,28 @@ test('a field holding its own placeholder text is not submitted', async () => {
     field = { label: 'Quantity', placeholder: '1', value: '1', changed: true };
     await submit('number');
     assert.equal(prompts, 6, `${AgentClass.name}: an ordinary value skipped its card`);
+
+    // Naming a plain word in the request does not supply it as the value; a
+    // whole card answer does.
+    agent.conversations.set(tabId, [{ role: 'user', content: 'Sign me up for email updates.' }]);
+    field = { label: 'Email', placeholder: 'Email', value: 'Email', changed: true };
+    assert.equal((await submit('named-word')).placeholderValue, true, `${AgentClass.name}: a word the request only named exempted the field`);
+    agent.conversations.set(tabId, [{ role: 'user', content: 'Sign me up for email updates.',
+      webbrainTaskClarifications: [{ question: 'What should the email field say?', answer: 'Email', source: 'text' }] }]);
+    await submit('answered-word');
+    assert.equal(prompts, 7, `${AgentClass.name}: a whole card answer was refused`);
+
+    // A framework can copy the typed value into the field's default, so the
+    // probe sees no edit; WebBrain's own write in this run still counts.
+    agent.conversations.set(tabId, [...task]);
+    agent.currentRunId.set(tabId, 'placeholder-run');
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false };
+    agent._rememberPlaceholderWrite(tabId, 'set_field', { text: 'you@example.com' },
+      { success: true, value: 'you@example.com', fieldMeta: { type: 'email', placeholder: 'you@example.com' } });
+    assert.equal((await submit('framework-default')).placeholderValue, true, `${AgentClass.name}: WebBrain's own write was missed`);
+    agent.currentRunId.set(tabId, 'next-run');
+    await submit('next-run');
+    assert.equal(prompts, 8, `${AgentClass.name}: a write from another run still counted`);
     assert.equal(executed, 0, `${AgentClass.name}: a refused or declined submission ran`);
   }
 });

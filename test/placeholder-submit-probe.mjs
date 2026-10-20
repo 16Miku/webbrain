@@ -1,7 +1,7 @@
-// The submit probe lists every changed field that still holds its own
-// placeholder text, for the placeholder guard. Unlike the summary's changed
-// fields, which stop at eight, the list covers the whole form; it never
-// carries a password, and a page default WebBrain did not change is not in it.
+// The submit probe lists every field that holds its own placeholder text,
+// for the placeholder guard, and says whether it differs from its default.
+// Unlike the summary's changed fields, which stop at eight, the list covers
+// the whole form, and it never carries a password.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
@@ -38,8 +38,10 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(result?.isSubmit, true);
           assert.equal(result.changedFields.length, 8, 'the summary stops at eight');
           assert.ok(!result.changedFields.some(field => field.label === 'Email'), 'the email field is past the summary');
-          assert.deepEqual(result.placeholderFields, [{ label: 'Email', value: 'you@example.com', placeholder: 'you@example.com', changed: true }],
-            'only the changed email field holding its placeholder; no password, no unchanged page default');
+          assert.deepEqual(result.placeholderFields, [
+            { label: 'Email', value: 'you@example.com', placeholder: 'you@example.com', changed: true },
+            { label: 'City', value: 'Istanbul', placeholder: 'Istanbul', changed: false },
+          ], 'the edited email field, and the page default marked unchanged; never the password');
         });
 
         await t.test('a value set_field is about to type and submit is checked too', async () => {

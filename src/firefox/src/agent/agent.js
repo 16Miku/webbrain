@@ -29437,27 +29437,65 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  // The changed fields of a submission that hold their own placeholder text
-  // when none of the user's messages or card answers gave that value: the
-  // page's example typed in as the user's. The probe's complete list is
-  // read when it sent one; the summary's changed fields stop at eight. A
-  // placeholder without a letter, or shorter than three characters (a "1"
-  // in a quantity box), is not an example of this kind.
+  // The edited fields of a submission that hold their own placeholder text
+  // when the user did not supply that value: the page's example typed in
+  // as the user's. A field counts as edited when the probe saw it differ
+  // from its default or WebBrain's own write put that value there in this
+  // run (a framework may copy a typed value into defaultValue). The
+  // probe's complete list is read when it sent one; the summary's changed
+  // fields stop at eight. A placeholder without a letter, or shorter than
+  // three characters (a "1" in a quantity box), is not an example of this
+  // kind.
   _placeholderValueFields(tabId, submitInfo) {
     const normalize = text => String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
     const candidates = Array.isArray(submitInfo?.placeholderFields) ? submitInfo.placeholderFields
       : Array.isArray(submitInfo?.changedFields) ? submitInfo.changedFields : [];
     const fields = candidates.filter(field => {
       const value = normalize(field?.value);
-      return field?.changed === true && value.length >= 3 && /\p{L}/u.test(value) && value === normalize(field?.placeholder);
+      return (field?.changed === true || this._placeholderWritten(tabId, value))
+        && value.length >= 3 && /\p{L}/u.test(value) && value === normalize(field?.placeholder);
     });
     if (!fields.length) return [];
-    const userText = (this.conversations.get(tabId) || [])
-      .filter(message => message?.role === 'user' && !this._isAgentInjectedUserMessage(message))
-      .flatMap(message => [this._plannerUserAuthoredText(message),
-        ...(Array.isArray(message.webbrainTaskClarifications) ? message.webbrainTaskClarifications.map(item => item?.answer) : [])])
-      .map(normalize).join('\n');
-    return fields.filter(field => !userText.includes(normalize(field.value)));
+    const messages = (this.conversations.get(tabId) || [])
+      .filter(message => message?.role === 'user' && !this._isAgentInjectedUserMessage(message));
+    const requests = messages.map(message => normalize(this._plannerUserAuthoredText(message)));
+    const answers = messages.flatMap(message => (Array.isArray(message.webbrainTaskClarifications) ? message.webbrainTaskClarifications : [])
+      .filter(item => ['user', 'text', 'option'].includes(item?.source)).map(item => normalize(item?.answer)));
+    const supplied = value => {
+      const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const named = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`, 'u');
+      // A plain word or phrase ("Email", "Your name") is named in requests
+      // without being given; it counts only as a whole answer to a card.
+      // A value with a digit or symbol ("you@example.com") counts where
+      // the user wrote it as a whole.
+      const specific = /[^\p{L}\s]/u.test(value);
+      return answers.includes(value) || (specific && [...requests, ...answers].some(text => named.test(text)));
+    };
+    return fields.filter(field => !supplied(normalize(field.value)));
+  }
+
+  // A value WebBrain typed into a field that equals the field's own
+  // placeholder, from the write's receipt (its field metadata), kept for
+  // the current run.
+  _rememberPlaceholderWrite(tabId, toolName, args, response) {
+    if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName) || response?.success !== true) return;
+    const meta = response.fieldMeta;
+    if (!meta || String(meta.type || '').toLowerCase() === 'password') return;
+    const normalize = text => String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const placeholder = normalize(meta.placeholder);
+    const written = normalize(typeof response.value === 'string' ? response.value : args?.text);
+    if (!placeholder || written !== placeholder) return;
+    const runId = this.currentRunId.get(tabId) || null;
+    this._placeholderWrites ??= new Map();
+    const entry = this._placeholderWrites.get(tabId);
+    const values = entry?.runId === runId ? entry.values : new Set();
+    values.add(written);
+    this._placeholderWrites.set(tabId, { runId, values });
+  }
+
+  _placeholderWritten(tabId, value) {
+    const entry = this._placeholderWrites?.get(tabId);
+    return !!entry && entry.runId === (this.currentRunId.get(tabId) || null) && entry.values.has(value);
   }
 
   _fallbackSubmitConfirmationInfo(host, tool, reason, summary = '') {
@@ -29938,9 +29976,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         try { return !!form.closest?.('[role="search"],search'); } catch { return false; }
       })();
       const changedFields = fields.filter(field => field.changed || field.value).slice(0, 8);
-      // Every changed field that still holds its own placeholder text, for
-      // the placeholder guard: unlike the summary above, not capped.
-      // Passwords and other fields without a typed value are left out.
+      // Every field that holds its own placeholder text, for the
+      // placeholder guard, and whether it differs from its default: unlike
+      // the summary above, not capped. Passwords and other fields without a
+      // typed value are left out.
       const placeholderFields = (() => {
         try {
           return Array.from(form.querySelectorAll('input, textarea')).slice(0, 500).flatMap(el => {
@@ -29949,8 +29988,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const placeholder = compact(el.getAttribute?.('placeholder') || '', 200);
             const value = pendingEl && el === pendingEl ? compact(pendingValue, 200) : compact(el.value || '', 200);
             const changed = el === pendingEl || (!!value && value !== defaultValue(el));
-            return changed && placeholder && value.toLowerCase() === placeholder.toLowerCase()
-              ? [{ label: labelFor(el), value, placeholder, changed: true }] : [];
+            return placeholder && value.toLowerCase() === placeholder.toLowerCase()
+              ? [{ label: labelFor(el), value, placeholder, changed }] : [];
           }).slice(0, 16);
         } catch {
           return [];
@@ -45546,6 +45585,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._annotateCredentialField(name, response, tabId);
       this._rememberFilledCredential(tabId, name, args, response);
+      this._rememberPlaceholderWrite(tabId, name, args, response);
       if (name === 'read_page') {
         response = applyReadPageWindow(response, args);
       }
@@ -45613,6 +45653,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._annotateCredentialField(name, response, tabId);
       this._rememberFilledCredential(tabId, name, args, response);
+      this._rememberPlaceholderWrite(tabId, name, args, response);
         if (name === 'read_page') {
           response = applyReadPageWindow(response, args);
         }
