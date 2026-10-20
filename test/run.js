@@ -90573,7 +90573,9 @@ test('chrome CDP submit selector scans its form for placeholder values', async (
       tagName: 'INPUT', type: attrs.type || 'text', value, defaultValue,
       getAttribute: name => attrs[name] ?? null, matches: () => false,
     });
+    // Any number of controls the scan skips comes before the edited field.
     const control = { form: { elements: [
+      ...Array.from({ length: 6000 }, (_, i) => input({ name: `h${i}`, type: 'hidden', placeholder: 'x' }, 'x')),
       input({ name: 'email', type: 'email', placeholder: 'you@example.com' }, 'you@example.com'),
       input({ name: 'pass', type: 'password', placeholder: 'Password' }, 'Password'),
       input({ name: 'city', placeholder: 'Istanbul', value: 'Istanbul' }, 'Istanbul', 'Istanbul'),

@@ -29903,7 +29903,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // only what it contains.
           const owned = String(form.tagName || '').toUpperCase() === 'FORM' && form.elements
             ? Array.from(form.elements) : Array.from(form.querySelectorAll('input, textarea'));
-          const matches = owned.filter(el => /^(?:INPUT|TEXTAREA)$/i.test(String(el?.tagName || ''))).slice(0, 5000).flatMap(el => {
+          // Every control is checked, however many the form has: only the
+          // matches are kept, and their list is capped below.
+          const matches = owned.filter(el => /^(?:INPUT|TEXTAREA)$/i.test(String(el?.tagName || ''))).flatMap(el => {
             const type = String(el.type || '').toLowerCase();
             if (['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio', 'file', 'password'].includes(type)) return [];
             // A disabled control, its own or its fieldset's, is not sent.

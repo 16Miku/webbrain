@@ -74,6 +74,17 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(result.placeholderFields[0]?.changed, true);
         });
 
+        await t.test('any number of controls the scan skips cannot hide an edited field', async () => {
+          await page.setContent('<form method="post" action="/many">'
+            + Array.from({ length: 6000 }, (_, i) => `<input type="hidden" name="h${i}" value="x">`).join('')
+            + Array.from({ length: 200 }, (_, i) => `<input name="d${i}" placeholder="Example" value="Example" disabled>`).join('')
+            + '<input id="email" name="email" aria-label="Email" placeholder="you@example.com"><button id="go">Save</button></form>');
+          await page.evaluate(() => { document.querySelector('#email').value = 'you@example.com'; });
+          const result = await probe('click', { selector: '#go' });
+          assert.equal(result?.isSubmit, true);
+          assert.deepEqual(result.placeholderFields.map(field => [field.name, field.changed]), [['email', true]]);
+        });
+
         await t.test('a field outside the form that names it with form= is checked too', async () => {
           await page.setContent('<form id="signup" method="post" action="/signup"><button id="go">Sign up</button></form>'
             + '<input id="email" form="signup" name="email" aria-label="Email" placeholder="you@example.com">');
