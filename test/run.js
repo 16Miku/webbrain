@@ -82732,13 +82732,17 @@ test('a field holding its own placeholder text is not submitted', async () => {
     completeList = null;
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };
 
-    // A value the user gave, in a message or in a card answer, asks as usual.
+    // Words in a request do not supply the value, whether they give it or
+    // refuse it; a whole answer on one of the task's cards does.
     agent.conversations.set(tabId, [...task, { role: 'user', content: 'Use YOU@example.com for it.' }]);
-    await submit('user-message');
-    assert.equal(prompts, 2, `${AgentClass.name}: a value from the user's message was refused`);
+    assert.equal((await submit('user-message')).placeholderValue, true, `${AgentClass.name}: a request's words supplied the value`);
+    agent.conversations.set(tabId, [...task, { role: 'user', content: 'Do not use you@example.com; use another address.' }]);
+    assert.equal((await submit('refused-in-request')).placeholderValue, true, `${AgentClass.name}: a refused value was submitted`);
     agent.conversations.set(tabId, [system, { ...task[1], webbrainTaskClarifications: [{ question: 'Which email?', answer: 'you@example.com', source: 'text' }] }]);
     await submit('user-answer');
-    assert.equal(prompts, 3, `${AgentClass.name}: a value from the user's card answer was refused`);
+    assert.equal(prompts, 2, `${AgentClass.name}: a value from the user's card answer was refused`);
+    agent.conversations.set(tabId, [system, { ...task[1], webbrainTaskClarifications: [{ question: 'Which email?', answer: 'Not you@example.com', source: 'text' }] }]);
+    assert.equal((await submit('refused-in-answer')).placeholderValue, true, `${AgentClass.name}: an answer refusing the value supplied it`);
 
     // Another value, a page default WebBrain did not change, and a placeholder
     // that is only a number ask as usual.
@@ -82749,17 +82753,17 @@ test('a field holding its own placeholder text is not submitted', async () => {
     await submit('page-default');
     field = { label: 'Quantity', placeholder: '1', value: '1', changed: true };
     await submit('number');
-    assert.equal(prompts, 6, `${AgentClass.name}: an ordinary value skipped its card`);
+    assert.equal(prompts, 5, `${AgentClass.name}: an ordinary value skipped its card`);
 
-    // Naming a plain word in the request does not supply it as the value; a
-    // whole card answer does.
+    // A plain word the request names is no answer either; a whole card
+    // answer is.
     agent.conversations.set(tabId, [system, { role: 'user', content: 'Sign me up for email updates.' }]);
     field = { label: 'Email', placeholder: 'Email', value: 'Email', changed: true };
     assert.equal((await submit('named-word')).placeholderValue, true, `${AgentClass.name}: a word the request only named exempted the field`);
     agent.conversations.set(tabId, [system, { role: 'user', content: 'Sign me up for email updates.',
       webbrainTaskClarifications: [{ question: 'What should the email field say?', answer: 'Email', source: 'text' }] }]);
     await submit('answered-word');
-    assert.equal(prompts, 7, `${AgentClass.name}: a whole card answer was refused`);
+    assert.equal(prompts, 6, `${AgentClass.name}: a whole card answer was refused`);
 
     // A framework can copy the typed value into the field's default, so the
     // probe sees no edit; WebBrain's own write in this run still counts.
@@ -82773,11 +82777,11 @@ test('a field holding its own placeholder text is not submitted', async () => {
     // placeholder, holding it as its page default, is not one WebBrain wrote.
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_202', name: 'email', id: '' };
     await submit('other-field');
-    assert.equal(prompts, 8, `${AgentClass.name}: a write to one field counted for another`);
+    assert.equal(prompts, 7, `${AgentClass.name}: a write to one field counted for another`);
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
     agent.currentRunId.set(tabId, 'next-run');
     await submit('next-run');
-    assert.equal(prompts, 9, `${AgentClass.name}: a write from another run still counted`);
+    assert.equal(prompts, 8, `${AgentClass.name}: a write from another run still counted`);
 
     // An earlier, unrelated turn cannot supply the value for the current task.
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };

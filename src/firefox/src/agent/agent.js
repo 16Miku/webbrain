@@ -45716,14 +45716,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // The edited fields of a submission that hold their own placeholder text
-  // when the user did not supply that value for the current task: the
-  // page's example typed in as the user's. A field counts as edited when
-  // the probe saw it differ from its default or WebBrain's own write put
-  // that value into that same field in this run (a framework may copy a
-  // typed value into defaultValue). The probe's complete list is read when
-  // it sent one; the summary's changed fields stop at eight. A placeholder
-  // without a letter, or shorter than three characters (a "1" in a quantity
-  // box), is not an example of this kind.
+  // when the user did not give that value as an answer on one of the
+  // current task's cards: the page's example typed in as the user's. A
+  // field counts as edited when the probe saw it differ from its default or
+  // WebBrain's own write put that value into that same field in this run (a
+  // framework may copy a typed value into defaultValue). The probe's
+  // complete list is read when it sent one; the summary's changed fields
+  // stop at eight. A placeholder without a letter, or shorter than three
+  // characters (a "1" in a quantity box), is not an example of this kind.
   _placeholderValueFields(tabId, submitInfo) {
     const normalize = text => String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
     const candidates = Array.isArray(submitInfo?.placeholderFields) ? submitInfo.placeholderFields
@@ -45734,33 +45734,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && (field?.changed === true || this._placeholderWritten(tabId, field, value));
     });
     if (!fields.length) return [];
-    // Only the active task's own words and the user's answers to its cards
-    // can supply a value; an earlier, unrelated turn cannot.
+    // Only a whole answer the user gave on one of the active task's cards
+    // supplies such a value. The words of a request are not read for it:
+    // whether a mention gives the value or refuses it ("do not use
+    // you@example.com") is not something a text match can tell, in any
+    // language, so the model asks and the answer decides.
     const messages = this.conversations.get(tabId) || [];
     const binding = this._activeTaskBinding(messages);
-    const taskMessages = binding.taskIndex < 0 ? []
-      : (binding.pinnedIndices || []).map(index => messages[index])
-        .filter(message => message?.role === 'user' && !this._isAgentInjectedUserMessage(message));
-    const requests = binding.taskIndex < 0 ? [] : [binding.requestText,
-      ...(Array.isArray(binding.updates) ? binding.updates.map(update => update?.text) : []),
-      ...taskMessages.map(message => this._plannerUserAuthoredText(message))].map(normalize).filter(Boolean);
     const answers = binding.taskIndex < 0 ? [] : [
       ...(Array.isArray(binding.answers) ? binding.answers : []),
       ...messages.slice(binding.taskIndex).flatMap(message => (message?.role === 'user' && Array.isArray(message.webbrainTaskClarifications)
         ? message.webbrainTaskClarifications : [])
         .filter(item => ['user', 'text', 'option'].includes(item?.source)).map(item => item?.answer)),
     ].map(normalize).filter(Boolean);
-    const supplied = value => {
-      const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const named = new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`, 'u');
-      // A plain word or phrase ("Email", "Your name") is named in requests
-      // without being given; it counts only as a whole answer to a card.
-      // A value with a digit or symbol ("you@example.com") counts where
-      // the user wrote it as a whole.
-      const specific = /[^\p{L}\s]/u.test(value);
-      return answers.includes(value) || (specific && [...requests, ...answers].some(text => named.test(text)));
-    };
-    return fields.filter(field => !supplied(normalize(field.value)));
+    return fields.filter(field => !answers.includes(normalize(field.value)));
   }
 
   // A value WebBrain typed into a field that equals the field's own
