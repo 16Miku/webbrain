@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebBrain activity indicator candidates</title>
+<style>
+  :root {
+    --page: #0f0f1c;
+    --ink: #e8e8e8;
+    --muted: #a0a0b8;
+    --rule: rgba(255, 255, 255, 0.08);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); }
+  header, section { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+  header { padding-top: 48px; }
+  h1 { margin: 0 0 8px; font-size: 26px; font-weight: 650; }
+  h2 { margin: 0 0 4px; font-size: 18px; font-weight: 650; }
+  p { margin: 0; color: var(--muted); line-height: 1.5; max-width: 72ch; }
+  section { border-top: 1px solid var(--rule); }
+  .controls { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 20px; color: var(--muted); font-size: 13px; }
+  .controls label { display: flex; align-items: center; gap: 8px; }
+  select, input { font: inherit; }
+  .stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 16px; margin-top: 20px; }
+  .stage { display: flex; align-items: center; justify-content: center; min-height: 340px; border-radius: 10px; }
+  .stage.small { min-height: 220px; }
+  .dark { background: #1a1a2e; }
+  .light { background: #f7f1e6; }
+  .bars { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(372px, 100%), 1fr)); gap: 16px; margin-top: 16px; }
+  .slice { display: flex; align-items: center; justify-content: center; padding: 28px 0; border-radius: 10px; }
+
+  /* The side panel's activity bar, copied from src/chrome/styles/sidepanel.css. */
+  .bar { width: 372px; max-width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 14px; overflow: hidden; }
+  .bar.dark { background: #16213e; border-top: 1px solid rgba(255, 255, 255, 0.08); color: #a0a0b8; }
+  .bar.light { background: #fffdf8; border-top: 1px solid rgba(89, 55, 25, 0.15); color: #6b5b47; }
+  .bar .toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+  .bar canvas { display: block; flex-shrink: 0; width: 22px; height: 22px; margin: -4px; }
+  .bar .label { font-size: 11px; font-weight: 600; line-height: 1.3; white-space: nowrap; }
+  .bar .stop { margin-left: auto; display: flex; align-items: center; gap: 4px; background: rgba(244, 67, 54, 0.12); border: 1px solid rgba(244, 67, 54, 0.3); font: inherit; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 6px; }
+  .bar.dark .stop { color: #f44336; }
+  .bar.light .stop { color: #c5363c; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Activity indicator candidates</h1>
+  <p>Directions explored for the side panel's working indicator, kept for reuse elsewhere (empty states, onboarding, the website, the companion app). The brain-outline version at the bottom is the one that shipped; its production code is <code>src/&lt;browser&gt;/src/ui/activity-brain.js</code>.</p>
+  <div class="controls">
+    <label>Accent
+      <select id="accent">
+        <option value="violet">UI violet</option>
+        <option value="pink">Logo pink</option>
+        <option value="mono">Mono</option>
+      </select>
+    </label>
+    <label>Speed <input id="speed" type="range" min="0.5" max="2" step="0.1" value="1"></label>
+  </div>
+</header>
+
+<section>
+  <h2>B · Nucleus</h2>
+  <p>The mono mark as a nucleus. Sparks whizz on precessing 3D orbits, passing behind the brain and back out in front of it; short-lived sparks arrive from random angles, and at large sizes embers flick off the heads.</p>
+  <div class="stages">
+    <div class="stage dark"><canvas data-kind="nucleus" data-theme="dark" data-size="320"></canvas></div>
+    <div class="stage light"><canvas data-kind="nucleus" data-theme="light" data-size="320"></canvas></div>
+  </div>
+  <div class="bars">
+    <div class="slice dark"><div class="bar dark"><span class="toggle"><canvas data-kind="nucleus" data-theme="dark" data-size="22"></canvas><span class="label">Thinking...</span></span><span class="stop">Stop</span></div></div>
+    <div class="slice light"><div class="bar light"><span class="toggle"><canvas data-kind="nucleus" data-theme="light" data-size="22"></canvas><span class="label">Thinking...</span></span><span class="stop">Stop</span></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>A · Neural circuit</h2>
+  <p>The mark redrawn as neurons: the traced outline, the central fissure, the stem and the W. Neurons fire and pass signals along the axons in cascades, and a signal keeps re-tracing the W. Large sizes only; below 48px it falls back to the variants underneath.</p>
+  <div class="stages">
+    <div class="stage dark"><canvas data-kind="synapse" data-theme="dark" data-size="320"></canvas></div>
+    <div class="stage light"><canvas data-kind="synapse" data-theme="light" data-size="320"></canvas></div>
+  </div>
+</section>
+
+<section>
+  <h2>A · W only (1×)</h2>
+  <p>The circuit reduced to its spine. Shown 8× and in the bar at its real size.</p>
+  <div class="stages">
+    <div class="stage small dark"><canvas data-kind="synapse" data-variant="w" data-theme="dark" data-size="22" data-zoom="8"></canvas></div>
+    <div class="stage small light"><canvas data-kind="synapse" data-variant="w" data-theme="light" data-size="22" data-zoom="8"></canvas></div>
+  </div>
+  <div class="bars">
+    <div class="slice dark"><div class="bar dark"><span class="toggle"><canvas data-kind="synapse" data-variant="w" data-theme="dark" data-size="22"></canvas><span class="label">Thinking...</span></span><span class="stop">Stop</span></div></div>
+    <div class="slice light"><div class="bar light"><span class="toggle"><canvas data-kind="synapse" data-variant="w" data-theme="light" data-size="22"></canvas><span class="label">Thinking...</span></span><span class="stop">Stop</span></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Shipped · brain outline (1×)</h2>
+  <p>The W inside the brain's traced outline; the outline brightens as the signal passes. For reference next to the candidates.</p>
+  <div class="stages">
+    <div class="stage small dark"><canvas data-kind="synapse" data-variant="brain" data-theme="dark" data-size="22" data-zoom="8"></canvas></div>
+    <div class="stage small light"><canvas data-kind="synapse" data-variant="brain" data-theme="light" data-size="22" data-zoom="8"></canvas></div>
+  </div>
+</section>
+
+<script src="marks.js"></script>
+<script src="loaders.js"></script>
+<script>
+(function () {
+  const canvases = Array.from(document.querySelectorAll('canvas[data-kind]'));
+  const accent = document.getElementById('accent');
+  const speed = document.getElementById('speed');
+  let engines = [];
+
+  function build() {
+    const density = Math.max(2, window.devicePixelRatio || 1);
+    engines = canvases.map((canvas, i) => {
+      const size = Number(canvas.dataset.size);
+      const zoom = Number(canvas.dataset.zoom || 1);
+      canvas.style.width = canvas.style.height = `${size * zoom}px`;
+      canvas.width = canvas.height = Math.round(size * zoom * density);
+      return window.WBLoaders[canvas.dataset.kind](canvas, {
+        size,
+        theme: canvas.dataset.theme,
+        variant: canvas.dataset.variant,
+        color: accent.value,
+        speed: Number(speed.value),
+        seed: 3 + i,
+        mark: window.WB_MARKS.detail,
+        markSmall: window.WB_MARKS.small,
+      });
+    });
+  }
+
+  accent.addEventListener('change', build);
+  speed.addEventListener('change', build);
+  build();
+  (function loop(now) {
+    engines.forEach((engine) => engine.frame(now));
+    requestAnimationFrame(loop);
+  })(performance.now());
+})();
+</script>
+</body>
+</html>

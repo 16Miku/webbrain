@@ -10,6 +10,7 @@ import { appendGeneratedMedia, restoreGeneratedMedia } from './generated-media-v
 
 import { createQuotaController } from './compass-quota.js';
 import { createTimeoutRing, updateTimeoutRing } from './timeout-ring.js';
+import { mountActivityBrain } from './activity-brain.js';
 import { createComposerModePins } from './composer-mode-pin.js';
 import { reportSidePanelPresence } from '../sidepanel-presence.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
@@ -826,6 +827,7 @@ const agentActivity = document.getElementById('agent-activity');
 const activityProgressToggle = document.getElementById('activity-progress-toggle');
 const activityText = document.getElementById('activity-text');
 const activityLiveStatus = document.getElementById('activity-live-status');
+mountActivityBrain(agentActivity);
 const modeAskBtn = document.getElementById('btn-mode-ask');
 const modeActBtn = document.getElementById('btn-mode-act');
 const modeDevBtn = document.getElementById('btn-mode-dev');
