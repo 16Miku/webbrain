@@ -309,6 +309,9 @@ for (const build of BUILDS) {
     assert.equal(parse(englishPlan({ localized: { ...copy, steps: copy.steps.slice(0, 1) } }), { locale: 'tr' }).localized.missing, true);
     assert.equal(parse(englishPlan({ risks: ['The form is submitted.'], localized: copy }), { locale: 'tr' }).localized.missing, true);
     assert.equal('missing' in parse(englishPlan({ risks: ['The form is submitted.'], localized: { ...copy, risks: ['Form gönderilir.'] } }), { locale: 'tr' }).localized, false);
+    // A copy in another language is no copy in the user's.
+    assert.equal(parse(englishPlan({ localized: { ...copy, locale: 'en' } }), { locale: 'tr' }).localized.missing, true);
+    assert.equal('missing' in parse(englishPlan({ localized: { ...copy, locale: 'tr-TR' } }), { locale: 'tr' }).localized, false);
   });
 
   test(`${build}: the translation request carries only the display fields, and its answer replaces them`, () => {
@@ -325,9 +328,11 @@ for (const build of BUILDS) {
       steps: [{ id: '1', action: 'E-posta alanını doldur.' }, { id: '2', action: 'Gönder ve onayı oku.' }], risks: ['Form gönderilir.'] });
     assert.deepEqual([translated.summary, translated.steps, translated.risks], [plan.summary, plan.steps, plan.risks], 'execution keeps the English plan');
     // An incomplete translation is not used: the plan is read in one language.
-    const complete = { summary: 'Adresi abone et.', steps: [{ id: '1', action: 'Doldur.' }, { id: '2', action: 'Gönder.' }], risks: ['Form gönderilir.'] };
-    assert.ok(planner.localizePlanFromContent(plan, JSON.stringify(complete)));
+    const complete = { locale: 'tr-TR', summary: 'Adresi abone et.', steps: [{ id: '1', action: 'Doldur.' }, { id: '2', action: 'Gönder.' }], risks: ['Form gönderilir.'] };
+    assert.ok(planner.localizePlanFromContent(plan, JSON.stringify(complete)), 'a regional tag of the same language counts');
     for (const incomplete of [
+      { ...complete, locale: 'en' },
+      { ...complete, locale: undefined },
       { ...complete, steps: [{ id: '1', action: 'Doldur.' }] },
       { ...complete, steps: [{ id: '1', action: 'Doldur.' }, { id: '3', action: 'Gönder.' }] },
       { ...complete, steps: [{ id: '1', action: 'Doldur.' }, { id: '2', action: '  ' }] },

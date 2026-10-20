@@ -543,6 +543,11 @@ export function normalizePlannerLocale(value) {
   return normalizedLocaleOrEmpty(value) || 'en';
 }
 
+// The language of a locale tag ("tr" for "tr-TR"), or '' when it has none.
+function localeLanguage(value) {
+  return normalizedLocaleOrEmpty(value).split('-')[0];
+}
+
 export function fallbackResponseLanguagePolicy(locale = 'en') {
   return {
     framing_locale: normalizePlannerLocale(locale),
@@ -1192,8 +1197,10 @@ export function normalizePlan(obj, opts = {}) {
     : [];
   const requestedLocale = normalizePlannerLocale(opts.locale || localizedInput.locale);
   const englishLocale = requestedLocale === 'en' || requestedLocale.startsWith('en-');
-  // The copy covers the summary, every step and every risk.
+  // The copy is in the requested language and covers the summary, every step
+  // and every risk.
   const localizedCopyComplete = Boolean(localizedSummary)
+    && (!localizedInput.locale || localeLanguage(localizedInput.locale) === localeLanguage(requestedLocale))
     && steps.every(step => localizedStepsById.get(step.id)?.action)
     && riskEntries.every(entry => sanitizeText(providedLocalizedRisks[entry.sourceIndex], 200));
   if (opts.requireIntent) {
@@ -1494,12 +1501,15 @@ export function buildPlanLocalizationMessages(plan) {
 }
 
 // The plan with the translation in `content` as its localized copy, or null
-// unless `content` translates the summary, every step (matched by id) and
-// every risk: the user reads the plan in one language, never a mix.
+// unless `content` is in the requested language and translates the summary,
+// every step (matched by id) and every risk: the user reads the plan in one
+// language, never a mix.
 export function localizePlanFromContent(plan, content) {
   const obj = extractFirstJsonObject(content);
   const summary = sanitizeText(obj?.summary, 400);
   if (!plan || !summary) return null;
+  const language = localeLanguage(obj.locale);
+  if (!language || language !== localeLanguage(plan.localized?.locale)) return null;
   const translatedSteps = new Map((Array.isArray(obj.steps) ? obj.steps : [])
     .map(step => [sanitizeText(step?.id, 20), sanitizeText(step?.action, 300)]));
   const translatedRisks = Array.isArray(obj.risks) ? obj.risks : [];
