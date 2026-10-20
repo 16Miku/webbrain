@@ -30268,15 +30268,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     const transactionOrderSite = /(?:^|\.)12306\.cn$/i.test(host);
     // The form and the button a submission goes through, as identities of
-    // the elements this frame holds, and every value the form would send, as
-    // a fingerprint keyed by a secret that never leaves this frame. A
-    // declined submission is remembered by them, so another form or button
-    // with the same fields and action (per-row forms told apart only by
-    // hidden IDs, Reject beside Approve), or the same form with any value
-    // changed (a field past the summary's first eight, a password, another
-    // file, a hidden record ID), still gets its own card. An Enter in a
-    // field, or set_field({submit}), submits through the form's default
-    // button.
+    // the elements this frame holds, and every value the form would send and
+    // where it would send them, as a fingerprint keyed by a secret that never
+    // leaves this frame. A declined submission is remembered by them, so
+    // another form or button with the same fields and action (per-row forms
+    // told apart only by hidden IDs, Reject beside Approve), or the same form
+    // with any value or destination changed (a field past the summary's
+    // first eight, a password, another file, a hidden record ID, a button's
+    // new formaction), still gets its own card. An Enter in a field, or
+    // set_field({submit}), submits through the form's default button.
     const submissionIdentity = (form, submitControl, pendingEl = null, pendingValue = null) => {
       try {
         if (!(window.__wbSubmissionIdentities instanceof WeakMap)) {
@@ -30324,8 +30324,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (el?.isContentEditable && !('value' in el)) return String(el.textContent || '');
           return String(el?.value ?? '');
         };
-        const sent = window.__wbSubmissionValueKey + JSON.stringify(controls.map(el => [
-          String(el?.getAttribute?.('name') || ''), String(el?.type || el?.tagName || ''), valueOf(el)]));
+        // Where it goes: the button's own formaction, formmethod, formenctype
+        // and formtarget override the form's, read as attributes so a field
+        // named "action" cannot stand in for the form's.
+        const destination = ['formaction', 'formmethod', 'formenctype', 'formtarget']
+          .map(name => [submitter?.getAttribute?.(name) ?? null, form?.getAttribute?.(name.slice(4)) ?? null]);
+        const sent = window.__wbSubmissionValueKey + JSON.stringify([destination, controls.map(el => [
+          String(el?.getAttribute?.('name') || ''), String(el?.type || el?.tagName || ''), valueOf(el)])]);
         // cyrb53, a 53-bit string hash; the frame's key makes it opaque.
         let h1 = 0xdeadbeef;
         let h2 = 0x41c6ce57;

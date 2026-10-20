@@ -74,6 +74,12 @@ for (const build of ['chrome', 'firefox']) {
             assert.notEqual(after.submissionIdentity, previous, `a change to ${selector}`);
             assert.equal(after.submissionIdentity.split('/').slice(0, 2).join('/'), previous.split('/').slice(0, 2).join('/'), 'the same form and button');
           }
+          // So does the button sending the form somewhere else.
+          for (const [name, value] of [['formaction', '/profile/delete'], ['formmethod', 'get']]) {
+            const previous = (await probe('click', { selector: '#go' })).submissionIdentity;
+            await page.evaluate(([attribute, text]) => document.querySelector('#go').setAttribute(attribute, text), [name, value]);
+            assert.notEqual((await probe('click', { selector: '#go' })).submissionIdentity, previous, `a new ${name}`);
+          }
         });
       } finally {
         await browser.close();
