@@ -45791,22 +45791,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || !response || typeof response !== 'object' || response.success !== true) return null;
     const meta = response.fieldMeta;
     if (!meta || String(meta.type || '').toLowerCase() === 'password') return null;
+    const ref = [args?.ref_id, response.ref_id, targetRef].map(value => String(value || '')).find(value => /^ref_\d+$/.test(value)) || '';
     const whole = text => String(text ?? '').replace(/\s+/g, ' ').trim();
     const normalize = text => whole(text).toLowerCase();
     const placeholder = normalize(meta.placeholder);
-    // The typed text, whole, when the write replaced the value: set_field
+    if (!ref || !placeholder) return null;
+    // A write that replaced the value put the typed text there: set_field
     // replaces it unless clear is false, the typing tools only with
-    // clear:true. An append reads the field's result instead, which the
-    // receipt reports shortened.
-    const result = this._textMutationReplacesValue(toolName, args || {}) && typeof args?.text === 'string'
-      ? args.text : response.value;
+    // clear:true. An append keeps what the field held before, so its result
+    // is read instead: the field's value as the result reports it, whole
+    // only when shorter than the 100 characters results are cut to. An
+    // append whose result is missing or may be cut short leaves the value
+    // unknown (null), and its receipt matches whatever the field then holds.
+    const replaced = this._textMutationReplacesValue(toolName, args || {});
+    const result = replaced && typeof args?.text === 'string' ? args.text : response.value;
+    if (!replaced && (typeof result !== 'string' || result.length >= 100)) return { value: null, ref };
     if (typeof result !== 'string') return null;
     const typed = whole(result);
-    if (!placeholder || normalize(typed) !== placeholder) return null;
-    const ref = [args?.ref_id, response.ref_id, targetRef].map(value => String(value || '')).find(value => /^ref_\d+$/.test(value)) || '';
+    if (normalize(typed) !== placeholder) return null;
     // Kept as the probe returns a whole value: its first 4,000 characters,
     // cut before the case is folded, as the probe cuts it.
-    return ref ? { value: normalize(typed.slice(0, 4000)), ref } : null;
+    return { value: normalize(typed.slice(0, 4000)), ref };
   }
 
   // Keeps a placeholder write's receipt for the current task, scoped by the
@@ -45844,10 +45849,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // Whether WebBrain's own write in this task put `value` into this probed
-  // field, the one with the same ref.
+  // field, the one with the same ref, or appended to it with a result
+  // nobody read whole.
   _placeholderWritten(tabId, field, value, writes = null) {
     const ref = String(field?.ref || '');
-    return !!ref && (writes || this._placeholderTaskWrites(tabId)).some(write => write.value === value && write.ref === ref);
+    return !!ref && (writes || this._placeholderTaskWrites(tabId))
+      .some(write => write.ref === ref && (write.value === null || write.value === value));
   }
 
   // Adds values to the tab's known credentials, keeping the most recent 64.

@@ -82795,6 +82795,22 @@ test('a field holding its own placeholder text is not submitted', async () => {
       { success: true, value: 'you@example.com', fieldMeta: appendMeta }, 'ref_404');
     assert.equal(agent._placeholderWritten(tabId, appendField, 'you@example.com'), true,
       `${AgentClass.name}: an append that left the placeholder was missed`);
+    // An append whose result does not report the value, as type_ax's
+    // default append does not, or reports it possibly cut short, leaves
+    // the value unknown: the receipt counts for whatever the field holds.
+    agent._rememberPlaceholderWrite(tabId, 'type_ax', { ref_id: 'ref_606', text: 'example.com' },
+      { success: true, fieldMeta: appendMeta });
+    assert.equal(agent._placeholderWritten(tabId, { ref: 'ref_606' }, 'you@example.com'), true,
+      `${AgentClass.name}: an append without a reported value was missed`);
+    agent._rememberPlaceholderWrite(tabId, 'type_text', { text: 'more' },
+      { success: true, value: 'x'.repeat(100), fieldMeta: appendMeta }, 'ref_707');
+    assert.equal(agent._placeholderWritten(tabId, { ref: 'ref_707' }, 'you@example.com'), true,
+      `${AgentClass.name}: an append with a cut-short value was missed`);
+    // A replacing write that did not put the placeholder there has no receipt.
+    agent._rememberPlaceholderWrite(tabId, 'type_ax', { ref_id: 'ref_808', text: 'reader@example.org', clear: true },
+      { success: true, fieldMeta: appendMeta });
+    assert.equal(agent._placeholderWritten(tabId, { ref: 'ref_808' }, 'you@example.com'), false,
+      `${AgentClass.name}: a write of another value counted`);
     // A name and id are not the field: another field (another form, page
     // or frame) can have the same ones. Only the ref counts, and a write
     // without one is not kept.
