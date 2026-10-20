@@ -882,6 +882,8 @@ export default {
   'st.skills.add_url': 'URL에서 가져오기',
   'st.skills.add_text': '원시 텍스트 추가',
   'st.skills.clear_form': '양식 지우기',
+  'st.skills.add_skill': '스킬 추가',
+  'st.skills.cancel': '취소',
   'st.skills.loading_url': '가져오는 중...',
   'st.skills.added': '스킬이 추가되었습니다.',
   'st.skills.removed': '스킬이 제거되었습니다.',

@@ -856,6 +856,8 @@ export default {
   'st.skills.add_url': 'Impor dari URL',
   'st.skills.add_text': 'Tambah teks mentah',
   'st.skills.clear_form': 'Bersihkan formulir',
+  'st.skills.add_skill': 'Tambah keterampilan',
+  'st.skills.cancel': 'Batalkan',
   'st.skills.loading_url': 'Mengimpor...',
   'st.skills.added': 'Keterampilan ditambahkan.',
   'st.skills.removed': 'Keterampilan dihapus.',

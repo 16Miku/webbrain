@@ -424,36 +424,44 @@
   <section class="tab-panel" data-panel="skills" role="tabpanel">
     <div class="provider-card" id="skills-card">
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.55;" data-i18n-html="st.skills.desc_html"></div>
-      <div class="field">
-        <label data-i18n="st.skills.name.label"></label>
-        <input type="text" id="skill-name" data-i18n-placeholder="st.skills.name.placeholder">
+      <!-- The form opens from Add skill (and from Edit on an enabled skill);
+           the lists of enabled and available skills come first. -->
+      <div class="btn-row skills-toolbar">
+        <button type="button" class="btn-primary" id="btn-show-skill-form" aria-controls="skill-add-form" data-i18n="st.skills.add_skill"></button>
       </div>
-      <div class="field">
-        <label data-i18n="st.skills.url.label"></label>
-        <input type="url" id="skill-url" placeholder="https://example.com/skill.md">
-      </div>
-      <div class="btn-row">
-        <button class="btn-primary" id="btn-add-skill-url" data-i18n="st.skills.add_url"></button>
-      </div>
-      <div class="field" style="margin-top:16px;">
-        <label data-i18n="st.skills.text.label"></label>
-        <textarea id="skill-text" rows="10" data-i18n-placeholder="st.skills.text.placeholder"></textarea>
-      </div>
-      <div class="btn-row">
-        <button class="btn-primary" id="btn-add-skill-text" data-i18n="st.skills.add_text"></button>
-        <button class="btn-secondary" id="btn-clear-skill-form" data-i18n="st.skills.clear_form"></button>
+      <div class="skill-add-form" id="skill-add-form" hidden>
+        <div class="field">
+          <label for="skill-name" data-i18n="st.skills.name.label"></label>
+          <input type="text" id="skill-name" data-i18n-placeholder="st.skills.name.placeholder">
+        </div>
+        <div class="field">
+          <label for="skill-url" data-i18n="st.skills.url.label"></label>
+          <input type="url" id="skill-url" placeholder="https://example.com/skill.md">
+        </div>
+        <div class="btn-row">
+          <button class="btn-primary" id="btn-add-skill-url" data-i18n="st.skills.add_url"></button>
+        </div>
+        <div class="field" style="margin-top:16px;">
+          <label for="skill-text" data-i18n="st.skills.text.label"></label>
+          <textarea id="skill-text" rows="10" data-i18n-placeholder="st.skills.text.placeholder"></textarea>
+        </div>
+        <div class="btn-row">
+          <button class="btn-primary" id="btn-add-skill-text" data-i18n="st.skills.add_text"></button>
+          <button class="btn-secondary" id="btn-clear-skill-form" data-i18n="st.skills.clear_form"></button>
+          <button type="button" class="btn-secondary" id="btn-cancel-skill-form" data-i18n="st.skills.cancel"></button>
+        </div>
       </div>
       <div class="test-result" id="skills-result"></div>
-    </div>
-
-    <div class="provider-card" id="packaged-skills-card">
-      <div class="setting-label" style="margin-bottom:10px;" data-i18n="st.skills.available.heading"></div>
-      <div id="packaged-skills-list"></div>
     </div>
 
     <div class="provider-card" id="skills-list-card">
       <div class="setting-label" style="margin-bottom:10px;" data-i18n="st.skills.list.heading"></div>
       <div id="skills-list"></div>
+    </div>
+
+    <div class="provider-card" id="packaged-skills-card">
+      <div class="setting-label" style="margin-bottom:10px;" data-i18n="st.skills.available.heading"></div>
+      <div id="packaged-skills-list"></div>
     </div>
 
     <div class="info-box" data-i18n-html="st.skills.security_html"></div>

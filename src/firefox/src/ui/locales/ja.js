@@ -856,6 +856,8 @@ export default {
   'st.skills.add_url': 'URLからインポート',
   'st.skills.add_text': '生テキストを追加',
   'st.skills.clear_form': 'フォームをクリア',
+  'st.skills.add_skill': 'スキルを追加',
+  'st.skills.cancel': 'キャンセル',
   'st.skills.loading_url': 'インポート中...',
   'st.skills.added': 'スキルが追加されました。',
   'st.skills.removed': 'スキルが削除されました。',

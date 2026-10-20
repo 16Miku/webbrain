@@ -843,6 +843,8 @@ export default {
   'st.skills.add_url': 'Importeren via URL',
   'st.skills.add_text': 'Ruwe tekst toevoegen',
   'st.skills.clear_form': 'Formulier wissen',
+  'st.skills.add_skill': 'Vaardigheid toevoegen',
+  'st.skills.cancel': 'Annuleren',
   'st.skills.loading_url': 'Importeren...',
   'st.skills.added': 'Vaardigheid toegevoegd.',
   'st.skills.removed': 'Vaardigheid verwijderd.',

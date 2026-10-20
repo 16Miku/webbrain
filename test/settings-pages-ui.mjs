@@ -214,6 +214,60 @@ try {
       assert.deepEqual(errors, [], `${build}: settings.html interaction errors`);
       await page.close();
 
+      // Skills: the enabled and available lists come first; the add form
+      // opens from Add skill or Edit and closes after a save or Cancel.
+      const customSkills = [{ id: 'skill_owned_1', name: 'Owned triage style', sourceType: 'text', content: '# Triage\nLabel issues.', createdAt: 1 }];
+      const { page: skills, errors: skillErrors } = await open(browser, build, 'settings.html#skills', { seed: { customSkills } });
+      await skills.locator('#skills-list button[data-skill-edit-id="skill_owned_1"]').waitFor();
+      assert.deepEqual(await skills.locator('[data-panel="skills"] > .provider-card').evaluateAll(cards => cards.map(card => card.id)),
+        ['skills-card', 'skills-list-card', 'packaged-skills-card'], `${build}: enabled skills, then available ones`);
+      assert.equal(await visible(skills, '#skill-add-form'), false, `${build}: the add form starts closed`);
+      await skills.locator('#btn-show-skill-form').click();
+      assert.ok(await visible(skills, '#skill-add-form'), `${build}: Add skill opens the form`);
+      assert.equal(await visible(skills, '#btn-show-skill-form'), false, `${build}: Add skill hides while the form is open`);
+      assert.equal(await skills.evaluate(() => document.activeElement?.id), 'skill-name', `${build}: the form takes focus`);
+      await skills.locator('#skill-name').fill('Draft name');
+      await skills.locator('#btn-cancel-skill-form').click();
+      assert.equal(await visible(skills, '#skill-add-form'), false, `${build}: Cancel closes the form`);
+      assert.equal(await skills.evaluate(() => document.activeElement?.id), 'btn-show-skill-form', `${build}: focus returns to Add skill`);
+      assert.equal(await skills.locator('#skill-name').inputValue(), '', `${build}: Cancel discards the draft`);
+      await skills.locator('#skills-list button[data-skill-edit-id="skill_owned_1"]').click();
+      assert.ok(await visible(skills, '#skill-add-form'), `${build}: Edit opens the form`);
+      assert.equal(await skills.locator('#skill-name').inputValue(), 'Owned triage style', `${build}: Edit loads the skill`);
+      await skills.locator('#skill-text').fill('# Triage\nLabel issues by area.');
+      await skills.locator('#btn-add-skill-text').click();
+      await skills.waitForFunction(() => window.testStore.customSkills?.[0]?.content === '# Triage\nLabel issues by area.');
+      assert.equal(await visible(skills, '#skill-add-form'), false, `${build}: saving closes the form`);
+      assert.ok(await visible(skills, '#skills-result'), `${build}: the result shows with the form closed`);
+      await skills.locator('#packaged-skills-list button[data-packaged-skill-id]').first().click();
+      await skills.waitForFunction(() => window.testStore.customSkills?.length === 2);
+      assert.ok(await visible(skills, '#skills-result'), `${build}: enabling a packaged skill is confirmed with the form closed`);
+      // Cancel stops a URL import still in flight: it adds no skill and
+      // leaves a draft started afterwards alone.
+      let releaseImport;
+      const importHeld = new Promise(resolve => { releaseImport = resolve; });
+      await skills.route('https://skills.example/slow.md', async route => {
+        await importHeld;
+        await route.fulfill({ status: 200, contentType: 'text/markdown', body: '# Slow skill\nDo the slow thing.' }).catch(() => {});
+      });
+      const skillCount = await skills.evaluate(() => window.testStore.customSkills.length);
+      await skills.locator('#btn-show-skill-form').click();
+      await skills.locator('#skill-name').fill('Slow import');
+      await skills.locator('#skill-url').fill('https://skills.example/slow.md');
+      await skills.locator('#btn-add-skill-url').click();
+      await skills.waitForFunction(() => document.getElementById('btn-add-skill-url').disabled);
+      await skills.locator('#btn-cancel-skill-form').click();
+      assert.equal(await skills.locator('#btn-add-skill-url').isDisabled(), false, `${build}: Cancel resets the import button`);
+      await skills.locator('#btn-show-skill-form').click();
+      await skills.locator('#skill-name').fill('New draft');
+      releaseImport();
+      await skills.waitForTimeout(300);
+      assert.equal(await skills.evaluate(() => window.testStore.customSkills.length), skillCount, `${build}: a cancelled import adds no skill`);
+      assert.equal(await skills.locator('#skill-name').inputValue(), 'New draft', `${build}: a cancelled import leaves the new draft alone`);
+      assert.ok(await visible(skills, '#skill-add-form'), `${build}: a cancelled import does not close the reopened form`);
+      assert.deepEqual(skillErrors, [], `${build}: skills tab errors`);
+      await skills.close();
+
       // Old Settings deep links land where those tabs live now.
       for (const [hash, target, tab] of [['providers', 'providers.html#llm', 'llm'], ['multimodal', 'providers.html#vision', 'vision'], ['permissions', 'permissions.html', null]]) {
         const { page: redirected, errors: redirectErrors } = await open(browser, build, `settings.html#${hash}`);

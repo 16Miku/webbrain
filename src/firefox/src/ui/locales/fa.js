@@ -909,6 +909,8 @@ export default {
   'st.skills.add_url': "وارد کردن از URL",
   'st.skills.add_text': "اضافه کردن متن خام",
   'st.skills.clear_form': "فرم پاک کردن",
+  'st.skills.add_skill': "اضافه کردن مهارت",
+  'st.skills.cancel': "لغو کنید",
   'st.skills.loading_url': "واردات...",
   'st.skills.added': "مهارت اضافه شد.",
   'st.skills.removed': "مهارت حذف شد.",

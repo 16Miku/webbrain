@@ -856,6 +856,8 @@ export default {
   'st.skills.add_url': 'นำเข้าจาก URL',
   'st.skills.add_text': 'เพิ่มข้อความดิบ',
   'st.skills.clear_form': 'ล้างแบบฟอร์ม',
+  'st.skills.add_skill': 'เพิ่มทักษะ',
+  'st.skills.cancel': 'ยกเลิก',
   'st.skills.loading_url': 'กำลังนำเข้า...',
   'st.skills.added': 'เพิ่มทักษะแล้ว',
   'st.skills.removed': 'ลบทักษะแล้ว',

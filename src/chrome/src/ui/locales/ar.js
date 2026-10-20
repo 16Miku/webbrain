@@ -882,6 +882,8 @@ export default {
   'st.skills.add_url': 'استيراد من URL',
   'st.skills.add_text': 'إضافة نص خام',
   'st.skills.clear_form': 'مسح النموذج',
+  'st.skills.add_skill': 'إضافة مهارة',
+  'st.skills.cancel': 'إلغاء',
   'st.skills.loading_url': 'جارٍ الاستيراد...',
   'st.skills.added': 'تمت إضافة المهارة.',
   'st.skills.removed': 'تمت إزالة المهارة.',

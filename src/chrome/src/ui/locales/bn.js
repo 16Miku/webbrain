@@ -915,6 +915,8 @@ export default {
   'st.skills.add_url': "URL থেকে আমদানি করুন",
   'st.skills.add_text': "কাঁচা পাঠ যোগ করুন",
   'st.skills.clear_form': "পরিষ্কার ফর্ম",
+  'st.skills.add_skill': "দক্ষতা যোগ করুন",
+  'st.skills.cancel': "বাতিল করুন",
   'st.skills.loading_url': "আমদানি করা হচ্ছে...",
   'st.skills.added': "দক্ষতা যোগ করা হয়েছে।",
   'st.skills.removed': "দক্ষতা সরানো হয়েছে।",

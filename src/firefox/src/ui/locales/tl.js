@@ -856,6 +856,8 @@ export default {
   'st.skills.add_url': 'Mag-import mula sa URL',
   'st.skills.add_text': 'Magdagdag ng raw na teksto',
   'st.skills.clear_form': 'Linisin ang form',
+  'st.skills.add_skill': 'Magdagdag ng kasanayan',
+  'st.skills.cancel': 'Kanselahin',
   'st.skills.loading_url': 'Nag-iimport...',
   'st.skills.added': 'Naidagdag ang kasanayan.',
   'st.skills.removed': 'Naalis ang kasanayan.',

@@ -882,6 +882,8 @@ export default {
   'st.skills.add_url': 'Імпортувати з URL',
   'st.skills.add_text': 'Додати сирий текст',
   'st.skills.clear_form': 'Очистити форму',
+  'st.skills.add_skill': 'Додати навичку',
+  'st.skills.cancel': 'Скасувати',
   'st.skills.loading_url': 'Імпортується...',
   'st.skills.added': 'Навичку додано.',
   'st.skills.removed': 'Навичку видалено.',

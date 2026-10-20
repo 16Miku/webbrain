@@ -860,6 +860,8 @@ export default {
   "st.skills.add_url": "ייבוא ​​מ URL",
   "st.skills.add_text": "הוסף טקסט גולמי",
   "st.skills.clear_form": "נקה טופס",
+  "st.skills.add_skill": "הוסף מיומנות",
+  "st.skills.cancel": "בטל",
   "st.skills.loading_url": "מייבא...",
   "st.skills.added": "מיומנות נוספה.",
   "st.skills.removed": "מיומנות הוסרה.",
