@@ -82577,6 +82577,135 @@ test('agent requires fresh submit confirmation across modes and prompt sources',
   }
 });
 
+test('a declined submission is not asked again in the same turn', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = 5107;
+    let prompts = 0;
+    let executed = 0;
+    let email = 'you@example.com';
+    // The form and button the page probe identified, as it reports them.
+    let elements = 'form-1/subscribe';
+    const updates = [];
+
+    agent.conversationModes.set(tabId, 'act');
+    agent._ensureGateSetting = async () => { };
+    agent._skipPermissionGate = false;
+    agent._currentUrl = async () => 'https://host.com/newsletter';
+    agent._recordProgressObservation = async () => null;
+    agent._autoRecordProgressAction = () => null;
+    agent._progressWarningForAction = () => '';
+    agent._persist = () => { };
+    agent._detectLikelySubmitAction = async (_tabId, name) => ({
+      isSubmit: true,
+      host: 'host.com',
+      tool: name,
+      method: 'GET',
+      actionUrl: 'https://host.com/newsletter',
+      reason: 'submit button/control activation',
+      summary: `Changed/filled fields: Email: ${email}.`,
+      changedFields: [{ label: 'Email', value: email, changed: true }],
+      submissionIdentity: elements,
+    });
+    agent._promptSubmitConfirmation = async () => {
+      prompts += 1;
+      return 'deny';
+    };
+    agent.executeTool = async () => {
+      executed += 1;
+      return { success: true };
+    };
+    const submit = async (id) => {
+      const messages = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{ id, function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: 'ref_subscribe' }) } }],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision: false },
+        '',
+        new Set(['click_ax']),
+        1,
+      );
+      return JSON.parse(messages[0].content);
+    };
+
+    const first = await submit('first');
+    assert.equal(prompts, 1, `${AgentClass.name}: the first submission asks`);
+    assert.equal(first.denied, true, `${AgentClass.name}: the first denial is reported`);
+    assert.equal(first.alreadyDeclined, undefined, `${AgentClass.name}: the first denial is the user's answer`);
+
+    const repeat = await submit('repeat');
+    assert.equal(prompts, 1, `${AgentClass.name}: the same submission is not asked again`);
+    assert.equal(repeat.denied, true, `${AgentClass.name}: the repeat is refused`);
+    assert.equal(repeat.alreadyDeclined, true, `${AgentClass.name}: the repeat says the user already declined`);
+    assert.match(repeat.error, /already declined this exact form submission/, `${AgentClass.name}: the model is told not to retry`);
+    assert.ok(updates.some(update => /Not asked again/.test(update.data?.message || '')), `${AgentClass.name}: the user sees why nothing was asked`);
+
+    const timeoutEntry = { resolve: () => { }, ts: Date.now() };
+    agent._pendingClarifications.set(tabId, new Map([['timed', timeoutEntry]]));
+    agent.submitClarifyResponse(tabId, 'timed', 'Yes, submit it', 'timeout');
+    await submit('after-timeout');
+    assert.equal(prompts, 1, `${AgentClass.name}: a timed-out answer is not the user changing their mind`);
+
+    email = 'webbrain-qa@example.com';
+    await submit('changed');
+    assert.equal(prompts, 2, `${AgentClass.name}: a changed value asks again`);
+
+    email = 'you@example.com';
+    const userEntry = { resolve: () => { }, ts: Date.now() };
+    agent._pendingClarifications.set(tabId, new Map([['asked', userEntry]]));
+    // The side panel sends the source of the user's answer: an option, text,
+    // a slash command or a Cloud API answer.
+    agent.submitClarifyResponse(tabId, 'asked', 'Yes, submit it', 'option');
+    await submit('after-user-answer');
+    assert.equal(prompts, 3, `${AgentClass.name}: the user's own answer on a later card asks again`);
+
+    agent.permissions.beginTurn(tabId);
+    await submit('new-turn');
+    assert.equal(prompts, 4, `${AgentClass.name}: a new turn asks again`);
+
+    // Another form with the same fields and action (a per-row form told
+    // apart only by a hidden ID), or another button of the same form, is a
+    // different submission and asks on its own card.
+    elements = 'form-2/subscribe';
+    await submit('other-form');
+    assert.equal(prompts, 5, `${AgentClass.name}: a declined form refused another form with the same fields`);
+    elements = 'form-1/unsubscribe';
+    await submit('other-button');
+    assert.equal(prompts, 6, `${AgentClass.name}: a declined button refused another button of the form`);
+    // A submission whose form and button the probe did not identify is never
+    // remembered: it asks every time.
+    elements = '';
+    await submit('unidentified-1');
+    await submit('unidentified-2');
+    assert.equal(prompts, 8, `${AgentClass.name}: an unidentified submission skipped its card`);
+    assert.equal(executed, 0, `${AgentClass.name}: nothing declined was submitted`);
+
+    // A script has no form identity: each run of one asks on its own card.
+    agent._detectLikelySubmitAction = async () => agent._fallbackSubmitConfirmationInfo('host.com', 'execute_js', 'execute_js can run page JavaScript');
+    const script = async (id, code) => {
+      const messages = [];
+      await agent._executeToolBatch(
+        tabId,
+        [{ id, function: { name: 'execute_js', arguments: JSON.stringify({ code }) } }],
+        messages,
+        () => { },
+        { supportsVision: false },
+        '',
+        new Set(['execute_js']),
+        1,
+      );
+      return messages;
+    };
+    agent.conversationModes.set(tabId, 'dev');
+    const before = prompts;
+    await script('script-1', 'document.forms[0].submit()');
+    await script('script-2', 'document.forms[1].submit()');
+    assert.equal(prompts, before + 2, `${AgentClass.name}: a declined script made a different script skip its card`);
+  }
+});
+
 test('submit confirmation honors scheduled and global gate bypasses', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     for (const scenario of [

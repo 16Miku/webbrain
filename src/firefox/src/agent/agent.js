@@ -6033,6 +6033,8 @@ export class Agent extends LoopDetector {
     this._ownedNativeChatReadRepairs.delete(tabId);
     // Only consume at model/tool boundaries, after all tool results are present.
     // Human corrections stay ordinary user messages; no page context is added.
+    // A correction may change the user's mind about a declined submission.
+    this.permissions?.clearDeclinedSubmissions?.(tabId);
     for (const item of run.messages.splice(0)) {
       const priorBinding = this._activeTaskBinding(messages);
       const parentTaskKey = this._progressTaskKeyForText(priorBinding.text);
@@ -14798,6 +14800,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const canGroupSearch = submitRisk.risk === SubmitRisk.LOW_RISK_SEARCH
             && ['click', 'click_ax', 'press_keys'].includes(fnName);
           let choice = null;
+          let alreadyDeclined = false;
           if (canGroupSearch) {
             const intentKey = submitActionKey(submitConfirmation, submitConfirmation.url);
             choice = await this._authorizeGroupedSearch(
@@ -14823,7 +14826,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               capabilities = capabilities.filter(capability => capability !== Capability.CLICK);
             }
           } else {
-            choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
+            // The user already said no to this exact submission (same form,
+            // same values) in this turn: refuse it again without a new card.
+            // Only a submission WebBrain resolved has an identity; a script or
+            // WebMCP callback, or a control with no form, asks every time.
+            const declineKey = this._declinableSubmissionKey(fnName, submitConfirmation);
+            if (declineKey && this.permissions?.isSubmissionDeclined?.(declineKey, tabId) === true) {
+              choice = 'deny';
+              alreadyDeclined = true;
+            } else {
+              choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
+              if (choice === 'deny' && declineKey) this.permissions?.declineSubmission?.(declineKey, tabId);
+            }
           }
           if (this._hasPendingSteering(tabId) && !this._checkAbort(tabId)) return skipSteeredPermissionWait(toolIndex);
           if (choice === null) {
@@ -14844,12 +14858,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 success: false,
                 denied: true,
                 ...(canGroupSearch ? { permissionRequired: true, groupedPermission: true } : { submitConfirmationRequired: true }),
+                ...(alreadyDeclined ? { alreadyDeclined: true } : {}),
                 error: canGroupSearch
                   ? `The user did not allow the grouped low-risk search actions on ${submitRisk.host || submitConfirmation.host || 'this site'}. Do NOT retry this unchanged search unless the user explicitly allows it.`
-                  : `The user did not confirm submitting the form on ${submitConfirmation.host || 'this site'}. Do NOT retry this submit action unless the user explicitly confirms it.`,
+                  : alreadyDeclined
+                    ? `The user already declined this exact form submission on ${submitConfirmation.host || 'this site'} in this task, so WebBrain did not ask again and nothing was submitted. Do NOT retry it. If a value must change, ask the user what to change; otherwise report that the form was not submitted.`
+                    : `The user did not confirm submitting the form on ${submitConfirmation.host || 'this site'}. Do NOT retry this submit action unless the user explicitly confirms it.`,
               }),
             });
-            onUpdate('warning', { message: canGroupSearch ? 'Low-risk search blocked until the user allows the grouped actions.' : 'Form submission blocked until the user confirms.' });
+            onUpdate('warning', { message: canGroupSearch ? 'Low-risk search blocked until the user allows the grouped actions.'
+              : alreadyDeclined ? 'Not asked again: you declined this exact submission.' : 'Form submission blocked until the user confirms.' });
             predispatchBlocked('submitConfirmationMs');
             if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
             continue;
@@ -18899,6 +18917,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // The time the user took to answer one of WebBrain's own cards does not
     // age the page observation the pending action was decided on.
     this._noteClarifyHeld(tabId, entry);
+    // The user answering any card (an option, typed text, a slash command,
+    // a Cloud API answer) is the user speaking again: a submission declined
+    // earlier in the turn may be asked about once more. A timeout's or
+    // Instant's answer is WebBrain's, not the user's.
+    if (source !== 'timeout' && source !== 'auto') this.permissions?.clearDeclinedSubmissions?.(tabId);
     this._settleClarification(entry, { answer, source });
     return true;
   }
@@ -29411,6 +29434,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return null;
   }
 
+  // The identity a declined submission is remembered by in a turn, or ''
+  // when WebBrain did not resolve one: a script or WebMCP callback, a
+  // control whose form, fields and action it could not read, or one whose
+  // form and button the page probe did not identify. Two forms can post
+  // the same visible fields to one endpoint (per-row forms told apart only
+  // by hidden IDs), one form can have several buttons, and the summary of
+  // changed fields leaves values out, so the key also names the frame, the
+  // form and button elements, and the probe's fingerprint of every value
+  // the form would send.
+  _declinableSubmissionKey(toolName, submitInfo) {
+    if (!submitInfo || toolName === 'execute_js' || toolName === 'execute_webmcp_tool') return '';
+    const resolved = (Array.isArray(submitInfo.changedFields) && submitInfo.changedFields.length > 0)
+      || (Array.isArray(submitInfo.fields) && submitInfo.fields.length > 0)
+      || !!(submitInfo.actionUrl || submitInfo.action);
+    const elements = String(submitInfo.submissionIdentity || '');
+    if (!resolved || !elements) return '';
+    const frame = Number.isInteger(submitInfo.frameId) ? submitInfo.frameId : 0;
+    return [submitActionKey(submitInfo, submitInfo.url), `frame:${frame}`, `elements:${elements}`].join('|');
+  }
+
   _fallbackSubmitConfirmationInfo(host, tool, reason, summary = '') {
     const normalizedHost = normalizeHost(host || '') || String(host || '').trim() || 'this site';
     return {
@@ -29545,6 +29588,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             frameDocumentIdentity: sameFrameDocument ? frameBaseline.identity : '',
             frameStatusMessages: sameFrameDocument ? frameBaseline.messages : [] } : {}),
           formRef: /^ref_\d+$/.test(String(detected.formRef || '')) ? detected.formRef : '',
+          submissionIdentity: String(detected.submissionIdentity || '').slice(0, 80),
           summary: String(detected.summary || '').slice(0, 1200),
           fields: Array.isArray(detected.fields) ? detected.fields.slice(0, 12) : [],
           hiddenFields: Array.isArray(detected.hiddenFields) ? detected.hiddenFields.slice(0, 20) : [],
@@ -30223,6 +30267,129 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } catch { return { complete: false }; }
     };
     const transactionOrderSite = /(?:^|\.)12306\.cn$/i.test(host);
+    // The form and the button a submission goes through, as identities of
+    // the elements this frame holds, and every value the form would send and
+    // where it would send them, as a fingerprint keyed by a secret that never
+    // leaves this frame. A declined submission is remembered by them, so
+    // another form or button with the same fields and action (per-row forms
+    // told apart only by hidden IDs, Reject beside Approve), or the same form
+    // with any value or destination changed (a field past the summary's
+    // first eight, a password, another file, a hidden record ID, a button's
+    // new formaction), still gets its own card. An Enter in a field submits
+    // through the form's default button; set_field({submit}) submits with
+    // no button.
+    const submissionIdentity = (form, submitControl, pendingEl = null, pendingValue = null) => {
+      try {
+        if (!(window.__wbSubmissionIdentities instanceof WeakMap)) {
+          window.__wbSubmissionIdentities = new WeakMap();
+          window.__wbSubmissionIdentityPrefix = Math.random().toString(36).slice(2, 10);
+          window.__wbSubmissionIdentityCount = 0;
+        }
+        if (typeof window.__wbSubmissionValueKey !== 'string' || !window.__wbSubmissionValueKey) {
+          window.__wbSubmissionValueKey = `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+        }
+        const identities = window.__wbSubmissionIdentities;
+        const identityOf = el => {
+          if (!el || el.nodeType !== 1) return '';
+          if (!identities.has(el)) {
+            window.__wbSubmissionIdentityCount = (Number(window.__wbSubmissionIdentityCount) || 0) + 1;
+            identities.set(el, `${window.__wbSubmissionIdentityPrefix}.${window.__wbSubmissionIdentityCount}`);
+          }
+          return identities.get(el);
+        };
+        const owner = submitControl ? (labelControlFor(submitControl) || submitControl) : null;
+        const typedField = !!owner && isFormField(owner)
+          && !/^(?:submit|image|button|reset)$/i.test(String(owner.type || ''));
+        const defaultButton = () => {
+          try {
+            return Array.from(form?.elements || []).find(el => /^(?:BUTTON|INPUT)$/i.test(String(el?.tagName || ''))
+              && /^(?:submit|image)$/i.test(String(el.type || ''))) || null;
+          } catch { return null; }
+        };
+        // Only a submission the browser makes from the form itself is
+        // remembered: the form's own submit button, an Enter in one of its
+        // fields, or set_field({submit}) on a plain field. A control that
+        // only runs page script (type=button, a role=button, a click
+        // handler, a form-less composer, a combobox or editor that page
+        // handlers commit) can act on state outside the form, such as the
+        // selected row, so it is never remembered.
+        if (String(form?.tagName || '').toUpperCase() !== 'FORM') return '';
+        const nativeButton = el => /^(?:BUTTON|INPUT)$/i.test(String(el?.tagName || ''))
+          && /^(?:submit|image)$/i.test(String(el?.type || ''));
+        let submitter = null;
+        if (owner && !typedField) {
+          submitter = owner.closest?.('button,input,[role="button"]') || owner;
+          if (!nativeButton(submitter) || (submitter.form && submitter.form !== form)) return '';
+        } else if (toolName === 'set_field') {
+          // requestSubmit() without a submitter (content.js): the form's own
+          // action and method apply, not a button's overrides.
+          const role = String(owner?.getAttribute?.('role') || '').toLowerCase();
+          const visiblePopup = () => {
+            try {
+              return Array.from(doc.querySelectorAll('[role="listbox"],[role="menu"]')).some(el => {
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+              });
+            } catch { return true; }
+          };
+          if (!owner || owner.isContentEditable || role === 'searchbox' || role === 'combobox'
+              || owner.getAttribute?.('aria-autocomplete') || owner.getAttribute?.('aria-expanded') === 'true'
+              || owner.getAttribute?.('aria-controls') || visiblePopup()) return '';
+        } else {
+          // An Enter in a field submits through the form's default button.
+          submitter = defaultButton();
+        }
+        // An image button also sends where it was clicked, which is not
+        // known here: such a submission is never remembered.
+        if (String(submitter?.tagName || '').toUpperCase() === 'INPUT' && String(submitter.type || '').toLowerCase() === 'image') return '';
+        const controls = (() => {
+          try { return Array.from(form.elements || []); } catch { return []; }
+        })();
+        const valueOf = el => {
+          // set_field({submit, clear:false}) appends to what the field holds.
+          if (el === pendingEl && pendingValue != null) {
+            const appended = toolName === 'set_field' && args?.clear === false;
+            const existing = el?.isContentEditable && !('value' in el) ? String(el.textContent || '') : String(el?.value ?? '');
+            return appended ? existing + String(pendingValue) : String(pendingValue);
+          }
+          // Arrays, not joined strings: a value may hold any separator.
+          const type = String(el?.type || '').toLowerCase();
+          if (type === 'checkbox' || type === 'radio') return [el.checked === true, String(el.value ?? '')];
+          if (type === 'file') return Array.from(el.files || []).map(file => [file.name, file.size, file.lastModified, file.type]);
+          if (type === 'select-multiple') return Array.from(el.selectedOptions || []).map(option => option.value);
+          if (el?.isContentEditable && !('value' in el)) return String(el.textContent || '');
+          return String(el?.value ?? '');
+        };
+        // Where it goes: the button's own formaction, formmethod, formenctype
+        // and formtarget override the form's, read as attributes so a field
+        // named "action" cannot stand in for the form's.
+        const destination = ['formaction', 'formmethod', 'formenctype', 'formtarget']
+          .map(name => [submitter?.getAttribute?.(name) ?? null, form?.getAttribute?.(name.slice(4)) ?? null]);
+        // A disabled control (its own or its fieldset's) is not sent, so the
+        // state is part of what goes out.
+        const disabled = el => { try { return el?.matches?.(':disabled') === true; } catch { return false; } };
+        const sent = window.__wbSubmissionValueKey + JSON.stringify([destination, controls.map(el => [
+          String(el?.getAttribute?.('name') || ''), String(el?.type || el?.tagName || ''), disabled(el), valueOf(el)])]);
+        // cyrb53, a 53-bit string hash; the frame's key makes it opaque.
+        let h1 = 0xdeadbeef;
+        let h2 = 0x41c6ce57;
+        for (let i = 0; i < sent.length; i += 1) {
+          const code = sent.charCodeAt(i);
+          h1 = Math.imul(h1 ^ code, 2654435761);
+          h2 = Math.imul(h2 ^ code, 1597334677);
+        }
+        h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+        h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+        h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+        h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+        const values = (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+        const formIdentity = identityOf(form);
+        const submitterIdentity = identityOf(submitter);
+        return formIdentity || submitterIdentity ? `${formIdentity}/${submitterIdentity}/${values}` : '';
+      } catch {
+        return '';
+      }
+    };
     const submitInfo = (form, reason, pendingEl = null, pendingValue = null, validationSubmitEvidence = 'strong', submitControl = null) => {
       const formOrders = transactionOrderSite
         ? transactionOrderScan(form)
@@ -30277,6 +30444,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         reason,
         validationSubmitEvidence,
         frameDocumentIdentity: [url, performance.timeOrigin].join('|'),
+        submissionIdentity: submissionIdentity(form, submitControl, pendingEl, pendingValue),
         semanticCommit: nativeConfirmationCommit(control),
         actionResource: resourceProofFor(control),
         resourceBaseline: resourceProofs().map(resource => resource.url),
