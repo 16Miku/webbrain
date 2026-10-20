@@ -180,16 +180,17 @@ try {
       assert.equal(await visible(page, '#select-theme'), false, `${build}: search hides non-matching General rows`);
       assert.equal(await visible(page, '[data-panel="memory"]'), false, `${build}: search leaves Memory out`);
       assert.ok(await visible(page, '[data-panel="budgets"] .search-panel-heading'), `${build}: matches sit under their tab name`);
-      // The results span tabs, so no tab is marked as the current one.
-      assert.equal(await page.locator('.tab-btn.active').evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)',
-        `${build}: no tab looks current during a search`);
+      // The results span tabs, so no tab is marked as the current one. The
+      // tab background fades (a 0.15 s transition), so wait for it to settle.
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('.tab-btn.active')).backgroundColor === 'rgba(0, 0, 0, 0)')
+        .catch(() => assert.fail(`${build}: no tab looks current during a search`));
       // A tab name opens that tab and ends the search.
       await page.locator('[data-panel="budgets"] [data-search-tab="budgets"]').click();
       assert.equal(await page.locator('#input-general-search').inputValue(), '', `${build}: a tab name ends the search`);
       assert.equal(await activeTab(page), 'budgets', `${build}: a tab name opens its tab`);
       assert.equal(await page.evaluate(() => document.activeElement?.dataset?.tab), 'budgets', `${build}: focus moves to that tab`);
-      assert.notEqual(await page.locator('.tab-btn.active').evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)',
-        `${build}: the picked tab is marked current again`);
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('.tab-btn.active')).backgroundColor !== 'rgba(0, 0, 0, 0)')
+        .catch(() => assert.fail(`${build}: the picked tab is marked current again`));
       await page.locator('#input-general-search').fill('redact');
       assert.ok(await visible(page, '#screenshot-redaction-setting'), `${build}: search finds Advanced settings`);
       assert.equal(await visible(page, '[data-panel="budgets"]'), false, `${build}: a tab without matches is hidden`);
