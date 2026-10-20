@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': 'Tersambung ({model})',
   'sp.status.error': 'Ralat: {msg}',
   'sp.status.failed': 'Sambungan gagal',
+  'sp.status.connecting': 'Menyemak sambungan…',
   'sp.btn.verbose': 'Togol log alat terperinci',
   'sp.btn.language': 'Bahasa',
   'sp.btn.settings': 'Tetapan',

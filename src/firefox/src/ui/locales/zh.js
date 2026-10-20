@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': '已连接 ({model})',
   'sp.status.error': '错误：{msg}',
   'sp.status.failed': '连接失败',
+  'sp.status.connecting': '正在检查连接…',
   'sp.btn.verbose': '切换详细工具日志',
   'sp.btn.language': '语言',
   'sp.btn.settings': '设置',

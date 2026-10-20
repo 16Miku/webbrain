@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': '接続済み ({model})',
   'sp.status.error': 'エラー: {msg}',
   'sp.status.failed': '接続に失敗しました',
+  'sp.status.connecting': '接続を確認しています…',
   'sp.btn.verbose': '詳細ツールログを切り替え',
   'sp.btn.language': '言語',
   'sp.btn.settings': '設定',

@@ -281,6 +281,7 @@ export default {
   'sp.status.connected': 'Bağlı ({model})',
   'sp.status.error': 'Hata: {msg}',
   'sp.status.failed': 'Bağlantı başarısız',
+  'sp.status.connecting': 'Bağlantı kontrol ediliyor…',
   'sp.btn.verbose': 'Ayrıntılı araç günlüğünü aç/kapat',
   'sp.btn.language': 'Dil',
   'sp.btn.history': 'Sohbet geçmişi',

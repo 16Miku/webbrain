@@ -134,6 +134,7 @@ export default {
   'sp.status.connected': "Conectado ({model})",
   'sp.status.error': "Erro: {msg}",
   'sp.status.failed': "Falha na conexão",
+  "sp.status.connecting": "Verificando a conexão…",
   'sp.btn.verbose': "Alternar registro detalhado da ferramenta",
   'sp.record.stop': "Pare",
   'sp.record.banner_label': "Gravação",

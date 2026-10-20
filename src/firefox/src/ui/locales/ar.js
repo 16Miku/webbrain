@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': 'متصل ({model})',
   'sp.status.error': 'خطأ: {msg}',
   'sp.status.failed': 'فشل الاتصال',
+  'sp.status.connecting': 'جارٍ التحقق من الاتصال…',
   'sp.btn.verbose': 'تبديل سجل الأدوات المفصّل',
   'sp.btn.language': 'اللغة',
   'sp.btn.settings': 'الإعدادات',

@@ -7,7 +7,7 @@ import vm from 'node:vm';
 
 const read = (build, file) => readFileSync(new URL(`../src/${build}/${file}`, import.meta.url), 'utf8');
 const extract = (source, name) => {
-  const start = source.search(new RegExp(`^function ${name}\\(`, 'm'));
+  const start = source.search(new RegExp(`^(?:async )?function ${name}\\(`, 'm'));
   assert.ok(start >= 0, name);
   return source.slice(start, source.indexOf('\n}', start) + 2);
 };
@@ -65,12 +65,39 @@ for (const build of ['chrome', 'firefox']) {
   });
 }
 
+for (const build of ['chrome', 'firefox']) {
+  // The dot's title is the picker button's accessible description, so a check
+  // in progress must not keep announcing the previous result.
+  test(`${build}: while a connection check runs, the dot's title says so`, async () => {
+    const en = (await import(`../src/${build}/src/ui/locales/en.js`)).default;
+    const panel = read(build, 'src/ui/sidepanel.js');
+    let answer;
+    const context = vm.createContext({
+      t: (key, params = {}) => String(en[key] || key).replace(/\{(\w+)\}/g, (_, k) => params[k] ?? ''),
+      providerSelect: { value: 'openrouter' },
+      providerTestRequestId: 0,
+      statusDot: { className: 'status-dot offline', title: en['sp.status.disconnected'] },
+      sendToBackground: async () => new Promise((resolve) => { answer = resolve; }),
+      markSelectedProviderUntested() { throw new Error('openrouter is tested'); },
+    });
+    vm.runInContext(extract(panel, 'testConnection'), context);
+    const pending = context.testConnection();
+    assert.equal(context.statusDot.className, 'status-dot connecting');
+    assert.equal(context.statusDot.title, 'Checking connection…');
+    answer({ ok: true, model: 'gpt-6-luna' });
+    await pending;
+    assert.equal(context.statusDot.className, 'status-dot online');
+    assert.equal(context.statusDot.title, 'Connected (gpt-6-luna)');
+  });
+}
+
 test('every language names the active model', async () => {
   for (const build of ['chrome', 'firefox']) {
     for (const code of ['en', 'tr', 'es', 'fr', 'de', 'nl', 'pt', 'pl', 'ru', 'uk', 'zh', 'ja', 'ko', 'ar', 'he', 'fa', 'hi', 'bn', 'id', 'ms', 'tl', 'th', 'vi']) {
       const dict = (await import(`../src/${build}/src/ui/locales/${code}.js`)).default;
       assert.match(dict['sp.provider_picker.current'] || '', /\{name\}/, `${build} ${code}`);
       assert.ok(dict['sp.provider_picker.none'], `${build} ${code}`);
+      assert.ok(dict['sp.status.connecting'], `${build} ${code}: a check in progress has a description`);
     }
   }
 });

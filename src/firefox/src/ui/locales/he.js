@@ -148,6 +148,7 @@ export default {
   "sp.status.connected": "מחובר ({model})",
   "sp.status.error": "שגיאה: {msg}",
   "sp.status.failed": "החיבור נכשל",
+  "sp.status.connecting": "בודק את החיבור…",
   "sp.btn.verbose": "הצג או הסתר יומן כלים מפורט",
   "sp.record.stop": "עצור",
   "sp.record.banner_label": "הקלטה",

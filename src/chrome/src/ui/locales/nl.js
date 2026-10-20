@@ -134,6 +134,7 @@ export default {
   'sp.status.connected': 'Verbonden ({model})',
   'sp.status.error': 'Fout: {msg}',
   'sp.status.failed': 'Verbinding mislukt',
+  'sp.status.connecting': 'Verbinding controleren…',
   'sp.btn.verbose': 'Uitvoerige toollogboekering in-/uitschakelen',
   'sp.record.stop': 'Stoppen',
   'sp.record.banner_label': 'Opnemen',

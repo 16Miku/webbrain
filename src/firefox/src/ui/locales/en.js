@@ -134,6 +134,7 @@ export default {
   'sp.status.connected': 'Connected ({model})',
   'sp.status.error': 'Error: {msg}',
   'sp.status.failed': 'Connection failed',
+  'sp.status.connecting': 'Checking connection…',
   'sp.btn.verbose': 'Toggle verbose tool log',
   'sp.record.stop': 'Stop',
   'sp.record.banner_label': 'Recording',

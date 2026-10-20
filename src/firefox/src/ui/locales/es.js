@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': 'Conectado ({model})',
   'sp.status.error': 'Error: {msg}',
   'sp.status.failed': 'Falló la conexión',
+  'sp.status.connecting': 'Comprobando la conexión…',
   'sp.btn.verbose': 'Alternar registro detallado de herramientas',
   'sp.btn.language': 'Idioma',
   'sp.btn.settings': 'Ajustes',

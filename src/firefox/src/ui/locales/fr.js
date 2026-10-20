@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': 'Connecté ({model})',
   'sp.status.error': 'Erreur : {msg}',
   'sp.status.failed': 'Échec de la connexion',
+  'sp.status.connecting': 'Vérification de la connexion…',
   'sp.btn.verbose': 'Basculer le journal détaillé des outils',
   'sp.btn.language': 'Langue',
   'sp.btn.settings': 'Paramètres',

@@ -134,6 +134,7 @@ export default {
   'sp.status.connected': 'Verbunden ({model})',
   'sp.status.error': 'Fehler: {msg}',
   'sp.status.failed': 'Verbindung fehlgeschlagen',
+  'sp.status.connecting': 'Verbindung wird geprüft…',
   'sp.btn.verbose': 'Ausführliche Tool-Protokolle umschalten',
   'sp.record.stop': 'Stopp',
   'sp.record.banner_label': 'Aufnahme',

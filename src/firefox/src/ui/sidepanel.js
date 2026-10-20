@@ -8516,6 +8516,9 @@ async function testConnection(options = {}) {
     return;
   }
   statusDot.className = 'status-dot connecting';
+  // The dot's title is the picker button's description: replace the last
+  // result while the check runs.
+  statusDot.title = t('sp.status.connecting');
   try {
     const res = await sendToBackground('test_provider', {
       providerId,

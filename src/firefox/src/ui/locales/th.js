@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': 'เชื่อมต่อแล้ว ({model})',
   'sp.status.error': 'ข้อผิดพลาด: {msg}',
   'sp.status.failed': 'เชื่อมต่อไม่สำเร็จ',
+  'sp.status.connecting': 'กำลังตรวจสอบการเชื่อมต่อ…',
   'sp.btn.verbose': 'สลับบันทึกเครื่องมือแบบละเอียด',
   'sp.btn.language': 'ภาษา',
   'sp.btn.settings': 'การตั้งค่า',

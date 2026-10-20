@@ -134,6 +134,7 @@ export default {
   'sp.status.connected': "متصل ({model})",
   'sp.status.error': "خطا: {msg}",
   'sp.status.failed': "اتصال ناموفق بود",
+  "sp.status.connecting": "در حال بررسی اتصال…",
   'sp.btn.verbose': "گزارش ابزار پرمخاطب را تغییر دهید",
   'sp.record.stop': "توقف کنید",
   'sp.record.banner_label': "در حال ضبط",

@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': 'Подключено ({model})',
   'sp.status.error': 'Ошибка: {msg}',
   'sp.status.failed': 'Не удалось подключиться',
+  'sp.status.connecting': 'Проверка подключения…',
   'sp.btn.verbose': 'Переключить подробный журнал инструментов',
   'sp.btn.language': 'Язык',
   'sp.btn.settings': 'Настройки',
