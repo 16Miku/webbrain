@@ -134,6 +134,7 @@ export default {
   'sp.status.connected': "সংযুক্ত ({model})",
   'sp.status.error': "ত্রুটি: {msg}",
   'sp.status.failed': "সংযোগ ব্যর্থ হয়েছে৷",
+  "sp.status.connecting": "সংযোগ যাচাই করা হচ্ছে…",
   'sp.btn.verbose': "ভার্বোস টুল লগ টগল করুন",
   'sp.record.stop': "থামো",
   'sp.record.banner_label': "রেকর্ডিং",

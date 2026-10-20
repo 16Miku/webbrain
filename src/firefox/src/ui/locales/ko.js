@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': '연결됨 ({model})',
   'sp.status.error': '오류: {msg}',
   'sp.status.failed': '연결 실패',
+  'sp.status.connecting': '연결 확인 중…',
   'sp.btn.verbose': '상세 도구 로그 전환',
   'sp.btn.language': '언어',
   'sp.btn.settings': '설정',

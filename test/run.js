@@ -44169,7 +44169,7 @@ test('sidepanel keeps display tools and conversation actions in the header and t
     assert.match(controls, /class="composer-control-row"[\s\S]*?id="mode-toggle"[\s\S]*?id="btn-mode-ask"[\s\S]*?id="btn-mode-act"[\s\S]*?id="btn-mode-dev"/, `${label}: the segmented mode controls keep their markup above the composer`);
     assert.doesNotMatch(controls, /id="btn-(?:clear|history)"/, `${label}: the mode row should not repeat the conversation actions`);
     const composer = html.slice(html.indexOf('<div id="input-wrapper">'), html.indexOf('<button id="selection-ask-action"'));
-    assert.match(composer, /id="input-text-layer"[\s\S]*?class="composer-toolbar"[\s\S]*?id="btn-attach"[\s\S]*?id="provider-picker"[\s\S]*?id="provider-picker-menu"[\s\S]*?id="status-dot"[\s\S]*?id="btn-mic"[\s\S]*?id="btn-send"/, `${label}: the composer should put the message first, then attach, the model picker and its status, mic and send`);
+    assert.match(composer, /id="input-text-layer"[\s\S]*?class="composer-toolbar"[\s\S]*?id="btn-attach"[\s\S]*?id="provider-picker"[\s\S]*?id="provider-picker-btn"[\s\S]*?class="provider-picker-icon"[\s\S]*?id="status-dot"[\s\S]*?class="provider-picker-caret"[\s\S]*?id="provider-picker-menu"[\s\S]*?id="btn-mic"[\s\S]*?id="btn-send"/, `${label}: the composer should put the message first, then attach, the model picker with its status on the engine icon, mic and send`);
     assert.match(css, /\.composer-toolbar \.provider-picker-menu \{\s*top: auto;\s*bottom: calc\(100% \+ 6px\);/, `${label}: the composer model menu should open upward`);
     assert.match(css, /#input-wrapper \{[\s\S]*?flex-direction: column;/, `${label}: the composer should stack the message above its toolbar`);
     assert.match(conversation, /id="btn-clear"[\s\S]*?data-i18n-title="sp\.btn\.clear_short"[\s\S]*?data-i18n-aria-label="sp\.btn\.clear_short"[\s\S]*?data-icon="plus"[\s\S]*?sp\.btn\.clear_short/, `${label}: New chat should have a plus icon, short tooltip, accessible name, and localized wide label`);
@@ -50363,16 +50363,17 @@ test('sidepanel drops stale provider selection and connection checks', () => {
     const managedCloudSkipIdx = testBody.indexOf("['webbrain_cloud', 'webbrain_cloud_max'].includes(providerId)");
     const sendIdx = testBody.indexOf("sendToBackground('test_provider'");
     const staleGuardIdx = testBody.indexOf('if (requestId !== providerTestRequestId || providerSelect.value !== providerId) return;');
-    const statusIdx = testBody.indexOf("statusDot.className = `status-dot ${res.ok ? 'online' : 'offline'}`;");
+    const statusIdx = testBody.indexOf("setStatusDot(res.ok ? 'online' : 'offline', res.ok");
     assert.notEqual(captureIdx, -1, `${label}: provider test should capture the intended provider`);
     assert.notEqual(requestIdx, -1, `${label}: provider test should increment a request sequence`);
     assert.notEqual(managedCloudSkipIdx, -1, `${label}: startup connection tests should skip both managed cloud profiles`);
     assert.notEqual(sendIdx, -1, `${label}: provider test background request missing`);
     assert.notEqual(staleGuardIdx, -1, `${label}: stale provider test results should be dropped`);
     assert.notEqual(statusIdx, -1, `${label}: provider status update missing`);
+    assert.match(testBody, /setStatusDot\('connecting', \(\) => t\('sp\.status\.connecting'\)\);[\s\S]*?sendToBackground\('test_provider'/, `${label}: a check in progress replaces the last result in the dot's title (the picker's description)`);
     assert.equal(captureIdx < requestIdx && requestIdx < sendIdx && sendIdx < staleGuardIdx && staleGuardIdx < statusIdx, true, `${label}: provider test stale guard must run after the async request and before status updates`);
     assert.doesNotMatch(testBody, /providerId: providerSelect\.value/, `${label}: provider test should not read the mutable selection after async delay`);
-    assert.match(panel, /function markSelectedProviderFailed\(error\) \{[\s\S]*?const msg = error\?\.message \|\| t\('sp\.status\.failed'\);[\s\S]*?statusDot\.className = 'status-dot offline';[\s\S]*?statusDot\.title = t\('sp\.status\.error', \{ msg \}\);[\s\S]*?\}/, `${label}: provider activation failures should surface on the selected provider`);
+    assert.match(panel, /function markSelectedProviderFailed\(error\) \{[\s\S]*?const reason = error\?\.message;[\s\S]*?setStatusDot\('offline', \(\) => t\('sp\.status\.error', \{ msg: reason \|\| t\('sp\.status\.failed'\) \}\)\);[\s\S]*?\}/, `${label}: provider activation failures should surface on the selected provider`);
 
     const changeStart = panel.indexOf("providerSelect.addEventListener('change', async () => {");
     assert.notEqual(changeStart, -1, `${label}: provider change handler missing`);
@@ -50391,6 +50392,8 @@ test('sidepanel drops stale provider selection and connection checks', () => {
       ? 'setActiveChatProvider(latestProviderId).catch(() => {});'
       : "sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});");
     const changeTestIdx = changeBody.indexOf('await testConnection({ providerId });');
+    const changeCheckingIdx = changeBody.indexOf("setStatusDot('connecting', () => t('sp.status.connecting'));");
+    assert.ok(invalidateIdx < changeCheckingIdx && changeCheckingIdx < activateIdx, `${label}: a provider change says it is checking before the activation request, not the previous provider's result`);
     assert.notEqual(changeCaptureIdx, -1, `${label}: provider change should capture the intended provider`);
     assert.notEqual(changeRequestIdx, -1, `${label}: provider change should increment a request sequence`);
     assert.notEqual(invalidateIdx, -1, `${label}: provider change should invalidate pending provider tests`);

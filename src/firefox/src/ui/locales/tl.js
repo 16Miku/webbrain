@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': 'Konektado ({model})',
   'sp.status.error': 'Error: {msg}',
   'sp.status.failed': 'Nabigo ang koneksyon',
+  'sp.status.connecting': 'Sinusuri ang koneksyon…',
   'sp.btn.verbose': 'I-toggle ang detalyadong tool log',
   'sp.btn.language': 'Wika',
   'sp.btn.settings': 'Mga Setting',

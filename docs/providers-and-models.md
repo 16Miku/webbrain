@@ -16,6 +16,12 @@ decision switches. See [the settings guide](https://webbrain.one/docs/settings/#
 and [data flow](privacy-and-data-flow.md#decision-models-and-completion-verification)
 for setup and disclosure details. Existing `#multimodal` settings links still work.
 
+In the side panel's composer, the model menu is an engine icon. The dot on the
+icon's corner shows the selected provider's latest connection check: green when
+it answered, red when it failed, amber while it runs. The dot is part of the
+menu button, so clicking it opens the menu, and the button's accessible
+description carries the status.
+
 Browser chat includes the configured main provider and text-model labels in its
 trusted per-turn context, so identity answers can use the current selection
 instead of guessing. Assistive model labels stay separate. Automatic routes such

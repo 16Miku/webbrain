@@ -243,6 +243,7 @@ export default {
   'sp.status.connected': 'Terhubung ({model})',
   'sp.status.error': 'Galat: {msg}',
   'sp.status.failed': 'Koneksi gagal',
+  'sp.status.connecting': 'Memeriksa koneksi…',
   'sp.btn.verbose': 'Alihkan log alat terperinci',
   'sp.btn.language': 'Bahasa',
   'sp.btn.settings': 'Pengaturan',

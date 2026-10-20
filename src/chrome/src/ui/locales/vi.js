@@ -134,6 +134,7 @@ export default {
   'sp.status.connected': "Đã kết nối ({model})",
   'sp.status.error': "Lỗi: {msg}",
   'sp.status.failed': "Kết nối không thành công",
+  "sp.status.connecting": "Đang kiểm tra kết nối…",
   'sp.btn.verbose': "Chuyển đổi nhật ký công cụ dài dòng",
   'sp.record.stop': "Dừng lại",
   'sp.record.banner_label': "ghi âm",

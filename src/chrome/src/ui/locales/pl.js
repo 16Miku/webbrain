@@ -134,6 +134,7 @@ export default {
   'sp.status.connected': 'Połączono ({model})',
   'sp.status.error': 'Błąd: {msg}',
   'sp.status.failed': 'Połączenie nieudane',
+  'sp.status.connecting': 'Sprawdzanie połączenia…',
   'sp.btn.verbose': 'Przełącz szczegółowy dziennik narzędzi',
   'sp.record.stop': 'Zatrzymaj',
   'sp.record.banner_label': 'Nagrywanie',

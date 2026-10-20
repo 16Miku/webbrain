@@ -134,6 +134,7 @@ export default {
   'sp.status.connected': "कनेक्टेड ({model})",
   'sp.status.error': "त्रुटि: {msg}",
   'sp.status.failed': "कनेक्शन विफल",
+  "sp.status.connecting": "कनेक्शन जाँचा जा रहा है…",
   'sp.btn.verbose': "वर्बोज़ टूल लॉग टॉगल करें",
   'sp.record.stop': "रुकें",
   'sp.record.banner_label': "रिकॉर्डिंग",
