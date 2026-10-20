@@ -114,6 +114,30 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(image?.isSubmit, true);
           assert.equal(image.submissionIdentity, '', 'an image button sends its click position');
         });
+
+        await t.test('only a submission the browser makes from the form is remembered', async () => {
+          await page.setContent('<form method="post" action="/search"><input id="q" name="q" aria-label="Query" value="owned">'
+            + '<button id="go" formaction="/elsewhere">Send</button>'
+            + '<button id="script" type="button" onclick="void 0">Delete selected</button>'
+            + '<div id="role" role="button" tabindex="0" onclick="void 0">Save</div></form>'
+            + '<section><textarea id="draft" aria-label="Draft">Hello</textarea><button id="composer" type="button" onclick="void 0">Send</button></section>');
+          await page.evaluate(() => { window.__wb_ax_lookup = ref => (ref === 'ref_q' ? document.querySelector('#q') : null); });
+          // set_field({submit}) submits with no button, so the button's
+          // formaction does not apply: another submission than clicking it.
+          const button = (await probe('click', { selector: '#go' })).submissionIdentity;
+          const field = (await probe('set_field', { ref_id: 'ref_q', text: 'owned', submit: true })).submissionIdentity;
+          assert.ok(button && field);
+          assert.notEqual(field, button, 'set_field is not a click on the default button');
+          assert.equal(field.split('/')[1], '', 'no button');
+          // Controls that only run page script are never remembered.
+          for (const selector of ['#script', '#role']) {
+            const result = await probe('click', { selector });
+            assert.equal(result?.isSubmit, true, selector);
+            assert.equal(result.submissionIdentity, '', selector);
+          }
+          const composer = await probe('click', { selector: '#composer' });
+          assert.equal(composer?.submissionIdentity || '', '', 'a form-less composer');
+        });
       } finally {
         await browser.close();
       }

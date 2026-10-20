@@ -30275,8 +30275,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // told apart only by hidden IDs, Reject beside Approve), or the same form
     // with any value or destination changed (a field past the summary's
     // first eight, a password, another file, a hidden record ID, a button's
-    // new formaction), still gets its own card. An Enter in a field, or
-    // set_field({submit}), submits through the form's default button.
+    // new formaction), still gets its own card. An Enter in a field submits
+    // through the form's default button; set_field({submit}) submits with
+    // no button.
     const submissionIdentity = (form, submitControl, pendingEl = null, pendingValue = null) => {
       try {
         if (!(window.__wbSubmissionIdentities instanceof WeakMap)) {
@@ -30305,18 +30306,44 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               && /^(?:submit|image)$/i.test(String(el.type || ''))) || null;
           } catch { return null; }
         };
-        const submitter = owner && !typedField
-          ? (owner.closest?.('button,input,[role="button"]') || owner)
-          : defaultButton();
+        // Only a submission the browser makes from the form itself is
+        // remembered: the form's own submit button, an Enter in one of its
+        // fields, or set_field({submit}) on a plain field. A control that
+        // only runs page script (type=button, a role=button, a click
+        // handler, a form-less composer, a combobox or editor that page
+        // handlers commit) can act on state outside the form, such as the
+        // selected row, so it is never remembered.
+        if (String(form?.tagName || '').toUpperCase() !== 'FORM') return '';
+        const nativeButton = el => /^(?:BUTTON|INPUT)$/i.test(String(el?.tagName || ''))
+          && /^(?:submit|image)$/i.test(String(el?.type || ''));
+        let submitter = null;
+        if (owner && !typedField) {
+          submitter = owner.closest?.('button,input,[role="button"]') || owner;
+          if (!nativeButton(submitter) || (submitter.form && submitter.form !== form)) return '';
+        } else if (toolName === 'set_field') {
+          // requestSubmit() without a submitter (content.js): the form's own
+          // action and method apply, not a button's overrides.
+          const role = String(owner?.getAttribute?.('role') || '').toLowerCase();
+          const visiblePopup = () => {
+            try {
+              return Array.from(doc.querySelectorAll('[role="listbox"],[role="menu"]')).some(el => {
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+              });
+            } catch { return true; }
+          };
+          if (!owner || owner.isContentEditable || role === 'searchbox' || role === 'combobox'
+              || owner.getAttribute?.('aria-autocomplete') || owner.getAttribute?.('aria-expanded') === 'true'
+              || owner.getAttribute?.('aria-controls') || visiblePopup()) return '';
+        } else {
+          // An Enter in a field submits through the form's default button.
+          submitter = defaultButton();
+        }
         // An image button also sends where it was clicked, which is not
         // known here: such a submission is never remembered.
         if (String(submitter?.tagName || '').toUpperCase() === 'INPUT' && String(submitter.type || '').toLowerCase() === 'image') return '';
         const controls = (() => {
-          try {
-            return String(form?.tagName || '').toUpperCase() === 'FORM'
-              ? Array.from(form.elements || [])
-              : Array.from(form?.querySelectorAll?.('input, textarea, select, [contenteditable="true"]') || []);
-          } catch { return []; }
+          try { return Array.from(form.elements || []); } catch { return []; }
         })();
         const valueOf = el => {
           // set_field({submit, clear:false}) appends to what the field holds.
