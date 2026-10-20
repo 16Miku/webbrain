@@ -399,12 +399,18 @@ for (const build of BUILDS) {
 
   test(`${build}: a failed or incomplete translation shows the English plan instead`, async () => {
     const incomplete = JSON.stringify({ locale: 'tr', summary: 'Adresi bültene abone et.', steps: [{ id: '1', action: 'E-posta alanını doldur.' }], risks: [] });
-    for (const translation of [new Error('provider unavailable'), 'not json', incomplete]) {
-      const f = displayFixture({ translation });
-      const gate = await f.gate();
-      assert.equal(gate.proceed, true);
-      assert.deepEqual(f.calls, ['planner', 'planner_localize']);
-      assert.equal(f.reviewed[0].shown.localized.summary, englishPlan().summary);
+    // The planner's own partial copy is not shown either: one language, never a mix.
+    const partialCopy = englishPlan({ confidence: 0.5, localized: { locale: 'tr', summary: 'Bültene abone ol.', steps: [{ id: '1', action: 'Doldur.' }], risks: [] } });
+    for (const plan of [englishPlan({ confidence: 0.5 }), partialCopy]) {
+      for (const translation of [new Error('provider unavailable'), 'not json', incomplete]) {
+        const f = displayFixture({ plan, translation });
+        const gate = await f.gate();
+        assert.equal(gate.proceed, true);
+        assert.deepEqual(f.calls, ['planner', 'planner_localize']);
+        const shown = f.reviewed[0].shown;
+        assert.equal(shown.localized.summary, englishPlan().summary);
+        assert.deepEqual(shown.localized.steps.map(step => step.action), englishPlan().steps.map(step => step.action));
+      }
     }
   });
 

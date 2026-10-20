@@ -1502,6 +1502,23 @@ export function buildPlanLocalizationMessages(plan) {
   ];
 }
 
+// The plan with its display fields in canonical English: what the user reads
+// when no complete copy in their language is available, so a partial copy
+// never shows two languages.
+export function canonicalPlanDisplay(plan) {
+  if (!plan) return plan;
+  return {
+    ...plan,
+    localized: {
+      locale: plan.localized?.locale || 'en',
+      summary: plan.summary,
+      steps: (plan.steps || []).map(({ id, action }) => ({ id, action })),
+      risks: [...(plan.risks || [])],
+      missing: true,
+    },
+  };
+}
+
 // The plan with the translation in `content` as its localized copy, or null
 // unless `content` is in the requested language and translates the summary,
 // every step (matched by id) and every risk: the user reads the plan in one

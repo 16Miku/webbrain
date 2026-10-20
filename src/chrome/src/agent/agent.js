@@ -144,6 +144,7 @@ import {
   PLAN_LOCALIZATION_RESPONSE_JSON_SCHEMA,
   buildAskModeHandoffMessages,
   buildPlanLocalizationMessages,
+  canonicalPlanDisplay,
   localizePlanFromContent,
   parsePlanFromContent,
   parseReadScopeFromContent,
@@ -26329,9 +26330,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // other than English, when the planner left out its localized copy: one
   // small request translates the display fields. Execution keeps the English
   // plan, and if the translation fails or is incomplete the user sees the
-  // English text.
+  // English plan, never what was left of a partial copy.
   async _localizedPlanForDisplay(tabId, plan, provider, costState, runId = null, runtimeMode = 'act') {
-    if (plan?.localized?.missing !== true || !provider?.chat) return plan;
+    if (plan?.localized?.missing !== true) return plan;
+    if (!provider?.chat) return canonicalPlanDisplay(plan);
     const messages = buildPlanLocalizationMessages(plan);
     const chatOptions = { ...this._plannerChatOptions(provider, false, false, 'localize'), temperature: 0 };
     await this._tracePlannerAttemptRequest(runId, 0, provider, messages, 'planner_localize', 1, runtimeMode, chatOptions);
@@ -26340,11 +26342,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const result = await this._chatWithCostAllowance(provider, messages, chatOptions, costState,
         { tabId, generationName: 'planner_localize' });
       await this._tracePlannerAttemptResponse(runId, 0, provider, result, 'planner_localize', 1, startedAt, chatOptions);
-      return localizePlanFromContent(plan, result?.content) || plan;
+      return localizePlanFromContent(plan, result?.content) || canonicalPlanDisplay(plan);
     } catch (error) {
       if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
       await this._tracePlannerAttemptFailure(runId, 'planner_localize', 1, error);
-      return plan;
+      return canonicalPlanDisplay(plan);
     }
   }
 
