@@ -1,10 +1,10 @@
 # Lean mode
 
-Lean mode gives a strong model a small tool set and a short prompt, and turns off WebBrain's own verification of its work. WebBrain's permission and safety boundaries stay exactly as they are.
+Lean mode turns off WebBrain's own verification of a strong model's work. The run keeps its tier's tools and prompt, with one added note asking the model to check its own work. WebBrain's permission and safety boundaries stay exactly as they are.
 
 WebBrain's checks were built for small local models, which mistype, lose track and report success too early. A strong model does not need most of that help. Each check costs a page read, a model call or a forced turn, and when a check cannot verify something it may refuse an action that was right. The clearest case is GitHub's file editor: it renders blank lines in a way WebBrain's readback reads as doubled, so WebBrain can never confirm a multi-paragraph edit, and it refuses the commit that follows. [lean-mode-comparison.md](lean-mode-comparison.md) replays that case and two ordinary ones with and without lean mode.
 
-Lean mode follows the Claude in Chrome model ([claude-chrome-comparison.md](claude-chrome-comparison.md)): a thin tool surface, and safety from permission prompts, site checks right before each action, and the model's own judgment, with no readback of typing and no completion judge.
+For verification, lean mode follows the Claude in Chrome model ([claude-chrome-comparison.md](claude-chrome-comparison.md)): safety comes from permission prompts, site checks right before each action and the model's own judgment, with no readback of typing and no completion judge. Unlike Claude in Chrome, it keeps WebBrain's whole tool set. An earlier version also cut the tools to a short list and the prompt to a short one; that list had no download tool, so a lean run could not download a file it then had to upload, such as a release asset.
 
 ## The setting
 
@@ -28,7 +28,7 @@ Auto turns lean mode on only when all of these hold (`src/*/src/agent/lean-mode.
 
 1. **The run is in Act mode.**
 2. **The provider is a cloud or router provider.** The category WebBrain gives the provider decides, so Ollama Cloud is a cloud provider. A local provider never gets lean mode under Auto, whatever model it serves, and a provider of unknown category does not either. A provider config that names no category is local when it is llama.cpp, Ollama, LM Studio or WebGPU.
-3. **The provider's prompt tier is Full.** A provider the user set to Compact or Mid keeps its tier's tools and prompt.
+3. **The provider's prompt tier is Full.** Auto keeps WebBrain's checks for a provider the user set to Compact or Mid.
 4. **The model id is on the strong-model list:**
    - Claude Opus and Sonnet, generation 4 and later, and Claude Fable and Mythos (`claude-sonnet-4-5`, `claude-opus-4-1-…`, `claude-fable-5-1`, `anthropic/claude-sonnet-4.5`, Bedrock ids);
    - GPT-5 and later, including gpt-6 variants, except nano models;
@@ -42,13 +42,11 @@ The list is `LEAN_STRONG_MODEL_RULES` in `lean-mode.js`. That file is identical 
 
 ## What a lean run gets
 
-**Tools.** 17 of WebBrain's existing tools, with the same schemas as at the Full tier: `get_accessibility_tree`, `read_page`, `inspect_viewport`, `click_ax`, `click`, `set_field`, `type_ax`, `set_checked`, `type_text`, `press_keys`, `scroll`, `navigate`, `wait_for_stable`, `upload_file`, `calculate`, `clarify` and `done` (`LEAN_TOOL_NAMES` in `tools.js`). `generate_image`, `carousel_navigate`, `gmail_count_results` and the tools of enabled skills are added when they apply, as in a full run; a Compact provider set to On keeps its own `upload_file` contract. On a native chat client (WhatsApp Web, Telegram Web; `isNativeChatClientUrl` in `adapters.js`) `chat_observe` and `chat_send` are added too (`LEAN_NATIVE_CHAT_TOOL_NAMES`): the recipient guard, which lean mode keeps, confirms a contact and reads the latest messages there through them, and without them its repairs pointed at tools the run did not have.
+**Tools.** The same tools as any Act run at the provider's tier, with the same schemas. Downloads, uploads, `browser_batch`, the scratchpad, WebMCP, research escalation and the CAPTCHA tools are offered when they apply, as in a run without lean mode: `getToolsForMode` in `tools.js` does not look at lean mode. A call to a tool the run does not offer is refused, as in every mode.
 
-Not offered: `browser_batch`, the scratchpad and progress ledger, `fetch_url` and the other fetch, research and download tools, iframe and shadow-DOM tools, `hover` and `drag_drop`, `verify_form`, the chat-workflow tools (apart from `chat_observe` and `chat_send` on a native chat client), scheduling, WebMCP and the CAPTCHA tools. Tabs are not model-callable in WebBrain in any mode. A call to a tool a run does not offer is refused, as in every mode.
+**Prompt.** The tier's Act prompt with its usual additions, plus one note, `SYSTEM_PROMPT_LEAN_NOTE` in `tools.js`: WebBrain will not re-check the model's typing or its result, so the model reads the page again and compares what it sees with the request before calling `done`.
 
-**Prompt.** `SYSTEM_PROMPT_ACT_LEAN`, about 5,900 characters against about 49,000 for the Full Act prompt. It keeps the untrusted-page-content boundary and the prompt-injection rules in full, the hard limits (deleting, paying, sending, publishing, recipients, credentials and one-time codes, CAPTCHAs and other human checks), the sensitive-data guidance and the plan-to-execution rules. It tells the model that WebBrain will not check its typing or its result, so it must read the page again before `done`. The notes for batching, WebMCP, research escalation and the CAPTCHA solver are left out because their tools are.
-
-[lean-mode-comparison.md](lean-mode-comparison.md) has the exact sizes; per turn a lean run sends about 70% fewer prompt and tool-schema tokens.
+[lean-mode-comparison.md](lean-mode-comparison.md) shows the per-turn sizes: the same tools as Off and a slightly longer prompt.
 
 ## What lean mode skips
 
@@ -69,7 +67,7 @@ Lean mode keeps:
 
 - **The hard classes, with their cards:** a wrong or unverified **recipient**, **deletions**, **money**, **credentials** and **publishing** something the user did not ask for.
 - **Permission gates:** site permissions, the submit confirmation card ("Ask before consequential actions"), Ask mode's read-only rule, `/allow-api`, and the refusal of tools the run does not offer.
-- **Host checks:** same-site and frame checks right before each action, task authority, a person acting in the tab, the page-feedback fences, untrusted-content wrapping and the prompt-injection boundary, and the CAPTCHA boundary. With no CAPTCHA tools, a challenge goes to the user, as on the Compact tier.
+- **Host checks:** same-site and frame checks right before each action, task authority, a person acting in the tab, the page-feedback fences, untrusted-content wrapping and the prompt-injection boundary, and the CAPTCHA boundary.
 - **Budgets:** the step limit and its final done-only turn, the loop detector and the observation budgets.
 - **User control:** Stop, steering, and the user's answers to cards and questions.
 
@@ -107,7 +105,7 @@ These quality guards keep running, each because a hard check depends on it (`LEA
 - **No caveat line.** A lean answer never carries "WebBrain could not verify everything", because WebBrain verified nothing.
 - **GitHub commits go through.** The commit after a CodeMirror edit is no longer held for an exact editor proof. The submit card still asks before the commit when "Ask before consequential actions" is on, and the committed file is not read back by WebBrain.
 - **Scheduled lean runs stop for the user more often.** When a scheduled run's consequential action ends with an effect WebBrain could not confirm, the task waits for the user to check the page before it runs again. In a full run the completion judge can confirm the effect and settle it; a lean run has no judge.
-- **CAPTCHAs go to the user.** A lean run has no solver tools, so a challenge is handed to the user even when a CAPTCHA solver is configured.
+- **The same tools.** A lean run can download, upload, batch, use WebMCP and a configured CAPTCHA solver as a full run can. Lean mode still keeps no progress ledger of its own: the model may write progress rows itself, but WebBrain does not classify the task's items or check them at `done`.
 
 ## How to compare
 
@@ -120,4 +118,4 @@ node scripts/lean-mode-comparison.mjs --debug  # each run's tool calls, results 
 
 The script is offline and deterministic. It measures the system prompt and tool schemas a model receives per Act turn for a Claude-class and a GPT-class provider in both builds, then replays three tasks through the Chrome build's real run loop with Lean mode Off and Auto: the GitHub CodeMirror edit and commit, a simple form, and a read-only lookup. The pages run in headless Chromium (Playwright) with the extension's content scripts; the model is a fixed tool-call script. The doc explains what such a replay can and cannot show.
 
-`test/lean-mode.mjs` covers the Auto rules, the tool list and prompt, the skipped and kept guards, run loops in both builds, and the settings, export, locale and trace wiring.
+`test/lean-mode.mjs` covers the Auto rules, that a lean run gets the same tools and prompt as a full run apart from the note, the skipped and kept guards, run loops in both builds, and the settings, export, locale and trace wiring.

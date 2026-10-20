@@ -913,7 +913,7 @@ export default {
   "st.display.strict_guards.label": "Ścisłe kontrole",
   "st.display.strict_guards.desc": "Wył. (domyślnie): akcję mogą zatrzymać tylko kontrole WebBrain dotyczące usuwania danych, wydawania pieniędzy, danych logowania, złego odbiorcy i publikacji czegoś, o co nie prosiłeś; pozostałe kontrole trafiają do modelu jako uwagi, żeby zadania nie utykały. Wł.: jak dotąd każda kontrola zatrzymuje akcję, gdy nie może jej potwierdzić.",
   "st.display.lean_mode.label": "Tryb lekki",
-  "st.display.lean_mode.desc": "Dla mocnych modeli: mniej narzędzi, krótszy prompt i brak automatycznego sprawdzania wpisanego tekstu oraz ukończonych zadań, więc model sam sprawdza swoją pracę. Nadal obowiązują te same limity uprawnień i bezpieczeństwa: kto otrzyma wiadomość, usuwanie danych, wydawanie pieniędzy, dane logowania, publikowanie czegoś, o co nie prosiłeś, oraz uprawnienia witryn. Auto (domyślnie) włącza go dla mocnych modeli w chmurze, a wyłącza dla modeli lokalnych i mniejszych. Tylko w trybie „Działaj”; „Ścisłe kontrole” nie działają, gdy jest włączony.",
+  "st.display.lean_mode.desc": "Dla mocnych modeli: brak automatycznego sprawdzania wpisanego tekstu oraz ukończonych zadań, więc model sam sprawdza swoją pracę. Nadal obowiązują te same limity uprawnień i bezpieczeństwa: kto otrzyma wiadomość, usuwanie danych, wydawanie pieniędzy, dane logowania, publikowanie czegoś, o co nie prosiłeś, oraz uprawnienia witryn. Auto (domyślnie) włącza go dla mocnych modeli w chmurze, a wyłącza dla modeli lokalnych i mniejszych. Tylko w trybie „Działaj”; „Ścisłe kontrole” nie działają, gdy jest włączony.",
   "st.display.lean_mode.auto": "Auto",
   "st.display.lean_mode.on": "Wł.",
   "st.display.lean_mode.off": "Wył.",
