@@ -284,7 +284,7 @@ for (const build of BUILDS) {
     // An English clarify question is the summary itself; another language needs its copy.
     const clarify = { ...intent, request_kind: 'clarify', read_scope: 'none', summary: 'Which day should I book?' };
     assert.equal(parse(clarify, { locale: 'en', compactIntent: true }).localized.summary, 'Which day should I book?');
-    assert.equal(parse(clarify, { locale: 'tr', compactIntent: true }), null);
+    assert.equal(parse(clarify, { locale: 'tr', compactIntent: true }).localized.missing, true, 'translated before it is asked');
     assert.equal(parse({ ...clarify, localized: { locale: 'tr', summary: 'Hangi gün?', steps: [], risks: [] } }, { locale: 'tr', compactIntent: true }).localized.summary, 'Hangi gün?');
     // The old long form still parses: a declared ledger and a full copy.
     const long = parse(englishPlan({
@@ -423,6 +423,19 @@ for (const build of BUILDS) {
       f.agent._hasPendingSteering = () => corrected;
       assert.deepEqual(await f[gate](), { proceed: false, steeringSuperseded: true }, gate);
       assert.equal(corrected, true, gate);
+    }
+  });
+
+  test(`${build}: a clarify question without its copy is translated and asked, not run as Act`, async () => {
+    const clarify = englishPlan({ request_kind: 'clarify', read_scope: 'none', requires_state_change: false, requires_submission: false,
+      summary: 'Which email address should I use?', steps: [], risks: [] });
+    const translation = JSON.stringify({ locale: 'tr', summary: 'Hangi e-posta adresini kullanayım?', steps: [], risks: [] });
+    for (const gate of ['gate', 'intent']) {
+      const f = displayFixture({ review: 'never', plan: gate === 'gate' ? clarify : { ...clarify, confidence: undefined }, translation });
+      const result = await f[gate]();
+      assert.deepEqual([result.proceed, result.requestKind, result.plannerClarification], [false, 'clarify', true], gate);
+      assert.deepEqual(f.calls, [gate === 'gate' ? 'planner' : 'planner_intent', 'planner_localize'], gate);
+      assert.equal(result.message, 'Hangi e-posta adresini kullanayım?', gate);
     }
   });
 

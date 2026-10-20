@@ -114152,7 +114152,11 @@ test('planner: canonical fields recover missing and partial localization without
       steps: [],
       risks: [],
     }), { requireIntent: true, locale: 'tr' });
-    assert.equal(malformedClarification, null, `${label}: clarification without the actual localized question bypassed repair`);
+    // Kept and marked for translation: the agent translates the question
+    // before asking it (agent._localizedPlanForDisplay), instead of failing
+    // the plan and continuing in Act.
+    assert.equal(malformedClarification?.request_kind, 'clarify', `${label}: clarification without its localized question was discarded`);
+    assert.equal(malformedClarification?.localized.missing, true, `${label}: clarification without its localized question is not marked for translation`);
 
   }
 });

@@ -1206,8 +1206,9 @@ export function normalizePlan(obj, opts = {}) {
     && steps.every(step => localizedStepsById.get(step.id)?.action)
     && riskEntries.every(entry => sanitizeText(providedLocalizedRisks[entry.sourceIndex], 200));
   if (opts.requireIntent) {
-    // English needs no localized copy: summary is the question.
-    if (requestKind === 'clarify' && !localizedSummary && !englishLocale) return null;
+    // A clarify question needs no localized copy here: summary is the
+    // question, and one the user reads in another language is translated
+    // before it is asked (localized.missing below).
     // The compact intent check writes no steps for execute work.
     const stepsRequired = requestKind === 'plan_only'
       || (requestKind === 'execute' && opts.compactIntent !== true);

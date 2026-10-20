@@ -793,11 +793,15 @@ for (const browser of ['chrome', 'firefox']) {
       assert.equal(plan.request_kind, request_kind);
       assert.equal(plan.requires_submission, false);
       if (request_kind === 'clarify') {
-        // English needs no localized copy: the English summary is the question.
+        // The summary is the question. English needs no localized copy; in
+        // another language the question is marked for translation before it
+        // is asked, rather than rejected.
         for (const localized of [null, {}]) {
           const english = planner.normalizePlan({ ...raw, localized }, { requireIntent: true, locale: 'en' });
           assert.equal(english.localized.summary, english.summary);
-          assert.equal(planner.normalizePlan({ ...raw, localized }, { requireIntent: true, locale: 'tr' }), null);
+          const turkish = planner.normalizePlan({ ...raw, localized }, { requireIntent: true, locale: 'tr' });
+          assert.equal(turkish.request_kind, 'clarify');
+          assert.equal(turkish.localized.missing, true);
         }
         assert.equal(planner.normalizePlan({ ...raw, read_scope: 'visible_page' }, { requireIntent: true, locale: 'en' }), null);
       }
