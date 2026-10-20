@@ -8,6 +8,10 @@ const html = `<!doctype html><main><h1>Account details</h1><form aria-label="Acc
 <label>Name <input id="name" value="Existing "></label><label>Email <input id="email"></label>
 <label>Note <textarea id="note"></textarea></label><button type="button">Save details</button>
 </form></main><aside id="counter">0</aside><button id="human">Human control</button>`;
+const loginHtml = `<!doctype html><main><h1>Member area</h1><form aria-label="Member login">
+<label>Username <input id="user" autocomplete="username"></label>
+<label>Password <input id="pass" type="password" autocomplete="current-password"></label>
+<button id="login" type="submit">Log in</button></form></main>`;
 
 test('batch feedback and monitor implementations are byte-identical across browsers', async () => {
   for (const file of ['agent/page-feedback.js', 'content/page-monitor.js']) {
@@ -19,9 +23,9 @@ test('batch feedback and monitor implementations are byte-identical across brows
 for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
   test(`${build}: batched fields carry only verified owned values across original target certificates`, { timeout: 120000 }, async t => {
     const browser = await engine.launch({ headless: true });
-    async function fixture() {
+    async function fixture(body = html) {
       const context = await browser.newContext();
-      await context.route('https://batch.test/**', route => route.fulfill({ contentType: 'text/html', body: html }));
+      await context.route('https://batch.test/**', route => route.fulfill({ contentType: 'text/html', body }));
       await context.addInitScript(RUN => {
         window.listeners = [];
         window.chrome = window.browser = { runtime: {
@@ -48,9 +52,9 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       await page.evaluate(async () => { window.snapshot = await send('page_monitor_capture_model', { includeTree: true }); });
       return { context, page };
     }
-    const validate = (page, selector = '#email', batchId = 'parent') => page.evaluate(({ selector, batchId }) => send('page_monitor_validate_model', {
-      tool: 'set_field', selector, snapshotToken: snapshot.snapshotToken, batchId,
-    }), { selector, batchId });
+    const validate = (page, selector = '#email', batchId = 'parent', tool = 'set_field') => page.evaluate(({ selector, batchId, tool }) => send('page_monitor_validate_model', {
+      tool, selector, snapshotToken: snapshot.snapshotToken, batchId,
+    }), { selector, batchId, tool });
     const write = (page, { seal = true, selector = '#name', text = 'Ada', mutation = null, tool = 'set_field', clear = true } = {}) => page.evaluate(async ({ seal, selector, text, mutation, tool, clear }) => {
       const params = { tool, selector, operationId: `op-${selector}`, batchId: 'parent',
         expectedModelSnapshot: snapshot.snapshotToken, allowPassiveRebase: true };
@@ -109,6 +113,28 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
           const first = await write(page, { mutation });
           assert.equal(first.finish.batchInputSealed, false, JSON.stringify(first));
           assert.equal((await validate(page)).ready, false);
+        } finally { await context.close(); }
+      });
+      await t.test('a verified password entry continues to the login button like any text field', async () => {
+        const { page, context } = await fixture(loginHtml);
+        try {
+          const user = await write(page, { selector: '#user', text: 'qa-member' });
+          assert.equal(user.finish.batchInputSealed, true, JSON.stringify(user));
+          const secret = await write(page, { selector: '#pass', text: 'synthetic-fixture-secret' });
+          assert.equal(secret.finish.batchInputSealed, true, JSON.stringify(secret));
+          assert.equal((await validate(page, '#login', 'parent', 'click')).ready, true);
+          assert.equal((await validate(page, '#login', 'another-batch', 'click')).ready, false);
+        } finally { await context.close(); }
+      });
+      await t.test('a password rewritten after the owned write cannot borrow the continuation', async () => {
+        const { page, context } = await fixture(loginHtml);
+        try {
+          const secret = await write(page, { selector: '#pass', text: 'synthetic-fixture-secret',
+            mutation: () => { document.querySelector('#pass').value = 'page-rewritten-secret'; } });
+          assert.equal(secret.finish.batchInputSealed, false, JSON.stringify(secret));
+          const click = await validate(page, '#login', 'parent', 'click');
+          assert.equal(click.ready, false);
+          assert.equal(click.reason, 'semantic_binding_changed');
         } finally { await context.close(); }
       });
       await t.test('a human gesture after the owned write keeps the intervention fence', async () => {

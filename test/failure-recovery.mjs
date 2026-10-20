@@ -126,6 +126,10 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(metadata.extra.certificationFailure, 'owner_unresolved');
     assert.equal(metadata.extra.monitoringRelaxed, true);
     assert.doesNotMatch(JSON.stringify(metadata), /private-token|private-body/);
+    // Why a binding changed is a fixed name, kept so a refused click says why.
+    for (const predicate of ['semantic_binding_changed', 'target_hit_changed']) {
+      assert.equal(projectTraceEventData('note', { note: 'page_action_validation', extra: { status: 'blocked', predicate } }).extra.predicate, predicate);
+    }
     const bad = projectTraceEventData('note', { note: 'page_action_validation', extra: {
       certificationFailure: 'private-body', predicate: 'private-secret', monitoringRelaxed: 'private-mode', captureMs: 'private-time' } });
     assert.doesNotMatch(JSON.stringify(bad), /private-body|private-secret|private-mode|private-time/);
