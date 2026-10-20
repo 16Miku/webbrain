@@ -231,6 +231,29 @@ try {
       await skills.locator('#packaged-skills-list button[data-packaged-skill-id]').first().click();
       await skills.waitForFunction(() => window.testStore.customSkills?.length === 2);
       assert.ok(await visible(skills, '#skills-result'), `${build}: enabling a packaged skill is confirmed with the form closed`);
+      // Cancel stops a URL import still in flight: it adds no skill and
+      // leaves a draft started afterwards alone.
+      let releaseImport;
+      const importHeld = new Promise(resolve => { releaseImport = resolve; });
+      await skills.route('https://skills.example/slow.md', async route => {
+        await importHeld;
+        await route.fulfill({ status: 200, contentType: 'text/markdown', body: '# Slow skill\nDo the slow thing.' }).catch(() => {});
+      });
+      const skillCount = await skills.evaluate(() => window.testStore.customSkills.length);
+      await skills.locator('#btn-show-skill-form').click();
+      await skills.locator('#skill-name').fill('Slow import');
+      await skills.locator('#skill-url').fill('https://skills.example/slow.md');
+      await skills.locator('#btn-add-skill-url').click();
+      await skills.waitForFunction(() => document.getElementById('btn-add-skill-url').disabled);
+      await skills.locator('#btn-cancel-skill-form').click();
+      assert.equal(await skills.locator('#btn-add-skill-url').isDisabled(), false, `${build}: Cancel resets the import button`);
+      await skills.locator('#btn-show-skill-form').click();
+      await skills.locator('#skill-name').fill('New draft');
+      releaseImport();
+      await skills.waitForTimeout(300);
+      assert.equal(await skills.evaluate(() => window.testStore.customSkills.length), skillCount, `${build}: a cancelled import adds no skill`);
+      assert.equal(await skills.locator('#skill-name').inputValue(), 'New draft', `${build}: a cancelled import leaves the new draft alone`);
+      assert.ok(await visible(skills, '#skill-add-form'), `${build}: a cancelled import does not close the reopened form`);
       assert.deepEqual(skillErrors, [], `${build}: skills tab errors`);
       await skills.close();
 
