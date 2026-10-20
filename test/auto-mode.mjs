@@ -1061,6 +1061,27 @@ for (const build of BUILDS) {
     await plain.run('Please book the 9 am slot for me.', 'act', [], { modeEscalation: { mode: 'act', plan: 'something else' } });
     assert.deepEqual(plainSeen[0].route, { requested: 'auto', mode: 'act', source: 'escalation' });
   });
+
+  // plan_need reads the user's words, not attached files or a continued
+  // run's earlier work, so its "direct" does not count for those turns.
+  test(`${build}: an attachment or a continued run keeps the planner whatever plan_need says`, async () => {
+    const contacts = { kind: 'text', name: 'contacts.csv', mimeType: 'text/csv', textContent: 'name,email\nAda,ada@example.test', source: 'user_upload' };
+    const routed = fixture(Agent, { decide: () => ({ choice: 'act', evidence: '', source: 'decision_model', alongside: { plan_need: 'direct' } }) });
+    const routedSeen = planRoute(routed);
+    fixtureReplies(routed, [stopAfterCall(routed)]);
+    await routed.run('Import the attached contacts.', 'auto', [contacts]);
+    assert.equal(routedSeen[0].mode, 'act');
+    assert.equal('plan' in routedSeen[0].route, false, 'the attachment is not in the plan_need question');
+    const restart = fixture(Agent);
+    const restartSeen = planRoute(restart);
+    fixtureReplies(restart, [stopAfterCall(restart)]);
+    await restart.run('Import the attached contacts.', 'act', [contacts], { modeEscalation: { mode: 'act', plan: 'direct' } });
+    assert.equal('plan' in restartSeen[0].route, false, 'nor in a hand-off restart');
+    const agent = routed.agent;
+    assert.equal(agent._routePlanSignal('direct', { continuation: true }), null, 'a continued run');
+    assert.equal(agent._routePlanSignal('plan', { hasAttachments: true, continuation: true }), 'plan', 'a plan answer still counts');
+    assert.equal(agent._routePlanSignal('direct'), 'direct');
+  });
 }
 
 for (const build of BUILDS) {

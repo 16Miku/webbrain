@@ -27360,7 +27360,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     this._autoModeEscalationTabs.add(tabId);
     this._autoModeRoutePendingTabs.add(tabId);
-    return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode, ...(continuation ? { continuedTask } : {}) } } };
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+    return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode, ...(continuation ? { continuedTask } : {}),
+      ...(hasAttachments ? { hasAttachments } : {}) } } };
+  }
+
+  // plan_need's answer as the planner gate may use it. "direct" counts only
+  // when the question held everything the task is about: attached files (a
+  // CSV of contacts to import) and a continued run's earlier work are not in
+  // it, so those turns keep the planner.
+  _routePlanSignal(choice, { hasAttachments = false, continuation = false } = {}) {
+    const plan = autoModePlanForChoice(choice);
+    return plan === 'direct' && (hasAttachments || continuation) ? null : plan;
   }
 
   // The user's own words of the task a continuation resumes: its request and
@@ -27466,7 +27477,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           routeMs: Number.isFinite(routed.latencyMs) ? routed.latencyMs : null,
           waitedMs: Date.now() - waitStartedAt,
           // plan_need for an action turn (_routedDirectTask).
-          ...(mode !== 'ask' && autoModePlanForChoice(routed.plan) ? { plan: routed.plan } : {}),
+          ...(() => {
+            const plan = mode === 'ask' ? null : this._routePlanSignal(routed.plan, {
+              hasAttachments: runOptions?.autoModeRouting?.hasAttachments === true,
+              continuation: runOptions?.trustedContinuation === true,
+            });
+            return plan ? { plan } : {};
+          })(),
         },
       },
     };
@@ -54910,7 +54927,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           corrections: carried.map(item => item.text), correctionIds: carried.map(item => item.id) } };
       }
     } else if (runOptions?.modeEscalation && isRunMode(mode)) {
-      const plan = autoModePlanForChoice(runOptions.modeEscalation.plan);
+      const plan = this._routePlanSignal(runOptions.modeEscalation.plan, {
+        hasAttachments: Array.isArray(attachments) && attachments.length > 0,
+        continuation: runOptions?.trustedContinuation === true,
+      });
       runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation', ...(plan ? { plan } : {}) } };
       onUpdate('run_mode', { mode, source: 'escalation' });
       this._takeModeEscalationSteering(tabId);
