@@ -316,7 +316,7 @@ for (const build of BUILDS) {
     assert.equal(planner.localizePlanFromContent(plan, 'Sorry.'), null);
   });
 
-  function displayFixture({ locale = 'tr', review = 'always', plan = englishPlan({ confidence: 0.5 }), translation } = {}) {
+  function displayFixture({ locale = 'tr', review = 'always', plan = englishPlan({ confidence: 0.5 }), translation, onTranslate } = {}) {
     const provider = { promptTier: 'full', model: 'display-fixture', name: 'display-fixture', chat: async () => ({ content: '' }) };
     const agent = new Agent({ getActive: () => provider, getVisionProvider: async () => null });
     agent.setPlanReviewSettings({ mode: review });
@@ -324,6 +324,7 @@ for (const build of BUILDS) {
     agent._chatWithCostAllowance = async (_provider, messages, _options, _cost, meta) => {
       calls.push(meta.generationName);
       if (meta.generationName !== 'planner_localize') return { content: JSON.stringify(plan) };
+      onTranslate?.(agent);
       if (translation instanceof Error) throw translation;
       return { content: translation ?? JSON.stringify({ locale, summary: 'Adresi bültene abone et.',
         steps: [{ id: '1', action: 'E-posta alanını doldur.' }, { id: '2', action: 'Gönder ve onayı oku.' }], risks: [] }) };
@@ -336,7 +337,7 @@ for (const build of BUILDS) {
     const message = { role: 'user', content: 'Bu sayfadaki bültene kendi e-posta adresimle kaydol.' };
     const tabInfo = { tabUrl: 'https://owned.test/newsletter', tabTitle: 'Newsletter' };
     return {
-      calls, reviewed,
+      agent, calls, reviewed,
       gate: () => agent._runPlannerGate(42, message, () => {}, null, null, '', tabInfo, 'try', 'act', { locale }),
       intent: () => agent._runPlannerIntentGate(42, message, () => {}, null, null, '', tabInfo, 'act', { locale }),
     };
@@ -376,6 +377,18 @@ for (const build of BUILDS) {
       assert.equal(gate.proceed, true);
       assert.deepEqual(f.calls, ['planner', 'planner_localize']);
       assert.equal(f.reviewed[0].shown.localized.summary, englishPlan().summary);
+    }
+  });
+
+  test(`${build}: a correction sent while a plan-only answer is translated is applied, not answered`, async () => {
+    const planOnly = englishPlan({ request_kind: 'plan_only', read_scope: 'none', requires_state_change: false, requires_submission: false,
+      steps: [{ id: '1', action: 'Fill in the newsletter email field.' }, { id: '2', action: 'Submit and read the confirmation.' }] });
+    for (const [gate, plan] of [['gate', planOnly], ['intent', { ...planOnly, confidence: undefined }]]) {
+      let corrected = false;
+      const f = displayFixture({ review: 'never', plan, onTranslate: () => { corrected = true; } });
+      f.agent._hasPendingSteering = () => corrected;
+      assert.deepEqual(await f[gate](), { proceed: false, steeringSuperseded: true }, gate);
+      assert.equal(corrected, true, gate);
     }
   });
 

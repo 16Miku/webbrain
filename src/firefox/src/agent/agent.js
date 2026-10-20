@@ -24996,6 +24996,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // The user reads this answer: in their language.
         const shown = await this._localizedPlanForDisplay(tabId, plan, provider, costState, runId, runtimeMode);
         if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
+        // A correction sent while the translation ran is applied, not answered.
+        if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+          return { proceed: false, steeringSuperseded: true };
+        }
         return {
           proceed: false,
           message: this._plannerTerminalMessage(shown),
@@ -25297,6 +25301,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // The user reads this answer: in their language.
           const shown = await this._localizedPlanForDisplay(tabId, candidate, provider, costState, runId, runtimeMode);
           if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+          // A correction sent while the translation ran is applied, not answered.
+          if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+            return { proceed: false, steeringSuperseded: true };
+          }
           return {
             proceed: false,
             message: this._plannerTerminalMessage(shown),
