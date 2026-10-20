@@ -52420,10 +52420,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (value) this._rememberCredentialValues(tabId, [value]);
   }
 
-  // A submission whose changed field still holds the page's own placeholder
-  // text, which no message or card answer from the user gave, is the page's
-  // example typed in as a value ("you@example.com" in an email box). It is
-  // refused before any card, whether or not the user asked to confirm
+  // A submission whose edited field still holds the page's own placeholder
+  // text, a value the user did not supply for the current task, is the
+  // page's example typed in as a value ("you@example.com" in an email box).
+  // It is refused before any card, whether or not the user asked to confirm
   // submissions (a scheduled run included), and the model is told to ask
   // the user for the value. Grouped searches keep their approval.
   _placeholderSubmitBlock(tabId, toolName, submitInfo) {
