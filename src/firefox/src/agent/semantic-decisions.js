@@ -572,6 +572,20 @@ export function boundedSemanticData(value, depth = 0) {
   return null;
 }
 
+// Whether boundedSemanticData(value) keeps all of value: no string past 600
+// characters, no list or object past 16 entries, nothing nested too deep.
+export function semanticDataComplete(value, depth = 0) {
+  if (value == null || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) return true;
+  if (typeof value === 'string') return value.normalize('NFC').replace(/\s+/g, ' ').trim().length <= 600;
+  if (depth >= 3) return false;
+  if (Array.isArray(value)) return value.length <= 16 && value.every(item => semanticDataComplete(item, depth + 1));
+  if (typeof value === 'object') {
+    const entries = Object.entries(value);
+    return entries.length <= 16 && entries.every(([key, item]) => String(key).length <= 40 && semanticDataComplete(item, depth + 1));
+  }
+  return false;
+}
+
 // The decision model's form of the question.
 export function semanticSystemOneQuestion(kind) {
   const spec = semanticQuestion(kind);

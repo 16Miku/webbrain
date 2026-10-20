@@ -126,6 +126,17 @@ for (const build of BUILDS) {
     assert.equal('plan' in await wide.agent._routeAutoRunMode(6, { ...question, request: 'あ'.repeat(4500) }), false);
   });
 
+  test(`${build}: an earlier task cut to fit the decision data never skips the planner`, async () => {
+    // A short follow-up leans on the earlier task, which the data keeps to 600 characters.
+    const start = 'Read the next row and note its owner. '.repeat(20).slice(0, 600);
+    const followUp = task => ({ request: 'Continue.', page: { previous_mode: 'act', current_task: task } });
+    const { agent, requests } = decisionAgent({ run_mode: sure('act'), plan_need: sure('direct') });
+    assert.equal((await agent._routeAutoRunMode(8, followUp(start))).plan, 'direct', 'an earlier task read whole');
+    const longer = await agent._routeAutoRunMode(8, followUp(`${start} Then delete every row you read.`));
+    assert.equal(requests.length, 2, 'the longer earlier task is a new question');
+    assert.equal('plan' in longer, false);
+  });
+
   test(`${build}: a remembered answer belongs to the whole request, not to its first 6,000 characters`, async () => {
     const start = 'Read this paragraph. '.repeat(300).slice(0, 6000);
     const { agent, requests } = decisionAgent({ run_mode: sure('act'), plan_need: sure('direct') });

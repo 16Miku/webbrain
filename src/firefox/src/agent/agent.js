@@ -14,7 +14,7 @@ import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confide
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText, systemOneStateBytes } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
 import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, autoModePlanForChoice, carriesUntrustedText, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
-import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
+import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticDataComplete, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
@@ -8931,8 +8931,8 @@ export class Agent extends LoopDetector {
    * in the same decision-model request (run_mode with plan_need). Their sure
    * answers come back as `alongside: { kind: choice | null }` and are
    * remembered on their own; the active model never answers them. An
-   * authorizing answer among them needs the whole request: when the request
-   * was cut to fit the decision model, it is not used.
+   * authorizing answer among them needs the whole request and data: when
+   * either was cut to fit the decision model, it is not used.
    */
   async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, retryChoices = [], alongside = [] } = {}) {
     const spec = semanticQuestion(kind);
@@ -8941,9 +8941,12 @@ export class Agent extends LoopDetector {
     const requestText = String(request ?? '');
     const trusted = kind === 'user_turn_kind' ? requestText : requestText.slice(0, 6000);
     const data = boundedSemanticData(page);
-    // Keyed by the whole request, not the part a model reads: two requests
-    // that share a cut-off start are different requests.
-    const keyFor = question => this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, question, requestText, data]));
+    // Whether a model reads all of it: the request is cut to 6,000 characters
+    // above, and boundedSemanticData shortens long data (an earlier task).
+    const inputComplete = trusted.length === requestText.length && semanticDataComplete(page);
+    // Keyed by the whole request, not the part a model reads, and by whether
+    // the data was cut: inputs that share a cut-off start are different.
+    const keyFor = question => this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, question, requestText, data, inputComplete]));
     const cacheKey = keyFor(kind);
     const extraKinds = [...new Set(Array.isArray(alongside) ? alongside : [])].filter(extra => extra !== kind && semanticQuestion(extra));
     this._semanticDecisionCache ??= new Map();
@@ -8972,9 +8975,9 @@ export class Agent extends LoopDetector {
       const settings = await this._jevSettings(tabId, provider);
       decisionKey = this._semanticDecisionKey(settings);
       const decisionText = redactSystemOneText(JSON.stringify({ request: trusted, page: data }));
-      // What the decision model reads of the request: cut to 6,000 characters
-      // above, then to the decision state's budget below.
-      const partialRequest = trusted.length < requestText.length || systemOneStateBytes(decisionText) > 12000;
+      // What the decision model reads: the input above, then cut to the
+      // decision state's budget below.
+      const partialInput = !inputComplete || systemOneStateBytes(decisionText) > 12000;
       // Keep the existing bounded fast route, but use the full-text main
       // model directly when a relationship question cannot fit in it.
       const decisionFits = kind !== 'user_turn_kind' || systemOneStateBytes(decisionText) <= 12000;
@@ -8987,9 +8990,9 @@ export class Agent extends LoopDetector {
         for (const extra of extraKinds) {
           const extraAnswer = verdict.answers?.[extra];
           const authorizing = semanticQuestion(extra).authorizing.includes(extraAnswer?.choice);
-          // A part of the request cannot authorize skipping anything the rest
+          // A part of the input cannot authorize skipping anything the rest
           // of it might need (plan_need: a payment after the cut).
-          if (authorizing && partialRequest) continue;
+          if (authorizing && partialInput) continue;
           const extraChoice = confidentChoice(extraAnswer, authorizing ? 0.85 : 0.7);
           if (extraChoice) {
             extraAnswers[extra] = extraChoice;
