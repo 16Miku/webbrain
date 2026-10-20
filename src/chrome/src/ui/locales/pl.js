@@ -874,6 +874,8 @@ export default {
   'st.skills.add_url': 'Importuj z URL',
   'st.skills.add_text': 'Dodaj surowy tekst',
   'st.skills.clear_form': 'Wyczyść formularz',
+  'st.skills.add_skill': 'Dodaj umiejętność',
+  'st.skills.cancel': 'Anuluj',
   'st.skills.loading_url': 'Importowanie...',
   'st.skills.added': 'Umiejętność dodana.',
   'st.skills.removed': 'Umiejętność usunięta.',

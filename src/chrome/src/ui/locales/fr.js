@@ -882,6 +882,8 @@ export default {
   'st.skills.add_url': 'Importer depuis une URL',
   'st.skills.add_text': 'Ajouter du texte brut',
   'st.skills.clear_form': 'Effacer le formulaire',
+  'st.skills.add_skill': 'Ajouter une compétence',
+  'st.skills.cancel': 'Annuler',
   'st.skills.loading_url': 'Importation...',
   'st.skills.added': 'Compétence ajoutée.',
   'st.skills.removed': 'Compétence supprimée.',

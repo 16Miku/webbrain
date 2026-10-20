@@ -117590,6 +117590,13 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     assert.match(html, /id="skill-url"/, `${label}: URL skill input missing`);
     assert.match(html, /id="skill-text"/, `${label}: raw skill textarea missing`);
     assert.match(html, /id="packaged-skills-list"/, `${label}: available packaged skills list missing`);
+    // The add form opens from Add skill; enabled skills list before available ones.
+    assert.match(html, /id="btn-show-skill-form"[^>]*aria-controls="skill-add-form"[^>]*data-i18n="st\.skills\.add_skill"/, `${label}: Add skill button missing`);
+    assert.match(html, /<div class="skill-add-form" id="skill-add-form" hidden>[\s\S]*?id="skill-url"[\s\S]*?id="skill-text"[\s\S]*?id="btn-cancel-skill-form"[\s\S]*?<\/div>\s*<\/div>\s*<div class="test-result" id="skills-result">/,
+      `${label}: the add form should start hidden, with the result line outside it`);
+    assert.ok(html.indexOf('id="skills-list-card"') < html.indexOf('id="packaged-skills-card"'), `${label}: enabled skills should list before available ones`);
+    assert.match(settingsJs, /function startSkillEdit\(skill\) \{[^}]*?setSkillFormOpen\(true\);/, `${label}: Edit should open the add form`);
+    assert.match(settingsJs, /btnCancelSkillForm\?\.addEventListener\('click', \(\) => \{[\s\S]*?skillUrlImport\.abort\(\);/, `${label}: Cancel should stop a URL import in flight`);
     assert.doesNotMatch(html, /id="chrome-web-store-release-card"/, `${label}: removed release skill must not leave an orphaned setup card`);
     assert.doesNotMatch(html, /id="chrome-web-store-package"/, `${label}: removed release skill must not leave an orphaned ZIP picker`);
     assert.match(html, /id="skill-preview-dialog"/, `${label}: skill content preview dialog missing`);

@@ -882,6 +882,8 @@ export default {
   'st.skills.add_url': 'Importar desde URL',
   'st.skills.add_text': 'Añadir texto sin procesar',
   'st.skills.clear_form': 'Limpiar formulario',
+  'st.skills.add_skill': 'Añadir habilidad',
+  'st.skills.cancel': 'Cancelar',
   'st.skills.loading_url': 'Importando...',
   'st.skills.added': 'Habilidad añadida.',
   'st.skills.removed': 'Habilidad eliminada.',

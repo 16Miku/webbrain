@@ -856,6 +856,8 @@ export default {
   'st.skills.add_url': '从 URL 导入',
   'st.skills.add_text': '添加原始文本',
   'st.skills.clear_form': '清除表单',
+  'st.skills.add_skill': '添加技能',
+  'st.skills.cancel': '取消',
   'st.skills.loading_url': '导入中...',
   'st.skills.added': '技能已添加。',
   'st.skills.removed': '技能已移除。',

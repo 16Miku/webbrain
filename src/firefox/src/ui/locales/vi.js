@@ -909,6 +909,8 @@ export default {
   'st.skills.add_url': "Nhập từ URL",
   'st.skills.add_text': "Thêm văn bản thô",
   'st.skills.clear_form': "Xóa biểu mẫu",
+  'st.skills.add_skill': "Thêm kỹ năng",
+  'st.skills.cancel': "Hủy bỏ",
   'st.skills.loading_url': "Đang nhập khẩu...",
   'st.skills.added': "Đã thêm kỹ năng.",
   'st.skills.removed': "Kỹ năng bị loại bỏ.",
