@@ -82785,12 +82785,26 @@ test('a field holding its own placeholder text is not submitted', async () => {
     agent.currentRunId.set(tabId, 'long-run');
     agent._rememberPlaceholderWrite(tabId, 'set_field', { ref_id: 'ref_303', text: longText },
       { success: true, value: longText.slice(0, 100), fieldMeta: { type: 'textarea', name: 'about', id: null, placeholder: longText } });
-    field = { label: 'About', placeholder: longText.slice(0, 200), value: longText.slice(0, 200), changed: false, ref: 'ref_303', name: 'about', id: '' };
+    field = { label: 'About', placeholder: longText.slice(0, 200), value: longText.slice(0, 200), fullValue: longText, complete: true,
+      changed: false, ref: 'ref_303', name: 'about', id: '' };
     assert.equal((await submit('long-write')).placeholderValue, true, `${AgentClass.name}: a long write was missed`);
+    // An answer has to be the whole value: the first 200 characters the
+    // probe shows are not it, and a value too long to return is never
+    // matched.
+    field = { ...field, changed: true };
+    agent.conversations.set(tabId, [system, { ...task[1], webbrainTaskClarifications: [{ question: 'About?', answer: longText.slice(0, 200), source: 'text' }] }]);
+    assert.equal((await submit('prefix-answer')).placeholderValue, true, `${AgentClass.name}: a prefix answered a long value`);
+    agent.conversations.set(tabId, [system, { ...task[1], webbrainTaskClarifications: [{ question: 'About?', answer: longText, source: 'text' }] }]);
+    const beforeWholeAnswer = prompts;
+    await submit('whole-answer');
+    assert.equal(prompts, beforeWholeAnswer + 1, `${AgentClass.name}: the whole answer was refused`);
+    field = { ...field, complete: false };
+    assert.equal((await submit('too-long')).placeholderValue, true, `${AgentClass.name}: a value too long to return was matched`);
+    agent.conversations.set(tabId, [...task]);
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: false, ref: 'ref_101', name: 'email', id: '' };
     agent.currentRunId.set(tabId, 'next-run');
     await submit('next-run');
-    assert.equal(prompts, 8, `${AgentClass.name}: a write from another run still counted`);
+    assert.equal(prompts, 9, `${AgentClass.name}: a write from another run still counted`);
 
     // An earlier, unrelated turn cannot supply the value for the current task.
     field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };

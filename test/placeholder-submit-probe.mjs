@@ -92,6 +92,26 @@ for (const build of ['chrome', 'firefox']) {
           assert.deepEqual(edited.placeholderFields.map(field => [field.name, field.changed]), [['note', false]],
             'a changed long value no longer equals its placeholder');
         });
+
+        await t.test('a disabled field is not sent and not listed; the whole value is returned', async () => {
+          const long = `Describe the change you need ${'with every detail that matters '.repeat(8)}`.trim();
+          await page.setContent('<form method="post" action="/change">'
+            + '<input id="off" name="off" aria-label="Off" placeholder="you@example.com" disabled>'
+            + '<fieldset disabled><input id="inner" name="inner" aria-label="Inner" placeholder="you@example.com"></fieldset>'
+            + `<textarea id="about" name="about" aria-label="About" placeholder="${long}"></textarea><button id="go">Send</button></form>`);
+          await page.evaluate(text => {
+            document.querySelector('#off').value = 'you@example.com';
+            document.querySelector('#inner').value = 'you@example.com';
+            document.querySelector('#about').value = text;
+          }, long);
+          const result = await probe('click', { selector: '#go' });
+          assert.equal(result?.isSubmit, true);
+          assert.deepEqual(result.placeholderFields.map(field => field.name), ['about'], 'disabled fields are not sent');
+          assert.ok(long.length > 200);
+          assert.equal(result.placeholderFields[0].fullValue, long, 'the whole value');
+          assert.equal(result.placeholderFields[0].complete, true);
+          assert.equal(result.placeholderFields[0].value.length, 200, 'the display value is shortened');
+        });
       } finally {
         await browser.close();
       }
