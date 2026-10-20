@@ -8974,10 +8974,11 @@ export class Agent extends LoopDetector {
     try {
       const settings = await this._jevSettings(tabId, provider);
       decisionKey = this._semanticDecisionKey(settings);
-      const decisionText = redactSystemOneText(JSON.stringify({ request: trusted, page: data }));
-      // What the decision model reads: the input above, then cut to the
-      // decision state's budget below.
-      const partialInput = !inputComplete || systemOneStateBytes(decisionText) > 12000;
+      const plainText = JSON.stringify({ request: trusted, page: data });
+      const decisionText = redactSystemOneText(plainText);
+      // What the decision model reads: the input above, with credential lines
+      // and URL queries redacted, then cut to the decision state's budget.
+      const partialInput = !inputComplete || decisionText !== plainText || systemOneStateBytes(decisionText) > 12000;
       // Keep the existing bounded fast route, but use the full-text main
       // model directly when a relationship question cannot fit in it.
       const decisionFits = kind !== 'user_turn_kind' || systemOneStateBytes(decisionText) <= 12000;

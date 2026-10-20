@@ -126,6 +126,17 @@ for (const build of BUILDS) {
     assert.equal('plan' in await wide.agent._routeAutoRunMode(6, { ...question, request: 'あ'.repeat(4500) }), false);
   });
 
+  test(`${build}: a request the decision model reads redacted never skips the planner`, async () => {
+    // Credential lines reach the decision model as "[credential omitted]", and
+    // URLs without their query: it judged something other than the request.
+    for (const request of ['Log in with the password Hunter-2 and open my orders.', 'Open https://shop.example/pay?amount=900&to=other.']) {
+      const { agent } = decisionAgent({ run_mode: sure('act'), plan_need: sure('direct') });
+      assert.equal('plan' in await agent._routeAutoRunMode(9, { ...question, request }), false, request);
+    }
+    const plain = decisionAgent({ run_mode: sure('act'), plan_need: sure('direct') });
+    assert.equal((await plain.agent._routeAutoRunMode(9, { ...question, request: 'Open https://shop.example/orders.' })).plan, 'direct');
+  });
+
   test(`${build}: an earlier task cut to fit the decision data never skips the planner`, async () => {
     // A short follow-up leans on the earlier task, which the data keeps to 600 characters.
     const start = 'Read the next row and note its owner. '.repeat(20).slice(0, 600);
