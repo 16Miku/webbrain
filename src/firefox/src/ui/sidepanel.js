@@ -610,6 +610,8 @@ const statusDot = document.getElementById('status-dot');
 // says the live status again (syncProviderPickerButton) instead of a fixed
 // first value.
 let statusDotTitle = () => t('sp.status.disconnected');
+// The provider whose state the dot shows (the selected one when it was set).
+let statusDotProviderId = null;
 if (statusDot) statusDot.title = statusDotTitle();
 // Short labels for the closed picker button (menu rows keep the longer status text).
 const providerPickerLabelById = new Map();
@@ -8192,9 +8194,12 @@ function syncProviderPickerButton() {
     providerPickerBtn.title = label;
     providerPickerBtn.setAttribute('aria-label', label);
   }
-  // The dot's title is the button's description: a language change renders the
-  // name again here, so it says the live status again too.
-  if (statusDot) statusDot.title = statusDotTitle();
+  // The dot is part of the button. When the selection has moved to another
+  // provider (here or from Settings), the last result belongs to the old one:
+  // show this one as untested until its own check. Otherwise say the live
+  // status again, which also follows a language change.
+  if (statusDot && statusDotProviderId !== id) markSelectedProviderUntested();
+  else if (statusDot) statusDot.title = statusDotTitle();
   if (providerPickerMenu) {
     providerPickerMenu.querySelectorAll('.provider-picker-option').forEach((btn) => {
       btn.setAttribute('aria-selected', btn.dataset.value === id ? 'true' : 'false');
@@ -8547,6 +8552,7 @@ async function testConnection(options = {}) {
 function setStatusDot(state, title) {
   statusDot.className = state ? `status-dot ${state}` : 'status-dot';
   statusDotTitle = title;
+  statusDotProviderId = providerSelect?.value ?? null;
   statusDot.title = title();
 }
 
@@ -15821,6 +15827,9 @@ providerSelect.addEventListener('change', async () => {
   syncProviderPickerButton();
   const requestId = ++providerSelectionRequestId;
   providerTestRequestId += 1;
+  // The button already names the new provider: while it is activated and
+  // checked, its status says so rather than the previous provider's result.
+  setStatusDot('connecting', () => t('sp.status.connecting'));
   try {
     await sendToBackground('set_active_provider', { providerId });
   } catch (e) {

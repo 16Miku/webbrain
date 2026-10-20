@@ -50392,6 +50392,8 @@ test('sidepanel drops stale provider selection and connection checks', () => {
       ? 'setActiveChatProvider(latestProviderId).catch(() => {});'
       : "sendToBackground('set_active_provider', { providerId: latestProviderId }).catch(() => {});");
     const changeTestIdx = changeBody.indexOf('await testConnection({ providerId });');
+    const changeCheckingIdx = changeBody.indexOf("setStatusDot('connecting', () => t('sp.status.connecting'));");
+    assert.ok(invalidateIdx < changeCheckingIdx && changeCheckingIdx < activateIdx, `${label}: a provider change says it is checking before the activation request, not the previous provider's result`);
     assert.notEqual(changeCaptureIdx, -1, `${label}: provider change should capture the intended provider`);
     assert.notEqual(changeRequestIdx, -1, `${label}: provider change should increment a request sequence`);
     assert.notEqual(invalidateIdx, -1, `${label}: provider change should invalidate pending provider tests`);
