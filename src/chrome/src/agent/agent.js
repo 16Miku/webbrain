@@ -15,7 +15,7 @@ import { installPageFeedback, beforePageAgentDispatch, capturePageAgentInputComp
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText, systemOneStateBytes } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
-import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, carriesUntrustedText, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
+import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, autoModePlanForChoice, carriesUntrustedText, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
@@ -9215,22 +9215,39 @@ export class Agent extends LoopDetector {
    * only, for a check that is not worth a call to the chat model.
    * `retryChoices` are answers that do not settle this question when they come
    * from the cache or the decision model; the active model is asked instead.
+   * `alongside` lists other questions about the same request and data, asked
+   * in the same decision-model request (run_mode with plan_need). Their sure
+   * answers come back as `alongside: { kind: choice | null }` and are
+   * remembered on their own; the active model never answers them.
    */
-  async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, retryChoices = [] } = {}) {
+  async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, retryChoices = [], alongside = [] } = {}) {
     const spec = semanticQuestion(kind);
     // Relationship decisions must read the entire latest user message. A
     // prefix-only verdict can mistake a correction or a new task at its end.
     const trusted = kind === 'user_turn_kind' ? String(request ?? '') : String(request ?? '').slice(0, 6000);
     const data = boundedSemanticData(page);
-    const cacheKey = this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, kind, trusted, data]));
+    const keyFor = question => this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, question, trusted, data]));
+    const cacheKey = keyFor(kind);
+    const extraKinds = [...new Set(Array.isArray(alongside) ? alongside : [])].filter(extra => extra !== kind && semanticQuestion(extra));
     this._semanticDecisionCache ??= new Map();
-    const cached = await this._semanticCacheHit(tabId, provider, this._semanticDecisionCache.get(cacheKey));
-    if (cached && !retryChoices.includes(cached.choice)) return { ...cached, source: 'cache' };
     let decisionKey = '';
-    const remember = result => {
-      this._semanticDecisionCache.set(cacheKey, { choice: result.choice, evidence: result.evidence, answeredBy: result.source, decisionKey: result.source === 'decision_model' ? decisionKey : '' });
+    const store = (key, result) => {
+      this._semanticDecisionCache.set(key, { choice: result.choice, evidence: result.evidence, answeredBy: result.source, decisionKey: result.source === 'decision_model' ? decisionKey : '' });
       while (this._semanticDecisionCache.size > 256) this._semanticDecisionCache.delete(this._semanticDecisionCache.keys().next().value);
-      return result;
+    };
+    const extraAnswers = {};
+    const withAlongside = result => (extraKinds.length ? { ...result, alongside: { ...extraAnswers } } : result);
+    for (const extra of extraKinds) {
+      const hit = await this._semanticCacheHit(tabId, provider, this._semanticDecisionCache.get(keyFor(extra)));
+      extraAnswers[extra] = hit?.choice ?? null;
+    }
+    const cached = await this._semanticCacheHit(tabId, provider, this._semanticDecisionCache.get(cacheKey));
+    // A cached answer settles the question, whatever is known about the
+    // questions asked alongside it.
+    if (cached && !retryChoices.includes(cached.choice)) return withAlongside({ ...cached, source: 'cache' });
+    const remember = result => {
+      store(cacheKey, result);
+      return withAlongside(result);
     };
     const runSignal = signal || this._runAbortSignal(tabId);
     const context = this.systemOneContext(tabId);
@@ -9245,8 +9262,16 @@ export class Agent extends LoopDetector {
         const verdict = await this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 2500, maxRetries: 0 }), {
           config: settings.decisionConfig, apiKey: settings.typesafeApiKey, signal: runSignal,
           state: { context: wrapSystemOneData(boundedSystemOneText(decisionText, 12000)) },
-          questions: { [kind]: semanticSystemOneQuestion(kind) },
+          questions: Object.fromEntries([kind, ...extraKinds].map(question => [question, semanticSystemOneQuestion(question)])),
         }, context);
+        for (const extra of extraKinds) {
+          const extraAnswer = verdict.answers?.[extra];
+          const extraChoice = confidentChoice(extraAnswer, semanticQuestion(extra).authorizing.includes(extraAnswer?.choice) ? 0.85 : 0.7);
+          if (extraChoice) {
+            extraAnswers[extra] = extraChoice;
+            store(keyFor(extra), { choice: extraChoice, evidence: '', source: 'decision_model' });
+          }
+        }
         const answer = verdict.answers?.[kind];
         const choice = confidentChoice(answer, spec.authorizing.includes(answer?.choice) ? 0.85 : 0.7);
         this.recordSystemOneVerdict(tabId, { decision: choice ? 'semantic' : 'fallback', reason: choice ? kind : `${kind}_low_confidence`,
@@ -9259,7 +9284,7 @@ export class Agent extends LoopDetector {
       if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
       this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `${kind}_${systemOneFailureReason(error)}` }, context);
     }
-    if (!mainModel || !provider?.chat || this._checkAbort(tabId)) return { choice: null, evidence: '', source: 'unavailable' };
+    if (!mainModel || !provider?.chat || this._checkAbort(tabId)) return withAlongside({ choice: null, evidence: '', source: 'unavailable' });
     try {
       const messages = semanticDecisionMessages(kind, trusted, data, text => this._wrapUntrusted('read_page', text));
       const response = await withCompletionTimeout(async completionSignal => {
@@ -9273,7 +9298,7 @@ export class Agent extends LoopDetector {
     } catch (error) {
       if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
     }
-    return { choice: null, evidence: '', source: 'unavailable' };
+    return withAlongside({ choice: null, evidence: '', source: 'unavailable' });
   }
 
   /**
@@ -26270,6 +26295,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  // The review settings as the planner prompt states them, so the model
+  // writes its localized copy only for a plan the user will see. A scheduled
+  // run that approves its plans unattended shows none.
+  _plannerReviewPromptPolicy(tabId) {
+    if (this.scheduledRunPolicies?.get?.(tabId)?.autoApprovePlanReview === true) return { mode: 'never' };
+    const mode = this._normalizePlanReviewMode(this.planReviewMode);
+    return mode === 'confidence'
+      ? { mode, threshold: this._normalizePlanReviewConfidenceThreshold(this.planReviewConfidenceThreshold) }
+      : { mode };
+  }
+
   _shouldReviewPlan(plan) {
     const mode = this._normalizePlanReviewMode(this.planReviewMode);
     if (mode === 'always') return true;
@@ -26283,6 +26319,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const mode = this._normalizePlanBeforeActMode(this.planBeforeActMode);
     if (mode === 'off' || this.planBeforeAct === false) return 'off';
     return mode;
+  }
+
+  // Try mode skips the planner for an Act or Dev turn the decision model
+  // routed and was sure is a direct task (plan_need, asked with run_mode).
+  // Strict mode, "always review" and a steering revision keep planning.
+  _routedDirectTask(plannerMode, runOptions = {}) {
+    return plannerMode === 'try'
+      && this._normalizePlanReviewMode(this.planReviewMode) !== 'always'
+      && runOptions?.modeRoute?.plan === 'direct'
+      && runOptions?.steeringRevision == null;
   }
 
   _plannerIsEnabled() {
@@ -26482,7 +26528,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const plannerMode = this._isActionMode(mode) && runOptions?.cloudRun !== true && !standaloneChatRun
       ? this._plannerMode()
       : 'off';
-    const runPlanner = plannerMode !== 'off';
+    // A turn the decision model routed as a direct task skips the planner; the
+    // intent check below still sets the task contract.
+    const directTask = this._routedDirectTask(plannerMode, runOptions);
+    const runPlanner = plannerMode !== 'off' && !directTask;
     const cloudIntent = this._isActionMode(mode) && runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
       && runOptions?.apiMutationsDenied !== true;
     const runIntent = this._isActionMode(mode) && !standaloneChatRun
@@ -26590,6 +26639,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
     } else {
       this.plannerFollowUpSkipTabs.delete(tabId);
+      if (directTask && runId) {
+        try { trace.recordNote(runId, 0, 'planner_skipped', { reason: 'direct_task', plannerMode }); } catch {}
+      }
       gate = runPlanner
         ? await this._runPlannerGate(
           tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, plannerMode, mode, runOptions, followUpContext,
@@ -27294,19 +27346,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  // The decision model's `run_mode` answer for a routed turn. It never asks
-  // the main model and never rejects: without a sure answer the turn starts
-  // read-only.
+  // The decision model's `run_mode` answer for a routed turn, and in the same
+  // request its `plan_need` answer (whether an action turn needs the planner).
+  // It never asks the main model and never rejects: without a sure answer the
+  // turn starts read-only.
   async _routeAutoRunMode(tabId, question) {
     const startedAt = Date.now();
     try {
-      const verdict = await this._semanticDecision(tabId, 'run_mode', question, { mainModel: false });
+      const verdict = await this._semanticDecision(tabId, 'run_mode', question, { mainModel: false, alongside: ['plan_need'] });
       const tier = this._resolvePromptTier(this._activeProvider(tabId));
+      const plan = autoModePlanForChoice(verdict.alongside?.plan_need);
       return {
         mode: autoModeForChoice(verdict.choice, { tier }),
         choice: verdict.choice || null,
         source: verdict.choice ? verdict.source : 'ask_first',
         latencyMs: Date.now() - startedAt,
+        ...(plan ? { plan } : {}),
       };
     } catch {
       return { mode: 'ask', choice: null, source: 'ask_first', latencyMs: Date.now() - startedAt };
@@ -27364,6 +27419,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           choice: routed.choice ?? null,
           routeMs: Number.isFinite(routed.latencyMs) ? routed.latencyMs : null,
           waitedMs: Date.now() - waitStartedAt,
+          // plan_need for an action turn (_routedDirectTask).
+          ...(mode !== 'ask' && autoModePlanForChoice(routed.plan) ? { plan: routed.plan } : {}),
         },
       },
     };
@@ -27409,7 +27466,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const base = question || { request, page: {} };
     const asked = corrections.length ? { ...base, request: corrected(corrections) } : base;
     // A sure "answer" from routing settles it; an "unclear" one asks again.
-    const verdict = await this._semanticDecision(tabId, 'run_mode', asked, { provider, retryChoices: ['unclear'] });
+    // plan_need rides along for the action run the hand-off restarts.
+    const verdict = await this._semanticDecision(tabId, 'run_mode', asked, { provider, retryChoices: ['unclear'], alongside: ['plan_need'] });
     const latest = this._autoModeTurnCorrections(tabId, messages, snapshot);
     if (latest.length !== corrections.length || latest.some((item, index) => item.id !== corrections[index].id)) {
       return { superseded: true };
@@ -27418,7 +27476,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!mode) {
       return { refusal: 'request_action_mode was refused: read on its own, the user\'s request does not ask for browser actions. Answer it read-only.' };
     }
-    return { accepted: { mode, evidence: requested.evidence }, corrections };
+    const plan = autoModePlanForChoice(verdict.alongside?.plan_need);
+    return { accepted: { mode, evidence: requested.evidence, ...(plan ? { plan } : {}) }, corrections };
   }
 
   // The conversation and per-tab turn state before a routed turn gathers its
@@ -27718,8 +27777,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // A scheduled task run executes an already scheduled task: the planner is
     // told so, and its scheduling tag must not turn into a state-change
     // requirement (see the planner).
+    // The compact intent check writes no steps for execute work (planner.js).
     const plannerParseOptions = {
-      requireIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true,
+      requireIntent: true, compactIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true,
       scheduledTask: runOptions?.scheduledRun === true && runOptions?.scheduledResume !== true,
     };
     const recheckOnly = runOptions?.plannerIntentRecheckOnly === true;
@@ -28017,6 +28077,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       plannerClarification: followUpContext.plannerClarification,
       researchEscalationEnabled: this.researchEscalationEnabled,
       siteWorkflow: this._adapterWorkflowRoutingForUrl(tabUrl),
+      planReview: this._plannerReviewPromptPolicy(tabId),
     });
     const plannerStep = 0;
 
@@ -54783,7 +54844,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           corrections: carried.map(item => item.text), correctionIds: carried.map(item => item.id) } };
       }
     } else if (runOptions?.modeEscalation && isRunMode(mode)) {
-      runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation' } };
+      const plan = autoModePlanForChoice(runOptions.modeEscalation.plan);
+      runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation', ...(plan ? { plan } : {}) } };
       onUpdate('run_mode', { mode, source: 'escalation' });
       this._takeModeEscalationSteering(tabId);
     } else {

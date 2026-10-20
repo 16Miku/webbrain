@@ -953,7 +953,7 @@ export default {
   'st.display.openai_ask_streaming.label': "Ask 모드에서 응답 스트리밍",
   'st.display.openai_ask_streaming.desc': "지원되는 공급자의 경우 Ask 모드에서 텍스트가 도착하면 표시합니다. 중단된 스트림은 알림을 표시하고 스트리밍 없이 한 번 다시 시도하며, 공급자/API 오류는 계속 표시됩니다. 도구 호출은 스트림 완료를 기다리며, Act, Dev, 예약, 클라우드 및 Continue 실행은 스트리밍되지 않습니다. 기본적으로 켜져 있습니다.",
   'st.display.plan_before_act.label': '실행 전 계획',
-  'st.display.plan_before_act.desc': "Act 및 Dev 모드는 도구 실행 전에 항상 구조화된 의도 확인을 수행합니다. 시도(기본값)는 전체 계획도 만들지만 짧은 후속 요청에서는 최근 승인된 계획을 재사용할 수 있습니다. 엄격 모드는 매 턴 전체 계획을 만듭니다. 의도나 계획이 계속 유효하지 않으면 시도 모드는 한 번 더 시도한 뒤 경고를 표시하고 Act 모드로 계속하며, 엄격 모드는 도구 실행 전에 중지합니다.",
+  'st.display.plan_before_act.desc': "Act 및 Dev 모드는 도구 실행 전에 항상 구조화된 의도 확인을 수행합니다. 시도(기본값)는 전체 계획도 만들지만 짧은 후속 요청에서는 최근 승인된 계획을 재사용할 수 있습니다. 엄격 모드는 매 턴 전체 계획을 만듭니다. 의도나 계획이 계속 유효하지 않으면 시도 모드는 한 번 더 시도한 뒤 경고를 표시하고 Act 모드로 계속하며, 엄격 모드는 도구 실행 전에 중지합니다. 자동이 메시지에 Act 또는 Dev를 고르고 짧고 직접적인 작업이라고 확신하면 시도 모드는 전체 계획을 건너뜁니다.",
   'st.display.plan_before_act.try': '계획 시도 (기본값)',
   'st.display.plan_before_act.strict': '엄격한 계획',
   'st.display.plan_before_act.off': '끄기',

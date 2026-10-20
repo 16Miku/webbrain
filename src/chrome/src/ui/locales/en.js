@@ -790,7 +790,7 @@ export default {
   'st.display.openai_ask_streaming.label': 'Stream Ask responses',
   'st.display.openai_ask_streaming.desc': 'Show text as it arrives in Ask mode for supported providers. Interrupted streams show a notice and retry once without streaming; provider/API errors are still shown. Tool calls wait for stream completion; Act, Dev, scheduled, cloud, and Continue runs stay non-streaming. On by default.',
   'st.display.plan_before_act.label': 'Plan before Act',
-  'st.display.plan_before_act.desc': 'Act and Dev always run a structured intent check before tools. Try (default) also builds full plans but may reuse a recently approved plan for a short follow-up; Strict builds a full plan every turn. Try retries once, then continues in Act with a warning if intent or planning is still invalid; Strict stops before tools.',
+  'st.display.plan_before_act.desc': 'Act and Dev always run a structured intent check before tools. Try (default) also builds full plans but may reuse a recently approved plan for a short follow-up; Strict builds a full plan every turn. Try retries once, then continues in Act with a warning if intent or planning is still invalid; Strict stops before tools. When Auto picks Act or Dev for a message and is sure it is a short, direct task, Try skips the full plan.',
   'st.display.plan_before_act.try': 'Try planning (default)',
   'st.display.plan_before_act.strict': 'Strict planning',
   'st.display.plan_before_act.off': 'Off',

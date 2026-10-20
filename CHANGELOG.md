@@ -6,6 +6,9 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+### Changed
+- Act and Dev start working sooner. When Auto sends a message to Act or Dev and is sure it is a short, direct task, such as opening a page, searching, filling in and submitting one form, or sending one message, Try planning now skips the full plan and runs only the intent check. Auto asks this in the same decision-model request that picks the mode, so it adds no request. Tasks with several goals, many items, several sites, a schedule, or risky steps such as payments, bookings, deletions, sign-ins or messages to several people still get a plan, and so does every Act and Dev turn with Strict planning or with plan review set to always ask. Plans are also quicker to write: an English plan no longer repeats itself in a second, "localized" copy, other languages get that copy only when you read the plan (a question, a plan-only answer or a plan shown for review), the intent check no longer lists steps for work it is about to do, and a plan that needs neither the scratchpad nor a progress ledger no longer fills in their fields.
+
 ## [42.2.0] - 2026-10-20
 
 ### Added

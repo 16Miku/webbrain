@@ -994,6 +994,73 @@ for (const build of BUILDS) {
     await f.run('yes');
     assert.deepEqual(questions[1].page, { previous_mode: 'act', current_task: 'Open the billing page.' });
   });
+
+  // plan_need is answered in the routing request and reaches the planner
+  // gate with the route (see test/plan-when-needed.mjs for the gate itself).
+  const planRoute = f => {
+    const seen = [];
+    f.agent._maybeRunPlannerGate = async (_tab, messages, enriched, _update, mode, _cost, _run, _info, runOptions) => {
+      seen.push({ mode, route: runOptions?.modeRoute || null });
+      messages.push(enriched);
+      return { proceed: true, requestKind: 'execute', requiresStateChange: false };
+    };
+    return seen;
+  };
+
+  test(`${build}: the route carries a sure plan_need answer to the planner gate`, async () => {
+    const asked = [];
+    const f = fixture(Agent, {
+      decide: (_q, options) => {
+        asked.push(options.alongside || []);
+        return { choice: 'act', evidence: '', source: 'decision_model', alongside: { plan_need: 'direct' } };
+      },
+    });
+    const seen = planRoute(f);
+    fixtureReplies(f, [stopAfterCall(f)]);
+    await f.run('Turn on dark mode in the settings.');
+    assert.deepEqual(asked, [['plan_need']], 'the route asks plan_need with run_mode');
+    assert.equal(seen[0].mode, 'act');
+    assert.equal(seen[0].route.plan, 'direct');
+    assert.deepEqual(runModes(f.updates), [{ mode: 'act', source: 'decision_model' }], 'the mode update is unchanged');
+  });
+
+  test(`${build}: no plan signal without a sure answer, and none for an Ask turn`, async () => {
+    const unsure = fixture(Agent, { decide: () => ({ choice: 'act', evidence: '', source: 'decision_model', alongside: { plan_need: null } }) });
+    const unsureSeen = planRoute(unsure);
+    fixtureReplies(unsure, [stopAfterCall(unsure)]);
+    await unsure.run('Turn on dark mode in the settings.');
+    assert.equal('plan' in unsureSeen[0].route, false);
+    const ask = fixture(Agent, {
+      decide: () => ({ choice: 'answer', evidence: '', source: 'decision_model', alongside: { plan_need: 'direct' } }),
+      replies: [done('It explains caching.')],
+    });
+    const askSeen = planRoute(ask);
+    await ask.run('What does this article say about caching?');
+    assert.equal(askSeen.length ? 'plan' in (askSeen[0].route || {}) : false, false);
+  });
+
+  test(`${build}: a hand-off carries the page-free plan_need answer into its action run`, async () => {
+    const f = fixture(Agent, {
+      decide: (_q, options) => (options.mainModel === false
+        ? { choice: null, evidence: '', source: 'unavailable', alongside: { plan_need: null } }
+        : { choice: 'act', evidence: '', source: 'decision_model', alongside: { plan_need: 'direct' } }),
+      replies: [handoff('act', 'book the 9 am slot')],
+    });
+    assert.equal(await f.run('Please book the 9 am slot for me.'), '');
+    const escalation = f.agent.takeModeEscalation(f.tab);
+    assert.deepEqual(escalation, { mode: 'act', evidence: 'book the 9 am slot', plan: 'direct' });
+    // The restart (background: modeEscalation) reaches the gate with it.
+    const restart = fixture(Agent);
+    const seen = planRoute(restart);
+    fixtureReplies(restart, [stopAfterCall(restart)]);
+    await restart.run('Please book the 9 am slot for me.', 'act', [], { modeEscalation: { mode: 'act', plan: 'direct' } });
+    assert.deepEqual(seen[0].route, { requested: 'auto', mode: 'act', source: 'escalation', plan: 'direct' });
+    const plain = fixture(Agent);
+    const plainSeen = planRoute(plain);
+    fixtureReplies(plain, [stopAfterCall(plain)]);
+    await plain.run('Please book the 9 am slot for me.', 'act', [], { modeEscalation: { mode: 'act', plan: 'something else' } });
+    assert.deepEqual(plainSeen[0].route, { requested: 'auto', mode: 'act', source: 'escalation' });
+  });
 }
 
 for (const build of BUILDS) {
@@ -1242,7 +1309,7 @@ for (const build of BUILDS) {
   test(`${build}: the background restarts a hand-off under the same request and reports the routed mode`, () => {
     const background = source(build, 'background.js');
     const chat = background.slice(background.indexOf("    case 'chat': {"), background.indexOf("    case 'chat_stream': {"));
-    assert.match(chat, /let escalation = mode === 'auto' \? agent\.takeModeEscalation\(tabId\) : null;\s*for \(let restarts = 0; escalation; restarts \+= 1\) \{\s*const reroute = escalation\.reroute === true;\s*const readOnly = reroute && restarts >= 2;\s*result = await agent\.processMessage\(tabId, msg\.text, publishUpdate, reroute \? 'auto' : escalation\.mode, msg\.attachments, \{\s*\.\.\.runOptions,\s*modeEscalation: \{ mode: escalation\.mode, \.\.\.\(reroute \? \{ reroute: true \} : \{\}\), \.\.\.\(readOnly \? \{ readOnly: true \} : \{\}\) \},\s*\}\);\s*escalation = reroute && !readOnly \? agent\.takeModeEscalation\(tabId\) : null;\s*\}/,
+    assert.match(chat, /let escalation = mode === 'auto' \? agent\.takeModeEscalation\(tabId\) : null;\s*for \(let restarts = 0; escalation; restarts \+= 1\) \{\s*const reroute = escalation\.reroute === true;\s*const readOnly = reroute && restarts >= 2;\s*result = await agent\.processMessage\(tabId, msg\.text, publishUpdate, reroute \? 'auto' : escalation\.mode, msg\.attachments, \{\s*\.\.\.runOptions,\s*modeEscalation: \{ mode: escalation\.mode, \.\.\.\(escalation\.plan \? \{ plan: escalation\.plan \} : \{\}\), \.\.\.\(reroute \? \{ reroute: true \} : \{\}\), \.\.\.\(readOnly \? \{ readOnly: true \} : \{\}\) \},\s*\}\);\s*escalation = reroute && !readOnly \? agent\.takeModeEscalation\(tabId\) : null;\s*\}/,
       'a late correction routes the restart again; a third one ends read-only, never in a mode chosen before it');
     assert.match(chat, /if \(type === 'run_mode' && \['ask', 'act', 'dev'\]\.includes\(data\?\.mode\)\) effectiveMode = data\.mode;/);
     assert.match(chat, /mode: effectiveMode,/);
@@ -1251,7 +1318,7 @@ for (const build of BUILDS) {
     assert.match(stream, /const mode = msg\.mode && msg\.mode !== 'auto' \? msg\.mode : 'ask';/);
     // Retry and Continue of a read-only automatic run hand off the same way.
     const resume = background.slice(background.indexOf("    case 'continue': {"), background.indexOf("    case 'clear_conversation': {"));
-    assert.match(resume, /result = await agent\.continueProcessing\(tabId, publishUpdate, mode, runOptions\);\s*(?:\/\/[^\n]*\n\s*)+let escalation = mode === 'auto' \? agent\.takeModeEscalation\(tabId\) : null;\s*for \(let restarts = 0; escalation; restarts \+= 1\) \{\s*const reroute = escalation\.reroute === true;\s*const readOnly = reroute && restarts >= 2;\s*result = await agent\.continueProcessing\(tabId, publishUpdate, reroute \? 'auto' : escalation\.mode, \{\s*\.\.\.runOptions,\s*modeEscalation: \{ mode: escalation\.mode, \.\.\.\(reroute \? \{ reroute: true \} : \{\}\), \.\.\.\(readOnly \? \{ readOnly: true \} : \{\}\) \},\s*\}\);\s*escalation = reroute && !readOnly \? agent\.takeModeEscalation\(tabId\) : null;\s*\}/);
+    assert.match(resume, /result = await agent\.continueProcessing\(tabId, publishUpdate, mode, runOptions\);\s*(?:\/\/[^\n]*\n\s*)+let escalation = mode === 'auto' \? agent\.takeModeEscalation\(tabId\) : null;\s*for \(let restarts = 0; escalation; restarts \+= 1\) \{\s*const reroute = escalation\.reroute === true;\s*const readOnly = reroute && restarts >= 2;\s*result = await agent\.continueProcessing\(tabId, publishUpdate, reroute \? 'auto' : escalation\.mode, \{\s*\.\.\.runOptions,\s*modeEscalation: \{ mode: escalation\.mode, \.\.\.\(escalation\.plan \? \{ plan: escalation\.plan \} : \{\}\), \.\.\.\(reroute \? \{ reroute: true \} : \{\}\), \.\.\.\(readOnly \? \{ readOnly: true \} : \{\}\) \},\s*\}\);\s*escalation = reroute && !readOnly \? agent\.takeModeEscalation\(tabId\) : null;\s*\}/);
     assert.match(resume, /if \(type === 'run_mode' && \['ask', 'act', 'dev'\]\.includes\(data\?\.mode\)\) effectiveMode = data\.mode;/);
     assert.match(resume, /mode: effectiveMode,/);
     assert.match(resume, /effectiveMode === 'ask' \? askCompletionSucceededForBadge/);

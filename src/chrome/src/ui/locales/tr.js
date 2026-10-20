@@ -962,7 +962,7 @@ export default {
   'st.display.openai_ask_streaming.label': 'Ask yanıtlarını akışla',
   'st.display.openai_ask_streaming.desc': 'Desteklenen sağlayıcılarda Ask metnini geldikçe göster. Kesilen akış bir bildirim gösterir ve aynı turu akışsız olarak bir kez yeniden dener; sağlayıcı/API hataları yine gösterilir. Araç çağrıları akış tamamlanana kadar bekler; Act, Dev, zamanlanmış, bulut ve Continue çalıştırmaları akışsız kalır. Varsayılan olarak açık.',
   'st.display.plan_before_act.label': 'Eylemden önce planla',
-  'st.display.plan_before_act.desc': 'Act ve Dev modları araçlardan önce her zaman yapılandırılmış bir niyet kontrolü çalıştırır. Dene (varsayılan) ayrıca tam planlar oluşturur ancak kısa bir takipte yakın zamanda onaylanmış planı yeniden kullanabilir; Katı her turda tam plan oluşturur. Niyet veya planlama hâlâ geçersizse Dene bir kez daha dener, ardından bir uyarı gösterip Act modunda devam eder; Katı araçlardan önce durur.',
+  'st.display.plan_before_act.desc': 'Act ve Dev modları araçlardan önce her zaman yapılandırılmış bir niyet kontrolü çalıştırır. Dene (varsayılan) ayrıca tam planlar oluşturur ancak kısa bir takipte yakın zamanda onaylanmış planı yeniden kullanabilir; Katı her turda tam plan oluşturur. Niyet veya planlama hâlâ geçersizse Dene bir kez daha dener, ardından bir uyarı gösterip Act modunda devam eder; Katı araçlardan önce durur. Otomatik bir mesaj için Act ya da Dev modunu seçtiğinde ve bunun kısa, doğrudan bir iş olduğundan emin olduğunda Dene tam planı atlar.',
   'st.display.plan_before_act.try': 'Planlamayı dene (varsayılan)',
   'st.display.plan_before_act.strict': 'Katı planlama',
   'st.display.plan_before_act.off': 'Kapalı',

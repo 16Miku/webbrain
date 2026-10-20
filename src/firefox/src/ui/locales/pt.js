@@ -778,7 +778,7 @@ export default {
   'st.display.openai_ask_streaming.label': "Transmitir respostas no modo Ask",
   'st.display.openai_ask_streaming.desc': "Mostre as respostas do provedor assim que chegarem no modo Ask. As chamadas de ferramenta aguardam um evento final do fluxo; execu??es Act, Dev, agendadas, na nuvem e Continue permanecem sem streaming. Ativado por padr?o.",
   'st.display.plan_before_act.label': "Planeje antes de agir",
-  'st.display.plan_before_act.desc': "Os modos Act e Dev sempre executam uma verificação estruturada de intenção antes das ferramentas. Tentar (padrão) também cria planos completos, mas pode reutilizar um plano aprovado recentemente em um acompanhamento curto; Estrito cria um plano completo a cada turno. Tentar repete uma vez e, se a intenção ou o planejamento ainda forem inválidos, continua no modo Act com um aviso; Estrito para antes das ferramentas.",
+  'st.display.plan_before_act.desc': "Os modos Act e Dev sempre executam uma verificação estruturada de intenção antes das ferramentas. Tentar (padrão) também cria planos completos, mas pode reutilizar um plano aprovado recentemente em um acompanhamento curto; Estrito cria um plano completo a cada turno. Tentar repete uma vez e, se a intenção ou o planejamento ainda forem inválidos, continua no modo Act com um aviso; Estrito para antes das ferramentas. Quando o Auto escolhe Act ou Dev para uma mensagem e tem certeza de que é uma tarefa curta e direta, Tentar pula o plano completo.",
   'st.display.plan_before_act.try': "Tente planejar (padrão)",
   'st.display.plan_before_act.strict': "Planejamento rigoroso",
   'st.display.plan_before_act.off': "Desligado",

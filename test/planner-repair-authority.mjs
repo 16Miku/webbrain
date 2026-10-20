@@ -791,7 +791,12 @@ for (const browser of ['chrome', 'firefox']) {
       assert.equal(plan.request_kind, request_kind);
       assert.equal(plan.requires_submission, false);
       if (request_kind === 'clarify') {
-        assert.equal(planner.normalizePlan({ ...raw, localized: {} }, { requireIntent: true, locale: 'en' }), null);
+        // English needs no localized copy: the English summary is the question.
+        for (const localized of [null, {}]) {
+          const english = planner.normalizePlan({ ...raw, localized }, { requireIntent: true, locale: 'en' });
+          assert.equal(english.localized.summary, english.summary);
+          assert.equal(planner.normalizePlan({ ...raw, localized }, { requireIntent: true, locale: 'tr' }), null);
+        }
         assert.equal(planner.normalizePlan({ ...raw, read_scope: 'visible_page' }, { requireIntent: true, locale: 'en' }), null);
       }
     }

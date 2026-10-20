@@ -945,7 +945,7 @@ export default {
   'st.display.openai_ask_streaming.label': "Strumieniuj odpowiedzi w trybie Ask",
   'st.display.openai_ask_streaming.desc': "Pokazuj odpowiedzi dostawcy w miar? nap?ywania w trybie Ask. Wywo?ania narz?dzi czekaj? na ko?cowe zdarzenie strumienia; Act, Dev, zadania zaplanowane, chmurowe i Continue pozostaj? bez strumieniowania. Domy?lnie w??czone.",
   'st.display.plan_before_act.label': 'Planuj przed działaniem',
-  'st.display.plan_before_act.desc': "Tryby Act i Dev zawsze wykonują ustrukturyzowaną kontrolę intencji przed użyciem narzędzi. Próba (domyślnie) tworzy też pełne plany, ale przy krótkiej kontynuacji może ponownie użyć niedawno zatwierdzonego planu; tryb Ścisły tworzy pełny plan w każdej turze. Próba ponawia działanie raz, a jeśli intencja lub plan nadal są nieprawidłowe, kontynuuje w trybie Act z ostrzeżeniem; tryb Ścisły zatrzymuje się przed narzędziami.",
+  'st.display.plan_before_act.desc': "Tryby Act i Dev zawsze wykonują ustrukturyzowaną kontrolę intencji przed użyciem narzędzi. Próba (domyślnie) tworzy też pełne plany, ale przy krótkiej kontynuacji może ponownie użyć niedawno zatwierdzonego planu; tryb Ścisły tworzy pełny plan w każdej turze. Próba ponawia działanie raz, a jeśli intencja lub plan nadal są nieprawidłowe, kontynuuje w trybie Act z ostrzeżeniem; tryb Ścisły zatrzymuje się przed narzędziami. Gdy Auto wybiera dla wiadomości Act lub Dev i jest pewne, że to krótkie, bezpośrednie zadanie, Próba pomija pełny plan.",
   'st.display.plan_before_act.try': 'Spróbuj planowania (domyślnie)',
   'st.display.plan_before_act.strict': 'Ścisłe planowanie',
   'st.display.plan_before_act.off': 'Wyłączone',

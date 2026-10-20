@@ -128,7 +128,9 @@ route unless D1 or the in-browser chat model is chosen.
 Each turn the user sends from the side panel also
 asks the configured decision model one `run_mode` question: the text of that
 message, the previous turn's mode and the user's earlier task in the
-conversation. No page text, title, address or screenshot is included, and the
+conversation. The same request asks `plan_need` (whether an action turn needs
+a written plan) about the same data, so it sends nothing more. No page text,
+title, address or screenshot is included, and the
 question is asked only when a message is sent, never while it is typed. Without
 a decision model the turn starts in Ask; only when the active model asks to
 hand the turn to Act or Dev is the same page-free question sent to the active
