@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': 'Загрузка D1, модели решений · {progress}%',
   'install.local_model.d1_paused': 'D1 приостановлена на {progress}%.',
   'install.local_model.d1_ready': 'D1 готова и прямо на этом устройстве отвечает на короткие вопросы WebBrain, например «Задача выполнена?».',
-  'install.local_model.d1_saved': 'D1 сохранена на этом устройстве. Чтобы её использовать, выберите её в Настройках, в разделе «Модели решений».',
+  'install.local_model.d1_saved': 'D1 сохранена на этом устройстве.',
   'install.local_model.d1_unsupported': 'Этот GPU не может запустить D1, поэтому WebBrain оставляет свои обычные проверки.',
   'install.local_model.d1_error': 'D1 остановилась: {error}',
 
@@ -856,6 +856,8 @@ export default {
   'st.skills.add_url': 'Импортировать из URL',
   'st.skills.add_text': 'Добавить сырой текст',
   'st.skills.clear_form': 'Очистить форму',
+  'st.skills.add_skill': 'Добавить навык',
+  'st.skills.cancel': 'Отмена',
   'st.skills.loading_url': 'Импортируется...',
   'st.skills.added': 'Навык добавлен.',
   'st.skills.removed': 'Навык удалён.',

@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': '결정 모델 D1 다운로드 중 · {progress}%',
   'install.local_model.d1_paused': 'D1이 {progress}%에서 일시중지됨.',
   'install.local_model.d1_ready': 'D1이 준비되었습니다. "이 작업이 끝났나요?" 같은 WebBrain의 간단한 질문에 이 기기에서 답합니다.',
-  'install.local_model.d1_saved': 'D1이 이 기기에 저장되었습니다. 사용하려면 설정의 결정 모델에서 선택하세요.',
+  'install.local_model.d1_saved': 'D1이 이 기기에 저장되었습니다.',
   'install.local_model.d1_unsupported': '이 GPU에서는 D1을 실행할 수 없어 WebBrain은 평소의 확인을 계속합니다.',
   'install.local_model.d1_error': 'D1이 중단되었습니다: {error}',
 
@@ -856,6 +856,8 @@ export default {
   'st.skills.add_url': 'URL에서 가져오기',
   'st.skills.add_text': '원시 텍스트 추가',
   'st.skills.clear_form': '양식 지우기',
+  'st.skills.add_skill': '스킬 추가',
+  'st.skills.cancel': '취소',
   'st.skills.loading_url': '가져오는 중...',
   'st.skills.added': '스킬이 추가되었습니다.',
   'st.skills.removed': '스킬이 제거되었습니다.',

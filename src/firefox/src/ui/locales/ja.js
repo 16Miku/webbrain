@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': '判定モデル D1 をダウンロード中 · {progress}%',
   'install.local_model.d1_paused': 'D1 を {progress}% で一時停止しました。',
   'install.local_model.d1_ready': 'D1 の準備ができました。「このタスクは終わった?」のような WebBrain の簡単な質問に、このデバイス上で答えます。',
-  'install.local_model.d1_saved': 'D1 をこのデバイスに保存しました。使うには、設定の「判定モデル」で選んでください。',
+  'install.local_model.d1_saved': 'D1 をこのデバイスに保存しました。',
   'install.local_model.d1_unsupported': 'この GPU では D1 を実行できないため、WebBrain は通常のチェックを続けます。',
   'install.local_model.d1_error': 'D1 が停止しました: {error}',
 
@@ -856,6 +856,8 @@ export default {
   'st.skills.add_url': 'URLからインポート',
   'st.skills.add_text': '生テキストを追加',
   'st.skills.clear_form': 'フォームをクリア',
+  'st.skills.add_skill': 'スキルを追加',
+  'st.skills.cancel': 'キャンセル',
   'st.skills.loading_url': 'インポート中...',
   'st.skills.added': 'スキルが追加されました。',
   'st.skills.removed': 'スキルが削除されました。',

@@ -125,7 +125,7 @@ export default {
   'install.local_model.d1_downloading': 'निर्णय मॉडल D1 डाउनलोड हो रहा है · {progress}%',
   'install.local_model.d1_paused': 'D1 को {progress}% पर रोका गया।',
   'install.local_model.d1_ready': 'D1 तैयार है और इसी डिवाइस पर WebBrain के छोटे सवालों के जवाब देता है, जैसे “क्या यह काम पूरा हो गया?”।',
-  'install.local_model.d1_saved': 'D1 इस डिवाइस पर सहेजा गया है। इसे इस्तेमाल करने के लिए सेटिंग्स में निर्णय मॉडल के अंतर्गत चुनें।',
+  'install.local_model.d1_saved': 'D1 इस डिवाइस पर सहेजा गया है।',
   'install.local_model.d1_unsupported': 'यह GPU D1 नहीं चला सकता, इसलिए WebBrain अपनी सामान्य जाँचें जारी रखता है।',
   'install.local_model.d1_error': 'D1 रुक गया: {error}',
 
@@ -909,6 +909,8 @@ export default {
   'st.skills.add_url': "यूआरएल से आयात करें",
   'st.skills.add_text': "कच्चा पाठ जोड़ें",
   'st.skills.clear_form': "स्पष्ट रूप",
+  'st.skills.add_skill': "कौशल जोड़ें",
+  'st.skills.cancel': "रद्द करें",
   'st.skills.loading_url': "आयात किया जा रहा है...",
   'st.skills.added': "कौशल जोड़ा गया.",
   'st.skills.removed': "कौशल हटा दिया गया.",

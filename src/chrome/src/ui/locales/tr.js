@@ -123,6 +123,8 @@ export default {
   'st.skills.add_url': 'URL\'den içe aktar',
   'st.skills.add_text': 'Ham metni ekle',
   'st.skills.clear_form': 'Formu temizle',
+  'st.skills.add_skill': 'Skill ekle',
+  'st.skills.cancel': 'İptal',
   'st.skills.loading_url': 'İçe aktarılıyor...',
   'st.skills.added': 'Skill eklendi.',
   'st.skills.removed': 'Skill kaldırıldı.',
@@ -233,7 +235,7 @@ export default {
   'install.local_model.d1_downloading': 'Karar modeli D1 indiriliyor · %{progress}',
   'install.local_model.d1_paused': 'D1, %{progress} noktasında duraklatıldı.',
   'install.local_model.d1_ready': 'D1 hazır; WebBrain’in “Bu görev bitti mi?” gibi hızlı sorularını bu cihazda yanıtlıyor.',
-  'install.local_model.d1_saved': 'D1 bu cihaza kaydedildi. Kullanmak için Ayarlar’da Karar modelleri bölümünden seç.',
+  'install.local_model.d1_saved': 'D1 bu cihaza kaydedildi.',
   'install.local_model.d1_unsupported': 'Bu GPU D1’i çalıştıramıyor; WebBrain her zamanki kontrollerini sürdürüyor.',
   'install.local_model.d1_error': 'D1 durdu: {error}',
 

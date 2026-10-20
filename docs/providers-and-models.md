@@ -65,14 +65,16 @@ finished, did a watch find what it waited for, what does a request say about an
 action) so the chat model does not have to. The Decision tab of the Providers
 page asks one question first:
 
-- **Auto** (default) needs no setup. It uses D1 (below) once D1 is
-  downloaded on this device, for completion checks and scheduled watch and
-  completion checks only. The Chrome install guide's **Download local models**
-  button downloads it next to Ternary Bonsai 2 2B Vision; **Download and load**
-  under On → D1 does too, in both browsers. D1 serves Auto while that Download
-  or Load stands: **Unload**, **Remove cached model** and Off end it. While
-  Compass is the chat provider, Compass's managed decision model answers
-  instead, as before. Otherwise no decision model is used. Readiness
+- **Auto** (default) needs no setup. Once D1 (below) is downloaded on this
+  device, it is Auto's decision model for completion checks and scheduled
+  watch and completion checks, whatever the chat provider. The Chrome install
+  guide's **Download local models** button downloads it first, then Ternary
+  Bonsai 2 2B Vision; **Download and load** under On → D1 does too, in both
+  browsers. D1 serves Auto while that Download or Load stands: **Unload**,
+  **Remove cached model** and Off end it. While Compass is the chat provider,
+  Compass's managed decision model keeps semantic decisions, and answers
+  completion checks too until D1 is downloaded. Otherwise no decision model is
+  used. Readiness
   (`agent/decision-availability.js`) is D1's experimental-model consent, the
   stored Load request and the package's ready marker in its OPFS directory
   (`providers/d1-cache.js`), read without starting the offscreen document,
@@ -123,10 +125,19 @@ about 0.95 GB of pinned model data and tokenizer/configuration files from
 the [Hugging Face model repository](https://huggingface.co/webbrain-one/d1-browser-decision-fp16)
 into OPFS. In Chrome the first-install guide offers the same download: its
 optional **Download local models** button, whose note names D1 and its size,
-is that consent, and it downloads D1 in D1's own Worker while Ternary Bonsai 2
-2B Vision downloads, then loads it. The guide reads D1's status, checks the GPU
-and starts or stops the download (the only `d1_control` commands it may send);
-it writes no decision settings, so Auto then uses D1 as described above. The package stores FP16 weights and computes in FP32; it is the
+is that consent. It downloads D1 first, in D1's own Worker, and loads it;
+Ternary Bonsai 2 2B Vision follows once D1's download is over (ready or
+saved, failed, or stopped other than by the guide's Pause), and at once when
+this GPU cannot run D1. The guide's download queues Bonsai in the background
+(`providers/install-download-queue.js`, `installChatModelAfterD1` in storage),
+so it follows even after the guide is closed: the guide's reads of D1's
+status and an alarm move it along, and a queue older than D1's own
+thirty-minute limit allows is dropped. Every click on the guide's button
+before Bonsai is ready stands for both models: resuming a paused Bonsai
+download also downloads D1 first when D1 is still missing. The guide reads D1's status, checks the
+GPU and starts or stops the download (the only `d1_control` commands it may
+send); it writes no decision settings, so Auto, the default, then uses D1 as
+described above, and the guide says so. The package stores FP16 weights and computes in FP32; it is the
 [FP32 release](https://huggingface.co/webbrain-one/d1-browser-decision-fp32)
 with its weights rounded once, and answers the same on its held-out test. A
 cached FP32 package from an earlier version is removed on the next download. The repository name is not a production-readiness claim; this provider
@@ -155,7 +166,7 @@ stays loaded until it is unloaded, removed or switched off on the Providers
 page (decisions Off, or another provider saved under On). Switching to Auto
 keeps it, loaded or still downloading, while that request stands
 (`releaseD1OnDecisionChange` in `background.js`); Auto uses it once it is
-downloaded unless Compass is the chat provider, and **Unload** releases it. A
+downloaded, and **Unload** releases it. A
 decision that finds D1 unloaded (a browser restart, a discarded stalled
 session, a lost GPU device) starts one reload from the verified cache in the
 background and uses the fallback chain meanwhile. A reload never downloads. A decision whose caller
@@ -196,8 +207,9 @@ use the existing fallback chain; no synthetic answer is substituted.
 Verify completion (`done`) defaults on when outsourcing is configured, with a
 90% acceptance threshold separate from the scheduled-check threshold. Compass
 uses its managed `/v1/decisions` route by default. An explicitly enabled and
-consented experimental D1 selection overrides only that decision route, not
-the main Compass provider. The fallback chain is decision model, active LLM, then existing
+consented experimental D1 selection, or in Auto a downloaded D1 for completion
+and scheduled checks, overrides only that decision route, not the main Compass
+provider. The fallback chain is decision model, active LLM, then existing
 completion checks. These outsourcing toggles control the decision model only;
 with outsourcing disabled or unconfigured, completion still uses a dedicated
 call to the active LLM, subject to its normal cost allowance, followed by the
@@ -205,9 +217,9 @@ existing checks. Strict Secret Mode disables these additional calls.
 
 | Active provider | First completion verifier | Fallback |
 | --- | --- | --- |
-| WebBrain Compass (default) | Managed decision model | Active LLM, then existing checks |
+| WebBrain Compass (default), D1 not downloaded | Managed decision model | Active LLM, then existing checks |
 | Explicitly enabled and consented D1, including with Compass | Experimental local D1; no sole success authority | Active LLM, then existing checks |
-| Auto, not Compass, D1 downloaded | Experimental local D1; no sole success authority | Active LLM, then existing checks |
+| Auto, D1 downloaded (Compass included) | Experimental local D1; no sole success authority | Active LLM, then existing checks |
 | Other provider, completion outsourcing enabled | Selected decision model | Active LLM, then existing checks |
 | Other provider, outsourcing disabled or unconfigured | Active LLM | Existing checks |
 

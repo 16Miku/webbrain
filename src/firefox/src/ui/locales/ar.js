@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': 'جارٍ تنزيل D1، نموذج القرار · {progress}%',
   'install.local_model.d1_paused': 'توقف D1 مؤقتًا عند {progress}%.',
   'install.local_model.d1_ready': 'D1 جاهز ويجيب على هذا الجهاز عن أسئلة WebBrain السريعة، مثل «هل انتهت هذه المهمة؟».',
-  'install.local_model.d1_saved': 'تم حفظ D1 على هذا الجهاز. لاستخدامه، اختره في الإعدادات ضمن نماذج القرار.',
+  'install.local_model.d1_saved': 'تم حفظ D1 على هذا الجهاز.',
   'install.local_model.d1_unsupported': 'لا تستطيع وحدة معالجة الرسومات هذه تشغيل D1، لذا يواصل WebBrain فحوصه المعتادة.',
   'install.local_model.d1_error': 'توقف D1: {error}',
 
@@ -856,6 +856,8 @@ export default {
   'st.skills.add_url': 'استيراد من URL',
   'st.skills.add_text': 'إضافة نص خام',
   'st.skills.clear_form': 'مسح النموذج',
+  'st.skills.add_skill': 'إضافة مهارة',
+  'st.skills.cancel': 'إلغاء',
   'st.skills.loading_url': 'جارٍ الاستيراد...',
   'st.skills.added': 'تمت إضافة المهارة.',
   'st.skills.removed': 'تمت إزالة المهارة.',

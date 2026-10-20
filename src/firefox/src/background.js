@@ -8,9 +8,8 @@ import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_KEEP_LOADED_KEY } from './provid
 // D1's Worker and GPU memory are released when decisions are switched Off,
 // another decision provider is saved, consent changes or Strict Secret Mode
 // starts. Leaving On for Auto keeps D1, loaded or still downloading, while the
-// user's Download or Load request stands: Auto uses it once it is downloaded,
-// unless Compass is the chat provider (decision-availability.js), and Unload
-// on the Providers page releases it.
+// user's Download or Load request stands: Auto uses it once it is downloaded
+// (decision-availability.js), and Unload on the Providers page releases it.
 function releaseD1OnDecisionChange(changes, area) {
   if (area !== 'local') return;
   const reset = () => { void d1Request('reset').catch(() => {}); };
@@ -3067,8 +3066,8 @@ async function handleFailureRecoveryResponse(msg, sender) {
 }
 
 // Whether D1 answers this profile's decisions now, for the install guide: an
-// explicit On selection, or Auto once D1 is downloaded while Compass is not the
-// chat provider (decision-availability.js).
+// explicit On selection, or Auto once D1 is downloaded, whatever the chat
+// provider (decision-availability.js).
 async function d1UsedForDecisions(api) {
   try {
     if (agent.strictSecretMode) return false;

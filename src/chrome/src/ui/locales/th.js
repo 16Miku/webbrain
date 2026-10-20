@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': 'กำลังดาวน์โหลด D1 โมเดลการตัดสินใจ · {progress}%',
   'install.local_model.d1_paused': 'D1 หยุดชั่วคราวที่ {progress}%',
   'install.local_model.d1_ready': 'D1 พร้อมแล้ว และตอบคำถามสั้นๆ ของ WebBrain เช่น “งานนี้เสร็จหรือยัง” บนอุปกรณ์นี้',
-  'install.local_model.d1_saved': 'บันทึก D1 ไว้บนอุปกรณ์นี้แล้ว หากต้องการใช้ ให้เลือกในการตั้งค่า ใต้โมเดลการตัดสินใจ',
+  'install.local_model.d1_saved': 'บันทึก D1 ไว้บนอุปกรณ์นี้แล้ว',
   'install.local_model.d1_unsupported': 'GPU นี้รัน D1 ไม่ได้ WebBrain จึงใช้การตรวจสอบตามปกติต่อไป',
   'install.local_model.d1_error': 'D1 หยุดทำงาน: {error}',
 
@@ -882,6 +882,8 @@ export default {
   'st.skills.add_url': 'นำเข้าจาก URL',
   'st.skills.add_text': 'เพิ่มข้อความดิบ',
   'st.skills.clear_form': 'ล้างแบบฟอร์ม',
+  'st.skills.add_skill': 'เพิ่มทักษะ',
+  'st.skills.cancel': 'ยกเลิก',
   'st.skills.loading_url': 'กำลังนำเข้า...',
   'st.skills.added': 'เพิ่มทักษะแล้ว',
   'st.skills.removed': 'ลบทักษะแล้ว',

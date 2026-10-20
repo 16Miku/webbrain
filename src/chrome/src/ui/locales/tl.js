@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': 'Dina-download ang D1, ang decision model · {progress}%',
   'install.local_model.d1_paused': 'Naka-pause ang D1 sa {progress}%.',
   'install.local_model.d1_ready': 'Handa na ang D1 at sinasagot nito sa device na ito ang mabibilis na tanong ng WebBrain, gaya ng “Tapos na ba ang task na ito?”.',
-  'install.local_model.d1_saved': 'Naka-save ang D1 sa device na ito. Para gamitin ito, piliin ito sa Mga Setting, sa ilalim ng Mga decision model.',
+  'install.local_model.d1_saved': 'Naka-save ang D1 sa device na ito.',
   'install.local_model.d1_unsupported': 'Hindi kayang patakbuhin ng GPU na ito ang D1, kaya nananatili ang WebBrain sa karaniwang mga check nito.',
   'install.local_model.d1_error': 'Huminto ang D1: {error}',
 
@@ -882,6 +882,8 @@ export default {
   'st.skills.add_url': 'Mag-import mula sa URL',
   'st.skills.add_text': 'Magdagdag ng raw na teksto',
   'st.skills.clear_form': 'Linisin ang form',
+  'st.skills.add_skill': 'Magdagdag ng kasanayan',
+  'st.skills.cancel': 'Kanselahin',
   'st.skills.loading_url': 'Nag-iimport...',
   'st.skills.added': 'Naidagdag ang kasanayan.',
   'st.skills.removed': 'Naalis ang kasanayan.',

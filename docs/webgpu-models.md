@@ -256,15 +256,18 @@ Use the tools in `scripts/models/bonsai/`:
   preload flows fetch model files: Providers → WebGPU, Apocalypse
   Mode, and the first-install page (Chrome), which offers Ternary Bonsai 2 2B
   Vision and D1, the decision model, behind its optional "Download local
-  models" button. The two download at once, each in its own worker, and the
-  page shows D1's progress on a line of its own; once the chat model is
+  models" button. D1 downloads first, in its own worker, and Bonsai follows
+  once D1's download is over (or at once when D1 cannot download here),
+  queued in the background so it follows even after the page is closed;
+  while D1's download runs, the button pauses or resumes it and the progress
+  bar follows it, and D1's progress has a line of its own. Once the chat model is
   ready, the same button starts, pauses, resumes or retries D1 alone. The
   install page checks for
   hardware WebGPU before fetching anything (D1 runs its own adapter check, and
-  a GPU it cannot use leaves the Bonsai download going), never changes the
+  a GPU it cannot use moves straight on to Bonsai), never changes the
   active provider or the decision settings, and only points an idle WebGPU
   provider at Bonsai when the configured model is not already downloaded.
-  Auto decisions then use D1, not Bonsai
+  Auto decisions then use D1, not Bonsai, whatever the chat provider
   ([`providers-and-models.md`](providers-and-models.md#decision-models)).
 
 ## Decisions on WebGPU
@@ -325,10 +328,10 @@ The labelled set is d1's balanced-V3 held-out test (72 synthetic screenshots,
     wrong destinations and unsubmitted drafts. The synthetic results below
     do not establish reliability on real browser tasks.
   - Completion checks no longer start Ternary's former 15-second decision
-    request. Auto gives its former slot to D1: once D1 is downloaded, and
-    while Compass is not the chat provider, D1 answers completion and
-    scheduled checks, and a positive answer still needs independent proof;
-    otherwise the active chat model checks. Ternary chat and screenshot
+    request. Auto gives its former slot to D1: once D1 is downloaded, D1
+    answers completion and scheduled checks, in place of Compass's managed
+    route too, and a positive answer still needs independent proof;
+    otherwise Compass's managed route or the active chat model checks. Ternary chat and screenshot
     reading remain available. The diagnostic fixture/readout path is retained
     for evaluating a future replacement; its results do not authorize actions.
 
