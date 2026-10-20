@@ -82578,12 +82578,18 @@ test('agent requires fresh submit confirmation across modes and prompt sources',
 });
 
 test('a field holding its own placeholder text is not submitted', async () => {
+  // The refusal is page-derived tool output, wrapped as untrusted content.
+  const toolJson = content => {
+    const text = String(content || '');
+    return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+  };
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
     const tabId = 5108;
     let prompts = 0;
     let executed = 0;
     let field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };
+    let completeList = null;
     const updates = [];
     const task = [{ role: 'user', content: 'Sign me up for the newsletter on this page.' }];
 
@@ -82606,6 +82612,7 @@ test('a field holding its own placeholder text is not submitted', async () => {
       summary: `Changed/filled fields: ${field.label}: ${field.value}.`,
       fields: [field],
       changedFields: [field],
+      ...(completeList ? { placeholderFields: completeList } : {}),
     });
     agent._promptSubmitConfirmation = async () => {
       prompts += 1;
@@ -82627,7 +82634,7 @@ test('a field holding its own placeholder text is not submitted', async () => {
         new Set(['click_ax']),
         1,
       );
-      return JSON.parse(messages[0].content);
+      return toolJson(messages[0].content);
     };
 
     const refused = await submit('placeholder');
@@ -82637,15 +82644,36 @@ test('a field holding its own placeholder text is not submitted', async () => {
     assert.equal(refused.placeholderFieldCount, 1, `${AgentClass.name}: the refusal counts the field`);
     assert.match(refused.error, /placeholder text/, `${AgentClass.name}: the model is told why`);
     assert.match(refused.error, /Ask the user/, `${AgentClass.name}: the model is told to ask`);
-    assert.ok(updates.some(update => /example text/.test(update.data?.message || '')), `${AgentClass.name}: the user sees why nothing was asked`);
+    assert.ok(updates.some(update => update.type === 'warning' && /placeholder text/.test(update.data?.message || '')),
+      `${AgentClass.name}: the user sees why nothing was asked`);
+
+    // Turning confirmations off, globally or for a scheduled run, does not
+    // let the page's example through.
+    agent._skipPermissionGate = true;
+    assert.equal((await submit('gate-off')).placeholderValue, true, `${AgentClass.name}: confirmations off submitted the placeholder`);
+    agent._skipPermissionGate = false;
+    agent.scheduledRunPolicies.set(tabId, { requireConsequentialConfirmation: false });
+    assert.equal((await submit('scheduled')).placeholderValue, true, `${AgentClass.name}: a scheduled run submitted the placeholder`);
+    agent.scheduledRunPolicies.delete(tabId);
+
+    // The probe's complete list covers a field past the summary's first
+    // eight changed fields.
+    field = { label: 'Name', placeholder: 'Your name', value: 'Ada', changed: true };
+    completeList = [{ label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true }];
+    assert.equal((await submit('past-summary')).placeholderValue, true, `${AgentClass.name}: a field past the summary was missed`);
+    completeList = [];
+    await submit('complete-list-clean');
+    assert.equal(prompts, 1, `${AgentClass.name}: an empty complete list still refused`);
+    completeList = null;
+    field = { label: 'Email', placeholder: 'you@example.com', value: 'you@example.com', changed: true };
 
     // A value the user gave, in a message or in a card answer, asks as usual.
     agent.conversations.set(tabId, [...task, { role: 'user', content: 'Use YOU@example.com for it.' }]);
     await submit('user-message');
-    assert.equal(prompts, 1, `${AgentClass.name}: a value from the user's message was refused`);
+    assert.equal(prompts, 2, `${AgentClass.name}: a value from the user's message was refused`);
     agent.conversations.set(tabId, [{ ...task[0], webbrainTaskClarifications: [{ question: 'Which email?', answer: 'you@example.com', source: 'text' }] }]);
     await submit('user-answer');
-    assert.equal(prompts, 2, `${AgentClass.name}: a value from the user's card answer was refused`);
+    assert.equal(prompts, 3, `${AgentClass.name}: a value from the user's card answer was refused`);
 
     // Another value, a page default WebBrain did not change, and a placeholder
     // that is only a number ask as usual.
@@ -82656,7 +82684,7 @@ test('a field holding its own placeholder text is not submitted', async () => {
     await submit('page-default');
     field = { label: 'Quantity', placeholder: '1', value: '1', changed: true };
     await submit('number');
-    assert.equal(prompts, 5, `${AgentClass.name}: an ordinary value skipped its card`);
+    assert.equal(prompts, 6, `${AgentClass.name}: an ordinary value skipped its card`);
     assert.equal(executed, 0, `${AgentClass.name}: a refused or declined submission ran`);
   }
 });

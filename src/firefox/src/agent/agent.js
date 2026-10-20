@@ -14630,7 +14630,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           predispatch.add(stage, Date.now() - started);
         }
       };
-      const runWorkflowPreSubmitChecks = async () => await timedCheck('resourceMutationMs',
+      const runWorkflowPreSubmitChecks = async () => this._placeholderSubmitBlock(tabId, fnName, detectedSubmitAction)
+        || await timedCheck('resourceMutationMs',
         () => this._resourceMutationPreSubmitBlock(tabId, fnName, fnArgs, detectedSubmitAction, provider))
         || this._steeringPriorSubmissionBlock(tabId, fnName, fnArgs, detectedSubmitAction)
         || await timedCheck('githubTransitionMs',
@@ -14797,31 +14798,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const submitRisk = classifySubmitRisk(submitConfirmation, submitConfirmation.url);
           const canGroupSearch = submitRisk.risk === SubmitRisk.LOW_RISK_SEARCH
             && ['click', 'click_ax', 'press_keys'].includes(fnName);
-          // A field that still holds the page's own placeholder text, which
-          // no message or card answer from the user gave, is the page's
-          // example typed in as a value ("you@example.com" in an email box).
-          // Nothing is submitted, no card is shown, and the model is told to
-          // ask the user for the value. Grouped searches keep their approval.
-          const placeholderFields = canGroupSearch ? [] : this._placeholderValueFields(tabId, submitConfirmation);
-          if (placeholderFields.length) {
-            messages.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              content: JSON.stringify({
-                success: false,
-                denied: true,
-                placeholderValue: true,
-                placeholderFieldCount: placeholderFields.length,
-                error: `Nothing was submitted on ${submitConfirmation.host || 'this site'}: ${placeholderFields.length === 1 ? 'a field still holds its' : 'fields still hold their'} `
-                  + 'own placeholder text, an example the page shows, not a value the user gave. Ask the user for the real value with clarify '
-                  + '(require_explicit_answer:true for personal values) and type that instead. Do NOT submit the placeholder.',
-              }),
-            });
-            onUpdate('warning', { message: 'Not submitted: a field holds the page\'s example text, not a value you gave.' });
-            predispatchBlocked('submitConfirmationMs');
-            if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
-            continue;
-          }
           let choice = null;
           if (canGroupSearch) {
             const intentKey = submitActionKey(submitConfirmation, submitConfirmation.url);
@@ -29436,14 +29412,42 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return null;
   }
 
+  // A submission whose changed field still holds the page's own placeholder
+  // text, which no message or card answer from the user gave, is the page's
+  // example typed in as a value ("you@example.com" in an email box). It is
+  // refused before any card, whether or not the user asked to confirm
+  // submissions (a scheduled run included), and the model is told to ask
+  // the user for the value. Grouped searches keep their approval.
+  _placeholderSubmitBlock(tabId, toolName, submitInfo) {
+    if (submitInfo?.isSubmit !== true) return null;
+    if (classifySubmitRisk(submitInfo, submitInfo.url).risk === SubmitRisk.LOW_RISK_SEARCH
+      && ['click', 'click_ax', 'press_keys'].includes(toolName)) return null;
+    const fields = this._placeholderValueFields(tabId, submitInfo);
+    if (!fields.length) return null;
+    return {
+      success: false,
+      denied: true,
+      dispatched: false,
+      noDispatch: true,
+      placeholderValue: true,
+      placeholderFieldCount: fields.length,
+      error: `Nothing was submitted on ${submitInfo.host || 'this site'}: ${fields.length === 1 ? 'a field still holds its' : 'fields still hold their'} `
+        + 'own placeholder text, an example the page shows, not a value the user gave. Ask the user for the real value with clarify '
+        + '(require_explicit_answer:true for personal values) and type that instead. Do NOT submit the placeholder.',
+    };
+  }
+
   // The changed fields of a submission that hold their own placeholder text
   // when none of the user's messages or card answers gave that value: the
-  // page's example typed in as the user's. A placeholder without a letter,
-  // or shorter than three characters (a "1" in a quantity box), is not an
-  // example of this kind.
+  // page's example typed in as the user's. The probe's complete list is
+  // read when it sent one; the summary's changed fields stop at eight. A
+  // placeholder without a letter, or shorter than three characters (a "1"
+  // in a quantity box), is not an example of this kind.
   _placeholderValueFields(tabId, submitInfo) {
     const normalize = text => String(text ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-    const fields = (Array.isArray(submitInfo?.changedFields) ? submitInfo.changedFields : []).filter(field => {
+    const candidates = Array.isArray(submitInfo?.placeholderFields) ? submitInfo.placeholderFields
+      : Array.isArray(submitInfo?.changedFields) ? submitInfo.changedFields : [];
+    const fields = candidates.filter(field => {
       const value = normalize(field?.value);
       return field?.changed === true && value.length >= 3 && /\p{L}/u.test(value) && value === normalize(field?.placeholder);
     });
@@ -29594,6 +29598,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           fields: Array.isArray(detected.fields) ? detected.fields.slice(0, 12) : [],
           hiddenFields: Array.isArray(detected.hiddenFields) ? detected.hiddenFields.slice(0, 20) : [],
           changedFields: Array.isArray(detected.changedFields) ? detected.changedFields.slice(0, 8) : [],
+          ...(Array.isArray(detected.placeholderFields) ? { placeholderFields: detected.placeholderFields.slice(0, 16) } : {}),
           method: String(detected.method || 'GET').slice(0, 20).toUpperCase(),
           action: String(detected.action || '').slice(0, 300),
           actionUrl: String(detected.actionUrl || detected.action || '').slice(0, 300),
@@ -29933,6 +29938,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         try { return !!form.closest?.('[role="search"],search'); } catch { return false; }
       })();
       const changedFields = fields.filter(field => field.changed || field.value).slice(0, 8);
+      // Every changed field that still holds its own placeholder text, for
+      // the placeholder guard: unlike the summary above, not capped.
+      // Passwords and other fields without a typed value are left out.
+      const placeholderFields = (() => {
+        try {
+          return Array.from(form.querySelectorAll('input, textarea')).slice(0, 500).flatMap(el => {
+            const type = String(el.type || '').toLowerCase();
+            if (['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio', 'file', 'password'].includes(type)) return [];
+            const placeholder = compact(el.getAttribute?.('placeholder') || '', 200);
+            const value = pendingEl && el === pendingEl ? compact(pendingValue, 200) : compact(el.value || '', 200);
+            const changed = el === pendingEl || (!!value && value !== defaultValue(el));
+            return changed && placeholder && value.toLowerCase() === placeholder.toLowerCase()
+              ? [{ label: labelFor(el), value, placeholder, changed: true }] : [];
+          }).slice(0, 16);
+        } catch {
+          return [];
+        }
+      })();
       const changedText = changedFields.length
         ? `Changed/filled fields: ${changedFields.map(field => `${field.label}: ${field.value || '(blank)'}`).join('; ')}.`
         : 'No changed or filled fields were detected.';
@@ -29948,6 +29971,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         fields: fields.slice(0, 12),
         hiddenFields,
         changedFields,
+        placeholderFields,
         method,
         action,
         actionUrl,
