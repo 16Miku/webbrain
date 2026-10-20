@@ -30,12 +30,16 @@ export const WEBGPU_CHAT_DECISION_MODEL = 'webbrain-one/Ternary-Bonsai-2-2B-ONNX
 
 const NO_DECISION_FEATURES = Object.freeze(Object.fromEntries(DECISION_FEATURES.map(feature => [feature, false])));
 // Auto with Compass keeps what Compass did before modes existed: completion
-// checks and semantic decisions on its managed model.
+// checks and semantic decisions on its managed model. A downloaded D1 takes
+// the completion checks (AUTO_LOCAL_FEATURES).
 const AUTO_COMPASS_FEATURES = Object.freeze({ ...NO_DECISION_FEATURES, done: true, semantic: true });
-// Auto with D1 downloaded and no Compass: the checks D1 answers by itself, the
-// ones the in-browser chat model answered before its decisions were disabled.
-// Fast classifications, fast browser actions and semantic decisions need an
-// explicit On, so the experimental and guard-facing paths stay opt-in.
+// Auto with D1 downloaded: the checks D1 answers by itself, the ones the
+// in-browser chat model answered before its decisions were disabled. Once D1
+// is downloaded it is Auto's decision model for them, in place of Compass's
+// managed model too. Fast classifications, fast browser actions and semantic
+// decisions need an explicit On, so the experimental and guard-facing paths
+// stay opt-in; while Compass is the chat provider, its managed model keeps
+// semantic decisions.
 const AUTO_LOCAL_FEATURES = Object.freeze({ ...NO_DECISION_FEATURES, done: true, watch: true, completion: true });
 
 // A saved mode wins. Profiles saved before modes existed map an enabled
@@ -46,11 +50,13 @@ export function resolveDecisionMode(stored = {}) {
   return stored?.systemOneEnabled === true ? 'on' : 'auto';
 }
 
-// Only Auto without Compass, after D1's experimental-model consent, looks for
-// D1's download (decision-availability.js), so callers can skip that lookup
-// otherwise.
-export function decisionNeedsLocalAssist(stored = {}, compass = null) {
-  return resolveDecisionMode(stored) === 'auto' && !compass && stored?.[D1_CONSENT_KEY] === D1_CONSENT_VERSION;
+// Only Auto, after D1's experimental-model consent, looks for D1's download
+// (decision-availability.js), so callers can skip that lookup otherwise. While
+// Compass is the chat provider, D1 takes only the decisions it answers in Auto:
+// `feature` names the one asked for, and none named means those checks.
+export function decisionNeedsLocalAssist(stored = {}, compass = null, feature = null) {
+  return resolveDecisionMode(stored) === 'auto' && stored?.[D1_CONSENT_KEY] === D1_CONSENT_VERSION
+    && (!compass || feature == null || AUTO_LOCAL_FEATURES[feature] === true);
 }
 
 // Whether the resolved configuration answers this decision. Every caller asks
@@ -85,12 +91,12 @@ function onDecisionFeatures(stored, config, legacy) {
 // answered, so Settings and model discovery see the same configuration.
 // Downloaded chat/vision weights do not establish reliable decision behavior;
 // `localAssistReady` says D1, a decision model, is downloaded and the user's
-// Download or Load stands (decision-availability.js). Only Auto without
-// Compass reads it.
-export function resolveDecisionConfig(stored = {}, compass = null, { localAssistReady = false } = {}) {
+// Download or Load stands (decision-availability.js). Only Auto reads it, and
+// with Compass only for the decisions D1 answers there (`feature`).
+export function resolveDecisionConfig(stored = {}, compass = null, { localAssistReady = false, feature = null } = {}) {
   stored = stored || {};
   const mode = resolveDecisionMode(stored);
-  if (localAssistReady === true && decisionNeedsLocalAssist(stored, compass)) {
+  if (localAssistReady === true && decisionNeedsLocalAssist(stored, compass, feature)) {
     const config = selectedDecisionConfig({ ...stored, decisionProvider: 'webgpu_d1', decisionVisionMode: 'auto' }, null, true);
     return { ...config, doneEnabled: true, mode, source: 'local_assist', features: { ...AUTO_LOCAL_FEATURES } };
   }

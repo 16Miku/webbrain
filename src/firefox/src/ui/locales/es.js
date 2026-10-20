@@ -197,7 +197,7 @@ export default {
   'install.local_model.d1_downloading': 'Descargando D1, el modelo de decisión · {progress} %',
   'install.local_model.d1_paused': 'D1 en pausa al {progress} %.',
   'install.local_model.d1_ready': 'D1 está listo y responde en este dispositivo a las preguntas rápidas de WebBrain, como «¿Terminó esta tarea?».',
-  'install.local_model.d1_saved': 'D1 está guardado en este dispositivo. Para usarlo, elígelo en Ajustes, en Modelos de decisión.',
+  'install.local_model.d1_saved': 'D1 está guardado en este dispositivo.',
   'install.local_model.d1_unsupported': 'Esta GPU no puede ejecutar D1, así que WebBrain mantiene sus comprobaciones habituales.',
   'install.local_model.d1_error': 'D1 se detuvo: {error}',
 

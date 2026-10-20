@@ -141,7 +141,7 @@ export default {
   'install.local_model.d1_downloading': 'מוריד את D1, מודל ההחלטות · {progress}%',
   'install.local_model.d1_paused': 'D1 הושהה ב-{progress}%.',
   'install.local_model.d1_ready': 'D1 מוכן ועונה במכשיר הזה על השאלות המהירות של WebBrain, כמו „האם המשימה הסתיימה?”.',
-  'install.local_model.d1_saved': 'D1 נשמר במכשיר הזה. כדי להשתמש בו, בחרו בו בהגדרות, תחת מודלי החלטות.',
+  'install.local_model.d1_saved': 'D1 נשמר במכשיר הזה.',
   'install.local_model.d1_unsupported': 'ה-GPU הזה לא יכול להריץ את D1, ולכן WebBrain ממשיך בבדיקות הרגילות שלו.',
   'install.local_model.d1_error': 'D1 נעצר: {error}',
   "sp.status.disconnected": "לא מחובר",

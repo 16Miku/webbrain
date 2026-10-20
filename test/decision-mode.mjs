@@ -76,7 +76,7 @@ for (const build of ['chrome', 'firefox']) {
     for (const feature of config.DECISION_FEATURES) assert.equal(config.decisionFeatureEnabled(selected, feature), false, feature);
   });
 
-  test(`${build}: Auto with Compass keeps its managed completion checks and semantic decisions only`, () => {
+  test(`${build}: Auto with Compass and no D1 keeps its managed completion checks and semantic decisions only`, () => {
     const selected = config.resolveDecisionConfig({ systemOneFastBrowser: true, systemOneFastClassifications: true }, COMPASS, { localAssistReady: true });
     assert.equal(selected.provider, 'compass'); assert.equal(selected.source, 'compass'); assert.equal(selected.enabled, true);
     assert.deepEqual(selected.features, { ...NO_FEATURES, done: true, semantic: true });
@@ -213,7 +213,7 @@ for (const build of ['chrome', 'firefox']) {
     });
   });
 
-  test(`${build}: Auto uses a downloaded D1 for completion and scheduled checks only, never over Compass or a saved choice`, async () => {
+  test(`${build}: Auto uses a downloaded D1 for completion and scheduled checks only, Compass included, never over a saved choice`, async () => {
     const consent = { [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION };
     const local = config.resolveDecisionConfig({ ...consent, decisionVisionMode: 'off', decisionProvider: 'openrouter', systemOneFastBrowser: true }, null, { localAssistReady: true });
     assert.equal(local.provider, 'webgpu_d1'); assert.equal(local.source, 'local_assist'); assert.equal(local.mode, 'auto');
@@ -223,17 +223,36 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(local.features, { ...NO_FEATURES, done: true, watch: true, completion: true },
       'fast classifications, fast browser actions and semantic decisions stay with On');
     assert.equal(local.threshold, .9);
-    // The download alone, or consent alone, is not enough; Compass, Off and On keep their own answer.
+    // The download alone, or consent alone, is not enough; Off and On keep their own answer.
     assert.equal(config.resolveDecisionConfig(consent).source, 'none');
     assert.equal(config.resolveDecisionConfig({}, null, { localAssistReady: true }).source, 'none', 'no consent, no D1');
-    assert.equal(config.resolveDecisionConfig(consent, COMPASS, { localAssistReady: true }).provider, 'compass');
     assert.equal(config.resolveDecisionConfig({ ...consent, decisionMode: 'off' }, null, { localAssistReady: true }).enabled, false);
     const on = config.resolveDecisionConfig({ ...consent, decisionMode: 'on', decisionProvider: 'typesafe', typesafeApiKey: 'ts-key' }, null, { localAssistReady: true });
     assert.equal(on.provider, 'typesafe'); assert.equal(on.source, 'configured');
     assert.equal(config.decisionNeedsLocalAssist(consent), true);
-    for (const [stored, compass] of [[{}, null], [consent, COMPASS], [{ ...consent, decisionMode: 'on' }, null], [{ ...consent, decisionMode: 'off' }, null], [{ ...consent, systemOneEnabled: true }, null]]) {
+    for (const [stored, compass] of [[{}, null], [{}, COMPASS], [{ ...consent, decisionMode: 'on' }, null], [{ ...consent, decisionMode: 'off' }, COMPASS], [{ ...consent, systemOneEnabled: true }, null]]) {
       assert.equal(config.decisionNeedsLocalAssist(stored, compass), false, JSON.stringify([stored, compass]));
     }
+    // While Compass is the chat provider, a downloaded D1 is Auto's decision
+    // model for the checks it answers; Compass's managed model keeps the rest.
+    const withCompass = config.resolveDecisionConfig(consent, COMPASS, { localAssistReady: true });
+    assert.equal(withCompass.provider, 'webgpu_d1'); assert.equal(withCompass.source, 'local_assist');
+    assert.deepEqual(withCompass.features, local.features);
+    for (const feature of ['done', 'watch', 'completion']) {
+      assert.equal(config.decisionNeedsLocalAssist(consent, COMPASS, feature), true, feature);
+      const answered = config.resolveDecisionConfig(consent, COMPASS, { localAssistReady: true, feature });
+      assert.equal(answered.provider, 'webgpu_d1', feature);
+      assert.equal(config.decisionFeatureEnabled(answered, feature), true, feature);
+    }
+    for (const feature of ['semantic', 'classifications', 'browser']) {
+      assert.equal(config.decisionNeedsLocalAssist(consent, COMPASS, feature), false, feature);
+      assert.equal(config.resolveDecisionConfig(consent, COMPASS, { localAssistReady: true, feature }).provider, 'compass', feature);
+    }
+    assert.equal(config.decisionFeatureEnabled(config.resolveDecisionConfig(consent, COMPASS, { localAssistReady: true, feature: 'semantic' }), 'semantic'), true,
+      "semantic decisions stay on Compass's managed model");
+    // Without Compass, D1 answers only its own checks whatever is asked.
+    assert.equal(config.decisionNeedsLocalAssist(consent, null, 'semantic'), true);
+    assert.equal(config.decisionFeatureEnabled(config.resolveDecisionConfig(consent, null, { localAssistReady: true, feature: 'semantic' }), 'semantic'), false);
   });
 
   test(`${build}: the current configuration reads D1's download only when Auto could use it`, async () => {
@@ -242,11 +261,16 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(auto.provider, 'webgpu_d1'); assert.equal(auto.source, 'local_assist');
       assert.deepEqual(reads, ['ready.json'], 'one marker read, no Worker or GPU');
       reads.length = 0;
-      assert.equal((await availability.resolveCurrentDecisionConfig(consent, COMPASS)).provider, 'compass');
+      // While Compass is the chat provider, D1 answers Auto's checks too.
+      assert.equal((await availability.resolveCurrentDecisionConfig(consent, COMPASS)).provider, 'webgpu_d1');
+      assert.equal((await availability.resolveCurrentDecisionConfig(consent, COMPASS, { feature: 'done' })).provider, 'webgpu_d1');
+      assert.deepEqual(reads, ['ready.json', 'ready.json']);
+      reads.length = 0;
+      assert.equal((await availability.resolveCurrentDecisionConfig(consent, COMPASS, { feature: 'semantic' })).provider, 'compass');
       await availability.resolveCurrentDecisionConfig({ ...consent, decisionMode: 'off' });
       await availability.resolveCurrentDecisionConfig({ ...consent, decisionMode: 'on', decisionProvider: 'local' });
       assert.equal((await availability.resolveCurrentDecisionConfig({})).source, 'none');
-      assert.deepEqual(reads, [], 'Compass, Off, On and a profile without consent never look');
+      assert.deepEqual(reads, [], "Compass's own decisions, Off, On and a profile without consent never look");
     });
     await withD1Download(pin, { keepLoaded: false }, async ({ reads, consent }) => {
       assert.equal((await availability.resolveCurrentDecisionConfig(consent)).source, 'none', 'Unload, Remove and Off end what Auto uses');
@@ -270,8 +294,9 @@ for (const build of ['chrome', 'firefox']) {
       const run = (source, runMeta = {}) => h.manager._evaluateSystemOne({ source, prompt: 'Watch status', tabId: 77 }, '', 'success', { settings: consent, evidence, ...runMeta });
       assert.equal((await run('watch')).decision, 'keep', 'Auto checks a watch with the downloaded D1');
       assert.equal((await run('scheduled')).decision, 'keep');
-      assert.equal((await run('watch', { compass: COMPASS })).reason, 'disabled', 'Compass keeps watches with the main model');
-      assert.equal(calls, 2);
+      assert.equal((await run('watch', { compass: COMPASS })).decision, 'keep', 'D1 checks watches while Compass chats too');
+      assert.equal((await run('scheduled', { compass: COMPASS })).decision, 'keep');
+      assert.equal(calls, 4);
     });
     const saved = globalThis.chrome;
     const store = { [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION };
@@ -284,7 +309,11 @@ for (const build of ['chrome', 'firefox']) {
         const agent = new Agent({ getActive: () => ({ config: {} }) });
         assert.equal((await agent._jevSettings(1, { config: {} }, 'done'))?.decisionConfig.provider, 'webgpu_d1');
         for (const feature of ['semantic', 'classifications', 'browser']) assert.equal(await agent._jevSettings(1, { config: {} }, feature), null, feature);
-        assert.equal(await agent._jevSettings(1, { config: { providerName: 'webbrain-cloud', baseUrl: COMPASS.baseUrl } }, 'watch'), null, 'Compass first');
+        const compassProvider = { config: { providerName: 'webbrain-cloud', baseUrl: COMPASS.baseUrl } };
+        assert.equal((await agent._jevSettings(1, compassProvider, 'watch'))?.decisionConfig.provider, 'webgpu_d1', 'D1 first, Compass or not');
+        assert.equal((await agent._jevSettings(1, compassProvider, 'semantic'))?.decisionConfig.provider, 'compass',
+          "Compass's managed model keeps semantic decisions");
+        for (const feature of ['classifications', 'browser']) assert.equal(await agent._jevSettings(1, compassProvider, feature), null, feature);
       });
     } finally {
       globalThis.chrome = globalThis.browser = saved;

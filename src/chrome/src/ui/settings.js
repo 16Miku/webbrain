@@ -270,9 +270,10 @@ function syncWebgpuDecisionProvider() {
   if (systemOneApiKeyInput) systemOneApiKeyInput.disabled = fixed;
 }
 
-// Auto, On or Off. Auto uses Compass's managed model while Compass is
-// the chat provider. Only On shows the provider fields and the per-decision
-// switches, so the card asks nothing until someone wants to configure it.
+// Auto, On or Off. Auto uses a downloaded D1, or else Compass's managed model
+// while Compass is the chat provider. Only On shows the provider fields and the
+// per-decision switches, so the card asks nothing until someone wants to
+// configure it.
 const decisionModeInputs = [...document.querySelectorAll('input[name="decision-mode"]')];
 function selectedDecisionMode() {
   return decisionModeInputs.find(input => input.checked)?.value || 'auto';
@@ -312,12 +313,12 @@ async function syncDecisionStatus() {
   // Strict Secret Mode keeps page content away from every decision model, so Auto has nothing to use.
   const strict = strictSecretModeOn;
   const compass = !strict && activeProviderIsCompass();
-  // Without Compass, Auto uses D1 once it is downloaded (decision-availability.js).
-  const local = !strict && !compass
+  // Auto uses D1 once it is downloaded, Compass or not (decision-availability.js).
+  const local = !strict
     && (await chrome.storage.local.get(D1_CONSENT_KEY).catch(() => ({})))?.[D1_CONSENT_KEY] === D1_CONSENT_VERSION
     && await d1LocalAssistReady();
   if (sequence !== decisionStatusSequence || selectedDecisionMode() !== 'auto') return;
-  const key = strict ? 'st.decision.status.strict' : compass ? 'st.decision.status.compass' : local ? 'st.decision.status.local' : 'st.decision.status.none';
+  const key = strict ? 'st.decision.status.strict' : local ? 'st.decision.status.local' : compass ? 'st.decision.status.compass' : 'st.decision.status.none';
   if (status) {
     status.dataset.i18n = key;
     status.dataset.state = compass || local ? 'active' : 'inactive';
@@ -338,7 +339,7 @@ for (const input of decisionModeInputs) {
     const legacyFeatures = materializeLegacyDecisionFeatures(await chrome.storage.local.get(DECISION_SETTINGS_KEYS));
     await chrome.storage.local.set({ ...legacyFeatures, [DECISION_MODE_KEY]: mode, systemOneEnabled: mode === 'on' });
     // Off ends D1's Download or Load; Auto keeps it, since Auto uses a
-    // downloaded D1 while Compass is not the chat provider.
+    // downloaded D1.
     if (mode === 'off') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     showSystemOneResult('ok', t('st.providers.saved'));
   });

@@ -110,10 +110,11 @@ requests.
 Providers → Decision has three decision-model modes. **Auto** (the
 default) sends nothing anywhere new: it uses D1 on the device once D1 is
 downloaded (with its explicit consent, on the Providers page or from the Chrome
-install guide), for completion and scheduled checks only, and while Compass is
-the conversation provider Compass's managed Cloud decision route answers
-completion checks and semantic decisions as before. With neither, no decision
-model is used. A downloaded chat or vision model never enables decisions.
+install guide), for completion and scheduled checks only, whatever the
+conversation provider. While Compass is the conversation provider, Compass's
+managed Cloud decision route answers semantic decisions as before, and
+completion checks too until D1 is downloaded. With neither, no decision model
+is used. A downloaded chat or vision model never enables decisions.
 **Off** uses none, Compass's included.
 **On** selects OpenRouter, TypeSafe, a local/custom System One endpoint, D1 or
 the in-browser chat model; completion verification, watch checks, scheduled

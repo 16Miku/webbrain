@@ -125,7 +125,7 @@ export default {
   'install.local_model.d1_downloading': 'Đang tải D1, mô hình quyết định · {progress}%',
   'install.local_model.d1_paused': 'D1 đã tạm dừng ở {progress}%.',
   'install.local_model.d1_ready': 'D1 đã sẵn sàng và trả lời ngay trên thiết bị này những câu hỏi nhanh của WebBrain, như “Tác vụ này xong chưa?”.',
-  'install.local_model.d1_saved': 'D1 đã được lưu trên thiết bị này. Để dùng, hãy chọn nó trong Cài đặt, mục Mô hình quyết định.',
+  'install.local_model.d1_saved': 'D1 đã được lưu trên thiết bị này.',
   'install.local_model.d1_unsupported': 'GPU này không chạy được D1, nên WebBrain giữ các bước kiểm tra thông thường.',
   'install.local_model.d1_error': 'D1 đã dừng: {error}',
 
