@@ -30316,7 +30316,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           } catch { return []; }
         })();
         const valueOf = el => {
-          if (el === pendingEl && pendingValue != null) return String(pendingValue);
+          // set_field({submit, clear:false}) appends to what the field holds.
+          if (el === pendingEl && pendingValue != null) {
+            const appended = toolName === 'set_field' && args?.clear === false;
+            const existing = el?.isContentEditable && !('value' in el) ? String(el.textContent || '') : String(el?.value ?? '');
+            return appended ? existing + String(pendingValue) : String(pendingValue);
+          }
           const type = String(el?.type || '').toLowerCase();
           if (type === 'checkbox' || type === 'radio') return `${el.checked ? 1 : 0}:${el.value ?? ''}`;
           if (type === 'file') return Array.from(el.files || []).map(file => [file.name, file.size, file.lastModified, file.type].join(':')).join('|');
@@ -30329,8 +30334,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // named "action" cannot stand in for the form's.
         const destination = ['formaction', 'formmethod', 'formenctype', 'formtarget']
           .map(name => [submitter?.getAttribute?.(name) ?? null, form?.getAttribute?.(name.slice(4)) ?? null]);
+        // A disabled control (its own or its fieldset's) is not sent, so the
+        // state is part of what goes out.
+        const disabled = el => { try { return el?.matches?.(':disabled') === true; } catch { return false; } };
         const sent = window.__wbSubmissionValueKey + JSON.stringify([destination, controls.map(el => [
-          String(el?.getAttribute?.('name') || ''), String(el?.type || el?.tagName || ''), valueOf(el)])]);
+          String(el?.getAttribute?.('name') || ''), String(el?.type || el?.tagName || ''), disabled(el), valueOf(el)])]);
         // cyrb53, a 53-bit string hash; the frame's key makes it opaque.
         let h1 = 0xdeadbeef;
         let h2 = 0x41c6ce57;

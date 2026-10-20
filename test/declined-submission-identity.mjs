@@ -81,6 +81,23 @@ for (const build of ['chrome', 'firefox']) {
             assert.notEqual((await probe('click', { selector: '#go' })).submissionIdentity, previous, `a new ${name}`);
           }
         });
+
+        await t.test('an append-mode set_field and a disabled field change what goes out', async () => {
+          await page.setContent('<form method="post" action="/notes">'
+            + '<input id="note" name="note" aria-label="Note" value="first"><input id="extra" name="extra" aria-label="Extra" value="kept">'
+            + '<button id="go">Save</button></form>');
+          await page.evaluate(() => { window.__wb_ax_lookup = ref => (ref === 'ref_note' ? document.querySelector('#note') : null); });
+          const submit = args => probe('set_field', { ref_id: 'ref_note', text: ' more', submit: true, ...args });
+          const appendFirst = (await submit({ clear: false })).submissionIdentity;
+          const replaceFirst = (await submit({})).submissionIdentity;
+          await page.evaluate(() => { document.querySelector('#note').value = 'second'; });
+          assert.notEqual((await submit({ clear: false })).submissionIdentity, appendFirst, 'appending to other text sends other text');
+          assert.equal((await submit({})).submissionIdentity, replaceFirst, 'replacing the text sends the same text');
+          // A field the page disables is no longer sent.
+          const enabled = (await probe('click', { selector: '#go' })).submissionIdentity;
+          await page.evaluate(() => { document.querySelector('#extra').disabled = true; });
+          assert.notEqual((await probe('click', { selector: '#go' })).submissionIdentity, enabled, 'a disabled field');
+        });
       } finally {
         await browser.close();
       }
