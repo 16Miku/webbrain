@@ -43776,8 +43776,9 @@ test('public Apocalypse Mode guide and launch essay document the offline boundar
     'docs: the guide should distinguish preparation downloads from offline operation');
   assert.match(guide, /Chromium, with compatible WebGPU hardware[\s\S]*?Firefox[\s\S]*?Chromium-only WebGPU text and vision download stack is not shown/,
     'docs: the guide should state the browser-specific WebGPU boundary');
-  assert.match(guide, /LiquidAI\/LFM2\.5-2\.6B-ONNX[\s\S]*?does not silently change the provider/,
-    'docs: the local text model should be named without implying global provider selection');
+  assert.match(guide, /webbrain-one\/webbrain-compass-vld-tiny-v5-onnx[\s\S]*?does not silently change the provider/,
+    'docs: the default local text model should be named without implying global provider selection');
+  assert.match(chineseGuide, /webbrain-one\/webbrain-compass-vld-tiny-v5-onnx/, 'docs: the Chinese guide names the same default text model');
   assert.match(guide, /about 810 MB[\s\S]*?WebBrain VL 2 450M/,
     'docs: the shipped local vision model and approximate download size should be current');
   assert.match(guide, /Wikipedia reader[\s\S]*?Emergency Box[\s\S]*?Medical guidance becomes outdated/,
