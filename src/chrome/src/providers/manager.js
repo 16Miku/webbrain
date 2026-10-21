@@ -7,17 +7,17 @@ import { VertexAnthropicProvider } from './vertex-anthropic.js';
 import { signOutClaude } from './oauth-claude.js';
 import { AwsBedrockProvider } from './aws-bedrock.js';
 import {
-  WebGPUBonsaiVisionProvider,
+  WebGPUChatVisionProvider,
   WebGPUProvider,
   WebGPUVisionProvider,
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  WEBGPU_DEFAULT_MODEL_ID,
   WEBGPU_DTYPE,
   WEBGPU_MODEL_ID,
   WEBGPU_RUNTIME_BITGPU,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
-  WEBGPU_VISION_BONSAI_MODEL_ID,
   WEBGPU_VISION_CHOICE_AUTO,
-  WEBGPU_VISION_CHOICE_BONSAI,
+  WEBGPU_VISION_CHOICE_COMPASS_VLD,
   WEBGPU_VISION_CHOICE_KEY,
   WEBGPU_VISION_CHOICE_WEBBRAIN_VL,
   WEBGPU_VISION_CHOICES,
@@ -27,6 +27,7 @@ import {
   WEBGPU_VISION_ENABLED_KEY,
   WEBGPU_VISION_MODEL_ID,
   hasWebgpuVisionCache,
+  isWebgpuChatVisionChoice,
   resolveWebgpuVisionChoice,
   storedWebgpuVisionChoice,
   normalizeWebgpuModelId,
@@ -34,8 +35,9 @@ import {
   webgpuModelDtype,
   webgpuModelPreset,
   webgpuModelRuntime,
+  webgpuVisionChoiceModelId,
 } from './webgpu.js';
-import { isLocalAssistModelReady } from './webgpu-model-cache.js';
+import { hasWebgpuTextModelCache, webgpuChatVisionReadiness } from './webgpu-model-cache.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
 import { purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
 import {
@@ -727,13 +729,13 @@ export class ProviderManager {
         label: 'WebGPU (In-browser)',
         providerName: 'webgpu',
         baseUrl: '',
-        model: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+        model: WEBGPU_DEFAULT_MODEL_ID,
         device: 'webgpu',
-        dtype: WEBGPU_DTYPE,
+        dtype: webgpuModelDtype(WEBGPU_DEFAULT_MODEL_ID),
         contextWindow: 32768,
         promptTier: 'compact',
         supportsAskStreaming: false,
-        supportsVision: false,
+        supportsVision: true,
         enabled: true,
       },
       azure_openai: {
@@ -1716,16 +1718,16 @@ export class ProviderManager {
 
   /**
    * The Chrome-only in-browser vision model, only when the stored choice
-   * resolves to a model that is ready. Auto uses Ternary Bonsai 2 2B Vision
-   * once it is downloaded; WebBrain VL 2 450M still needs its explicit,
-   * consented enable from Settings.
+   * resolves to a model that is ready. Auto uses Compass VLD Tiny v5 once it is
+   * downloaded (Ternary Bonsai 2 2B Vision when only that is); WebBrain VL 2
+   * 450M still needs its explicit, consented enable from Settings.
    */
   async getLocalVisionFallbackProvider() {
     try {
       const readiness = await this.getWebgpuVisionReadiness();
       if (readiness.enabled && readiness.consented && readiness.status === 'ready') {
-        return readiness.modelId === WEBGPU_VISION_BONSAI_MODEL_ID
-          ? new WebGPUBonsaiVisionProvider()
+        return isWebgpuChatVisionChoice(readiness.model)
+          ? new WebGPUChatVisionProvider({ model: readiness.modelId })
           : new WebGPUVisionProvider();
       }
     } catch (e) {
@@ -1742,9 +1744,9 @@ export class ProviderManager {
       WEBGPU_VISION_CONSENT_VERSION_KEY,
     ]);
     const choice = storedWebgpuVisionChoice(stored);
-    // One Cache Storage lookup; it never starts the offscreen document.
-    const bonsaiReady = await isLocalAssistModelReady().catch(() => false);
-    return { choice, model: resolveWebgpuVisionChoice(choice, { bonsaiReady }), bonsaiReady };
+    // Cache Storage lookups only; they never start the offscreen document.
+    const { compassVldReady, bonsaiReady } = await webgpuChatVisionReadiness();
+    return { choice, model: resolveWebgpuVisionChoice(choice, { compassVldReady, bonsaiReady }), compassVldReady, bonsaiReady };
   }
 
   /**
@@ -1774,20 +1776,22 @@ export class ProviderManager {
    * shape for both models. Auto without Bonsai and Off report `disabled`.
    */
   async getWebgpuVisionReadiness() {
-    const { choice, model, bonsaiReady } = await this.getWebgpuVisionChoice();
-    if (model === WEBGPU_VISION_CHOICE_BONSAI) {
-      // A Bonsai download is the chat preset's transfer; its progress lives
+    const { choice, model, compassVldReady, bonsaiReady } = await this.getWebgpuVisionChoice();
+    if (isWebgpuChatVisionChoice(model)) {
+      // A chat preset's download is that preset's transfer; its progress lives
       // with the text model, so this cheap check reports only ready or not.
+      const ready = model === WEBGPU_VISION_CHOICE_COMPASS_VLD ? compassVldReady : bonsaiReady;
       return {
         enabled: true,
         consented: true,
-        status: bonsaiReady ? 'ready' : 'not-downloaded',
-        progress: bonsaiReady ? 100 : 0,
+        status: ready ? 'ready' : 'not-downloaded',
+        progress: ready ? 100 : 0,
         loaded: 0,
         total: 0,
         error: '',
         updatedAt: 0,
-        modelId: WEBGPU_VISION_BONSAI_MODEL_ID,
+        modelId: webgpuVisionChoiceModelId(model),
+        model,
         choice,
       };
     }
@@ -1803,7 +1807,7 @@ export class ProviderManager {
       total: 0,
       error: '',
       updatedAt: 0,
-      modelId: choice === WEBGPU_VISION_CHOICE_AUTO ? WEBGPU_VISION_BONSAI_MODEL_ID : WEBGPU_VISION_MODEL_ID,
+      modelId: choice === WEBGPU_VISION_CHOICE_AUTO ? webgpuVisionChoiceModelId(WEBGPU_VISION_CHOICE_COMPASS_VLD) : WEBGPU_VISION_MODEL_ID,
       choice,
     };
   }
@@ -1995,12 +1999,34 @@ export class ProviderManager {
     return this._webgpuProvider().downloadStatus(msg);
   }
 
-  /** Start the selected shipped Apocalypse chat model, defaulting to Compass. */
+  /**
+   * Compass VLD Tiny v5 replaced Compass Tiny v2.1 as the WebGPU default.
+   * Older releases stored every built-in provider's defaults, so a stored
+   * Compass Tiny v2.1 is not a choice by itself. Only a configuration nobody
+   * set up moves: not marked configured, not the active provider, and Compass
+   * Tiny v2.1 never downloaded here (an unreadable cache keeps it). Returns
+   * whether it moved.
+   */
+  async migrateUntouchedWebgpuDefault() {
+    const config = this.providers.get('webgpu')?.config;
+    if (!config || config.configured === true || this.activeProviderId === 'webgpu') return false;
+    if (String(config.model || '').trim() !== WEBGPU_COMPASS_TINY_V2_MODEL_ID) return false;
+    if (await hasWebgpuTextModelCache(WEBGPU_COMPASS_TINY_V2_MODEL_ID) !== false) return false;
+    await this.updateProvider('webgpu', {
+      model: WEBGPU_DEFAULT_MODEL_ID,
+      dtype: webgpuModelDtype(WEBGPU_DEFAULT_MODEL_ID),
+      contextWindow: 32768,
+      supportsVision: true,
+    }, { markConfigured: false });
+    return true;
+  }
+
+  /** Start the selected shipped Apocalypse chat model, defaulting to Compass VLD Tiny v5. */
   async enableAndStartWebgpuTextDownload() {
     try {
       const currentModel = this.getAll().webgpu?.model;
       const preset = webgpuModelPreset(currentModel);
-      const model = preset?.id || WEBGPU_COMPASS_TINY_V2_MODEL_ID;
+      const model = preset?.id || WEBGPU_DEFAULT_MODEL_ID;
       const dtype = preset?.dtype || webgpuModelDtype(model, WEBGPU_DTYPE);
       await this.updateProvider('webgpu', {
         model,

@@ -156,6 +156,76 @@ Use the tools in `scripts/models/bonsai/`:
   native vision parity only while its encoder hashes still match.
 - `build_vision.py` applies the rewrite on full rebuilds.
 
+## Compass VLD Tiny v5
+
+The default in-browser model,
+[`webbrain-one/webbrain-compass-vld-tiny-v5-onnx`](https://huggingface.co/webbrain-one/webbrain-compass-vld-tiny-v5-onnx)
+(about 2.2 GB), is WebBrain's fine-tune of
+[MiniCPM-V-4.7-1B](https://huggingface.co/openbmb/MiniCPM-V-4.7-1B): a SigLIP
+vision tower with a merger that downsamples 16 times, and a language model with
+Qwen3.5-0.8B's topology (18 GatedDeltaNet and 6 full-attention layers). One
+model serves chat and tool calls, screenshots (the vision fallback and tiny
+Ask) and decisions. Its training data and evaluations are on the model card.
+
+- **Runtime.** Transformers.js has neither a MiniCPM-V model class nor its
+  processor, so `src/chrome/src/offscreen/compass-vld-runtime.js` drives the
+  three graphs with ONNX Runtime Web directly, in the same worker, model
+  queue and Cache Storage as the other presets:
+  - `embed_tokens` (Q8): token embeddings.
+  - `vision_encoder` (FP16): crops to image features.
+  - `decoder_model_merged` (Q8): a chunked GatedDeltaNet prefill (no `Scan`),
+    last-position `logits` and `decision_hidden`, and the recurrent,
+    convolution and KV cache in and out.
+
+  It ports the processor: slicing a screenshot into up to nine crops plus a
+  thumbnail, Pillow-compatible bicubic resampling, the image placeholders and
+  the canvas M-RoPE positions. Token ids and positions match the PyTorch
+  processor, and resampled pixels differ by at most 2/255 on about 0.01% of
+  values. `test/compass-vld-runtime.mjs` checks the crops, placeholders and
+  positions against a PyTorch reference for synthetic images
+  (`test/fixtures/compass-vld-processor.json`). The tokenizer is
+  Transformers.js's `Qwen2Tokenizer`, built from the cached files rather than
+  by `AutoTokenizer.from_pretrained`, which first looks for
+  `tokenizer_config.json` at revision `main`: the pinned download never
+  caches that, so the lookup would go to Hugging Face on every load and fail
+  offline. With the published files it renders the reference's prompts and
+  produces its token ids exactly. Decoding is greedy with thinking off; tool
+  calls use Qwen3.5's XML format.
+- **Download.** Files are read at a pinned commit (`COMPASS_VLD_REVISION`),
+  one at a time. Each is stored only once it arrived whole and is then
+  checked against its pinned size and SHA-256; a mismatch removes it and
+  fails the download. A dropped connection or a server error retries that
+  file twice. Inference reads only the cache.
+- **Checks on the published files** (RTX 5090, Chromium through Playwright):
+  - `audit_webgpu_onnx.py` passes for every graph: no `Scan` or `Loop`, and
+    decoder logits of shape `[batch, 1, 248094]`.
+  - `check-bonsai-webgpu.mjs --vision --image-history --offline`, with
+    Hugging Face fetches blocked: the sum, the tool call and its result,
+    each image's colour and shape, and the second image picked from a
+    two-image history all passed, as did the same run with `--ocr` (the
+    four-character code printed in each ~1 MP image). The first answer
+    took about 6 s, loading the model from the cache included; the others
+    took 0.2–1.2 s.
+  - `check-webgpu-long-prompts.mjs --vision` (up to 48 new tokens, decode
+    included; the answers were identical with and without slices):
+
+    | Prompt tokens | One pass | 512-token slices |
+    |---|---|---|
+    | 1k | 1.0 s | 1.0 s |
+    | 4k | 1.6 s | 1.8 s |
+    | 8k | 2.5 s | 4.3 s |
+    | 1k with a screenshot | 0.8 s | 0.6 s |
+  - `check-webgpu-ask.mjs`: 20/20 tasks in 28 s, every one through tiny Ask
+    in one call; the six image tasks took a screenshot and the text tasks
+    none. Two answers passed the loose checks but are worth watching: the
+    Act request answered that it would click the button instead of saying
+    Ask cannot act, and the Turkish and Spanish image questions were
+    answered in English.
+  - Decisions and the tiny Ask screenshot gate are below.
+- **Memory.** About 2.2 GB of weights, about 12 KB of FP16 KV per token in
+  its six attention layers, and a fixed recurrent state in the GatedDeltaNet
+  layers.
+
 ## Runtime behaviour to keep
 
 - **Tiny Ask** (`src/chrome/src/agent/tiny-ask.js`). A side-panel Ask turn
@@ -172,9 +242,11 @@ Use the tools in `scripts/models/bonsai/`:
   - Page text is ephemeral: durable history keeps only the question, and each
     turn reads the page again. Offline Wikipedia and Emergency Box references
     are added only when there is no page text.
-  - When the model reads images (Ternary Bonsai 2 2B Vision), a question
-    can also get a screenshot of the visible page. The model decides, so it
-    works in any language and there are no word lists (`tinyAskScreenshotGate`).
+  - When the model reads images (Compass VLD Tiny v5 or Ternary Bonsai 2 2B
+    Vision), a question can also get a screenshot of the visible page. The
+    model decides, so it works in any language and there are no word lists
+    (`tinyAskScreenshotGate`). The numbers below are Bonsai's; Compass VLD
+    Tiny v5's follow them.
     - Before the answer, one Yes/No readout on the same model returns a logit
       margin and the decoder's last-position state. It costs about 0.22 s on
       the RTX 5090 and generates no text.
@@ -208,10 +280,29 @@ Use the tools in `scripts/models/bonsai/`:
       screenshot alone never suppresses offline references. With an attached
       image both images can be sent, when the readout says the page is needed
       too.
+    - Compass VLD Tiny v5 has its own probe (1,026 weights, in the same file).
+      Its untrained readout scored 44/72 on the hand-written test, answering
+      yes to 6 of the 34 visual questions. A probe trained like Bonsai's scored
+      72/72 there but caught only 24 of the 73 visual follow-ups below: its
+      training had no short follow-ups such as "And the button?". The shipped
+      probe adds them (`gate_dataset.py --follow-ups`: about 320 short
+      follow-ups from templates in the same 11 languages, phrased unlike the
+      follow-up sets below, split 80/20 on their own). On the RTX 5090:
+      - Validation (generated templates, follow-ups included): 175/181.
+      - Hand-written test: 69/72, all 34 visual questions and 3/38 false
+        "yes", all three short requests in languages absent from training
+        (pl, vi, hi); 25/28 in those languages.
+      - Through the extension, the questions in
+        `check-tiny-ask-screenshot-gate.mjs`: 24/24 visual, 1/31 false "yes"
+        ("Ada Lovelace kimdir?" on a page with almost no text).
+      - Through the extension, follow-ups at 0.4: 22/30 visual and 0/30
+        false "yes" on the set the bar was chosen on, 11/17 and 1/25 on the
+        pronoun set, 24/26 and 0/26 on the set checked afterwards.
+      - The readout takes about 0.11 s (median), against 0.22 s for Bonsai.
     - If the readout fails, the turn stays text-only. That includes a model
-      that cannot run it (only Bonsai 2 2B Vision can) and a cached decoder
-      graph from before `decision_hidden`. There is no fallback to the
-      untrained readout.
+      without a trained probe (only Compass VLD Tiny v5 and Bonsai 2 2B Vision
+      have one) and a cached decoder graph from before `decision_hidden`.
+      There is no fallback to the untrained readout.
     - The capture is the same as automatic screenshots: redaction, size
       budget and the per-turn limit. It is ephemeral like page text, and it
       never goes to a separate vision model.
@@ -234,9 +325,10 @@ Use the tools in `scripts/models/bonsai/`:
   - Do not add tools or instructions back to this profile without
     re-running `scripts/check-webgpu-ask.mjs`. Every token is prefilled again
     on every call, and a 2B model picks tools unreliably.
-- **Sliced prefill.** For the Bonsai 2 Vision presets the worker prefills
-  long prompts in 512-token slices that carry the recurrent, conv and KV
-  cache, then lets `generate()` continue from that cache.
+- **Sliced prefill.** For the Bonsai 2 Vision presets and Compass VLD Tiny v5
+  the worker prefills long prompts in 512-token slices that carry the
+  recurrent, conv and KV cache, then continues decoding from that cache
+  (`generate()` for Bonsai, `CompassVldRuntime.generate` for Compass VLD).
   - Answers match a single pass up to FP16 rounding. In the RTX 5090 runs,
     most sliced greedy answers were identical over 48 tokens. The rest
     matched for the first 30–39 words, then picked a different but
@@ -254,31 +346,26 @@ Use the tools in `scripts/models/bonsai/`:
     shared GPUs.
 - **Cache-only inference.** Chat never downloads. Only explicit download or
   preload flows fetch model files: Providers → WebGPU, Apocalypse
-  Mode, and the first-install page (Chrome), which offers Ternary Bonsai 2 2B
-  Vision and D1, the decision model, behind its optional "Download local
-  models" button. D1 downloads first, in its own worker, and Bonsai follows
-  once D1's download is over (or at once when D1 cannot download here),
-  queued in the background so it follows even after the page is closed;
-  while D1's download runs, the button pauses or resumes it and the progress
-  bar follows it, and D1's progress has a line of its own. Once the chat model is
-  ready, the same button starts, pauses, resumes or retries D1 alone. The
-  install page checks for
-  hardware WebGPU before fetching anything (D1 runs its own adapter check, and
-  a GPU it cannot use moves straight on to Bonsai), never changes the
+  Mode, and the first-install page (Chrome), which offers Compass VLD Tiny v5
+  behind its optional "Download local models" button: one 2.2 GB download
+  that chats, reads screenshots and answers decisions. The install page
+  checks for hardware WebGPU before fetching anything, never changes the
   active provider or the decision settings, and only points an idle WebGPU
-  provider at Bonsai when the configured model is not already downloaded.
-  Auto decisions then use D1, not Bonsai, whatever the chat provider
-  ([`providers-and-models.md`](providers-and-models.md#decision-models)).
+  provider at the model when the configured model is not already downloaded.
+  Auto decisions and Auto in-browser vision then use it, whatever the chat
+  provider ([`providers-and-models.md`](providers-and-models.md#decision-models)).
+  The page no longer downloads D1 or Ternary Bonsai 2 2B Vision.
 
 ## Decisions on WebGPU
 
 Two on-device paths answer typed decision questions (`choice`, `noul`,
 `score`) without generating text. `scripts/check-webgpu-decisions.mjs` runs
-both through the real extension on the same labelled questions:
+them through the real extension on the same labelled questions (`--engines`
+takes `d1`, `compass-vld` and `bonsai`):
 
 ```bash
 node scripts/check-webgpu-decisions.mjs --test <final_test.json> --images <dir> \
-  --engines d1,bonsai --stress --download --profile <fresh profile> \
+  --engines d1,compass-vld --stress --download --profile <fresh profile> \
   --adapter-luid 0,82094 --output result.json
 ```
 
@@ -306,9 +393,11 @@ The labelled set is d1's balanced-V3 held-out test (72 synthetic screenshots,
     onnxruntime-node, both packages, scored against the labels) and
     `scripts/models/d1/package_fp16.py`.
 - **The chat model as a decision model** (`src/chrome/src/offscreen/webgpu-decisions.js`,
-  `bonsai-decision-probe.js`). Ternary Bonsai 2 2B Vision prefills the state
-  and screenshots once and appends each question as a short continuation of
-  that cache; nothing generates text.
+  `compass-vld-decision-probe.js`, `bonsai-decision-probe.js`). The model
+  prefills the state and screenshots once and appends each question as a
+  short continuation of that cache; nothing generates text. Compass VLD Tiny
+  v5 answers agent decisions; Ternary Bonsai 2 2B Vision, the first chat
+  model used this way, only answers diagnostic fixtures now.
   - The zero-shot readout (option-code token probabilities, the Perplexity
     decider's readout) follows the answer format but never says "unknown"
     for completion: it called 30 of 48 pending or failed views completed. A
@@ -321,38 +410,55 @@ The labelled set is d1's balanced-V3 held-out test (72 synthetic screenshots,
     chosen on validation. The 2B decoder graph exposes that state as
     `decision_hidden` (`scripts/models/bonsai/add_decision_hidden.py`);
     logits and caches are unchanged.
-  - Ternary is currently disabled as an agent decision provider, including
-    saved explicit selections and Auto with downloaded weights. Real trace
-    replays produced confident false failures; simplifying the question or
-    using the raw token readout also produced confident false completions on
-    wrong destinations and unsubmitted drafts. The synthetic results below
-    do not establish reliability on real browser tasks.
-  - Completion checks no longer start Ternary's former 15-second decision
-    request. Auto gives its former slot to D1: once D1 is downloaded, D1
-    answers completion and scheduled checks, in place of Compass's managed
-    route too, and a positive answer still needs independent proof;
-    otherwise Compass's managed route or the active chat model checks. Ternary chat and screenshot
-    reading remain available. The diagnostic fixture/readout path is retained
-    for evaluating a future replacement; its results do not authorize actions.
+  - Ternary is disabled as an agent decision provider. Real trace replays
+    produced confident false failures; simplifying the question or using the
+    raw token readout also produced confident false completions on wrong
+    destinations and unsubmitted drafts. Its chat and screenshot reading
+    remain available, and its diagnostic fixture path stays for comparison.
+  - **Compass VLD Tiny v5** replaces it. Unlike Bonsai's frozen backbone, the
+    model itself was fine-tuned on d1's train split in this protocol (the
+    verify continuation above, among its chat and screenshot data), and the
+    same 1,025-parameter probe shape reads its margins and
+    `decision_hidden`; the probe's weights on the hidden state came out
+    small, so the score is close to the scaled Yes margin. In Chrome, Auto
+    uses it once it is downloaded, before a downloaded D1, for completion and
+    scheduled checks, in place of Compass's managed route too; a saved On
+    selection of the in-browser chat model uses it for every decision. A
+    positive completion still needs independent proof, and the first decision
+    after a browser restart, which loads the model, can exceed the judge's
+    15-second deadline and fall back to the existing chain.
+  - d1's test families are disjoint from its train families but come from
+    the same generator, so the synthetic results below favour the models
+    trained on that split (d1 and Compass VLD Tiny v5) and do not establish
+    reliability on real browser tasks. Validate on real traces before relying
+    on the margins.
 
 
 Results on the held-out test, RTX 5090, through the extension:
 
-| | d1 FP32, main | d1 FP16, new runtime | Bonsai 2B readout, no training | Bonsai 2B + probe |
-|---|---:|---:|---:|---:|
-| Categorical | 92/126 | 92/126 | 74/126 | 110/126 |
-| Completion found | 22/24 | 22/24 | 24/24 | 21/24 |
-| False completions | 1/48 | 1/48 | 30/48 | 4/48 |
-| Unknown recognized | 23/24 | 23/24 | 0/24 | 20/24 |
-| Other choice / yes-no | 10/36, 13/18 | 10/36, 13/18 | 18/36, 14/18 | 29/36, 16/18 |
-| Score MAE | 0.574 | 0.573 | 0.459 | 0.724 |
-| Latency p50 / p95 (s per request) | 0.83 / 0.97 | 0.75 / 0.88 | 1.65 / 2.16 | 2.25 / 2.81 |
-| 16 questions on 1k / 2k / 4k / 8k-token states | ok / fail / fail / fail | all ok | not run | not run |
+| | d1 FP32, main | d1 FP16, new runtime | Bonsai 2B readout, no training | Bonsai 2B + probe | Compass VLD Tiny v5 + probe |
+|---|---:|---:|---:|---:|---:|
+| Categorical | 92/126 | 92/126 | 74/126 | 110/126 | 120/126 |
+| Completion found | 22/24 | 22/24 | 24/24 | 21/24 | 24/24 |
+| False completions | 1/48 | 1/48 | 30/48 | 4/48 | 0/48 |
+| Unknown recognized | 23/24 | 23/24 | 0/24 | 20/24 | 24/24 |
+| Other choice / yes-no | 10/36, 13/18 | 10/36, 13/18 | 18/36, 14/18 | 29/36, 16/18 | 33/36, 15/18 |
+| Score MAE | 0.574 | 0.573 | 0.459 | 0.724 | 0.147 |
+| Latency p50 / p95 (s per request) | 0.83 / 0.97 | 0.75 / 0.88 | 1.65 / 2.16 | 2.25 / 2.81 | 0.89 / 1.25 |
+| 16 questions on 1k / 2k / 4k / 8k-token states | ok / fail / fail / fail | all ok | not run | not run | not run |
 
-- At WebBrain's 0.9 completion threshold d1 is still the better completion
-  verifier (22 found, 1 false against 19 and 4); the probe is better on every
-  other question type and better calibrated overall (test NLL 1.04 against
-  1.38). Score questions got worse with the probe (18 test questions).
+Compass VLD Tiny v5 was measured through extension 42.3.1 with this change
+(`--engines compass-vld`, Q8 language model, FP16 vision encoder): its
+first request, which loads the model, took 4.7 s, and the Providers test
+through the judge, provider and worker passed with its two pixel facts in
+2.0 s. A request's prefill (a median of about 500 tokens with the
+screenshot) took about 0.38 s and its questions about 0.5 s.
+
+- At WebBrain's 0.9 completion threshold d1 was the better completion
+  verifier than Bonsai's probe (22 found, 1 false against 19 and 4); the
+  probe is better on every other question type and better calibrated overall
+  (test NLL 1.04 against 1.38). Score questions got worse with the probe (18
+  test questions).
 - All of these are synthetic, AI-labelled screens from one generator; the
   probe and d1 were trained on the same train split. Neither result
   establishes real-site quality.
@@ -400,3 +506,12 @@ change in place, as the Bonsai 2 Vision decoders did:
   a rewritten text repository or point the preset at a passing graph.
 - Selection shortcuts (context-menu "explain", "summarize" and similar) on
   in-browser models still use the full Ask system prompt, without tools.
+- Compass VLD Tiny v5's decision results come from d1's synthetic test.
+  Replay real traces, the evidence that disabled Ternary's decisions, before
+  relying on its margins.
+- The install guide no longer has D1's line, so its D1-first download path
+  (`initializeD1Download` in `ui/install.js`, `providers/install-download-queue.js`)
+  is unused; remove it or give the guide D1 back.
+- Compass VLD Tiny v5's Q4 graphs (about 1.7 GB with the FP16 vision encoder, pinned in the runtime)
+  could back a lighter preset for smaller GPUs; they have not been measured
+  in the extension.

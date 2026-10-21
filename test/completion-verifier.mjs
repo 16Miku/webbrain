@@ -560,21 +560,38 @@ for (const build of ['chrome', 'firefox']) {
       if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor); else delete globalThis.navigator;
     }
   };
-  for (const decisionMode of ['auto', 'on']) {
-    test(`${build}: ${decisionMode} leaves completion with the main model for a saved Ternary selection`, withDecisionRuntime(async () => {
-      let mainCalls = 0, decisionCalls = 0;
-      for (const outcome of ['succeeded', 'failed']) {
-        const agent = stagedFormAgent({ messages: [], guard: { enabled: true, requiresSubmission: false, requiresStateChange: true }, captures: { count: 0 },
-          onDecision: () => { decisionCalls++; throw new Error('Ternary must not be invoked'); },
-          onChat: () => { mainCalls++; return { content: JSON.stringify({ outcome, reason: 'fresh independent evidence' }) }; } });
-        const verdict = await runtime.verifyBrowserCompletion(agent, 1, { pageUrl: 'https://forms.example/signup' });
-        assert.equal(verdict.engine, 'llm');
-        assert.equal(verdict.outcome, outcome, 'the main model retains both positive and negative authority');
-      }
-      assert.equal(mainCalls, 2);
-      assert.equal(decisionCalls, 0, 'disabled Ternary never starts, even before main-model fallback');
-    }, { decisionMode, decisionProvider: 'webgpu_chat', systemOneEnabled: true, systemOneDoneEnabled: true }));
-  }
+  test(`${build}: Auto leaves completion with the main model while no decision model is downloaded, whatever provider was saved`, withDecisionRuntime(async () => {
+    let mainCalls = 0, decisionCalls = 0;
+    for (const outcome of ['succeeded', 'failed']) {
+      const agent = stagedFormAgent({ messages: [], guard: { enabled: true, requiresSubmission: false, requiresStateChange: true }, captures: { count: 0 },
+        onDecision: () => { decisionCalls++; throw new Error('no decision model is downloaded'); },
+        onChat: () => { mainCalls++; return { content: JSON.stringify({ outcome, reason: 'fresh independent evidence' }) }; } });
+      const verdict = await runtime.verifyBrowserCompletion(agent, 1, { pageUrl: 'https://forms.example/signup' });
+      assert.equal(verdict.engine, 'llm');
+      assert.equal(verdict.outcome, outcome, 'the main model retains both positive and negative authority');
+    }
+    assert.equal(mainCalls, 2);
+    assert.equal(decisionCalls, 0, 'nothing downloaded, nothing asked');
+  }, { decisionMode: 'auto', decisionProvider: 'webgpu_chat', systemOneEnabled: true, systemOneDoneEnabled: true }));
+  test(`${build}: On with the in-browser chat model checks completion with it in Chrome, and a positive answer still needs the main model`, withDecisionRuntime(async () => {
+    const cases = build === 'chrome'
+      ? [['succeeded', { engine: 'llm', outcome: 'failed', mainCalls: 1, asked: true }], ['pending', { engine: 'webgpu_chat', outcome: 'pending', mainCalls: 0, asked: true }]]
+      // Firefox has no in-browser chat model: the main model decides alone.
+      : [['succeeded', { engine: 'llm', outcome: 'failed', mainCalls: 1, asked: false }]];
+    for (const [decisionOutcome, expected] of cases) {
+      const providers = [];
+      let mainCalls = 0;
+      const agent = stagedFormAgent({ messages: [], guard: { enabled: true, requiresSubmission: false, requiresStateChange: true }, captures: { count: 0 }, decisionOutcome,
+        onDecision: args => providers.push(args.config.provider),
+        onChat: () => { mainCalls++; return { content: JSON.stringify({ outcome: 'failed', reason: 'the page still shows the form' }) }; } });
+      const verdict = await runtime.verifyBrowserCompletion(agent, 1, { pageUrl: 'https://forms.example/signup' });
+      if (expected.asked) assert.ok(providers.length > 0 && providers.every(provider => provider === 'webgpu_chat'), `${decisionOutcome}: the chat model answered first`);
+      else assert.deepEqual(providers, []);
+      assert.equal(verdict.engine, expected.engine, decisionOutcome);
+      assert.equal(verdict.outcome, expected.outcome, decisionOutcome);
+      assert.equal(mainCalls, expected.mainCalls, decisionOutcome);
+    }
+  }, { decisionMode: 'on', decisionProvider: 'webgpu_chat', systemOneEnabled: true, systemOneDoneEnabled: true }));
   test(`${build}: Auto checks completion with a downloaded D1, and a positive D1 answer still needs the main model`, async () => {
     const pin = await import(`../src/${build}/src/providers/d1-config.js`);
     const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;

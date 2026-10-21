@@ -1,7 +1,7 @@
 import { DECISION_MODE_KEY, DECISION_SETTINGS_KEYS, materializeLegacyDecisionFeatures, DEFAULT_DECISION_MODEL, WEBGPU_CHAT_DECISION_MODEL, resolveDecisionConfig, resolveDecisionMode } from '../agent/decision-config.js';
 import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
 import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_MODEL_ID } from '../providers/d1-config.js';
-import { d1LocalAssistReady } from '../agent/decision-availability.js';
+import { chatDecisionModelReady, d1LocalAssistReady } from '../agent/decision-availability.js';
 import { initD1Settings } from './d1-settings.js';
 /**
  * WebBrain Settings pages — settings.html (preferences, budgets, memory,
@@ -69,13 +69,15 @@ import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 import { AUTO_VISION_PROVIDER_IDS, visionDetectionMatches } from '../providers/vision-capabilities.js';
 import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
 import {
-  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  WEBGPU_DEFAULT_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
   WEBGPU_SELECTABLE_MODEL_PRESETS,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_BONSAI_MODEL_ID,
   WEBGPU_VISION_CHOICE_AUTO,
   WEBGPU_VISION_CHOICE_BONSAI,
+  WEBGPU_VISION_CHOICE_COMPASS_VLD,
+  WEBGPU_VISION_COMPASS_VLD_MODEL_ID,
   WEBGPU_VISION_CHOICE_KEY,
   WEBGPU_VISION_CHOICE_OFF,
   WEBGPU_VISION_CHOICE_WEBBRAIN_VL,
@@ -85,6 +87,7 @@ import {
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_ENABLED_KEY,
   normalizeWebgpuModelId,
+  webgpuModelDisplayName,
   webgpuModelSupportsVision,
 } from '../providers/webgpu.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
@@ -270,8 +273,8 @@ function syncWebgpuDecisionProvider() {
   if (systemOneApiKeyInput) systemOneApiKeyInput.disabled = fixed;
 }
 
-// Auto, On or Off. Auto uses a downloaded D1, or else Compass's managed model
-// while Compass is the chat provider. Only On shows the provider fields and the
+// Auto, On or Off. Auto uses a downloaded Compass VLD Tiny v5 or D1, or else
+// Compass's managed model while Compass is the chat provider. Only On shows the provider fields and the
 // per-decision switches, so the card asks nothing until someone wants to
 // configure it.
 const decisionModeInputs = [...document.querySelectorAll('input[name="decision-mode"]')];
@@ -307,27 +310,29 @@ async function syncDecisionStatus() {
   const sequence = ++decisionStatusSequence;
   if (mode !== 'auto') {
     if (status) status.hidden = true;
-    if (btnTestSystemOne) btnTestSystemOne.hidden = mode === 'off' || decisionProviderInput?.value === 'webgpu_chat';
+    if (btnTestSystemOne) btnTestSystemOne.hidden = mode === 'off';
     return;
   }
   // Strict Secret Mode keeps page content away from every decision model, so Auto has nothing to use.
   const strict = strictSecretModeOn;
   const compass = !strict && activeProviderIsCompass();
-  // Auto uses D1 once it is downloaded, Compass or not (decision-availability.js).
-  const local = !strict
+  // Auto uses Compass VLD Tiny v5 once it is downloaded, else D1, Compass or
+  // not (decision-availability.js).
+  const chatModel = !strict && await chatDecisionModelReady();
+  const local = !strict && !chatModel
     && (await chrome.storage.local.get(D1_CONSENT_KEY).catch(() => ({})))?.[D1_CONSENT_KEY] === D1_CONSENT_VERSION
     && await d1LocalAssistReady();
   if (sequence !== decisionStatusSequence || selectedDecisionMode() !== 'auto') return;
-  const key = strict ? 'st.decision.status.strict' : local ? 'st.decision.status.local' : compass ? 'st.decision.status.compass' : 'st.decision.status.none';
+  const key = strict ? 'st.decision.status.strict' : chatModel ? 'st.decision.status.chat_model' : local ? 'st.decision.status.local' : compass ? 'st.decision.status.compass' : 'st.decision.status.none';
   if (status) {
     status.dataset.i18n = key;
-    status.dataset.state = compass || local ? 'active' : 'inactive';
+    status.dataset.state = compass || local || chatModel ? 'active' : 'inactive';
     status.textContent = t(key);
     status.hidden = false;
   }
-  // Test runs here in the browser, so it can check D1 but not Compass's
-  // managed model.
-  if (btnTestSystemOne) btnTestSystemOne.hidden = !local;
+  // Test runs here in the browser, so it can check the on-device models but
+  // not Compass's managed model.
+  if (btnTestSystemOne) btnTestSystemOne.hidden = !local && !chatModel;
 }
 for (const input of decisionModeInputs) {
   input.addEventListener('change', async () => {
@@ -492,7 +497,7 @@ let currentVisionConfig = {};
 // In-browser vision: the stored choice, the model it resolves to now, and the
 // state the status line and action button need (see renderLocalVision).
 let webgpuVisionChoice = WEBGPU_VISION_CHOICE_AUTO;
-let webgpuVisionLocal = { model: null, bonsaiReady: false, readiness: null, bonsaiDownload: null };
+let webgpuVisionLocal = { model: null, compassVldReady: false, bonsaiReady: false, readiness: null, chatDownload: null };
 let webgpuVisionPollTimer = null;
 
 if (globalThis.chrome?.storage?.onChanged) {
@@ -1825,7 +1830,7 @@ btnTestSystemOne?.addEventListener('click', async () => {
 
 // --- Vision Model ---
 
-const WEBGPU_VISION_LOCAL_CHOICES = new Set([WEBGPU_VISION_CHOICE_BONSAI, WEBGPU_VISION_CHOICE_WEBBRAIN_VL]);
+const WEBGPU_VISION_LOCAL_CHOICES = new Set([WEBGPU_VISION_CHOICE_COMPASS_VLD, WEBGPU_VISION_CHOICE_BONSAI, WEBGPU_VISION_CHOICE_WEBBRAIN_VL]);
 
 // An explicitly chosen in-browser model takes the place of the endpoint form;
 // Auto and Off leave the endpoint editable.
@@ -1833,12 +1838,28 @@ function isWebgpuVisionEnabled() {
   return WEBGPU_VISION_LOCAL_CHOICES.has(webgpuVisionChoice);
 }
 
-function bonsaiVisionDownloadState() {
-  const state = webgpuVisionLocal.bonsaiDownload;
+// The chat preset that reads screenshots for the current choice: Ternary
+// Bonsai 2 2B Vision for its own choice, and for Auto when only it is
+// downloaded (resolveWebgpuVisionChoice); otherwise Compass VLD Tiny v5.
+function chatVisionModelId() {
+  if (webgpuVisionChoice === WEBGPU_VISION_CHOICE_BONSAI) return WEBGPU_VISION_BONSAI_MODEL_ID;
+  if (webgpuVisionChoice === WEBGPU_VISION_CHOICE_AUTO && !webgpuVisionLocal.compassVldReady && webgpuVisionLocal.bonsaiReady) {
+    return WEBGPU_VISION_BONSAI_MODEL_ID;
+  }
+  return WEBGPU_VISION_COMPASS_VLD_MODEL_ID;
+}
+
+function chatVisionReady() {
+  return chatVisionModelId() === WEBGPU_VISION_BONSAI_MODEL_ID ? webgpuVisionLocal.bonsaiReady : webgpuVisionLocal.compassVldReady;
+}
+
+function chatVisionDownloadState() {
+  const state = webgpuVisionLocal.chatDownload;
   if (!state) return null;
-  const sameModel = model => String(model || '').trim() === WEBGPU_VISION_BONSAI_MODEL_ID;
+  const modelId = chatVisionModelId();
+  const sameModel = model => String(model || '').trim() === modelId;
   if (sameModel(state.modelId)) return state;
-  // A Bonsai transfer started elsewhere shows up as the active transfer.
+  // A transfer started elsewhere shows up as the active transfer.
   return state.activeTransfer && sameModel(state.activeTransfer.modelId) ? state.activeTransfer : state;
 }
 
@@ -1869,29 +1890,30 @@ function webgpuVisionLocalView() {
         return { kind: '', status: t('st.vision.local.status.not_downloaded'), action: 'start' };
     }
   }
-  // Auto and Ternary Bonsai 2 2B Vision.
-  if (webgpuVisionLocal.bonsaiReady) {
-    return { kind: 'ready', status: t('st.vision.local.status.ready', { model: 'Ternary Bonsai 2 2B Vision' }), action: '' };
+  // Auto and the chat presets that read images.
+  const model = webgpuModelDisplayName(chatVisionModelId());
+  if (chatVisionReady()) {
+    return { kind: 'ready', status: t('st.vision.local.status.ready', { model }), action: '' };
   }
-  const download = bonsaiVisionDownloadState();
+  const download = chatVisionDownloadState();
   if (download && ['downloading', 'checking'].includes(download.status)) {
     return {
       kind: '',
-      status: t('st.vision.local.status.bonsai_downloading', { progress: Math.round(Number(download.progress) || 0) }),
-      action: 'stop-bonsai',
+      status: t('st.vision.local.status.chat_downloading', { model, progress: Math.round(Number(download.progress) || 0) }),
+      action: 'stop-chat-model',
       busy: true,
     };
   }
   if (download?.status === 'paused') {
-    return { kind: '', status: t('st.providers.webgpu_download.paused', { progress: Math.round(Number(download.progress) || 0) }), action: 'bonsai' };
+    return { kind: '', status: t('st.providers.webgpu_download.paused', { progress: Math.round(Number(download.progress) || 0) }), action: 'chat-model' };
   }
   if (download?.status === 'error') {
-    return { kind: 'error', status: `${t('st.providers.webgpu_download.error')}: ${download.error || t('st.providers.webgpu_download.error_detail')}`, action: 'bonsai' };
+    return { kind: 'error', status: `${t('st.providers.webgpu_download.error')}: ${download.error || t('st.providers.webgpu_download.error_detail')}`, action: 'chat-model' };
   }
   return {
     kind: '',
     status: t(choice === WEBGPU_VISION_CHOICE_AUTO ? 'st.vision.local.status.auto_off' : 'st.vision.local.status.not_downloaded'),
-    action: 'bonsai',
+    action: 'chat-model',
   };
 }
 
@@ -1899,14 +1921,15 @@ const WEBGPU_VISION_ACTION_LABELS = {
   enable: 'st.vision.local.download_webbrain_vl',
   start: 'st.vision.local.download_webbrain_vl',
   resume: 'st.providers.webgpu_download.resume',
-  bonsai: 'st.vision.local.download_bonsai',
-  'stop-bonsai': 'st.providers.webgpu_download.stop',
+  'chat-model': 'st.vision.local.download_chat_model',
+  'stop-chat-model': 'st.providers.webgpu_download.stop',
 };
 
 function renderLocalVision() {
   if (webgpuVisionChoiceSelect) webgpuVisionChoiceSelect.value = webgpuVisionChoice;
   const view = webgpuVisionLocalView();
-  const active = isWebgpuVisionEnabled() || (webgpuVisionChoice === WEBGPU_VISION_CHOICE_AUTO && webgpuVisionLocal.bonsaiReady);
+  const active = isWebgpuVisionEnabled()
+    || (webgpuVisionChoice === WEBGPU_VISION_CHOICE_AUTO && (webgpuVisionLocal.compassVldReady || webgpuVisionLocal.bonsaiReady));
   webgpuVisionOption?.classList.toggle('enabled', active);
   if (webgpuVisionStatus) {
     webgpuVisionStatus.textContent = view.status;
@@ -1917,8 +1940,11 @@ function renderLocalVision() {
     btnUseWebgpuVision.hidden = !key;
     btnUseWebgpuVision.dataset.action = view.action || '';
     if (key) {
+      const params = view.action === 'chat-model' ? { model: webgpuModelDisplayName(chatVisionModelId()) } : null;
       btnUseWebgpuVision.dataset.i18n = key;
-      btnUseWebgpuVision.textContent = t(key);
+      if (params) btnUseWebgpuVision.dataset.i18nParams = JSON.stringify(params);
+      else delete btnUseWebgpuVision.dataset.i18nParams;
+      btnUseWebgpuVision.textContent = params ? t(key, params) : t(key);
     }
   }
   if (visionEndpointFields) visionEndpointFields.disabled = isWebgpuVisionEnabled();
@@ -1975,20 +2001,25 @@ async function refreshLocalVision() {
     webgpuVisionLocal = {
       ...webgpuVisionLocal,
       model: result.model || null,
+      compassVldReady: result.compassVldReady === true,
       bonsaiReady: result.bonsaiReady === true,
       readiness: result.readiness || null,
     };
   }
-  // Only a Bonsai choice that is not ready needs the transfer status; asking
-  // for it starts the offscreen document, so a ready or other choice skips it.
-  const wantsBonsai = [WEBGPU_VISION_CHOICE_AUTO, WEBGPU_VISION_CHOICE_BONSAI].includes(webgpuVisionChoice)
-    && !webgpuVisionLocal.bonsaiReady;
-  if (wantsBonsai) {
-    const snapshot = await sendToBackground('get_webgpu_download_status', { model: WEBGPU_VISION_BONSAI_MODEL_ID }).catch(() => null);
-    webgpuVisionLocal.bonsaiDownload = snapshot ? normalizeWebgpuDownloadSnapshot(snapshot) : null;
-    if (webgpuVisionLocal.bonsaiDownload?.ready) webgpuVisionLocal.bonsaiReady = true;
+  // Only a chat-model choice that is not ready needs the transfer status;
+  // asking for it starts the offscreen document, so a ready or other choice
+  // skips it.
+  const chatChoice = [WEBGPU_VISION_CHOICE_AUTO, WEBGPU_VISION_CHOICE_COMPASS_VLD, WEBGPU_VISION_CHOICE_BONSAI].includes(webgpuVisionChoice);
+  if (chatChoice && !chatVisionReady()) {
+    const modelId = chatVisionModelId();
+    const snapshot = await sendToBackground('get_webgpu_download_status', { model: modelId }).catch(() => null);
+    webgpuVisionLocal.chatDownload = snapshot ? normalizeWebgpuDownloadSnapshot(snapshot) : null;
+    if (webgpuVisionLocal.chatDownload?.ready) {
+      if (modelId === WEBGPU_VISION_BONSAI_MODEL_ID) webgpuVisionLocal.bonsaiReady = true;
+      else webgpuVisionLocal.compassVldReady = true;
+    }
   } else {
-    webgpuVisionLocal.bonsaiDownload = null;
+    webgpuVisionLocal.chatDownload = null;
   }
   renderLocalVision();
 }
@@ -2036,10 +2067,10 @@ async function runWebgpuVisionAction(action) {
   } else if (action === 'start' || action === 'resume') {
     const result = await sendToBackground('start_webgpu_vision_download');
     if (result?.ok === false) throw new Error(result.error || 'The local vision model download could not be started.');
-  } else if (action === 'bonsai') {
-    await sendToBackground('start_webgpu_download', { model: WEBGPU_VISION_BONSAI_MODEL_ID });
-  } else if (action === 'stop-bonsai') {
-    await sendToBackground('stop_webgpu_download', { model: WEBGPU_VISION_BONSAI_MODEL_ID });
+  } else if (action === 'chat-model') {
+    await sendToBackground('start_webgpu_download', { model: chatVisionModelId() });
+  } else if (action === 'stop-chat-model') {
+    await sendToBackground('stop_webgpu_download', { model: chatVisionModelId() });
   }
   await refreshLocalVision();
 }
@@ -2091,9 +2122,9 @@ btnUseWebgpuVision?.addEventListener('click', async () => {
   if (!action) return;
   btnUseWebgpuVision.disabled = true;
   try {
-    if (action !== 'stop-bonsai') showVisionResult('', t('st.providers.webgpu_download.start'));
+    if (action !== 'stop-chat-model') showVisionResult('', t('st.providers.webgpu_download.start'));
     await runWebgpuVisionAction(action);
-    if (action === 'stop-bonsai') flashVisionResult('ok', t('st.vision.cleared'));
+    if (action === 'stop-chat-model') flashVisionResult('ok', t('st.vision.cleared'));
     else visionTestResult.classList.remove('show');
   } catch (error) {
     showVisionResult('error', error?.message || String(error));
@@ -2121,7 +2152,7 @@ btnTestVision?.addEventListener('click', async () => {
   const baseUrl = normalizeOpenAICompatibleBaseUrl(visionBaseUrlInput.value);
   const apiKey = visionApiKeyInput.value.trim();
   const model = visionModelInput.value.trim();
-  // An empty endpoint form under Auto tests Bonsai when Auto resolved to it.
+  // An empty endpoint form under Auto tests the in-browser model Auto resolved to.
   const isWebgpu = isWebgpuVisionEnabled() || (!baseUrl && !model && !!webgpuVisionLocal.model);
 
   if (!isWebgpu && (!baseUrl || !model)) {
@@ -3292,7 +3323,7 @@ function getDisplayedWebgpuModel(id = 'webgpu') {
   try {
     return normalizeWebgpuModelId(input?.value || providersData[id]?.model);
   } catch {
-    return String(input?.value || providersData[id]?.model || WEBGPU_COMPASS_TINY_V2_MODEL_ID).trim();
+    return String(input?.value || providersData[id]?.model || WEBGPU_DEFAULT_MODEL_ID).trim();
   }
 }
 

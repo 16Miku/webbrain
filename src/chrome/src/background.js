@@ -36,7 +36,7 @@ const sidePanelPresence = createSidePanelPresence(chrome);
 chrome.runtime.onConnect.addListener((port) => { sidePanelPresence.attach(port); });
 import { ProviderManager } from './providers/manager.js';
 import {
-  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  WEBGPU_DEFAULT_MODEL_ID,
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_MODEL_ID,
@@ -263,6 +263,9 @@ async function resumeInterruptedVisionPreload() {
   // load() migrates legacy visionModel consent before readiness decides
   // whether an interrupted preload is eligible to resume.
   await providerManager.load();
+  // An untouched WebGPU setting moves to the current default model; this
+  // reads Cache Storage, so it runs here rather than in the synchronous load().
+  await providerManager.migrateUntouchedWebgpuDefault().catch(() => false);
   return await providerManager.resumeWebgpuVisionDownload();
 }
 Promise.all([
@@ -2744,7 +2747,7 @@ async function standaloneRunProviderId(msg) {
   const config = providerManager.getAll().webgpu;
   const download = await providerManager.getWebgpuDownloadStatus().catch(() => null);
   if (!isShippedWebgpuPreset(config?.model) || download?.ready !== true) {
-    throw new Error(`Download ${webgpuModelDisplayName(config?.model || WEBGPU_COMPASS_TINY_V2_MODEL_ID)} in Providers > WebGPU or Apocalypse Mode > WebGPU before using WebGPU in standalone chat.`);
+    throw new Error(`Download ${webgpuModelDisplayName(config?.model || WEBGPU_DEFAULT_MODEL_ID)} in Providers > WebGPU or Apocalypse Mode > WebGPU before using WebGPU in standalone chat.`);
   }
   return providerId;
 }

@@ -1,4 +1,5 @@
-"""Train tiny Ask's screenshot gate probe for Ternary Bonsai 2 2B Vision.
+"""Train tiny Ask's screenshot gate probe for an in-browser model that reads
+images (Ternary Bonsai 2 2B Vision, Compass VLD Tiny v5).
 
 Inputs are reports from scripts/check-tiny-ask-screenshot-gate.mjs run with
 `--dataset <split>.json --return-hidden` on the splits written by
@@ -9,6 +10,10 @@ chosen on validation and the test split is scored once. The test split holds
 hand-written questions, including languages absent from training.
 
     python scripts/models/bonsai/train_gate_probe.py --reports <dir> --out <dir> --js src/chrome/src/offscreen/tiny-ask-gate-probe.js
+
+--model and --export name the model and its probe in that file (default
+Ternary Bonsai 2 2B Vision, TINY_ASK_GATE_PROBE; Compass VLD Tiny v5 is
+COMPASS_VLD_TINY_ASK_GATE_PROBE).
 """
 import argparse
 import base64
@@ -81,6 +86,8 @@ def main():
     parser.add_argument('--reports', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--js', type=Path)
+    parser.add_argument('--model', default='webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision')
+    parser.add_argument('--export', default='TINY_ASK_GATE_PROBE')
     args = parser.parse_args()
     train_rows, train_m, train_h, train_y = load(args.reports / 'gate-train.json')
     val_rows, val_m, val_h, val_y = load(args.reports / 'gate-validation.json')
@@ -116,17 +123,21 @@ def main():
     if args.js:
         test = report['test']
         source = Path(args.js).read_text(encoding='utf-8')
-        header = source.split('export const TINY_ASK_GATE_PROBE')[0]
-        tail = source.split('});', 1)[1]
+        start = source.index(f'export const {args.export} = Object.freeze({{')
+        end = source.index('});', start) + len('});')
+        # The validation line just above the probe is rewritten with it.
+        line = source.rfind('\n', 0, start - 1) + 1
+        if source.startswith('// Validation (generated', line):
+            start = line
         body = (f"// Validation (generated templates, {len(TRAIN_LANGUAGES)} languages): {report['validation']['accuracy']}. Test (hand-written, "
                 f"including {len({r['language'] for r in test_rows} - TRAIN_LANGUAGES)} languages absent from training): "
                 f"{test['accuracy']}, unseen languages {test.get('unseen_languages', 'n/a')}.\n"
-                "export const TINY_ASK_GATE_PROBE = Object.freeze({\n"
-                "  model: 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision',\n"
+                f"export const {args.export} = Object.freeze({{\n"
+                f"  model: '{args.model}',\n"
                 f"  hiddenSize: {width},\n  margin: {float(a)!r},\n  bias: {bias!r},\n"
-                f"  weightsBase64: '{base64.b64encode(folded.tobytes()).decode()}',\n")
-        header = '\n'.join(line for line in header.splitlines() if not line.startswith('// Validation (generated')) + '\n'
-        Path(args.js).write_text(header + body + '});' + tail, encoding='utf-8')
+                f"  weightsBase64: '{base64.b64encode(folded.tobytes()).decode()}',\n"
+                "});")
+        Path(args.js).write_text(source[:start] + body + source[end:], encoding='utf-8')
         print('wrote', args.js)
 
 

@@ -140,11 +140,15 @@
             <div class="local-model-body">
               <div class="local-model-head">
                 <strong data-i18n="ap.models.text.title"></strong>
-                <span class="meta" data-webgpu-text-size>1.87 GB · WebGPU</span>
+                <span class="meta" data-webgpu-text-size>2.2 GB · WebGPU</span>
               </div>
               <div class="webgpu-text-presets" role="radiogroup" aria-label="Local chat model">
                 <label class="webgpu-text-preset">
-                  <input type="radio" name="webgpu-text-preset" value="webbrain-one/webbrain-compass-tiny-v2.1" data-webgpu-text-preset checked>
+                  <input type="radio" name="webgpu-text-preset" value="webbrain-one/webbrain-compass-vld-tiny-v5-onnx" data-webgpu-text-preset checked>
+                  <span>Compass VLD Tiny v5</span>
+                </label>
+                <label class="webgpu-text-preset">
+                  <input type="radio" name="webgpu-text-preset" value="webbrain-one/webbrain-compass-tiny-v2.1" data-webgpu-text-preset>
                   <span>Compass Tiny v2.1</span>
                 </label>
                 <label class="webgpu-text-preset">
@@ -199,6 +203,7 @@
               <div class="vision-choice">
                 <select id="vision-model-choice" aria-labelledby="vision-model-title">
                   <option value="auto" data-i18n="st.vision.local.choice.auto"></option>
+                  <option value="compass-vld" data-i18n="st.vision.local.choice.compass_vld"></option>
                   <option value="bonsai" data-i18n="st.vision.local.choice.bonsai"></option>
                   <option value="webbrain-vl" data-i18n="st.vision.local.choice.webbrain_vl"></option>
                   <option value="off" data-i18n="st.vision.local.choice.off"></option>

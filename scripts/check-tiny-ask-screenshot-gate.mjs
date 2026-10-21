@@ -8,6 +8,8 @@
 //     --adapter-luid 0,82094 --output .build/tiny-ask-gate/result.json
 //
 // --extension DIR    unpacked extension (default src/chrome); use a fresh profile per build
+// --model ID         in-browser model (default Compass VLD Tiny v5; Ternary Bonsai 2 2B
+//                    Vision is webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision)
 // --threshold P      Yes threshold to report (default TINY_ASK_SCREENSHOT_GATE_THRESHOLD)
 // --dataset FILE     labelled rows from scripts/models/bonsai/gate_dataset.py instead of
 //                    the built-in cases ({label, language, question, pageChars, ...})
@@ -30,7 +32,7 @@ const option = (name, fallback) => { const i = args.indexOf(name); return i < 0 
 const extension = path.resolve(option('--extension', path.join(root, 'src/chrome')));
 const profile = path.resolve(option('--profile', '.build/tiny-ask-gate/profile'));
 const output = path.resolve(option('--output', '.build/tiny-ask-gate/result.json'));
-const model = 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision';
+const model = option('--model', 'webbrain-one/webbrain-compass-vld-tiny-v5-onnx');
 const followUps = args.includes('--follow-ups');
 const threshold = Number(option('--threshold', followUps ? TINY_ASK_SCREENSHOT_FOLLOW_UP_THRESHOLD : TINY_ASK_SCREENSHOT_GATE_THRESHOLD));
 

@@ -3,10 +3,11 @@
 This directory packages the JavaScript and WASM runtime used by two local
 WebGPU paths in Chrome and by offline RAG's CPU/WASM semantic reranker:
 
-- **Apocalypse Mode / Settings -> local WebGPU chat** offers Compass Tiny
-  v2.1 (`webbrain-one/webbrain-compass-tiny-v2.1`, ~1.87 GB) and Ternary Bonsai 2
-  2B / 4B in text and vision variants, used by the standalone-chat nuclear
-  control and selectable as a normal chat provider. The underlying runtime also supports
+- **Apocalypse Mode / Settings -> local WebGPU chat** offers Compass VLD
+  Tiny v5 (`webbrain-one/webbrain-compass-vld-tiny-v5-onnx`, ~2.2 GB, the
+  default), Compass Tiny v2.1 (`webbrain-one/webbrain-compass-tiny-v2.1`,
+  ~1.87 GB) and Ternary Bonsai 2 2B / 4B in text and vision variants, used by
+  the standalone-chat nuclear control and selectable as a normal chat provider. The underlying runtime also supports
   LFM2.5 and Nanbeige exports. An opt-in Bonsai 27B preset uses a separate
   vendored bitgpu worker, not this Transformers.js runtime; see
   `src/chrome/vendor/bitgpu/README.webbrain.md`.
@@ -18,9 +19,9 @@ WebGPU paths in Chrome and by offline RAG's CPU/WASM semantic reranker:
 
 Model weights are not bundled. Explicit download controls fetch the selected
 WebGPU model and store it in the browser cache; inference only uses cached
-models. The default preset is Compass Tiny v2.1 (~1.87 GB), with underlying runtime support for LFM2.5
+models. The default preset is Compass VLD Tiny v5 (~2.2 GB), with underlying runtime support for LFM2.5
 (2.6B, 1.2B Instruct, 1.2B Thinking, VL 1.6B, VL 3B) and Nanbeige4.2-3B.
-Compass Tiny v2.1 is available through the nuclear control in standalone chat
+The selected preset is available through the nuclear control in standalone chat
 and can also be configured, downloaded, and selected directly in Settings ->
 Providers -> WebGPU. Reasoning presets supported by the runtime keep completed
 thinking out of visible answers. Current LFM2.5-VL layouts use:
@@ -48,6 +49,24 @@ bound each pass at the cost of roughly one extra decoder run per slice. Greedy
 answers match the single-pass path. `chrome.storage.local` key
 `webgpuPrefillSliceTokens` overrides the slice size (64–8192 tokens; `0`
 disables slicing).
+
+Compass VLD Tiny v5, a fine-tune of MiniCPM-V-4.7-1B, has no Transformers.js
+model class or processor. `src/chrome/src/offscreen/compass-vld-runtime.js`
+creates its three graphs (`embed_tokens` Q8, `vision_encoder` FP16 and a
+chunked-GatedDeltaNet `decoder_model_merged` Q8 that returns only last-position
+logits and `decision_hidden`) with this bundle's `ort.webgpu.mjs`, the same
+ONNX Runtime Web build Transformers.js uses, and ports the processor:
+MiniCPM-V slicing, Pillow-compatible bicubic resampling, the image
+placeholders and the canvas M-RoPE positions. Transformers.js supplies only the
+tokenizer class and the chat-template renderer; the runtime builds the
+tokenizer from the cached files itself, because `AutoTokenizer.from_pretrained`
+first looks for `tokenizer_config.json` at revision `main`, which the pinned
+download does not cache. Its files are fetched at a pinned revision, one at
+a time, and each is checked against its pinned size and SHA-256 before it is
+used. Its own sessions keep outputs and caches on the GPU
+(`preferredOutputLocation: 'gpu-buffer'`) and read back only the last-position
+logits; the advice below about that option is for the Transformers.js
+generation path.
 
 For the split Bonsai text and Vision models, the worker corrects Transformers.js
 4.2's text-only rotary cache offset; image turns keep the native three-axis
@@ -174,7 +193,8 @@ ProviderManager._createProvider('webgpu') / getVisionProvider()
   -> MV3 offscreen document
   -> dedicated module Worker
   -> text-generation pipeline / AutoProcessor + AutoModelForImageTextToText
-  -> selected Compass Tiny v2.1 (or custom ONNX repo) / local vision sidecar over WebGPU
+  -> selected preset (Compass VLD Tiny v5 through its own ONNX Runtime sessions,
+     Compass Tiny v2.1 or a custom ONNX repo) / local vision sidecar over WebGPU
 ```
 
 Keep inference in the Worker. The MV3 service worker has no WebGPU, while the

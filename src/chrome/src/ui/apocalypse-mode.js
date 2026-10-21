@@ -21,11 +21,13 @@ import {
 } from './emergency-download-client.js';
 import { createOfflineRagReadinessController } from './offline-rag-readiness.js';
 import {
-  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  WEBGPU_DEFAULT_MODEL_ID,
   WEBGPU_DTYPE,
   WEBGPU_SELECTABLE_MODEL_PRESETS,
   WEBGPU_VISION_BONSAI_MODEL_ID,
   WEBGPU_VISION_CHOICE_AUTO,
+  WEBGPU_VISION_CHOICE_BONSAI,
+  WEBGPU_VISION_COMPASS_VLD_MODEL_ID,
   WEBGPU_VISION_CHOICE_KEY,
   WEBGPU_VISION_CHOICE_OFF,
   WEBGPU_VISION_CHOICE_WEBBRAIN_VL,
@@ -35,10 +37,11 @@ import {
   isShippedWebgpuPreset,
   isSelectableWebgpuPreset,
   storedWebgpuVisionChoice,
+  webgpuModelDisplayName,
   webgpuModelDtype,
   webgpuModelPreset,
 } from '../providers/webgpu.js';
-import { isLocalAssistModelReady } from '../providers/webgpu-model-cache.js';
+import { webgpuChatVisionReadiness } from '../providers/webgpu-model-cache.js';
 import { t } from './i18n.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 
@@ -97,6 +100,7 @@ let visionDownloadState = null;
 let visionFallbackExplicitlyEnabled = false;
 // The in-browser vision choice shared with Settings (WEBGPU_VISION_CHOICE_KEY).
 let visionChoice = WEBGPU_VISION_CHOICE_AUTO;
+let visionCompassVldReady = false;
 let visionBonsaiReady = false;
 let fixedWebgpuProviderConfigured = false;
 let fixedWebgpuProviderMarkedReady = false;
@@ -106,8 +110,8 @@ let webgpuDownloadStatusRequest = 0;
 let webgpuDownloadState = {
   status: 'checking',
   ready: false,
-  modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
-  dtype: WEBGPU_DTYPE,
+  modelId: WEBGPU_DEFAULT_MODEL_ID,
+  dtype: webgpuModelDtype(WEBGPU_DEFAULT_MODEL_ID),
   file: '',
   loaded: 0,
   total: 0,
@@ -419,7 +423,7 @@ function updateWebgpuDownloadPanel() {
     button.disabled = ['checking', 'stopping'].includes(state.status);
   }
   updateOverallModelsReadiness();
-  // The vision card follows Bonsai's text-model transfer and the selected preset.
+  // The vision card follows its chat model's text-model transfer and the selected preset.
   renderVisionDownload();
 }
 
@@ -434,17 +438,17 @@ function confirmCompletedModelRemoval(action, status, modelTitleKey) {
 
 function selectedWebgpuPreset() {
   const checked = document.querySelector('[data-webgpu-text-preset]:checked');
-  return webgpuModelPreset(checked?.value) || webgpuModelPreset(WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+  return webgpuModelPreset(checked?.value) || webgpuModelPreset(WEBGPU_DEFAULT_MODEL_ID);
 }
 
 function selectedWebgpuModelId() {
-  return selectedWebgpuPreset()?.id || WEBGPU_COMPASS_TINY_V2_MODEL_ID;
+  return selectedWebgpuPreset()?.id || WEBGPU_DEFAULT_MODEL_ID;
 }
 
 function updateWebgpuTextPresetUi() {
   const preset = selectedWebgpuPreset();
   const size = document.querySelector('[data-webgpu-text-size]');
-  if (size) size.textContent = `${preset?.size || '1.87 GB'} · WebGPU`;
+  if (size) size.textContent = `${preset?.size || '2.2 GB'} · WebGPU`;
   const warning = document.querySelector('[data-webgpu-text-warning]');
   if (warning) warning.hidden = true;
   const copy = document.querySelector('[data-webgpu-text-copy]');
@@ -454,7 +458,7 @@ function updateWebgpuTextPresetUi() {
     copy.textContent = t('ap.webgpu.rag', { model: preset.label });
   }
   for (const input of document.querySelectorAll('[data-webgpu-text-preset]')) {
-    input.checked = input.value === (preset?.id || WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    input.checked = input.value === (preset?.id || WEBGPU_DEFAULT_MODEL_ID);
   }
 }
 
@@ -505,26 +509,43 @@ function setWebgpuDownloadState(state, { syncActiveTransfer = false } = {}) {
   updateWebgpuDownloadPanel();
 }
 
-function bonsaiVisionTextState() {
-  return webgpuTextStateByModel.get(WEBGPU_VISION_BONSAI_MODEL_ID)
-    || (webgpuDownloadState.modelId === WEBGPU_VISION_BONSAI_MODEL_ID ? webgpuDownloadState : null);
+// The chat preset that reads screenshots for the current choice: Ternary
+// Bonsai 2 2B Vision for its own choice, and for Auto when only it is
+// downloaded (resolveWebgpuVisionChoice); otherwise Compass VLD Tiny v5.
+function chatVisionModelId() {
+  if (visionChoice === WEBGPU_VISION_CHOICE_BONSAI) return WEBGPU_VISION_BONSAI_MODEL_ID;
+  if (visionChoice === WEBGPU_VISION_CHOICE_AUTO && !visionCompassVldReady && visionBonsaiReady) return WEBGPU_VISION_BONSAI_MODEL_ID;
+  return WEBGPU_VISION_COMPASS_VLD_MODEL_ID;
 }
 
-function bonsaiVisionReady() {
-  const state = bonsaiVisionTextState();
-  return visionBonsaiReady || state?.ready === true || state?.status === 'ready';
+function chatVisionTextState() {
+  const modelId = chatVisionModelId();
+  return webgpuTextStateByModel.get(modelId)
+    || (webgpuDownloadState.modelId === modelId ? webgpuDownloadState : null);
 }
 
-// Which model the Vision Model card speaks for: WebBrain VL 2 450M, Ternary
-// Bonsai 2 2B Vision, the selected Text Model when that is Bonsai (it already
-// sees images), or nothing.
+function chatVisionReady() {
+  const modelId = chatVisionModelId();
+  const state = chatVisionTextState();
+  const cached = modelId === WEBGPU_VISION_BONSAI_MODEL_ID ? visionBonsaiReady : visionCompassVldReady;
+  return cached || state?.ready === true || state?.status === 'ready';
+}
+
+async function refreshChatVisionReadiness() {
+  ({ compassVldReady: visionCompassVldReady, bonsaiReady: visionBonsaiReady } = await webgpuChatVisionReadiness()
+    .catch(() => ({ compassVldReady: false, bonsaiReady: false })));
+}
+
+// Which model the Vision Model card speaks for: WebBrain VL 2 450M, a chat
+// preset that reads images (chatVisionModelId), the selected Text Model when
+// that is the same preset (it already sees images), or nothing.
 function visionCardPath() {
   if (visionChoice === WEBGPU_VISION_CHOICE_OFF) return 'off';
   if (visionChoice === WEBGPU_VISION_CHOICE_WEBBRAIN_VL) return 'webbrain-vl';
-  return selectedWebgpuModelId() === WEBGPU_VISION_BONSAI_MODEL_ID ? 'text-model' : 'bonsai';
+  return selectedWebgpuModelId() === chatVisionModelId() ? 'text-model' : 'chat-model';
 }
 
-async function runBonsaiVisionAction(action) {
+async function runChatVisionAction(action) {
   const actionMap = {
     start: 'start_webgpu_download',
     resume: 'start_webgpu_download',
@@ -533,8 +554,9 @@ async function runBonsaiVisionAction(action) {
   };
   const backgroundAction = actionMap[action];
   if (!backgroundAction) return;
-  const target = { model: WEBGPU_VISION_BONSAI_MODEL_ID, dtype: webgpuModelDtype(WEBGPU_VISION_BONSAI_MODEL_ID) };
-  const previous = bonsaiVisionTextState() || { ...target, modelId: target.model };
+  const modelId = chatVisionModelId();
+  const target = { model: modelId, dtype: webgpuModelDtype(modelId) };
+  const previous = chatVisionTextState() || { ...target, modelId: target.model };
   try {
     setWebgpuDownloadState({
       ...previous,
@@ -547,13 +569,13 @@ async function runBonsaiVisionAction(action) {
   } catch (error) {
     setWebgpuDownloadState({ ...previous, modelId: target.model, status: 'error', ready: false, error: error.message });
   }
-  visionBonsaiReady = await isLocalAssistModelReady().catch(() => false);
+  await refreshChatVisionReadiness();
   renderVisionDownload();
 }
 
 async function runVisionDownloadAction(action) {
   const path = visionCardPath();
-  if (path === 'bonsai') return runBonsaiVisionAction(action);
+  if (path === 'chat-model') return runChatVisionAction(action);
   if (path !== 'webbrain-vl') return;
   if ((action === 'start' || action === 'resume') && !visionFallbackExplicitlyEnabled) {
     globalThis.location.href = runtimeApi.runtime.getURL('src/ui/providers.html#vision');
@@ -600,7 +622,7 @@ async function runVisionDownloadAction(action) {
 
 async function ensureFixedWebgpuProvider({ markConfigured = false, force = false, preserveConfig = false } = {}) {
   const preset = selectedWebgpuPreset();
-  const model = preset?.id || WEBGPU_COMPASS_TINY_V2_MODEL_ID;
+  const model = preset?.id || WEBGPU_DEFAULT_MODEL_ID;
   const dtype = preset?.dtype || webgpuModelDtype(model, WEBGPU_DTYPE);
   if (!force && fixedWebgpuProviderConfigured && (!markConfigured || fixedWebgpuProviderMarkedReady)) {
     const current = webgpuDownloadState?.modelId;
@@ -740,7 +762,7 @@ function setModelTestResult(element, message = '', kind = '') {
 function visionTestAvailable() {
   const path = visionCardPath();
   if (path === 'webbrain-vl') return visionFallbackExplicitlyEnabled && visionDownloadState?.status === 'ready';
-  return path !== 'off' && bonsaiVisionReady();
+  return path !== 'off' && chatVisionReady();
 }
 
 async function testWebgpuVisionModel() {
@@ -866,19 +888,20 @@ function renderVisionDownload() {
   if (elements['vision-model-size']) {
     elements['vision-model-size'].textContent = path === 'webbrain-vl'
       ? '~810 MB · WebGPU'
-      : path === 'off' ? 'WebGPU' : `${webgpuModelPreset(WEBGPU_VISION_BONSAI_MODEL_ID)?.size || '1.45 GB'} · WebGPU`;
+      : path === 'off' ? 'WebGPU' : `${webgpuModelPreset(chatVisionModelId())?.size || '2.2 GB'} · WebGPU`;
   }
   if (path === 'webbrain-vl') {
     renderWebbrainVlVisionDownload();
     return;
   }
-  renderBonsaiVisionCard(path);
+  renderChatVisionCard(path);
 }
 
-function renderBonsaiVisionCard(path) {
-  const ready = bonsaiVisionReady();
-  const state = normalizeWebgpuDownloadState(bonsaiVisionTextState()
-    || { modelId: WEBGPU_VISION_BONSAI_MODEL_ID, status: ready ? 'ready' : 'not-downloaded' });
+function renderChatVisionCard(path) {
+  const modelId = chatVisionModelId();
+  const ready = chatVisionReady();
+  const state = normalizeWebgpuDownloadState(chatVisionTextState()
+    || { modelId, status: ready ? 'ready' : 'not-downloaded' });
   const status = ready ? 'ready' : state.status;
   const progress = Math.round(state.progress);
   const statusEl = elements['vision-model-status'];
@@ -887,7 +910,7 @@ function renderBonsaiVisionCard(path) {
     button.hidden = true;
     button.disabled = status === 'stopping';
   }
-  elements['vision-model-progress'].hidden = path !== 'bonsai' || status !== 'downloading';
+  elements['vision-model-progress'].hidden = path !== 'chat-model' || status !== 'downloading';
   elements['vision-model-progress'].value = progress;
   elements['vision-model-test'].disabled = !visionTestAvailable() || visionTestRunning;
   if (!visionTestAvailable() && !visionTestRunning) setModelTestResult(elements['vision-model-test-result']);
@@ -897,9 +920,9 @@ function renderBonsaiVisionCard(path) {
     statusEl.textContent = t('st.vision.local.status.off');
   } else if (path === 'text-model') {
     // Its download lives on the Text Model card above.
-    statusEl.textContent = t('ap.vision.text_model_sees');
+    statusEl.textContent = t('ap.vision.text_model_sees', { model: webgpuModelDisplayName(modelId) });
   } else if (status === 'ready') {
-    statusEl.textContent = t('st.vision.local.status.ready', { model: 'Ternary Bonsai 2 2B Vision' });
+    statusEl.textContent = t('st.vision.local.status.ready', { model: webgpuModelDisplayName(modelId) });
   } else if (status === 'downloading' || status === 'checking') {
     statusEl.textContent = `${t('ap.status.downloading')} · ${progress}%`;
     actions.pause.hidden = false;
@@ -918,7 +941,7 @@ function renderBonsaiVisionCard(path) {
       ? `${t('ap.status.error')}${message ? ` · ${message}` : ''}`
       : t(visionChoice === WEBGPU_VISION_CHOICE_AUTO ? 'st.vision.local.status.auto_off' : 'st.providers.webgpu_download.not_downloaded');
     actions.start.hidden = false;
-    actions.start.textContent = t('st.vision.local.download_bonsai');
+    actions.start.textContent = t('st.vision.local.download_chat_model', { model: webgpuModelDisplayName(modelId) });
   }
   updateOverallModelsReadiness();
 }
@@ -991,8 +1014,8 @@ async function refreshVisionDownload() {
   visionFallbackExplicitlyEnabled = stored[WEBGPU_VISION_ENABLED_KEY] === true
     && stored[WEBGPU_VISION_CONSENT_VERSION_KEY] === WEBGPU_VISION_CONSENT_VERSION;
   visionChoice = storedWebgpuVisionChoice(stored);
-  // One Cache Storage lookup; the text-model probes keep it current after that.
-  visionBonsaiReady = await isLocalAssistModelReady().catch(() => false);
+  // Cache Storage lookups; the text-model probes keep them current after that.
+  await refreshChatVisionReadiness();
   renderVisionDownload();
 }
 
