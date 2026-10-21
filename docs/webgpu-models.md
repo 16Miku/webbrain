@@ -189,13 +189,19 @@ Ask) and decisions. Its training data and evaluations are on the model card.
   `tokenizer_config.json` at revision `main`: the pinned download never
   caches that, so the lookup would go to Hugging Face on every load and fail
   offline. With the published files it renders the reference's prompts and
-  produces its token ids exactly. Decoding is greedy with thinking off; tool
-  calls use Qwen3.5's XML format.
+  produces its token ids exactly. Message text, tool descriptions and decision
+  questions that spell one of its special tokens get a zero-width space after
+  the first character, so a page quoting `<|image_pad|>` or `<|im_end|>`
+  cannot add an image slot or end a turn. Decoding is greedy with thinking
+  off; tool calls use Qwen3.5's XML format.
 - **Download.** Files are read at a pinned commit (`COMPASS_VLD_REVISION`),
   one at a time. Each is stored only once it arrived whole and is then
   checked against its pinned size and SHA-256; a mismatch removes it and
   fails the download. A dropped connection or a server error retries that
-  file twice. Inference reads only the cache.
+  file twice. Inference reads only the cache. The ready marker does not name
+  the revision, so readiness also checks that every pinned file is cached;
+  after a new pin the model reads as not downloaded until Download fetches
+  the new files, and a finished download removes the earlier revision's.
 - **Checks on the published files** (RTX 5090, Chromium through Playwright):
   - `audit_webgpu_onnx.py` passes for every graph: no `Scan` or `Loop`, and
     decoder logits of shape `[batch, 1, 248094]`.

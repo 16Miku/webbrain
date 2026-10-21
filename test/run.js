@@ -68969,6 +68969,57 @@ test('Bonsai WebGPU presets preserve ordered selection and model-specific image 
   assert.equal(manager.getAll().webgpu.promptTier, 'mid');
 });
 
+test('an untouched Compass Tiny v2.1 WebGPU setting moves to Compass VLD Tiny v5 once, and a later choice of v2.1 stays', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousCaches = globalThis.caches;
+  const local = {};
+  const cachedModels = new Set();
+  globalThis.chrome = { storage: { local: {
+    get: async key => (Object.hasOwn(local, key) ? { [key]: local[key] } : {}),
+    set: async patch => { Object.assign(local, patch); },
+  } } };
+  const readableCaches = { match: async url => ([...cachedModels].some(id => decodeURIComponent(url).includes(`/${id}|`)) ? new Response('{}') : undefined) };
+  // A profile whose WebGPU provider holds Compass Tiny v2.1, never marked configured.
+  const profile = async () => {
+    const manager = new ProviderManagerCh();
+    manager.save = async () => {};
+    manager.providers.set('webgpu', new WebGPUProvider(manager._defaultConfigs().webgpu));
+    await manager.updateProvider('webgpu', { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID }, { markConfigured: false });
+    assert.notEqual(manager.getAll().webgpu.configured, true);
+    return manager;
+  };
+  try {
+    globalThis.caches = undefined;
+    const unreadable = await profile();
+    assert.equal(await unreadable.migrateUntouchedWebgpuDefault(), false);
+    assert.equal(unreadable.getAll().webgpu.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.deepEqual(local, {}, 'an unreadable cache leaves the decision for a later start');
+
+    globalThis.caches = readableCaches;
+    const untouched = await profile();
+    assert.equal(await untouched.migrateUntouchedWebgpuDefault(), true);
+    assert.equal(untouched.getAll().webgpu.model, WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID);
+    assert.deepEqual(untouched.getAll().webgpu.dtype, WEBGPU_COMPASS_VLD_DTYPE);
+    assert.notEqual(untouched.getAll().webgpu.configured, true, 'the move does not mark the provider configured');
+
+    // Picking Compass Tiny v2.1 in Apocalypse Mode saves it unconfigured; a
+    // service worker restart must not move it again.
+    const chosen = await profile();
+    assert.equal(await chosen.migrateUntouchedWebgpuDefault(), false);
+    assert.equal(chosen.getAll().webgpu.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+
+    for (const key of Object.keys(local)) delete local[key];
+    cachedModels.add(WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    const downloaded = await profile();
+    assert.equal(await downloaded.migrateUntouchedWebgpuDefault(), false, 'a downloaded Compass Tiny v2.1 stays');
+    assert.equal(downloaded.getAll().webgpu.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.equal(local.webgpuDefaultMigration, WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID, 'that decision is final too');
+  } finally {
+    globalThis.chrome = previousChrome;
+    if (previousCaches === undefined) delete globalThis.caches; else globalThis.caches = previousCaches;
+  }
+});
+
 test('Apocalypse hydrates every selectable Bonsai preset and inspects sibling cache state without changing selection', async () => {
   const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
   const functions = source.slice(source.indexOf('async function refreshWebgpuDownloadStatus('), source.indexOf('async function onWebgpuTextPresetChange('));

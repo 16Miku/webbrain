@@ -104,6 +104,8 @@ const WEBBRAIN_CLOUD_CONTEXT_WINDOW = 1000000;
 const WEBBRAIN_CLOUD_LEGACY_CONTEXT_WINDOW = 256000;
 const WEBBRAIN_DEVICE_GUID_KEY = 'webbrainDeviceGuid';
 const HELP_IMPROVE_WEBBRAIN_KEY = 'helpImproveWebBrain';
+// The WebGPU default the untouched-default migration last decided for.
+const WEBGPU_DEFAULT_MIGRATION_KEY = 'webgpuDefaultMigration';
 const OPENROUTER_DEFAULT_MODEL = 'openrouter/free';
 const OPENROUTER_LEGACY_DEFAULT_MODEL = 'stepfun/step-3.7-flash';
 const OPENAI_DEFAULT_MODEL = 'gpt-5.6-terra';
@@ -2004,21 +2006,33 @@ export class ProviderManager {
    * Older releases stored every built-in provider's defaults, so a stored
    * Compass Tiny v2.1 is not a choice by itself. Only a configuration nobody
    * set up moves: not marked configured, not the active provider, and Compass
-   * Tiny v2.1 never downloaded here (an unreadable cache keeps it). Returns
-   * whether it moved.
+   * Tiny v2.1 never downloaded here. This is decided once; an unreadable cache
+   * leaves it for a later start. Choosing Compass Tiny v2.1 afterwards stays,
+   * even where that choice is saved without marking the provider configured
+   * (Apocalypse Mode's model list). Returns whether it moved.
    */
   async migrateUntouchedWebgpuDefault() {
+    const stored = await chrome.storage.local.get(WEBGPU_DEFAULT_MIGRATION_KEY);
+    if (stored?.[WEBGPU_DEFAULT_MIGRATION_KEY] === WEBGPU_DEFAULT_MODEL_ID) return false;
     const config = this.providers.get('webgpu')?.config;
-    if (!config || config.configured === true || this.activeProviderId === 'webgpu') return false;
-    if (String(config.model || '').trim() !== WEBGPU_COMPASS_TINY_V2_MODEL_ID) return false;
-    if (await hasWebgpuTextModelCache(WEBGPU_COMPASS_TINY_V2_MODEL_ID) !== false) return false;
-    await this.updateProvider('webgpu', {
-      model: WEBGPU_DEFAULT_MODEL_ID,
-      dtype: webgpuModelDtype(WEBGPU_DEFAULT_MODEL_ID),
-      contextWindow: 32768,
-      supportsVision: true,
-    }, { markConfigured: false });
-    return true;
+    if (!config) return false;
+    let moved = false;
+    if (config.configured !== true && this.activeProviderId !== 'webgpu'
+        && String(config.model || '').trim() === WEBGPU_COMPASS_TINY_V2_MODEL_ID) {
+      const cached = await hasWebgpuTextModelCache(WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+      if (cached === null) return false;
+      if (cached === false) {
+        await this.updateProvider('webgpu', {
+          model: WEBGPU_DEFAULT_MODEL_ID,
+          dtype: webgpuModelDtype(WEBGPU_DEFAULT_MODEL_ID),
+          contextWindow: 32768,
+          supportsVision: true,
+        }, { markConfigured: false });
+        moved = true;
+      }
+    }
+    await chrome.storage.local.set({ [WEBGPU_DEFAULT_MIGRATION_KEY]: WEBGPU_DEFAULT_MODEL_ID });
+    return moved;
   }
 
   /** Start the selected shipped Apocalypse chat model, defaulting to Compass VLD Tiny v5. */

@@ -564,9 +564,12 @@ browser actions. The standalone chat window keeps its own page-free profile.
   processor ported from PyTorch. It runs greedy with thinking disabled and
   emits Qwen3.5 XML tool calls (`<tool_call><function=...><parameter=...>`),
   which the local fallback parser accepts. Files are fetched at a pinned
-  revision and each is checked against its pinned size and SHA-256. A profile
-  that never set up WebGPU moves from the previous default, Compass Tiny v2.1,
-  to it when Compass Tiny v2.1 was never downloaded there.
+  revision and each is checked against its pinned size and SHA-256. Message
+  text that spells a special token (`<|image_pad|>`, `<|im_end|>`) is encoded
+  as ordinary text. On the first start after the update, a profile that never
+  set up WebGPU moves from the previous default, Compass Tiny v2.1, to it when
+  Compass Tiny v2.1 was never downloaded there; choosing Compass Tiny v2.1
+  later stays.
 - [`webbrain-one/webbrain-compass-tiny-v2.1`](https://huggingface.co/webbrain-one/webbrain-compass-tiny-v2.1)
   (`q4f16`, about 1.87 GB across two external-data shards), WebBrain's Compass
   Tiny v2.1 fine-tune of MiniCPM5-2B for Compact tool routing. It runs greedy

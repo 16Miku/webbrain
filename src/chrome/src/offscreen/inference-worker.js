@@ -660,6 +660,13 @@ async function isTextModelReady(modelId, dtype) {
     const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
     const marker = await cache.match(textReadyMarkerUrl(modelId, dtype));
     if (!marker) return false;
+    // The marker does not name Compass VLD Tiny v5's pinned revision. When its
+    // files are not all cached (a newer pin), drop the marker so the model
+    // reads as not downloaded and Download fetches the missing files.
+    if (isCompassVldModel(modelId) && !await compassVldFilesCached(cache, modelId, dtype)) {
+      await cache.delete(textReadyMarkerUrl(modelId, dtype));
+      return false;
+    }
     readyTextModelKeys.add(key);
     return true;
   } catch {
@@ -1913,11 +1920,12 @@ async function runCompassVldText(payload) {
   if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
   const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
   const { messages, imageUrls } = prepareMultimodalMessages(payload?.messages);
-  const prompt = runtime.tokenizer.apply_chat_template(messages, {
+  // Page text and tool descriptions stay text even where they spell a special token.
+  const prompt = runtime.tokenizer.apply_chat_template(runtime.compassVld.plainStrings(messages), {
     add_generation_prompt: true,
     tokenize: false,
     enable_thinking: false,
-    tools: tools.length ? tools : undefined,
+    tools: tools.length ? runtime.compassVld.plainStrings(tools) : undefined,
   });
   const stopIfCancelled = () => throwIfTextCancelled(requestKey);
   const images = await loadCompassVldImages(runtime, imageUrls, stopIfCancelled);
@@ -2089,11 +2097,15 @@ async function runCompassVldDecision(payload, { isCancelled = () => false } = {}
   if (variant === 'probe' && modelId !== COMPASS_VLD_DECISION_PROBE.model) {
     throw new Error(`No decision probe is trained for ${modelId}.`);
   }
+  const engine = runtime.compassVld;
+  // The page state, the user's message and the questions stay text even where
+  // they spell a special token.
+  const plain = text => engine.plainText(text);
   const messages = [
     { role: 'system', content: [{ type: 'text', text: decisionSystemPrompt(payload?.promptVariant) }] },
     { role: 'user', content: [
       ...request.images.map(() => ({ type: 'image' })),
-      { type: 'text', text: `${variant === 'gate' ? String(request.state || '') : decisionStateText(request.state)}\n\n${DECISION_QUESTION_MARKER}` },
+      { type: 'text', text: `${plain(variant === 'gate' ? String(request.state || '') : decisionStateText(request.state))}\n\n${DECISION_QUESTION_MARKER}` },
     ] },
   ];
   const rendered = runtime.tokenizer.apply_chat_template(messages, { add_generation_prompt: true, enable_thinking: false, tokenize: false });
@@ -2103,7 +2115,6 @@ async function runCompassVldDecision(payload, { isCancelled = () => false } = {}
   }
   const prefixText = rendered.slice(0, split);
   const tailText = rendered.slice(split + DECISION_QUESTION_MARKER.length);
-  const engine = runtime.compassVld;
   const codeIds = new Map();
   const codeId = code => {
     if (!codeIds.has(code)) {
@@ -2139,7 +2150,7 @@ async function runCompassVldDecision(payload, { isCancelled = () => false } = {}
         const count = decisionOptions(question).names.length;
         for (let index = 0; index < count; index++) {
           stopIfCancelled();
-          const output = await engine.continuation(prefix, prefill.cache, `${decisionVerifyText(question, index)}${tailText}`);
+          const output = await engine.continuation(prefix, prefill.cache, `${plain(decisionVerifyText(question, index))}${tailText}`);
           suffixTokens += output.tokens;
           margins.push(output.logits[yesId] - output.logits[noId]);
           hidden.push(output.hidden);
@@ -2155,7 +2166,7 @@ async function runCompassVldDecision(payload, { isCancelled = () => false } = {}
       if (variant === 'gate') {
         if (question.type !== 'noul') throw new Error('The screenshot gate takes Yes/No questions only.');
         stopIfCancelled();
-        const output = await engine.continuation(prefix, prefill.cache, `${decisionQuestionText(question)}${tailText}`);
+        const output = await engine.continuation(prefix, prefill.cache, `${plain(decisionQuestionText(question))}${tailText}`);
         suffixTokens += output.tokens;
         const margin = output.logits[yesId] - output.logits[noId];
         const probability = tinyAskGateProbability(modelId, margin, output.hidden);
@@ -2173,7 +2184,7 @@ async function runCompassVldDecision(payload, { isCancelled = () => false } = {}
         continue;
       }
       stopIfCancelled();
-      const output = await engine.continuation(prefix, prefill.cache, `${decisionQuestionText(question)}${tailText}`);
+      const output = await engine.continuation(prefix, prefill.cache, `${plain(decisionQuestionText(question))}${tailText}`);
       suffixTokens += output.tokens;
       const logits = output.logits;
       const ids = decisionOptions(question).codes.map(codeId);

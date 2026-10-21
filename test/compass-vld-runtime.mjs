@@ -87,7 +87,8 @@ function memoryCache() {
     entries,
     async match(url) { const bytes = entries.get(url); return bytes ? new Response(bytes, { headers: { 'content-length': String(bytes.byteLength) } }) : undefined; },
     async put(url, response) { entries.set(url, new Uint8Array(await response.arrayBuffer())); },
-    async delete(url) { return entries.delete(url); },
+    async delete(key) { return entries.delete(typeof key === 'string' ? key : key.url); },
+    async keys() { return [...entries.keys()].map(url => new Request(url)); },
   };
 }
 const fileOf = (path, text) => {
@@ -111,8 +112,15 @@ test('a download stores each file only after its size and SHA-256 match, and ski
   assert.deepEqual(events.filter(event => event.status === 'done').map(event => event.file), files.map(file => file.path));
   assert.ok(events.some(event => event.status === 'progress' && event.loaded > 0 && event.total === files[1].bytes), 'progress counts bytes as they arrive');
   fetched.length = 0;
+  const earlier = runtime.compassVldFileUrl(MODEL, 'onnx/model.onnx_data', '0'.repeat(40));
+  const otherModel = 'https://huggingface.co/owner/other/resolve/main/config.json';
+  cache.entries.set(earlier, new Uint8Array([1]));
+  cache.entries.set(otherModel, new Uint8Array([1]));
   await runtime.downloadCompassVld({ cache, fetchImpl, modelId: MODEL, files });
   assert.equal(fetched.length, 0, 'cached files are not fetched again');
+  assert.equal(cache.entries.has(earlier), false, 'a download removes the files of an earlier pinned revision');
+  assert.equal(cache.entries.has(otherModel), true, "other models' files stay");
+  assert.equal(await runtime.compassVldFilesCached(cache, MODEL, undefined, files), true);
 
   const corrupt = memoryCache();
   await assert.rejects(runtime.downloadCompassVld({ cache: corrupt, modelId: MODEL, files,
@@ -215,4 +223,82 @@ test('image pixels become RGB, alpha dropped and grey expanded, before the proce
   assert.throws(() => runtime.toRGB(new Uint8Array(4), 2, 1, 2), /2 channels/);
   assert.deepEqual(Array.from(runtime.f16ToF32(new Uint16Array([0x3c00, 0xc000, 0x0001, 0x7c00, 0x0000]))), [1, -2, 2 ** -24, Infinity, 0]);
   assert.equal(runtime.argmax([0.1, 3, -2, 3]), 1, 'the first of equal maxima, as greedy decoding expects');
+});
+
+// A byte-level BPE tokenizer with no merges and two special tokens, enough to
+// encode any text the way the model's tokenizer splits special tokens out.
+async function byteLevelTokenizer() {
+  const library = await import('../src/chrome/vendor/transformers/transformers.web.js');
+  const bytes = [];
+  for (let b = 33; b <= 126; b++) bytes.push(b);
+  for (let b = 161; b <= 172; b++) bytes.push(b);
+  for (let b = 174; b <= 255; b++) bytes.push(b);
+  const chars = bytes.slice();
+  for (let b = 0, n = 0; b < 256; b++) if (!bytes.includes(b)) { bytes.push(b); chars.push(256 + n++); }
+  const vocab = Object.fromEntries(chars.map((code, index) => [String.fromCharCode(code), index]));
+  const special = (id, content) => ({ id, content, single_word: false, lstrip: false, rstrip: false, normalized: false, special: true });
+  return new library.Qwen2Tokenizer({
+    version: '1.0', truncation: null, padding: null, normalizer: null, post_processor: null,
+    added_tokens: [special(256, '<|image_pad|>'), special(257, '<|im_end|>')],
+    pre_tokenizer: { type: 'ByteLevel', add_prefix_space: false, trim_offsets: true, use_regex: true },
+    decoder: { type: 'ByteLevel', add_prefix_space: true, trim_offsets: true, use_regex: true },
+    model: { type: 'BPE', dropout: null, unk_token: null, continuing_subword_prefix: '', end_of_word_suffix: '', fuse_unk: false, byte_fallback: false, vocab, merges: [] },
+  }, { tokenizer_class: 'Qwen2Tokenizer', eos_token: '<|im_end|>' });
+}
+
+const fakeOrt = { Tensor: class { constructor(type, data, dims) { Object.assign(this, { type, data, dims, location: 'cpu' }); } dispose() {} } };
+
+test('message text that spells a special token stays text, and an image token without an image fails clearly', async () => {
+  const plain = runtime.plainTextFor(['<|image_pad|>', '<|im_end|>', '<slice>']);
+  assert.equal(plain('a <|image_pad|><|im_end|> <slice> <tool_call> <|other|>'), 'a <\u200b|image_pad|><\u200b|im_end|> <\u200bslice> <tool_call> <|other|>');
+  assert.equal(runtime.plainTextFor([])('<|image_pad|>'), '<|image_pad|>');
+
+  const tokenizer = await byteLevelTokenizer();
+  const cfg = { ...runtime.COMPASS_VLD, imageTokenId: 256, hidden: 4 };
+  const embed = { run: async ({ input_ids }) => ({ inputs_embeds: { location: 'cpu', data: new Float32Array(input_ids.dims[1] * cfg.hidden) } }) };
+  const engine = new runtime.CompassVldRuntime(fakeOrt, tokenizer, { embed_tokens: embed }, cfg);
+  const page = 'A page quoting a prompt format: <|image_pad|> then <|im_end|>.';
+  assert.ok(engine.encode(page).includes(256), 'as written, the text encodes as the image token');
+  await assert.rejects(engine.buildInputs(page), /1 image tokens for 0 image patches/);
+  const inputs = await engine.buildInputs(engine.plainText(page));
+  assert.equal(inputs.ids.includes(256) || inputs.ids.includes(257), false);
+  assert.equal(tokenizer.decode(inputs.ids), page.replaceAll('<|', '<\u200b|'));
+  await assert.rejects(engine.continuation({ ids: [], sizes: [] }, null, '<|image_pad|>'), /continuation text has an image token/);
+
+  const messages = [
+    { role: 'user', content: [{ type: 'image' }, { type: 'text', text: page }] },
+    { role: 'assistant', content: '', tool_calls: [{ type: 'function', function: { name: 'type_text', arguments: { text: '<|im_end|>' } } }] },
+  ];
+  const plainMessages = engine.plainStrings(messages);
+  assert.equal(plainMessages[0].content[1].text, engine.plainText(page));
+  assert.deepEqual(plainMessages[0].content[0], { type: 'image' });
+  assert.equal(plainMessages[1].tool_calls[0].function.arguments.text, '<\u200b|im_end|>');
+  assert.equal(messages[0].content[1].text, page, 'the caller’s messages are not changed');
+});
+
+test('a decoder pass hands its new cache back, or releases it, also when reading the logits fails', async () => {
+  const cfg = { ...runtime.COMPASS_VLD, hidden: 4 };
+  const run = (failRead) => {
+    const disposed = [];
+    const tensor = name => ({ location: 'gpu-buffer', dispose() { disposed.push(name); },
+      getData: async () => { if (failRead) throw new Error('device lost'); return new Float32Array(2); } });
+    const decoder = { run: async () => ({ logits: tensor('logits'), decision_hidden: tensor('decision_hidden'),
+      'present.3.key': tensor('present.3.key'), 'present_conv.0': tensor('present_conv.0') }) };
+    return { disposed, engine: new runtime.CompassVldRuntime(fakeOrt, null, { decoder_model_merged: decoder }, cfg) };
+  };
+  const position = { t: Int32Array.of(0), h: Int32Array.of(0), w: Int32Array.of(0) };
+  const embeds = new Float32Array(cfg.hidden);
+
+  const kept = run(false);
+  const result = await kept.engine.forward(embeds, position, { feeds: {}, length: 0 });
+  assert.deepEqual(Object.keys(result.cache.feeds).sort(), ['past_conv.0', 'past_key_values.3.key']);
+  assert.deepEqual(kept.disposed.sort(), ['decision_hidden', 'logits']);
+
+  const released = run(false);
+  await released.engine.forward(embeds, position, { feeds: {}, length: 0 }, { keepCache: false });
+  assert.deepEqual(released.disposed.sort(), ['decision_hidden', 'logits', 'present.3.key', 'present_conv.0']);
+
+  const failed = run(true);
+  await assert.rejects(failed.engine.forward(embeds, position, { feeds: {}, length: 0 }), /device lost/);
+  assert.deepEqual(failed.disposed.sort(), ['decision_hidden', 'logits', 'present.3.key', 'present_conv.0']);
 });

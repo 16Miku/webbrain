@@ -455,4 +455,13 @@ test('the screenshot gate probes never fall back to the untrained readout', asyn
   const compassVld = worker.slice(worker.indexOf('async function runCompassVldDecision'), worker.indexOf('async function runMultimodalDecision'));
   assert.match(compassVld, /const probability = tinyAskGateProbability\(modelId, margin, output\.hidden\);\n[\s\S]*?if \(probability === null && !\(returnHidden && output\.hidden\)\) \{\n\s*throw new Error\(`No screenshot gate probe is trained for/,
     'Compass VLD Tiny v5 uses its own probe the same way');
+  // Page text, the user's message and the questions that spell a special token
+  // (`<|image_pad|>`, `<|im_end|>`) must reach Compass VLD Tiny v5 as text.
+  assert.match(compassVld, /text: `\$\{plain\(variant === 'gate' \? String\(request\.state \|\| ''\) : decisionStateText\(request\.state\)\)\}\\n\\n\$\{DECISION_QUESTION_MARKER\}`/);
+  assert.equal((compassVld.match(/engine\.continuation\(prefix, prefill\.cache, `\$\{plain\(decision(?:Verify|Question)Text\(question(?:, index)?\)\)\}\$\{tailText\}`\)/g) || []).length, 3,
+    'every question continuation is plain text');
+  assert.doesNotMatch(compassVld, /engine\.continuation\(prefix, prefill\.cache, `\$\{decision/);
+  const compassVldText = worker.slice(worker.indexOf('async function runCompassVldText'), worker.indexOf('async function runMultimodalText'));
+  assert.match(compassVldText, /apply_chat_template\(runtime\.compassVld\.plainStrings\(messages\), \{[\s\S]*?tools: tools\.length \? runtime\.compassVld\.plainStrings\(tools\) : undefined,/,
+    'chat messages and tool descriptions are plain text too');
 });

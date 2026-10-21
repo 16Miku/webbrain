@@ -151,6 +151,20 @@ export async function downloadCompassVld({
     }
     onProgress({ status: 'done', file: file.path, loaded: file.bytes, total: file.bytes });
   }
+  await removeOtherCompassVldRevisions(cache, modelId);
+}
+
+/** Delete this model's files from any other revision, left by an earlier pin. */
+export async function removeOtherCompassVldRevisions(cache, modelId, revision = COMPASS_VLD_REVISION) {
+  if (typeof cache.keys !== 'function') return 0;
+  const base = `https://huggingface.co/${modelId}/resolve/`;
+  const current = `${base}${encodeURIComponent(revision)}/`;
+  let removed = 0;
+  for (const request of await cache.keys()) {
+    const url = typeof request === 'string' ? request : request.url;
+    if (url.startsWith(base) && !url.startsWith(current) && await cache.delete(request)) removed += 1;
+  }
+  return removed;
 }
 
 async function fetchIntoCache(cache, fetchImpl, url, file, onProgress) {
@@ -640,6 +654,23 @@ export function argmax(values) {
   return best;
 }
 
+/**
+ * Text that spells one of the tokenizer's special tokens (`<|image_pad|>`,
+ * `<|im_end|>`, `<slice>`, …) would be encoded as that token: an image slot
+ * with no image behind it, or a turn boundary that page text could inject.
+ * The returned function puts a zero-width space after the first character of
+ * each such spelling, so it stays readable and is encoded as ordinary text.
+ * It is for message text before the chat template renders it; the template's
+ * own special tokens are added afterwards.
+ */
+export function plainTextFor(specialTokens = []) {
+  const tokens = [...new Set(Array.from(specialTokens, String))].filter(token => token.length > 1)
+    .sort((a, b) => b.length - a.length);
+  if (!tokens.length) return text => String(text ?? '');
+  const pattern = new RegExp(tokens.map(token => token.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&')).join('|'), 'g');
+  return text => String(text ?? '').replace(pattern, token => `${token[0]}\u200b${token.slice(1)}`);
+}
+
 export class CompassVldRuntime {
   /**
    * @param ort       onnxruntime-web (the WebGPU build Transformers.js uses)
@@ -654,6 +685,17 @@ export class CompassVldRuntime {
     this.decoder = sessions.decoder_model_merged;
     this.cfg = cfg;
     this.layerKinds = Array.from({ length: cfg.layers }, (_, i) => ((i + 1) % cfg.fullAttentionInterval === 0 ? 'attn' : 'gdn'));
+    this.plainText = plainTextFor(tokenizer?.all_special_tokens || []);
+  }
+
+  /** A copy of messages or tools with every string passed through plainText. */
+  plainStrings(value) {
+    if (typeof value === 'string') return this.plainText(value);
+    if (Array.isArray(value)) return value.map(item => this.plainStrings(item));
+    if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, this.plainStrings(item)]));
+    }
+    return value;
   }
 
   async dispose() {
@@ -706,6 +748,12 @@ export class CompassVldRuntime {
   async buildInputs(promptText, images = [], { beforeImage = null } = {}) {
     const text = images.length ? expandImagePlaceholders(promptText, images) : promptText;
     const ids = this.encode(text);
+    // Message text must reach here through plainText; an image token it spelled
+    // would otherwise be taken for an image patch.
+    const div = this.cfg.mergeFactor * this.cfg.mergeFactor;
+    const patches = images.reduce((sum, image) => sum + image.crops.reduce((n, crop) => n + (crop.h * crop.w) / div, 0), 0);
+    const pads = ids.reduce((sum, id) => sum + (id === this.cfg.imageTokenId ? 1 : 0), 0);
+    if (pads !== patches) throw new Error(`The prompt has ${pads} image tokens for ${patches} image patches.`);
     const embeds = await this.embedIds(ids);
     if (images.length) {
       const features = [];
@@ -775,19 +823,24 @@ export class CompassVldRuntime {
       const data = tensor.location === 'gpu-buffer' ? await tensor.getData() : tensor.data;
       return data instanceof Uint16Array ? f16ToF32(data) : (data instanceof Float32Array ? data : Float32Array.from(data));
     };
+    const present = Object.entries(out).filter(([name]) => name.startsWith('present'));
+    let kept = false;
     try {
       const logits = await read(out.logits);
       const hidden = wantHidden && out.decision_hidden ? await read(out.decision_hidden) : null;
       const next = { feeds: {}, length: total };
-      for (const [name, tensor] of Object.entries(out)) {
-        if (!name.startsWith('present')) continue;
-        if (keepCache) next.feeds[name.replace('present_conv', 'past_conv').replace('present_recurrent', 'past_recurrent').replace('present.', 'past_key_values.')] = tensor;
-        else tensor.dispose?.();
+      if (keepCache) {
+        for (const [name, tensor] of present) {
+          next.feeds[name.replace('present_conv', 'past_conv').replace('present_recurrent', 'past_recurrent').replace('present.', 'past_key_values.')] = tensor;
+        }
+        kept = true;
       }
       return { logits, hidden, cache: next };
     } finally {
       out.logits?.dispose?.();
       out.decision_hidden?.dispose?.();
+      // The new cache is released unless it was handed back, also when a read failed.
+      if (!kept) for (const [, tensor] of present) tensor.dispose?.();
     }
   }
 
@@ -858,6 +911,7 @@ export class CompassVldRuntime {
   /** Logits (and decision_hidden) after appending `text` to a prefilled prefix, leaving the prefix cache as it was. */
   async continuation(prefix, prefixCache, text) {
     const suffix = this.encode(text);
+    if (suffix.includes(this.cfg.imageTokenId)) throw new Error('The continuation text has an image token; pass it through plainText.');
     const pos = canvasPositions(prefix.ids.concat(suffix), prefix.sizes, this.cfg);
     const P = prefix.ids.length;
     const embeds = await this.embedIds(suffix);
