@@ -167,6 +167,11 @@ type uvInstallation struct {
 	SHA256  string `json:"sha256"`
 }
 
+type mlxInstallation struct {
+	Requirements string        `json:"requirements"`
+	Files        []runtimeFile `json:"files"`
+}
+
 var runtimeVerifier download.Verifier
 
 func fileSHA256(path string) (string, error) {
@@ -303,11 +308,94 @@ func installedUVManifest(arch string) ([]byte, error) {
 }
 
 func mlxEnvironmentInstalled() bool {
-	if !fileOK(filepath.Join(mlxVenv(), "bin", "python"), 0) {
+	dir := mlxVenv()
+	data, err := os.ReadFile(filepath.Join(dir, ".installed"))
+	if err != nil {
 		return false
 	}
-	data, err := os.ReadFile(filepath.Join(mlxVenv(), ".installed"))
-	return err == nil && string(data) == strings.Join(mlxRequirements, "\n")+"\n"
+	var installed mlxInstallation
+	if json.Unmarshal(data, &installed) != nil || installed.Requirements != strings.Join(mlxRequirements, "\n") || len(installed.Files) < 6 {
+		return false
+	}
+	pythonVerified := false
+	for _, f := range installed.Files {
+		rel := filepath.FromSlash(f.Path)
+		if !filepath.IsLocal(rel) || f.Size <= 0 || len(f.SHA256) != 64 {
+			return false
+		}
+		path := filepath.Join(dir, rel)
+		if f.Path == "bin/python" {
+			info, err := os.Stat(path)
+			if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+				return false
+			}
+			pythonVerified = true
+		}
+		if !runtimeVerifier.Valid(path, f.Size, f.SHA256) {
+			return false
+		}
+	}
+	return pythonVerified
+}
+
+const mlxImportScript = `import importlib, json
+names = ("mlx.core", "mlx_lm", "mlx_vlm", "mlx_vlm.models.prism_hadamard_qwen35", "transformers")
+modules = [importlib.import_module(name) for name in names]
+from mlx_vlm.models.prism_hadamard_qwen35 import Model
+paths = [module.__file__ for module in modules]
+if any(path is None for path in paths):
+    raise RuntimeError("MLX dependency has no file path")
+print("WBC_MLX_FILES=" + json.dumps(paths))`
+
+func mlxImportFiles(ctx context.Context, py string) ([]string, error) {
+	cmd := osutil.CommandContext(ctx, py, "-c", mlxImportScript)
+	cmd.Env = append(os.Environ(), "HF_HUB_OFFLINE=1")
+	cmd.Stderr = logx.Writer("[mlx]")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("import MLX dependencies: %w (see log)", err)
+	}
+	const prefix = "WBC_MLX_FILES="
+	i := strings.LastIndex(string(out), prefix)
+	if i < 0 {
+		return nil, errors.New("MLX dependency check returned no module paths")
+	}
+	var paths []string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out[i+len(prefix):]))), &paths); err != nil {
+		return nil, fmt.Errorf("parse MLX dependency paths: %w", err)
+	}
+	if len(paths) != 5 {
+		return nil, errors.New("MLX dependency check returned an incomplete module list")
+	}
+	return paths, nil
+}
+
+func installedMLXManifest(modulePaths []string) ([]byte, error) {
+	dir := mlxVenv()
+	paths := append([]string{filepath.Join(dir, "bin", "python")}, modulePaths...)
+	installed := mlxInstallation{Requirements: strings.Join(mlxRequirements, "\n")}
+	for _, path := range paths {
+		rel, err := filepath.Rel(dir, path)
+		if err != nil || !filepath.IsLocal(rel) {
+			return nil, fmt.Errorf("MLX dependency is outside its environment: %s", path)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() || info.Size() == 0 {
+			return nil, fmt.Errorf("MLX dependency is not a file: %s", path)
+		}
+		if rel == filepath.Join("bin", "python") && runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
+			return nil, errors.New("MLX Python is not executable")
+		}
+		sha, err := fileSHA256(path)
+		if err != nil {
+			return nil, err
+		}
+		installed.Files = append(installed.Files, runtimeFile{filepath.ToSlash(rel), info.Size(), sha})
+	}
+	return json.Marshal(installed)
 }
 
 func (m *Manager) ggufInstalled(p Plan) bool {
@@ -624,7 +712,14 @@ func (m *Manager) installMLX(ctx context.Context, info sysinfo.Info) error {
 		_ = os.Remove(src)
 	}
 	if mlxEnvironmentInstalled() {
-		return nil
+		if _, err := mlxImportFiles(ctx, filepath.Join(mlxVenv(), "bin", "python")); err == nil {
+			return nil
+		} else {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			logx.Printf("MLX environment needs repair: %v", err)
+		}
 	}
 	env := append(os.Environ(),
 		"UV_CACHE_DIR="+filepath.Join(paths.Runtimes(), "uv-cache"),
@@ -654,12 +749,15 @@ func (m *Manager) installMLX(ctx context.Context, info sysinfo.Info) error {
 		return err
 	}
 	m.setPhase(PhaseInstalling, "Checking the native Bonsai loader", nil)
-	check := osutil.CommandContext(ctx, py, "-c", "from mlx_vlm.models.prism_hadamard_qwen35 import Model")
-	check.Stdout, check.Stderr = logx.Writer("[mlx]"), logx.Writer("[mlx]")
-	if err := check.Run(); err != nil {
-		return errors.New("mlx-vlm installed but its Bonsai 2 loader is missing (see log)")
+	modulePaths, err := mlxImportFiles(ctx, py)
+	if err != nil {
+		return err
 	}
-	return os.WriteFile(filepath.Join(mlxVenv(), ".installed"), []byte(strings.Join(mlxRequirements, "\n")+"\n"), 0o644)
+	manifest, err := installedMLXManifest(modulePaths)
+	if err != nil {
+		return fmt.Errorf("verify MLX environment: %w", err)
+	}
+	return os.WriteFile(filepath.Join(mlxVenv(), ".installed"), manifest, 0o644)
 }
 
 // trustMacBinaries clears quarantine and ad-hoc signs downloaded executables
@@ -754,6 +852,13 @@ func (m *Manager) Start() (startErr error) {
 			return errors.New("the MLX pack is not installed")
 		}
 		py := filepath.Join(mlxVenv(), "bin", "python")
+		checkCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_, checkErr := mlxImportFiles(checkCtx, py)
+		cancel()
+		if checkErr != nil {
+			_ = os.Remove(filepath.Join(mlxVenv(), ".installed"))
+			return fmt.Errorf("MLX environment is damaged; reinstall it: %w", checkErr)
+		}
 		upstream = mlxDir()
 		cmd = osutil.Command(py, "-m", "mlx_vlm.server", "--model", mlxDir(), "--host", "127.0.0.1",
 			"--port", fmt.Sprint(port), "--enable-thinking")
@@ -870,7 +975,7 @@ func (m *Manager) registrationFailed(err error) {
 func (m *Manager) waitForExit(cmd *exec.Cmd, exited chan struct{}) {
 	defer close(exited)
 	err := cmd.Wait()
-	_ = m.register(nil)
+	unregisterErr := m.register(nil)
 	m.mu.Lock()
 	why := m.stopErr
 	if !m.stopping {
@@ -881,6 +986,9 @@ func (m *Manager) waitForExit(cmd *exec.Cmd, exited chan struct{}) {
 		logx.Printf("%s", msg)
 		why = errors.New(msg + " (see log)")
 	}
+	if unregisterErr != nil {
+		why = errors.Join(why, fmt.Errorf("unregister stopped local model: %w", unregisterErr))
+	}
 	m.cmd, m.port, m.startedAt, m.stopErr = nil, 0, nil, nil
 	m.phase, m.step, m.err, m.progress = PhaseIdle, "", "", nil
 	if why != nil {
@@ -890,14 +998,14 @@ func (m *Manager) waitForExit(cmd *exec.Cmd, exited chan struct{}) {
 	m.changed()
 }
 
-// Stop terminates the local server.
-func (m *Manager) Stop() {
+// Stop unregisters and terminates the local server. A failed unregister is
+// reported even if the process has already exited.
+func (m *Manager) Stop() error {
 	m.mu.Lock()
 	if starting := m.starting; starting != nil {
 		m.mu.Unlock()
 		<-starting
-		m.Stop()
-		return
+		return m.Stop()
 	}
 	cmd, exited := m.cmd, m.exited
 	m.stopping = true
@@ -905,9 +1013,15 @@ func (m *Manager) Stop() {
 		m.phase = PhaseStopping
 	}
 	m.mu.Unlock()
-	_ = m.register(nil)
+	unregisterErr := m.register(nil)
+	if unregisterErr != nil {
+		logx.Printf("unregister local model while stopping: %v", unregisterErr)
+	}
 	if cmd == nil || cmd.Process == nil {
-		return
+		if unregisterErr != nil {
+			m.setPhase(PhaseError, "", fmt.Errorf("unregister stopped local model: %w", unregisterErr))
+		}
+		return unregisterErr
 	}
 	m.changed()
 	terminate(cmd)
@@ -917,6 +1031,13 @@ func (m *Manager) Stop() {
 		_ = cmd.Process.Kill()
 		<-exited
 	}
+	m.mu.Lock()
+	phase, detail := m.phase, m.err
+	m.mu.Unlock()
+	if phase == PhaseError {
+		return errors.New(detail)
+	}
+	return nil
 }
 
 // Running reports whether the local server is up.
@@ -934,7 +1055,9 @@ func (m *Manager) Remove(format string) error {
 	if _, err := m.store.Update(func(s *settings.Settings) { s.Local.AutoStart = false }); err != nil {
 		return err
 	}
-	m.Stop()
+	if err := m.Stop(); err != nil {
+		return err
+	}
 	var removeErrs []error
 	remove := func(path string) {
 		if err := os.RemoveAll(path); err != nil {
@@ -973,7 +1096,9 @@ func (m *Manager) Remove(format string) error {
 // Restart applies new settings (vision mode, context) to a running server.
 func (m *Manager) Restart() error {
 	running := m.Running()
-	m.Stop()
+	if err := m.Stop(); err != nil {
+		return err
+	}
 	if running {
 		return m.Start()
 	}

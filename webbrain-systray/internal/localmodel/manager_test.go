@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -320,11 +321,73 @@ func TestMLXEnvironmentRejectsStaleDependencies(t *testing.T) {
 	if mlxEnvironmentInstalled() {
 		t.Fatal("stale MLX dependency marker was accepted")
 	}
-	if err := os.WriteFile(marker, []byte(strings.Join(mlxRequirements, "\n")+"\n"), 0o600); err != nil {
+	modulePaths := make([]string, 5)
+	for i := range modulePaths {
+		modulePaths[i] = filepath.Join(mlxVenv(), "lib", "python3.11", "site-packages", fmt.Sprintf("module-%d.py", i))
+		if err := os.MkdirAll(filepath.Dir(modulePaths[i]), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(modulePaths[i], []byte("module"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest, err := installedMLXManifest(modulePaths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, manifest, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if !mlxEnvironmentInstalled() {
-		t.Fatal("current MLX dependency marker was rejected")
+		t.Fatal("verified MLX environment was rejected")
+	}
+	if err := os.Remove(modulePaths[2]); err != nil {
+		t.Fatal(err)
+	}
+	if mlxEnvironmentInstalled() {
+		t.Fatal("MLX environment missing an installed package was accepted")
+	}
+	if err := os.WriteFile(modulePaths[2], []byte("module"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(filepath.Join(bin, "python"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if mlxEnvironmentInstalled() {
+			t.Fatal("MLX environment with a non-executable Python was accepted")
+		}
+	}
+}
+
+func TestStopReportsFailedLocalModelUnregister(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := osutil.Command(executable, "-test.run=^TestLocalModelWaitHelper$")
+	cmd.Env = append(os.Environ(), "WBC_WAIT_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	var calls atomic.Int32
+	m := NewManager(nil, func([]core.LocalUpstream) error {
+		calls.Add(1)
+		return errors.New("proxy config is read-only")
+	}, nil)
+	m.cmd, m.exited, m.phase = cmd, make(chan struct{}), PhaseRunning
+	go m.waitForExit(cmd, m.exited)
+	if err := m.Stop(); err == nil || !strings.Contains(err.Error(), "proxy config is read-only") {
+		t.Fatalf("Stop hid unregister failure: %v", err)
+	}
+	if calls.Load() < 2 {
+		t.Fatalf("expected unregister retry after process exit, got %d calls", calls.Load())
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.phase != PhaseError || !strings.Contains(m.err, "proxy config is read-only") {
+		t.Fatalf("failed unregister reported phase=%q error=%q", m.phase, m.err)
 	}
 }
 

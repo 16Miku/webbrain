@@ -584,7 +584,7 @@ func (a *App) restartOn(s settings.Settings, port int, strict bool) error {
 	local := a.Proxy.Local()
 	before := a.Proxy.Port()
 	panelOpen := a.listeners() > 0
-	a.Proxy.Stop()
+	a.Proxy.StopForRestart()
 	err := a.Proxy.Start(a.proxyOptionsOn(s, local, port, strict))
 	a.mu.Lock()
 	a.notice = ""

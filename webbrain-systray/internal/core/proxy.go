@@ -83,6 +83,13 @@ func New() *Proxy { return &Proxy{} }
 func (p *Proxy) Port() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.done != nil {
+		select {
+		case <-p.done:
+			return 0
+		default:
+		}
+	}
 	return p.port
 }
 
@@ -267,8 +274,16 @@ func (p *Proxy) Start(opts Options) error {
 	return errors.New("proxy did not start listening in time")
 }
 
-// Stop shuts the service down and waits for it to exit.
-func (p *Proxy) Stop() {
+// Stop shuts the service down, waiting up to ten seconds during application
+// shutdown. A timed-out service still owns its port until it actually exits.
+func (p *Proxy) Stop() { p.stop(10 * time.Second) }
+
+// StopForRestart waits for the old in-process service to exit before replacing
+// it. Starting another instance while it is alive would fail and leave the
+// companion without a usable proxy.
+func (p *Proxy) StopForRestart() { p.stop(0) }
+
+func (p *Proxy) stop(grace time.Duration) {
 	p.opMu.Lock()
 	defer p.opMu.Unlock()
 	p.mu.Lock()
@@ -278,13 +293,20 @@ func (p *Proxy) Stop() {
 		return
 	}
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		logx.Printf("proxy did not stop within 10s")
+	if grace == 0 {
+		<-done
+	} else {
+		select {
+		case <-done:
+		case <-time.After(grace):
+			logx.Printf("proxy did not stop within %s", grace)
+			return
+		}
 	}
 	p.mu.Lock()
-	p.port = 0
+	if p.done == done {
+		p.port = 0
+	}
 	p.mu.Unlock()
 }
 
