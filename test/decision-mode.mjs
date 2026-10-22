@@ -7,7 +7,7 @@ const area = { get: async () => ({}), set: async () => {} };
 globalThis.chrome = globalThis.browser = { storage: { local: area, session: area }, runtime: { getURL: x => x, sendMessage: async () => ({}) } };
 
 const cache = await import('../src/chrome/src/providers/webgpu-model-cache.js');
-const { WEBGPU_BONSAI2_VL_2B_MODEL_ID } = await import('../src/chrome/src/providers/webgpu.js');
+const { WEBGPU_BONSAI2_VL_2B_MODEL_ID, WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_VISION_MODEL_ID } = await import('../src/chrome/src/providers/webgpu.js');
 // Compass VLD Tiny v5, the in-browser chat model fine-tuned for decisions, and
 // Ternary Bonsai 2 2B Vision, a chat model that reads screenshots but whose
 // decisions failed validation.
@@ -235,6 +235,87 @@ for (const build of ['chrome', 'firefox']) {
     });
     await withModelCache([], async () => {
       assert.equal((await availability.resolveCurrentDecisionConfig({})).enabled, false);
+    });
+  });
+
+  // The offscreen WebGPU worker holds one in-browser model at a time: a check
+  // on the chat decision model would unload the task's own chat or screenshot
+  // model, and its next turn or screenshot would load that again.
+  test(`${build}: Auto asks the in-browser chat model only while the task keeps no other in-browser model loaded`, async () => {
+    const V5 = config.WEBGPU_CHAT_DECISION_MODEL;
+    assert.equal(await availability.chatDecisionModelFree(), true, 'a task with no in-browser model');
+    assert.equal(await availability.chatDecisionModelFree([]), true);
+    assert.equal(await availability.chatDecisionModelFree([V5]), true, 'a task on the chat decision model itself shares it');
+    assert.equal(await availability.chatDecisionModelFree([V5, WEBGPU_VISION_MODEL_ID]), false);
+    assert.equal(await availability.chatDecisionModelFree(async () => [WEBGPU_COMPASS_TINY_V2_MODEL_ID]), false);
+    assert.equal(await availability.chatDecisionModelFree(async () => { throw new Error('unreadable'); }), false,
+      'when the task cannot say what it keeps loaded, the chat model is not asked');
+    const asked = [];
+    const models = list => async () => { asked.push(list); return list; };
+    await withModelCache([CHAT_DECISION_MARKER], async () => {
+      const busy = await availability.resolveCurrentDecisionConfig({}, null, { feature: 'done', inBrowserModels: models([WEBGPU_COMPASS_TINY_V2_MODEL_ID]) });
+      assert.equal(busy.source, 'none', 'with another in-browser model serving the task, the check stays with the main model');
+      const shared = await availability.resolveCurrentDecisionConfig({}, COMPASS, { feature: 'watch', inBrowserModels: models([V5]) });
+      assert.equal(shared.provider, build === 'chrome' ? 'webgpu_chat' : 'compass');
+      assert.equal(asked.length, build === 'chrome' ? 2 : 0, 'Firefox never asks');
+      asked.length = 0;
+      await availability.resolveCurrentDecisionConfig({ decisionMode: 'off' }, null, { inBrowserModels: models([]) });
+      await availability.resolveCurrentDecisionConfig({ decisionMode: 'on', decisionProvider: 'local' }, null, { inBrowserModels: models([]) });
+      await availability.resolveCurrentDecisionConfig({}, COMPASS, { feature: 'semantic', inBrowserModels: models([]) });
+      assert.deepEqual(asked, [], 'only a check Auto could give the chat model reads them');
+    });
+    await withModelCache([], async () => {
+      await availability.resolveCurrentDecisionConfig({}, null, { inBrowserModels: models([]) });
+      assert.deepEqual(asked, [], 'nor without its download');
+    });
+    await withD1Download(pin, {}, async ({ consent }) => {
+      await withModelCache([CHAT_DECISION_MARKER], async () => {
+        const local = await availability.resolveCurrentDecisionConfig(consent, null, { feature: 'done', inBrowserModels: [WEBGPU_COMPASS_TINY_V2_MODEL_ID] });
+        assert.equal(local.provider, 'webgpu_d1', 'D1, in its own worker, takes the checks instead');
+      });
+    });
+  });
+
+  test(`${build}: a task's in-browser models are its WebGPU chat model and the in-browser model reading its screenshots`, async () => {
+    const V5 = config.WEBGPU_CHAT_DECISION_MODEL;
+    const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+    const routes = [];
+    let route = { provider: { model: WEBGPU_VISION_MODEL_ID }, route: 'local_fallback' };
+    const agent = new Agent({ getActive: () => ({ config: {} }), resolveVisionRoute: async provider => { routes.push(provider); return route; } });
+    const webgpu = (model, supportsVision) => ({ name: 'webgpu', model, supportsVision, config: {} });
+    const textOnly = { name: 'deepseek', model: 'deepseek-chat', supportsVision: false, config: {} };
+    if (build === 'firefox') {
+      assert.deepEqual(await agent._inBrowserModels(webgpu(WEBGPU_COMPASS_TINY_V2_MODEL_ID, false)), [], 'Firefox runs no in-browser models');
+      assert.deepEqual(routes, []);
+      return;
+    }
+    assert.deepEqual(await agent._inBrowserModels(null), []);
+    assert.deepEqual(await agent._inBrowserModels(webgpu(V5, true)), [V5]);
+    assert.deepEqual(await agent._inBrowserModels({ name: 'anthropic', model: 'claude', supportsVision: true, config: {} }), []);
+    assert.deepEqual(routes, [], 'a provider that sees screenshots needs no reader');
+    assert.deepEqual(await agent._inBrowserModels(webgpu(WEBGPU_COMPASS_TINY_V2_MODEL_ID, false)), [WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_VISION_MODEL_ID]);
+    assert.deepEqual(await agent._inBrowserModels(textOnly), [WEBGPU_VISION_MODEL_ID], 'a text-only provider keeps its screenshot reader loaded');
+    route = { provider: { model: 'gpt-4o-mini' }, route: 'explicit_override', rawImage: false };
+    assert.deepEqual(await agent._inBrowserModels(textOnly), [], 'an external endpoint reads them outside the browser');
+    // Auto's completion checks follow them.
+    await withModelCache([CHAT_DECISION_MARKER], async () => {
+      assert.equal(await agent._jevSettings(1, webgpu(WEBGPU_COMPASS_TINY_V2_MODEL_ID, false), 'done'), null,
+        'a check would unload the chat model the task runs on');
+      assert.equal((await agent._jevSettings(1, webgpu(V5, true), 'done'))?.decisionConfig.provider, 'webgpu_chat');
+    });
+  });
+
+  test(`${build}: scheduled checks leave the in-browser chat model alone while the task keeps another in-browser model loaded`, async () => {
+    const judge = { evaluate: async () => { throw new Error('no decision model is in use'); } };
+    const h = makeSchedulerHarness(scheduler, { systemOneJudge: judge });
+    const providers = [];
+    h.manager.agent._inBrowserModels = async provider => { providers.push(provider); return [WEBGPU_COMPASS_TINY_V2_MODEL_ID]; };
+    const provider = { name: 'webgpu', model: WEBGPU_COMPASS_TINY_V2_MODEL_ID, config: {} };
+    await withModelCache([CHAT_DECISION_MARKER], async () => {
+      const verdict = await h.manager._evaluateSystemOne({ source: 'watch', prompt: 'Watch status', tabId: 77 }, '', 'success',
+        { settings: {}, evidence: { observations: [{ data: 'Status: done' }] }, provider });
+      assert.equal(verdict.reason, 'disabled');
+      assert.deepEqual(providers, build === 'chrome' ? [provider] : []);
     });
   });
 

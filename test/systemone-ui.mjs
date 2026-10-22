@@ -79,7 +79,8 @@ function installStub({ lang, build, version, seed = {} }) {
         webbrain_cloud: { label: 'WebBrain Cloud', category: 'cloud', providerName: 'webbrain-cloud', configured: true } }, active: sessionStorage.getItem('active-provider') || 'llamacpp' }
         : msg.action === 'test_system_one' ? { success: true, model: msg.settings?.decisionModel || 'jev-1.13.0', visionVerified: msg.settings?.decisionProvider === 'openrouter' }
           : msg.action === 'list_decision_models' ? { success: true, models: [{ id: 'cloudflare/clef-flash', name: 'Decider', supportsVision: true, inputRate: .02, outputRate: 0 }, { id: 'another/publisher', name: 'Another decision model', supportsVision: false, inputRate: .1, outputRate: 0 }] }
-            : msg.action === 'get_user_memory' ? { ok: true, enabled: true, records: [] } : {};
+            : msg.action === 'get_user_memory' ? { ok: true, enabled: true, records: [] }
+              : msg.action === 'get_in_browser_models' ? { ok: true, models: window.testInBrowserModels || [] } : {};
       callback?.(result); return Promise.resolve(result);
     } },
     commands: { getAll: async () => [] }, tabs: { create: async () => ({}) },
@@ -151,6 +152,16 @@ try {
           assert.equal(await page.locator('#btn-test-system-one').isVisible(), true, 'the chat model runs here, so Auto can test it');
           await page.locator('#system-one-card').screenshot({ animations: 'disabled', caret: 'hide', path: `${output}/${build}-${lang}-${width}-auto-chat-model.png` });
           assert.equal(await page.evaluate(() => testRequests.filter(r => r.action === 'test_system_one').length), 0);
+          // While the active provider keeps another in-browser model loaded, a
+          // check would unload it, so Auto does not use the chat model.
+          await page.evaluate(() => { window.testInBrowserModels = ['webbrain-one/webbrain-compass-tiny-v2.1']; dispatchEvent(new Event('focus')); });
+          await page.waitForFunction(() => document.querySelector('#decision-auto-status').dataset.state === 'inactive');
+          assert.doesNotMatch(await statusText(), /Compass VLD Tiny v5/);
+          assert.equal(await page.locator('#btn-test-system-one').isVisible(), false);
+          await page.evaluate(() => { window.testInBrowserModels = ['webbrain-one/webbrain-compass-vld-tiny-v5-onnx']; dispatchEvent(new Event('focus')); });
+          await page.waitForFunction(() => document.querySelector('#decision-auto-status').dataset.state === 'active');
+          assert.match(await statusText(), /Compass VLD Tiny v5/, 'a provider chatting on the chat decision model shares it');
+          await page.evaluate(() => { delete window.testInBrowserModels; });
           await page.evaluate(async () => { await caches.delete('transformers-cache'); dispatchEvent(new Event('focus')); });
           await page.waitForFunction(() => document.querySelector('#decision-auto-status').dataset.state === 'inactive');
         }

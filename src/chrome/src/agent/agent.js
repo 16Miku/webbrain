@@ -9155,12 +9155,27 @@ export class Agent extends LoopDetector {
     return image;
   }
 
+  // The in-browser models a task on `provider` keeps in the offscreen WebGPU
+  // worker: its chat model, and the model reading its screenshots when it
+  // cannot see them (Providers → Vision). Auto's decisions stay off that
+  // worker while one of them is another model (decision-availability.js
+  // chatDecisionModelFree). Storage and Cache Storage lookups only.
+  async _inBrowserModels(provider) {
+    if (!provider) return [];
+    const models = this._isInBrowserProvider(provider) && provider.model ? [provider.model] : [];
+    if (!provider.supportsVision) {
+      const route = await this._resolveVisionRoute(null, provider);
+      if (route?.route === 'local_fallback' && route.provider?.model) models.push(route.provider.model);
+    }
+    return models;
+  }
+
   // The decision settings when the decision model answers `feature`
   // (decision-config.js DECISION_FEATURES), otherwise null.
   async _jevSettings(tabId, provider = this._activeProvider(tabId), feature = 'semantic') {
     const stored = await chrome.storage.local.get([...JEV_FAST_KEYS, ...DECISION_SETTINGS_KEYS]);
     const compass = provider?.config?.providerName === 'webbrain-cloud' ? provider.config : null;
-    const decisionConfig = await resolveCurrentDecisionConfig(stored, compass, { feature });
+    const decisionConfig = await resolveCurrentDecisionConfig(stored, compass, { feature, inBrowserModels: () => this._inBrowserModels(provider) });
     return decisionFeatureEnabled(decisionConfig, feature) && !this.strictSecretMode && (decisionConfig.local || globalThis.navigator?.onLine !== false) ? { ...stored, decisionConfig } : null;
   }
 

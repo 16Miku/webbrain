@@ -1,7 +1,7 @@
 import { DECISION_MODE_KEY, DECISION_SETTINGS_KEYS, materializeLegacyDecisionFeatures, DEFAULT_DECISION_MODEL, WEBGPU_CHAT_DECISION_MODEL, resolveDecisionConfig, resolveDecisionMode } from '../agent/decision-config.js';
 import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
 import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_MODEL_ID } from '../providers/d1-config.js';
-import { chatDecisionModelReady, d1LocalAssistReady } from '../agent/decision-availability.js';
+import { chatDecisionModelFree, chatDecisionModelReady, d1LocalAssistReady } from '../agent/decision-availability.js';
 import { initD1Settings } from './d1-settings.js';
 /**
  * WebBrain Settings pages — settings.html (preferences, budgets, memory,
@@ -316,9 +316,11 @@ async function syncDecisionStatus() {
   // Strict Secret Mode keeps page content away from every decision model, so Auto has nothing to use.
   const strict = strictSecretModeOn;
   const compass = !strict && activeProviderIsCompass();
-  // Auto uses Compass VLD Tiny v5 once it is downloaded, else D1, Compass or
-  // not (decision-availability.js).
-  const chatModel = !strict && await chatDecisionModelReady();
+  // Auto uses Compass VLD Tiny v5 once it is downloaded, unless the active
+  // provider keeps another in-browser model loaded, else D1, Compass or not
+  // (decision-availability.js).
+  const chatModel = !strict && await chatDecisionModelReady()
+    && await chatDecisionModelFree(() => sendToBackground('get_in_browser_models').then(result => result?.models));
   const local = !strict && !chatModel
     && (await chrome.storage.local.get(D1_CONSENT_KEY).catch(() => ({})))?.[D1_CONSENT_KEY] === D1_CONSENT_VERSION
     && await d1LocalAssistReady();

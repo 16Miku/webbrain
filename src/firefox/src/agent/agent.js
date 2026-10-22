@@ -8864,12 +8864,18 @@ export class Agent extends LoopDetector {
     return image;
   }
 
+  // Firefox runs no in-browser models; Chrome lists a task's own here for its
+  // decision routing (decision-availability.js chatDecisionModelFree).
+  async _inBrowserModels() {
+    return [];
+  }
+
   // The decision settings when the decision model answers `feature`
   // (decision-config.js DECISION_FEATURES), otherwise null.
   async _jevSettings(tabId, provider = this._activeProvider(tabId), feature = 'semantic') {
     const stored = await browser.storage.local.get([...JEV_FAST_KEYS, ...DECISION_SETTINGS_KEYS]);
     const compass = provider?.config?.providerName === 'webbrain-cloud' ? provider.config : null;
-    const decisionConfig = await resolveCurrentDecisionConfig(stored, compass, { feature });
+    const decisionConfig = await resolveCurrentDecisionConfig(stored, compass, { feature, inBrowserModels: () => this._inBrowserModels(provider) });
     return decisionFeatureEnabled(decisionConfig, feature) && !this.strictSecretMode && (decisionConfig.local || globalThis.navigator?.onLine !== false) ? { ...stored, decisionConfig } : null;
   }
 

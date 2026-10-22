@@ -592,6 +592,36 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(mainCalls, expected.mainCalls, decisionOutcome);
     }
   }, { decisionMode: 'on', decisionProvider: 'webgpu_chat', systemOneEnabled: true, systemOneDoneEnabled: true }));
+  // The in-browser worker holds one model at a time: a check on the chat
+  // decision model would unload the task's own in-browser model.
+  test(`${build}: Auto checks completion with the downloaded chat model only while the task keeps no other in-browser model loaded`, withDecisionRuntime(async () => {
+    const { webgpuTextReadyMarkerUrl, WEBGPU_LOCAL_ASSIST_MODEL_ID } = await import('../src/chrome/src/providers/webgpu-model-cache.js');
+    const cachesDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+    const marker = webgpuTextReadyMarkerUrl(WEBGPU_LOCAL_ASSIST_MODEL_ID);
+    globalThis.caches = { match: async (url, options = {}) => (options.cacheName === 'transformers-cache' && url === marker ? new Response('{}') : undefined) };
+    try {
+      for (const [inBrowserModels, asked] of [[[], build === 'chrome'], [['webbrain-one/webbrain-compass-tiny-v2.1'], false]]) {
+        const providers = [];
+        let mainCalls = 0;
+        const agent = stagedFormAgent({ messages: [], guard: { enabled: true, requiresSubmission: false, requiresStateChange: true }, captures: { count: 0 }, decisionOutcome: 'pending',
+          onDecision: args => providers.push(args.config.provider),
+          onChat: () => { mainCalls++; return { content: JSON.stringify({ outcome: 'failed', reason: 'the page still shows the form' }) }; } });
+        agent._inBrowserModels = async provider => { assert.equal(provider, agent._activeProvider(1)); return inBrowserModels; };
+        const verdict = await runtime.verifyBrowserCompletion(agent, 1, { pageUrl: 'https://forms.example/signup' });
+        const label = JSON.stringify(inBrowserModels);
+        if (asked) {
+          assert.ok(providers.length > 0 && providers.every(provider => provider === 'webgpu_chat'), `${label}: the chat model answered`);
+          assert.equal(verdict.engine, 'webgpu_chat', label);
+        } else {
+          assert.deepEqual(providers, [], `${label}: no decision model was asked`);
+          assert.equal(verdict.engine, 'llm', label);
+          assert.equal(mainCalls, 1, label);
+        }
+      }
+    } finally {
+      if (cachesDescriptor) Object.defineProperty(globalThis, 'caches', cachesDescriptor); else delete globalThis.caches;
+    }
+  }, { decisionMode: 'auto' }));
   test(`${build}: Auto checks completion with a downloaded D1, and a positive D1 answer still needs the main model`, async () => {
     const pin = await import(`../src/${build}/src/providers/d1-config.js`);
     const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;

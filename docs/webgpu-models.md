@@ -429,7 +429,12 @@ The labelled set is d1's balanced-V3 held-out test (72 synthetic screenshots,
     small, so the score is close to the scaled Yes margin. In Chrome, Auto
     uses it once it is downloaded, before a downloaded D1, for completion and
     scheduled checks, in place of Compass's managed route too; a saved On
-    selection of the in-browser chat model uses it for every decision. A
+    selection of the in-browser chat model uses it for every decision. Auto
+    skips it while the task keeps another model in this worker (a WebGPU chat
+    model other than v5, or the in-browser screenshot reader of a provider
+    that cannot see images): the worker holds one model at a time, so each
+    check would unload that model and the next turn would load it again. D1,
+    in its own worker, answers those checks instead. A
     positive completion still needs independent proof, and the first decision
     after a browser restart, which loads the model, can exceed the judge's
     15-second deadline and fall back to the existing chain.

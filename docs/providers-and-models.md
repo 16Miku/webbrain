@@ -74,16 +74,23 @@ page asks one question first:
 - **Auto** (default) needs no setup. In Chrome, once Compass VLD Tiny v5 (the
   in-browser chat model, below) is downloaded on this device, it is Auto's
   decision model for completion checks and scheduled watch and completion
-  checks, whatever the chat provider. The Chrome install guide's **Download
+  checks, whatever the chat provider, except while the task keeps another
+  in-browser model loaded: a WebGPU chat model other than v5, or the
+  in-browser model that reads screenshots for a provider that cannot see
+  them. The WebGPU worker holds one model at a time, so a check would unload
+  that model and the task's next turn or screenshot would load it again
+  (`agent._inBrowserModels`). The Chrome install guide's **Download
   local models** button downloads it, and so does Providers → WebGPU or
-  Apocalypse Mode. Without it, a downloaded D1 (below) takes the same checks:
+  Apocalypse Mode. Without it, or while it would unload another model, a
+  downloaded D1 (below), which runs in its own worker, takes the same checks:
   **Download and load** under On → D1 downloads it, in both browsers, and D1
   serves Auto while that Download or Load stands: **Unload**, **Remove cached
   model** and Off end it. While Compass is the chat provider, Compass's
   managed decision model keeps semantic decisions, and answers completion
   checks too until one of these is downloaded. Otherwise no decision model is
   used. Readiness (`agent/decision-availability.js`) is the chat model's
-  ready marker in Cache Storage, then D1's experimental-model consent, the
+  ready marker in Cache Storage and the task's in-browser models (read only
+  when the chat model could answer), then D1's experimental-model consent, the
   stored Load request and the package's ready marker in its OPFS directory
   (`providers/d1-cache.js`), all read without starting the offscreen document,
   the Worker or the GPU. Other downloaded chat or vision models, Ternary
@@ -222,8 +229,8 @@ existing checks. Strict Secret Mode disables these additional calls.
 | WebBrain Compass (default), no on-device decision model downloaded | Managed decision model | Active LLM, then existing checks |
 | Explicitly selected in-browser chat model (Chrome), including with Compass | Compass VLD Tiny v5; no sole success authority | Active LLM, then existing checks |
 | Explicitly enabled and consented D1, including with Compass | Experimental local D1; no sole success authority | Active LLM, then existing checks |
-| Auto, Compass VLD Tiny v5 downloaded (Chrome; Compass included) | Compass VLD Tiny v5; no sole success authority | Active LLM, then existing checks |
-| Auto, D1 downloaded and the chat model not (Compass included) | Experimental local D1; no sole success authority | Active LLM, then existing checks |
+| Auto, Compass VLD Tiny v5 downloaded and no other in-browser model serving the task (Chrome; Compass included) | Compass VLD Tiny v5; no sole success authority | Active LLM, then existing checks |
+| Auto, D1 downloaded and the chat model not, or serving the task would unload another in-browser model (Compass included) | Experimental local D1; no sole success authority | Active LLM, then existing checks |
 | Other provider, completion outsourcing enabled | Selected decision model | Active LLM, then existing checks |
 | Other provider, outsourcing disabled or unconfigured | Active LLM | Existing checks |
 

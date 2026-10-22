@@ -3503,13 +3503,25 @@ async function d1UsedForDecisions(api) {
     if (agent.strictSecretMode) return false;
     if (providerManager.providers.size === 0) await providerManager.load();
     let compass = null;
+    let provider = null;
     try {
-      const provider = providerManager.getActive();
+      provider = providerManager.getActive();
       if (provider?.config?.providerName === 'webbrain-cloud') compass = provider.config;
     } catch { /* no active provider yet */ }
-    const config = await resolveCurrentDecisionConfig(await api.storage.local.get(DECISION_SETTINGS_KEYS), compass);
+    const config = await resolveCurrentDecisionConfig(await api.storage.local.get(DECISION_SETTINGS_KEYS), compass,
+      { inBrowserModels: () => agent._inBrowserModels(provider) });
     return config.provider === 'webgpu_d1' && config.enabled === true;
   } catch { return false; }
+}
+
+// The in-browser models the active provider's tasks keep loaded (agent.js
+// _inBrowserModels), so what Settings tests and shows for Auto is what the
+// agent uses (decision-availability.js chatDecisionModelFree).
+async function activeInBrowserModels() {
+  if (providerManager.providers.size === 0) await providerManager.load();
+  let provider = null;
+  try { provider = providerManager.getActive(); } catch { /* no active provider yet */ }
+  return agent._inBrowserModels(provider);
 }
 
 async function handleMessage(msg, sender) {
@@ -4949,6 +4961,11 @@ async function handleMessage(msg, sender) {
         readiness: await providerManager.getWebgpuVisionReadiness(),
       };
     }
+    case 'get_in_browser_models': {
+      // Settings' Auto decision status follows the agent's rule
+      // (decision-availability.js chatDecisionModelFree).
+      return { ok: true, models: await activeInBrowserModels() };
+    }
     case 'set_webgpu_vision_choice': {
       // Choosing WebBrain VL 2 450M can re-enable it under consent already
       // given, so only the two pages that show the choice may change it.
@@ -5078,7 +5095,7 @@ async function handleMessage(msg, sender) {
         // would use now, and there is nothing to test when it uses nothing.
         const testsConfigured = !msg.settings || ['on', undefined].includes(msg.settings.decisionMode);
         // Auto's D1 needs the experimental-model consent the draft does not carry.
-        let config = msg.settings ? (testsConfigured ? resolveDecisionConfig({ ...msg.settings, decisionMode: 'on' }) : await resolveCurrentDecisionConfig({ ...await chrome.storage.local.get(D1_CONSENT_KEY), ...msg.settings })) : undefined;
+        let config = msg.settings ? (testsConfigured ? resolveDecisionConfig({ ...msg.settings, decisionMode: 'on' }) : await resolveCurrentDecisionConfig({ ...await chrome.storage.local.get(D1_CONSENT_KEY), ...msg.settings }, null, { inBrowserModels: activeInBrowserModels })) : undefined;
         if (config && !testsConfigured && !config.enabled) throw new Error('No decision model is in use.');
         if (config?.provider === 'openrouter' && (!msg.settings.decisionVisionMode || msg.settings.decisionVisionMode === 'auto')) {
           try { const card = (await listDecisionModels(config)).find(m => m.id === config.model); if (card) config = { ...config, supportsVision: card.supportsVision }; } catch {}
