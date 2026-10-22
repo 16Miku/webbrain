@@ -27187,12 +27187,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // A second look told not to re-ask may not take on more than the user's
   // task already carried: a submission neither the first answer nor the
   // question the user just answered held, a recipient the first answer did
-  // not name, or a schedule. Those stay questions for the user.
+  // not name, or a schedule. Those stay questions for the user. A recipient
+  // counts for a draft too: normalizePlan moves the addressees of a message
+  // that is not sent into draft_recipients, and a draft written into the open
+  // conversation is still a recipient taken from the page.
   _plannerSecondLookWidens(firstPlan, plan, followUpContext = {}) {
     const submissionCarried = firstPlan?.requires_submission === true
       || followUpContext?.plannerClarification?.requiresSubmission === true;
     if (plan?.requires_submission === true && !submissionCarried) return true;
-    if (plan?.messaging && JSON.stringify(plan.messaging) !== JSON.stringify(firstPlan?.messaging || null)) return true;
+    const named = JSON.stringify(firstPlan?.messaging || firstPlan?.draft_recipients || null);
+    if ([plan?.messaging, plan?.draft_recipients].some(target => target && JSON.stringify(target) !== named)) return true;
     return !!plan?.scheduling;
   }
 
