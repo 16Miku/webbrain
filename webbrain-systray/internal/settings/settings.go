@@ -124,7 +124,7 @@ func Open() (*Store, error) {
 		changed = true
 	}
 	if changed {
-		if err := st.saveLocked(); err != nil {
+		if err := st.saveLocked(st.s); err != nil {
 			return nil, err
 		}
 	}
@@ -142,12 +142,17 @@ func (st *Store) Get() Settings {
 func (st *Store) Update(fn func(*Settings)) (Settings, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	fn(&st.s)
-	return st.s, st.saveLocked()
+	next := st.s
+	fn(&next)
+	if err := st.saveLocked(next); err != nil {
+		return st.s, err
+	}
+	st.s = next
+	return next, nil
 }
 
-func (st *Store) saveLocked() error {
-	data, err := json.MarshalIndent(st.s, "", "  ")
+func (st *Store) saveLocked(s Settings) error {
+	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}

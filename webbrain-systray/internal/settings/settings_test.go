@@ -33,3 +33,24 @@ func TestPortMigration(t *testing.T) {
 		}
 	}
 }
+
+func TestFailedUpdateKeepsPublishedSettings(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	st, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := st.Get()
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("block"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st.path = filepath.Join(blocker, "settings.json")
+	returned, err := st.Update(func(s *Settings) { s.APIKey = NewAPIKey() })
+	if err == nil {
+		t.Fatal("update unexpectedly persisted through a regular file")
+	}
+	if returned.APIKey != before.APIKey || st.Get().APIKey != before.APIKey {
+		t.Fatal("failed update published an unpersisted API key")
+	}
+}
