@@ -4535,6 +4535,41 @@ for (const browserKind of ['chrome', 'firefox']) {
     }
   });
 
+  // Trace b71fd1dc: Instagram's Add Photo or Video button opens a formless,
+  // display:none input. The chooser guard named it by its path from the root
+  // ("div:nth-of-type(3) > input"), the inventory by its attributes, so the
+  // model held two selectors for one input. Both now name it the same way.
+  for (const opener of ['click', 'showPicker']) {
+    test(`file picker guard (${browserKind}): names a ${opener} chooser's input as the file-input inventory does`, async (page) => {
+      const isolatedCall = await setupIsolatedContentHtml(page, `<!doctype html>
+        <style>.x1s85apg{display:none}</style>
+        <input type="text" name="searchInput" placeholder="Search">
+        <div><div><div role="textbox" contenteditable="true" aria-placeholder="Message..."></div></div>
+        <div><div role="button" tabindex="0" aria-label="Voice Clip">Voice</div></div>
+        <div><input accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg" class="x1s85apg" multiple type="file">
+        <div role="button" tabindex="0" id="add-photo" aria-label="Add Photo or Video">Photo</div></div></div>
+        <script>
+          document.querySelector('#add-photo').addEventListener('click', () => {
+            document.querySelector('input[type=file]').${opener}();
+          });
+        </script>`, browserKind);
+
+      let chooserOpened = false;
+      page.once('filechooser', () => { chooserOpened = true; });
+      const result = await isolatedCall('click', { text: 'Photo' });
+      await page.waitForTimeout(20);
+      if (chooserOpened) throw new Error(`${opener} native chooser was not suppressed`);
+      const inventory = (await isolatedCall('get_interactive_elements_cdp', {})).filter(item => item.type === 'file');
+      const expected = 'input[type="file"][accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg"][multiple]';
+      if (inventory.length !== 1 || inventory[0].selector !== expected) {
+        throw new Error(`expected one inventory record named ${expected}, got ${JSON.stringify(inventory)}`);
+      }
+      if (!result?.filePickerBlocked || result.success !== false || result.selector !== expected) {
+        throw new Error(`the blocked chooser must name the inventory's selector, got ${JSON.stringify(result)}`);
+      }
+    });
+  }
+
   test(`file picker guard (${browserKind}): withholds selectors that collide across shadow roots`, async (page) => {
     await setupContentHtml(page, `<!doctype html>
       <button id="choose">Select a shadow file...</button>

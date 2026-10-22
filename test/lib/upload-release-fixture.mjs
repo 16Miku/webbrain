@@ -49,6 +49,36 @@ export const xComposeUploadHtml = `<!doctype html><meta charset="utf-8"><title>C
 // A page may replace its hidden transport wrapper with a directly clipped
 // native slot after consuming the first attachment. Asset editors live next
 // to the exclusive dropzone and remain part of the same release form.
+// Instagram's direct-message thread as trace b71fd1dc read it (2026-10): no
+// form, header or footer; the one file input, display:none by class between
+// Voice Clip and Add Photo or Video, sits several wrappers deep below a
+// thread too large for the page monitor's owner bounds, so no certificate
+// covers it. rerenderComposerInput() swaps in an identical new input, as a
+// re-mounted composer does. Owned names only.
+export function instagramDirectThreadHtml(recipient = 'Owned Recipient', handle = 'owned.recipient') {
+  const icon = label => `<div role="button" tabindex="0"><svg role="img" aria-label="${label}"><title>${label}</title><path d="M0 0h24v24H0z"/></svg></div>`;
+  const nest = (html, depth) => Array.from({ length: depth }).reduce(inner => `<div>${inner}</div>`, html);
+  const threads = ['Ungvb', recipient, 'Owned Contact One', 'Owned Contact Two', 'Owned Contact Three']
+    .map(name => `<div role="button" tabindex="0"><img alt="user-profile-picture" src="data:,"><span>${name}</span></div>`).join('');
+  const history = Array.from({ length: 60 }, (_, index) => nest(`<div role="group"><div role="article" data-message-direction="incoming">Message ${index + 1}</div></div>`, 5)).join('');
+  const composer = `<div class="composer">${icon('Choose an emoji')}<div role="textbox" contenteditable="true" aria-placeholder="Message..." id="body"><p><br></p></div>`
+    + `${icon('Voice Clip')}<input accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg" class="x1s85apg" multiple type="file">${icon('Add Photo or Video')}${icon('Choose a GIF or sticker')}</div>`;
+  return `<!doctype html><meta charset="utf-8"><title>Instagram • Messages</title>
+<style>body{margin:0;font:14px sans-serif}.x1s85apg{display:none}#threads{position:fixed;left:72px;top:0;width:400px;height:700px;overflow:auto}
+#pane{position:fixed;left:480px;top:0;width:640px;height:700px;display:flex;flex-direction:column}#head{height:75px}
+#thread{flex:1;overflow:auto}.composer{display:flex;align-items:center;height:44px;margin:12px;border:1px solid #888;border-radius:22px}
+[contenteditable]{flex:1;min-height:20px}[role=button]{display:inline-flex;width:40px;height:40px}svg{width:24px;height:24px}</style>
+<div role="main"><div id="threads"><nav aria-label="Thread list"><h1>owned.account</h1>${threads}</nav></div>
+<div id="pane"><div id="head"><a href="/${handle}/" aria-label="Open the profile page of ${handle}"><img alt="user-profile-picture" src="data:,"><h2>${recipient}</h2><span>${handle}</span></a>
+${icon('Audio call')}${icon('Video call')}${icon('Conversation information')}</div>
+<div id="thread" role="log">${history}</div>${nest(composer, 6)}</div></div>
+<script>window.composerInputChanges=[];
+const onComposerInputChange=event=>{composerInputChanges.push([...event.target.files].map(file=>file.name));window.dispatchEvent(new CustomEvent('composer-input-change',{detail:event.target}));};
+document.querySelector('input[type=file]').addEventListener('change',onComposerInputChange);
+window.rerenderComposerInput=()=>{const current=document.querySelector('input[type=file]'),next=current.cloneNode(false);
+ next.addEventListener('change',onComposerInputChange);current.replaceWith(next);};</script>`;
+}
+
 export function stageSequentialReleaseUploads(hiding = 'clipped') {
   document.querySelectorAll('h1,h2').forEach(node => node.remove());
   const decoration = document.createElement('div'); decoration.hidden = true;

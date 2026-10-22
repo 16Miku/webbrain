@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
-import { uploadReleaseHtml, stageSequentialReleaseUploads, xComposeUploadHtml } from './lib/upload-release-fixture.mjs';
+import { uploadReleaseHtml, stageSequentialReleaseUploads, xComposeUploadHtml, instagramDirectThreadHtml } from './lib/upload-release-fixture.mjs';
 
 const recipientUploadHtml = `<!doctype html><style>
 #binary-widget{display:block;width:400px;padding:10px}input[type=file]{width:1px;height:1px;opacity:0}
@@ -285,6 +285,34 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         const validation = await validate(page, fresh, dialogInput.selector);
         assert.equal(validation.ready, true, JSON.stringify(validation));
       }, xComposeUploadHtml));
+      // Trace b71fd1dc and the Codex review of #502: Instagram's message input
+      // is formless, hidden and deep in a large thread, so it is never
+      // certified. The monitor knows which node an inventory listed under its
+      // selector; a node the page re-mounts under the same selector is not it.
+      await t.test('Instagram composer input is known by the node its inventory listed, not by its selector', () => withFixture(async page => {
+        const inventory = token => page.evaluate(token => deliver('get_interactive_elements_cdp', { _fileInventoryToken: token }), token)
+          .then(items => items.filter(item => item.type === 'file'));
+        const check = (snapshot, selector, fileInventoryToken) => page.evaluate(params => deliver('page_monitor_validate_model',
+          { tool: 'upload_file', ...params }), { selector, snapshotToken: snapshot.snapshotToken, ...(fileInventoryToken ? { fileInventoryToken } : {}) });
+        const [file] = await inventory('inventory-1');
+        assert.equal(file?.selector, 'input[type="file"][accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg"][multiple]', JSON.stringify(file));
+        const snapshot = await capture(page, { uploadTargets: [file.selector] });
+        const listed = await check(snapshot, file.selector, 'inventory-1');
+        assert.equal(listed.ready, false, JSON.stringify(listed));
+        assert.equal(listed.reason, 'target_uncovered', JSON.stringify(listed));
+        assert.equal(listed.inventoried, true, JSON.stringify(listed));
+        assert.equal((await check(snapshot, file.selector, 'inventory-0')).inventoried, undefined, 'another inventory');
+        assert.equal((await check(snapshot, file.selector)).inventoried, undefined, 'no inventory');
+        await page.evaluate(() => window.rerenderComposerInput());
+        const remounted = await check(await capture(page, { uploadTargets: [file.selector] }), file.selector, 'inventory-1');
+        assert.equal(remounted.reason, 'target_uncovered', JSON.stringify(remounted));
+        assert.equal(remounted.inventoried, undefined, `a re-mounted input was never listed: ${JSON.stringify(remounted)}`);
+        const [fresh] = await inventory('inventory-2');
+        assert.equal(fresh?.selector, file.selector);
+        const current = await capture(page, { uploadTargets: [fresh.selector] });
+        assert.equal((await check(current, fresh.selector, 'inventory-2')).inventoried, true, 'the fresh inventory lists the new node');
+        assert.equal((await check(current, fresh.selector, 'inventory-1')).inventoried, undefined, 'the older inventory is spent');
+      }, instagramDirectThreadHtml()));
       for (const authority of ['user', 'Stop', 'run', 'document']) await t.test(`${authority} revokes upload authority`, () => withFixture(async page => {
         const snapshot = await capture(page);
         const attached = await attach(page, snapshot, async page => {

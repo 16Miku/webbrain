@@ -45778,6 +45778,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       _nativeChatDraftBinding:dispatchContext.nativeChatDraftBinding || null,
       _nativeChatDraftPreparation:dispatchContext.nativeChatDraftPreparation === true };
     if (dispatchContext.jevBinding) contentArgs = { ...contentArgs, _jevBinding: dispatchContext.jevBinding };
+    // Names the model's file-input inventory, so the page monitor keeps the
+    // nodes it listed (see page-feedback.js, page-feedback-target-binding).
+    if (name === 'get_interactive_elements' && typeof dispatchContext.fileInventoryToken === 'string' && dispatchContext.fileInventoryToken) {
+      contentArgs = { ...contentArgs, _fileInventoryToken: dispatchContext.fileInventoryToken };
+    }
     const sendContentAction = async stageAbortSignal => {
       if (Agent.STATE_CHANGE_TOOLS.has(name)) {
         await beforePageAgentDispatch(globalThis.browser || globalThis.chrome, tabId, {
