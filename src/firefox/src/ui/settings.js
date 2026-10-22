@@ -2748,7 +2748,7 @@ function providerSearchTextForEntry(id, config, fieldDefs) {
   ]).filter(Boolean).join(' ');
   return normalizeGeneralSearchText([
     id,
-    config.label,
+    id === 'webbrain_cloud' ? 'Compass Light' : config.label,
     config.type,
     config.category,
     config.model,
@@ -2761,7 +2761,7 @@ function providerSearchTextForEntry(id, config, fieldDefs) {
 }
 
 function providerSearchRank(id, config, query) {
-  const names = [id, config.label, config.providerName]
+  const names = [id, id === 'webbrain_cloud' ? 'Compass Light' : config.label, config.providerName]
     .filter(Boolean)
     .map(normalizeGeneralSearchText);
   if (names.some((name) => name === query)) return 0;
@@ -3721,7 +3721,7 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   // LM Studio defaults to whatever's loaded) just renders nothing rather
   // than a placeholder.
   const modelStr = (config.model && String(config.model).trim()) || '';
-  const label = config.label || id;
+  const label = id === 'webbrain_cloud' ? 'Compass Light' : (config.label || id);
   header.innerHTML = `
     <div class="provider-header-left">
       <span class="provider-chevron" aria-hidden="true">${expanded ? '▾' : '▸'}</span>
@@ -4045,7 +4045,7 @@ function refreshProviderCardStatus(id) {
     else duplicateButton.title = t('st.providers.duplicate_inactive');
   }
   const name = card.querySelector('.provider-name');
-  if (name) name.textContent = providersData[id]?.label || id;
+  if (name) name.textContent = id === 'webbrain_cloud' ? 'Compass Light' : (providersData[id]?.label || id);
   const badges = card.querySelector('.provider-status-badges');
   if (!badges) return;
   badges.innerHTML = `

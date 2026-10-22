@@ -8612,8 +8612,8 @@ async function loadProviders() {
     providerPickerLabelById.clear();
     providerPickerModelById.clear();
 
-    const cloudConfig = res.providers.webbrain_cloud || { label: 'WebBrain Compass' };
-    const cloudLabel = cloudConfig.label || 'WebBrain Compass';
+    // Managed tier names are presentation only; keep background IDs/configs intact.
+    const cloudLabel = 'Compass Light';
     const cloudGroup = document.createElement('optgroup');
     cloudGroup.label = t('sp.providers.no_setup_group');
     const cloudOption = document.createElement('option');
@@ -8625,8 +8625,7 @@ async function loadProviders() {
     appendProviderPickerGroup(cloudGroup.label);
     appendProviderPickerOption('webbrain_cloud', cloudLabel, t('sp.providers.no_setup'));
 
-    const cloudMaxConfig = res.providers.webbrain_cloud_max || { label: 'WebBrain Compass XL' };
-    const cloudMaxLabel = cloudMaxConfig.label || 'WebBrain Compass XL';
+    const cloudMaxLabel = 'Compass';
     const cloudMaxOption = document.createElement('option');
     cloudMaxOption.value = 'webbrain_cloud_max';
     cloudMaxOption.textContent = `${cloudMaxLabel} — ${t('sp.providers.no_setup')}`;
