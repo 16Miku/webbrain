@@ -27251,33 +27251,40 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // keep the question but never authorizes more. Returns why an execute plan
   // is rejected, or null. Another question, an answer or a plan to show runs
   // nothing and passes. A rejected plan leaves the question with the user.
+  // What the user's answer itself settles (which person, what timing,
+  // whether to send) only an independent reading of their words can tell.
+  // The full planner gate checks the plan for alignment with them next
+  // (alignmentChecks); the intent check (Planner off) has no such check, so
+  // there a second look may run only what the answered question carried.
   // - adds_submission: a submission the answered question did not carry,
-  //   unless the plan is then checked for alignment with the user's words
-  //   (alignmentChecks, the full planner gate): the answer may itself be the
-  //   approval ("yes, send it"), and only that independent check can read it.
-  //   The intent check has none, so there the user keeps the question.
+  //   unless the alignment check follows: the answer may be the approval
+  //   ("yes, send it").
   // - adds_recipient: a recipient, for a message or a draft (normalizePlan
   //   keeps a draft's addressees in draft_recipients), other than the people
-  //   the answered question addressed, unless the user's own words name every
-  //   person. The open conversation is never taken from the page.
+  //   the answered question addressed, unless the alignment check follows
+  //   and the user's own words name every person. The open conversation is
+  //   never taken from the page.
   // - adds_schedule: a schedule of another kind than the answered question
-  //   carried. The user's answer is often its timing ("every five minutes"),
-  //   but a schedule_resume pause never becomes a recurring schedule_task.
+  //   carried: a schedule_resume pause never becomes a recurring
+  //   schedule_task.
+  // - unchecked_schedule: a schedule of the kind it carried without the
+  //   alignment check, which alone reads whether the answer gave its timing
+  //   ("every five minutes", not "I'm not sure yet").
   // - drops_schedule: no schedule_task where the answered question or the
-  //   first answer carried one. The intent check has no alignment check that
-  //   would notice the run doing the task once instead.
+  //   first answer carried one: the run would do the task once instead.
   _plannerSecondLookRejection(firstPlan, plan, followUpContext = {}, { alignmentChecks = false } = {}) {
     if (plan?.request_kind !== 'execute') return null;
     if (plan.requires_submission === true && followUpContext?.answeredQuestionRequiresSubmission !== true
         && !alignmentChecks) return 'adds_submission';
     for (const target of [plan.messaging, plan.draft_recipients]) {
       if (!target || this._sameMessageTarget(followUpContext?.answeredQuestionMessageTarget, target)) continue;
-      if (target.target_kind === 'named'
+      if (alignmentChecks && target.target_kind === 'named'
           && this._userTextNamesRecipients(followUpContext?.taskUserText, target.recipients)) continue;
       return 'adds_recipient';
     }
     const carriedSchedule = followUpContext?.answeredQuestionSchedulingTool || null;
     if (plan.scheduling && plan.scheduling.tool !== carriedSchedule) return 'adds_schedule';
+    if (plan.scheduling && !alignmentChecks) return 'unchecked_schedule';
     if (plan.scheduling?.tool !== 'schedule_task'
         && [carriedSchedule, firstPlan?.scheduling?.tool].includes('schedule_task')) return 'drops_schedule';
     return null;

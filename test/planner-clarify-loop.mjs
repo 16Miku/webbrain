@@ -390,58 +390,68 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: a second look told not to re-ask runs only what the user backed`, async () => {
     const named = ALI;
     const task = { tool: 'schedule_task' };
-    // [label, first answer on this turn, second look, what the user backed, accepted]
+    // A turn that answers a planner question has history, so in the planner
+    // gate the plan is then checked for alignment with the user's words. The
+    // intent check (Planner off) has no such check.
+    const digest = `User: Post the same thing on LinkedIn too\nAssistant: ${QUESTION}`;
+    // [label, first answer on this turn, second look, what the user backed,
+    //  accepted in the planner gate (its alignment check approves), accepted in the intent check]
     const cases = [
-      ['a submission nobody asked for', clarifyPlan({ requires_submission: false }), plannerPlan(), {}, false],
-      ['a submission only the first answer on this turn carried', clarifyPlan(), plannerPlan(), {}, false],
-      ['a submission the answered question carried', clarifyPlan({ requires_submission: false }), plannerPlan(), ASKED, true],
-      ['a recipient only the first answer on this turn named', clarifyPlan({ messaging: named }), plannerPlan({ messaging: named }), ASKED, false],
-      ['the recipient the answered question named', clarifyPlan(), plannerPlan({ messaging: named }), { ...ASKED, answeredQuestionMessageTarget: named }, true],
+      ['a submission nobody asked for', clarifyPlan({ requires_submission: false }), plannerPlan(), {}, true, false],
+      ['a submission only the first answer on this turn carried', clarifyPlan(), plannerPlan(), {}, true, false],
+      ['a submission the answered question carried', clarifyPlan({ requires_submission: false }), plannerPlan(), ASKED, true, true],
+      ['a recipient only the first answer on this turn named', clarifyPlan({ messaging: named }), plannerPlan({ messaging: named }), ASKED, false, false],
+      ['the recipient the answered question named', clarifyPlan(), plannerPlan({ messaging: named }), { ...ASKED, answeredQuestionMessageTarget: named }, true, true],
       ['the people the answered question named, in another order and casing', clarifyPlan(),
         plannerPlan({ messaging: { target_kind: 'active_conversation', recipients: [{ identity: 'AYSE YILMAZ', role: 'cc' }, { identity: 'ali veli', role: 'cc' }] } }),
-        { ...ASKED, answeredQuestionMessageTarget: OPEN_CHAT_CC }, true],
+        { ...ASKED, answeredQuestionMessageTarget: OPEN_CHAT_CC }, true, true],
       ['someone else in the conversation the answered question addressed', clarifyPlan(),
         plannerPlan({ messaging: { target_kind: 'active_conversation', recipients: [{ identity: 'Ali Veli', role: 'cc' }, { identity: 'Bob', role: 'cc' }] } }),
-        { ...ASKED, answeredQuestionMessageTarget: OPEN_CHAT_CC }, false],
+        { ...ASKED, answeredQuestionMessageTarget: OPEN_CHAT_CC }, false, false],
       ['the open conversation where the answered question named a person', clarifyPlan(), plannerPlan({ messaging: OPEN_CHAT }),
-        { ...ASKED, answeredQuestionMessageTarget: named }, false],
+        { ...ASKED, answeredQuestionMessageTarget: named }, false, false],
       ['a draft into the open conversation', clarifyPlan({ requires_submission: false }),
-        plannerPlan({ requires_submission: false, messaging: OPEN_CHAT }), {}, false],
+        plannerPlan({ requires_submission: false, messaging: OPEN_CHAT }), {}, false, false],
       ['a draft for a recipient only the first answer on this turn named', clarifyPlan({ requires_submission: false, messaging: named }),
-        plannerPlan({ requires_submission: false, messaging: named }), {}, false],
+        plannerPlan({ requires_submission: false, messaging: named }), {}, false, false],
       ['a draft for the recipient the answered question named', clarifyPlan({ requires_submission: false }),
-        plannerPlan({ requires_submission: false, messaging: named }), { answeredQuestionMessageTarget: named }, true],
+        plannerPlan({ requires_submission: false, messaging: named }), { answeredQuestionMessageTarget: named }, true, true],
       ['a recipient the user named in the answer', clarifyPlan(), plannerPlan({ messaging: named }),
-        { ...ASKED, taskUserText: userWords('Send the report to my accountant', 'It is Ali Veli') }, true],
+        { ...ASKED, taskUserText: userWords('Send the report to my accountant', 'It is Ali Veli') }, true, false],
       ['a recipient only the page could have named', clarifyPlan(), plannerPlan({ messaging: named }),
-        { ...ASKED, taskUserText: userWords('Send the report to my accountant', 'the one on the screen') }, false],
+        { ...ASKED, taskUserText: userWords('Send the report to my accountant', 'the one on the screen') }, false, false],
       ['the open conversation, whatever the user wrote', clarifyPlan({ requires_submission: false }),
         plannerPlan({ requires_submission: false, messaging: OPEN_CHAT }),
-        { taskUserText: userWords('Draft a reply', 'use the current chat') }, false],
+        { taskUserText: userWords('Draft a reply', 'use the current chat') }, false, false],
       ['the open conversation the answered question addressed', clarifyPlan({ requires_submission: false }),
-        plannerPlan({ requires_submission: false, messaging: OPEN_CHAT }), { answeredQuestionMessageTarget: OPEN_CHAT }, true],
-      ['a schedule the task did not carry', clarifyPlan(), plannerPlan({ scheduling: { ...task, hint: 'Every 43200 minutes.' } }), ASKED, false],
-      ['a schedule only the first answer on this turn carried', clarifyPlan({ scheduling: OPEN_SCHEDULE }), plannerPlan({ scheduling: EVERY_FIVE }), ASKED, false],
+        plannerPlan({ requires_submission: false, messaging: OPEN_CHAT }), { answeredQuestionMessageTarget: OPEN_CHAT }, true, true],
+      ['a schedule the task did not carry', clarifyPlan(), plannerPlan({ scheduling: { ...task, hint: 'Every 43200 minutes.' } }), ASKED, false, false],
+      ['a schedule only the first answer on this turn carried', clarifyPlan({ scheduling: OPEN_SCHEDULE }), plannerPlan({ scheduling: EVERY_FIVE }), ASKED, false, false],
       ['a schedule the answered question carried', clarifyPlan(), plannerPlan({ scheduling: EVERY_FIVE }),
-        { ...ASKED, answeredQuestionSchedulingTool: 'schedule_task' }, true],
+        { ...ASKED, answeredQuestionSchedulingTool: 'schedule_task' }, true, false],
       ['a recurring schedule where the answered question carried only a pause', clarifyPlan(),
-        plannerPlan({ scheduling: EVERY_FIVE }), { ...ASKED, answeredQuestionSchedulingTool: 'schedule_resume' }, false],
+        plannerPlan({ scheduling: EVERY_FIVE }), { ...ASKED, answeredQuestionSchedulingTool: 'schedule_resume' }, false, false],
       ['a run without the recurring schedule the answered question carried', clarifyPlan(), plannerPlan(),
-        { ...ASKED, answeredQuestionSchedulingTool: 'schedule_task' }, false],
-      ['a run without the recurring schedule the first answer on this turn carried', clarifyPlan({ scheduling: OPEN_SCHEDULE }), plannerPlan(), ASKED, false],
+        { ...ASKED, answeredQuestionSchedulingTool: 'schedule_task' }, false, false],
+      ['a run without the recurring schedule the first answer on this turn carried', clarifyPlan({ scheduling: OPEN_SCHEDULE }), plannerPlan(), ASKED, false, false],
       ['a run without the pause the answered question carried', clarifyPlan(), plannerPlan(),
-        { ...ASKED, answeredQuestionSchedulingTool: 'schedule_resume' }, true],
+        { ...ASKED, answeredQuestionSchedulingTool: 'schedule_resume' }, true, true],
     ];
-    for (const [label, first, second, extraContext, accepted] of cases) {
+    for (const [label, first, second, extraContext, plannerAccepts, intentAccepts] of cases) {
       for (const gate of ['planner', 'intent']) {
+        const accepted = gate === 'planner' ? plannerAccepts : intentAccepts;
         const answers = gate === 'planner' ? [first, second] : [intentPlan(first), intentPlan(second)];
-        const { agent, calls } = scriptedAgent({ provider: PLAIN_MODEL, answers });
+        const { agent, calls, alignmentChecks } = scriptedAgent({ provider: PLAIN_MODEL, answers });
         const followUpContext = { answersPlannerQuestion: true, ...extraContext };
-        const result = gate === 'planner' ? await fullGate(agent, { followUpContext }) : await intentGate(agent, { followUpContext });
+        const result = gate === 'planner' ? await fullGate(agent, { followUpContext, digest }) : await intentGate(agent, { followUpContext });
         assert.equal(calls.length, 2, `${gate} ${label}`);
-        if (accepted) assert.equal(result.requestKind, 'execute', `${gate} ${label}: ${JSON.stringify(result)}`);
-        else assert.deepEqual([result.proceed, result.requestKind, result.message], [false, 'clarify', QUESTION], `${gate} ${label}: ${JSON.stringify(result)}`);
-        if (accepted && second.scheduling) assert.equal(result.requiredSchedulingTool, 'schedule_task', `${gate} ${label}`);
+        if (accepted) {
+          assert.equal(result.requestKind, 'execute', `${gate} ${label}: ${JSON.stringify(result)}`);
+          if (gate === 'planner') assert.equal(alignmentChecks.length, 1, `${gate} ${label}: checked against the user's words`);
+          if (second.scheduling) assert.equal(result.requiredSchedulingTool, 'schedule_task', `${gate} ${label}`);
+        } else {
+          assert.deepEqual([result.proceed, result.requestKind, result.message], [false, 'clarify', QUESTION], `${gate} ${label}: ${JSON.stringify(result)}`);
+        }
       }
     }
     // A rethink without the guidance is an ordinary plan: a schedule the
@@ -457,18 +467,23 @@ for (const build of ['chrome', 'firefox']) {
     const { parsePlanFromContent } = await import(`../src/${build}/src/agent/planner.js`);
     const parse = plan => parsePlanFromContent(JSON.stringify(plan), { requireIntent: true, locale: 'en' });
     const agent = newAgent();
-    const reason = (second, context = {}, first = clarifyPlan()) => agent._plannerSecondLookRejection(parse(first), parse(second), context);
+    const reason = (second, context = {}, first = clarifyPlan(), options = {}) =>
+      agent._plannerSecondLookRejection(parse(first), parse(second), context, options);
+    const checked = { alignmentChecks: true };
     assert.equal(reason(plannerPlan()), 'adds_submission', 'a first answer on this turn authorizes nothing');
+    assert.equal(reason(plannerPlan(), {}, clarifyPlan(), checked), null, 'the alignment check reads a send the answer approved');
     assert.equal(reason(plannerPlan({ messaging: ALI }), ASKED, clarifyPlan({ messaging: ALI })), 'adds_recipient');
+    const namedByUser = { ...ASKED, taskUserText: userWords('Send it to Alice or Ali Veli, ask me which', 'Ali Veli') };
+    assert.equal(reason(plannerPlan({ messaging: ALI }), namedByUser), 'adds_recipient', 'without the alignment check nothing reads the choice');
+    assert.equal(reason(plannerPlan({ messaging: ALI }), namedByUser, clarifyPlan(), checked), null);
+    assert.equal(reason(plannerPlan({ messaging: ALI }), ASKED, clarifyPlan(), checked), 'adds_recipient', 'the check never stands in for a name');
     assert.equal(reason(plannerPlan({ requires_submission: false, messaging: ALI })), 'adds_recipient', 'a draft\'s recipient too');
-    assert.equal(reason(plannerPlan({ scheduling: EVERY_FIVE }), ASKED, clarifyPlan({ scheduling: OPEN_SCHEDULE })), 'adds_schedule');
-    assert.equal(reason(plannerPlan(), { ...ASKED, answeredQuestionSchedulingTool: 'schedule_task' }), 'drops_schedule');
-    assert.equal(reason(plannerPlan(), ASKED, clarifyPlan({ scheduling: OPEN_SCHEDULE })), 'drops_schedule', 'the first answer may keep the question');
-    assert.equal(reason(plannerPlan({ scheduling: EVERY_FIVE }), { ...ASKED, answeredQuestionSchedulingTool: 'schedule_task' }), null);
-    assert.equal(agent._plannerSecondLookRejection(parse(clarifyPlan()), parse(plannerPlan()), {}, { alignmentChecks: true }), null,
-      'the alignment check reads a send the answer approved');
-    assert.equal(agent._plannerSecondLookRejection(parse(clarifyPlan()), parse(plannerPlan({ messaging: ALI })), {}, { alignmentChecks: true }),
-      'adds_recipient', 'but it never stands in for a recipient');
+    assert.equal(reason(plannerPlan({ scheduling: EVERY_FIVE }), ASKED, clarifyPlan({ scheduling: OPEN_SCHEDULE }), checked), 'adds_schedule');
+    const carried = { ...ASKED, answeredQuestionSchedulingTool: 'schedule_task' };
+    assert.equal(reason(plannerPlan({ scheduling: EVERY_FIVE }), carried), 'unchecked_schedule', 'without the alignment check nothing reads the timing');
+    assert.equal(reason(plannerPlan({ scheduling: EVERY_FIVE }), carried, clarifyPlan(), checked), null);
+    assert.equal(reason(plannerPlan(), carried, clarifyPlan(), checked), 'drops_schedule');
+    assert.equal(reason(plannerPlan(), ASKED, clarifyPlan({ scheduling: OPEN_SCHEDULE }), checked), 'drops_schedule', 'the first answer may keep the question');
     for (const request_kind of ['clarify', 'respond', 'plan_only']) {
       const second = request_kind === 'clarify'
         ? clarifyPlan({ summary: SECOND_QUESTION, messaging: ALI, scheduling: EVERY_FIVE })
