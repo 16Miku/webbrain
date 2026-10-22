@@ -4254,6 +4254,18 @@
     return parts.join(' > ');
   }
 
+  // The open dialogs that contain a file input. X opens its post composer at
+  // /compose/post as a dialog over the home timeline, and the timeline's
+  // inline composer keeps an identical hidden input (same accept and
+  // multiple, no id or name, same ten nearest ancestors): only the dialog
+  // tells the two apart.
+  function _fileInputDialogScopes(el) {
+    return ['[role="dialog"]', '[role="alertdialog"]', '[aria-modal="true"]', 'dialog[open]']
+      .filter(scope => {
+        try { return !!el.closest(scope); } catch { return false; }
+      });
+  }
+
   function _uniqueFileInputSelector(el) {
     if (!(el instanceof HTMLInputElement) || el.type !== 'file') return '';
     const candidates = [];
@@ -4270,11 +4282,20 @@
     candidates.push(`input[type="file"]${acceptPart}`);
     const path = _fileInputPath(el);
     if (path) candidates.push(path);
+    for (const scope of _fileInputDialogScopes(el)) {
+      candidates.push(`${scope} input[type="file"]${acceptPart}${multiplePart}`);
+      candidates.push(`${scope} input[type="file"]${acceptPart}`);
+    }
     for (const selector of candidates) {
       const matches = _deepSelectorMatches(selector);
       if (matches.length === 1 && matches[0] === el) return selector;
     }
-    return '';
+    // A record without a selector leaves the model nothing it may use, and a
+    // failed upload's recovery waits for one (trace e6187b5f: 15 refused
+    // upload_file calls on X). Climb until the path is unique. Only identical
+    // inputs in separate shadow roots stay without one: no selector reaches
+    // across a shadow boundary, so none could single one out.
+    return uniqueFileInputSelector(el) || '';
   }
 
   // Internal Compact-upload discovery. This is intentionally not a model
@@ -4298,6 +4319,7 @@
             accept: el.getAttribute('accept'),
             multiple: el.hasAttribute('multiple'),
             inShadowDOM,
+            ...(_fileInputDialogScopes(el).length ? { inDialog: true } : {}),
             ...(selector ? { selector } : {}),
           });
         });
@@ -4329,6 +4351,9 @@
         const selector = _uniqueFileInputSelector(el);
         result.accept = el.getAttribute('accept');
         result.multiple = el.hasAttribute('multiple');
+        // Says which of two otherwise identical inputs belongs to the open
+        // dialog, such as the composer the model just opened.
+        if (_fileInputDialogScopes(el).length) result.inDialog = true;
         if (selector) result.selector = selector;
       }
       return result;

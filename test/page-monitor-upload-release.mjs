@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
-import { uploadReleaseHtml, stageSequentialReleaseUploads } from './lib/upload-release-fixture.mjs';
+import { uploadReleaseHtml, stageSequentialReleaseUploads, xComposeUploadHtml } from './lib/upload-release-fixture.mjs';
 
 const recipientUploadHtml = `<!doctype html><style>
 #binary-widget{display:block;width:400px;padding:10px}input[type=file]{width:1px;height:1px;opacity:0}
@@ -272,6 +272,19 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         await page.evaluate(() => document.getElementById('fc-release-body').id = 'releases-upload');
         assert.equal((await validate(page, snapshot)).ready, false);
       }));
+      // Trace e6187b5f: X's test id names the composer dialog's input and the
+      // timeline composer's copy behind it. The inventory must still name the
+      // dialog's input exactly enough to bind.
+      await t.test('X dialog composer input binds by its inventory selector, not the shared test id', () => withFixture(async page => {
+        const snapshot = await capture(page);
+        assert.equal((await validate(page, snapshot, 'input[data-testid="fileInput"]')).reason, 'target_ambiguous');
+        const files = (await page.evaluate(() => deliver('get_interactive_elements_cdp'))).filter(item => item.type === 'file');
+        const dialogInput = files.find(item => item.inDialog === true);
+        assert.ok(dialogInput?.selector && files.every(item => item.selector), JSON.stringify(files));
+        const fresh = await capture(page, { uploadTargets: files.map(item => item.selector) });
+        const validation = await validate(page, fresh, dialogInput.selector);
+        assert.equal(validation.ready, true, JSON.stringify(validation));
+      }, xComposeUploadHtml));
       for (const authority of ['user', 'Stop', 'run', 'document']) await t.test(`${authority} revokes upload authority`, () => withFixture(async page => {
         const snapshot = await capture(page);
         const attached = await attach(page, snapshot, async page => {

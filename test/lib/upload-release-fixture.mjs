@@ -18,6 +18,34 @@ for(const [slot,id] of [['markdown','fc-release-body'],['binary','releases-uploa
 });document.getElementById('binary-button').onclick=()=>{chooserClicks++;document.getElementById('releases-upload').click();};
 document.getElementById('release-form').onsubmit=event=>event.preventDefault();</script>`;
 
+// Trace e6187b5f (WebBrain 42.3.1, x.com/compose/post): X opens the post
+// composer as a dialog over the home timeline, and the timeline's inline
+// composer keeps its own hidden input[data-testid="fileInput"]. The two share
+// accept, multiple and their ten nearest ancestors; only the dialog differs.
+// The toolbar skeleton is X's own as of 2026-10 (text and icons omitted).
+const xComposerToolbar = `<nav role="navigation"><div>
+<div data-testid="ScrollSnap-prevButtonWrapper" style="opacity:0"><button type="button" aria-label="Previous" disabled tabindex="-1"><span>&lt;</span></button></div>
+<div data-testid="ScrollSnap-SwipeableList"><div role="tablist" data-testid="ScrollSnap-List">
+<div role="presentation"><div><div><div>
+<button type="button" role="button" aria-label="Add photos or video"><span>Media</span></button>
+<input type="file" data-testid="fileInput" tabindex="-1" multiple accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime">
+</div></div></div></div>
+<div role="presentation"><div><div><button type="button" role="button" data-testid="gifSearchButton" aria-label="Add a GIF"><span>GIF</span></button></div></div></div>
+<div role="presentation"><div><div><button type="button" role="button" data-testid="createPollButton" aria-label="Add poll"><span>Poll</span></button></div></div></div>
+<div role="presentation"><div><div><div><button type="button" role="button" aria-label="Add emoji"><span>Emoji</span></button></div></div></div></div>
+</div></div>
+<div data-testid="ScrollSnap-nextButtonWrapper" style="opacity:0"><button type="button" aria-label="Next" disabled tabindex="-1"><span>&gt;</span></button></div>
+</div></nav>`;
+const xComposer = postButton => `<div contenteditable="true" role="textbox" aria-label="Post text" aria-multiline="true" data-testid="tweetTextarea_0"><div><br></div></div>
+<div data-testid="toolBar">${xComposerToolbar}<button type="button" data-testid="${postButton}" disabled>Post</button></div>`;
+export const xComposeUploadHtml = `<!doctype html><meta charset="utf-8"><title>Compose post / X</title>
+<style>body{margin:0;font:15px system-ui}input[type=file]{position:absolute;width:0;height:0;opacity:0}
+#layers{position:fixed;inset:0;display:flex;justify-content:center;align-items:flex-start}
+[aria-modal=true]{margin-top:40px;width:600px;background:#fff;padding:12px}</style>
+<main aria-label="Home timeline"><div class="inline-composer">${xComposer('tweetButtonInline')}</div></main>
+<div id="layers"><div role="dialog"><div role="dialog" aria-modal="true" aria-label="Compose post"><div role="group">
+<button type="button" aria-label="Close">x</button>${xComposer('tweetButton')}</div></div></div></div>`;
+
 // A page may replace its hidden transport wrapper with a directly clipped
 // native slot after consuming the first attachment. Asset editors live next
 // to the exclusive dropzone and remain part of the same release form.

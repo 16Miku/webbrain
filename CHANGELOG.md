@@ -9,6 +9,9 @@ This changelog was generated from the repository Git history and release tags. V
 ### Changed
 - The spinning ring next to "Thinking…" in the side panel is now a small WebBrain brain drawn as a neural circuit: a signal keeps tracing the W, and the brain's outline lights up as it passes. It moves only while WebBrain is working and the panel is visible, follows the light and dark themes, and holds still when your system asks to reduce motion.
 
+### Fixed
+- Act can attach images and videos to a post on X again. While the post composer is open at x.com/compose/post, the timeline behind it keeps a second, identical file input, and WebBrain's list of the page's controls gave neither input a selector. After the model's first selector matched both, WebBrain refused every later upload until it saw a selector it could not get, so the run ended at its cost limit with nothing attached. The list now gives every file input a selector that matches only that input, scoped to the open dialog where that is what tells them apart, and marks the dialog's input `inDialog`. The X site notes name the dialog's input, and when no selector can single out an input, WebBrain tells the model to report the upload as blocked instead of retrying.
+
 ## [42.3.1] - 2026-10-20
 
 ### Changed
