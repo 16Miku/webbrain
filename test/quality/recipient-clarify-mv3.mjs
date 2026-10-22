@@ -6,6 +6,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { conformFixtureCompletionCall } from './completion-provider-contract.mjs';
 import { fixedChoiceQuestion, fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
+import { instagramDirectThreadHtml } from '../lib/upload-release-fixture.mjs';
 // The questions a messaging page's own checks read its texts with.
 const MESSAGING_TEXT_KINDS = ['message_control', 'message_field', 'message_author', 'message_status'];
 
@@ -31,32 +32,12 @@ const variants = [
   // Trace b71fd1dc: on Instagram's own composer every upload_file was refused
   // (action_binding_unavailable) after the user had confirmed the recipient.
   ['instagram-composer', ['download', 'list', 'inventory', 'upload', 'tree', 'done'], null, null, 'once', 1, 'instagram'],
+  // The page re-renders that input after the inventory. The new node was never
+  // listed, so its upload is refused; the next inventory's upload goes out.
+  ['instagram-composer-rerendered', ['download', 'list', 'inventory', 'upload', 'inventory', 'upload', 'tree', 'done'],
+    null, null, 'once', 1, 'instagram-rerendered'],
 ];
 for (const variant of variants) await runVariant(...variant);
-
-// Instagram's composer as trace b71fd1dc read it (2026-10): no form, header or
-// footer, and the one file input, display:none by class between Voice Clip and
-// Add Photo or Video, sits several wrappers deep in a thread too large for the
-// page monitor's owner bounds. No certificate covers that input, so the model
-// names it by the selector get_interactive_elements returned.
-function instagramThreadPage() {
-  const icon = label => `<div role="button" tabindex="0"><svg role="img" aria-label="${label}"><title>${label}</title><path d="M0 0h24v24H0z"/></svg></div>`;
-  const nest = (html, depth) => Array.from({ length: depth }).reduce(inner => `<div>${inner}</div>`, html);
-  const threads = ['Ungvb', recipient, 'Owned Contact One', 'Owned Contact Two', 'Owned Contact Three']
-    .map(name => `<div role="button" tabindex="0"><img alt="user-profile-picture" src="data:,"><span>${name}</span></div>`).join('');
-  const history = Array.from({ length: 60 }, (_, index) => nest(`<div role="group"><div role="article" data-message-direction="incoming">Message ${index + 1}</div></div>`, 5)).join('');
-  const composer = `<div class="composer">${icon('Choose an emoji')}<div role="textbox" contenteditable="true" aria-placeholder="Message..." id="body"><p><br></p></div>`
-    + `${icon('Voice Clip')}<input accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg" class="x1s85apg" multiple type="file">${icon('Add Photo or Video')}${icon('Choose a GIF or sticker')}</div>`;
-  return `<!doctype html><meta charset="utf-8"><title>Instagram • Messages</title>
-  <style>body{margin:0;font:14px sans-serif}.x1s85apg{display:none}#threads{position:fixed;left:72px;top:0;width:400px;height:700px;overflow:auto}
-  #pane{position:fixed;left:480px;top:0;width:640px;height:700px;display:flex;flex-direction:column}#head{height:75px}
-  #thread{flex:1;overflow:auto}.composer{display:flex;align-items:center;height:44px;margin:12px;border:1px solid #888;border-radius:22px}
-  [contenteditable]{flex:1;min-height:20px}[role=button]{display:inline-flex;width:40px;height:40px}svg{width:24px;height:24px}</style>
-  <div role="main"><div id="threads"><nav aria-label="Thread list"><h1>owned.account</h1>${threads}</nav></div>
-  <div id="pane"><div id="head"><a href="/dr.gamzec_/" aria-label="Open the profile page of dr.gamzec_"><img alt="user-profile-picture" src="data:,"><h2>${recipient}</h2><span>dr.gamzec_</span></a>
-  ${icon('Audio call')}${icon('Video call')}${icon('Conversation information')}</div>
-  <div id="thread" role="log">${history}</div>${nest(composer, 6)}</div></div>`;
-}
 
 async function runVariant(variant, steps, answer, source, cardAnswer, expectedSends, threadPage = 'owned') {
   const approved = expectedSends > 0;
@@ -71,6 +52,7 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
     summary: 'Attach the downloaded photo in the Gamze conversation.', steps: [{ id: '1', action: 'Attach the photo and verify it was sent.' }],
     memory: { use_progress_ledger: false, progress_action: null }, scheduling: null, risks: [] };
   const sends = [], providerRequests = [], clarifications = [], cards = [];
+  let threadTab = null, rerendered = false;
   let actionCalls = 0, judgeCalls = 0, blockedRemote = 0, base = '';
   const completionRecovery = { reads: 0 };
   const textOf = content => typeof content === 'string' ? content : Array.isArray(content)
@@ -111,6 +93,11 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
     else {
       const step = actionCalls++;
       const kind = steps[Math.min(step, steps.length - 1)];
+      // After the model listed the file inputs, the page re-mounts its own.
+      if (kind === 'upload' && threadPage === 'instagram-rerendered' && !rerendered) {
+        rerendered = true;
+        await threadTab.evaluate(() => window.rerenderComposerInput());
+      }
       const call = kind === 'download' ? { name: 'download_files', args: { urls: [`${base}/photo.png`] } }
         : kind === 'list' ? { name: 'list_downloads', args: { limit: 5 } }
         : kind === 'inventory' ? { name: 'get_interactive_elements', args: {} }
@@ -138,7 +125,20 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
-  const pageBody = (threadPage === 'instagram' ? instagramThreadPage() : `<!doctype html><meta charset="utf-8"><title>Owned direct thread</title>
+  // The page sends a photo once its message box's file input changes.
+  const sendPhoto = `async input => {
+    const file = input.files[0]; if (!file) return;
+    const body = new FormData(); body.append('photo', file);
+    const result = await fetch('/api/v1/direct_v2/threads/17848282661759097/items/configure_photo/', { method: 'POST', body });
+    if (result.ok) {
+      const item = document.createElement('div'); item.dataset.messageDirection = 'outgoing'; item.textContent = 'You sent an attachment.';
+      document.querySelector('#thread').append(item);
+    }
+  }`;
+  const pageBody = threadPage.startsWith('instagram')
+    ? instagramDirectThreadHtml(recipient, 'dr.gamzec_')
+      + `<script>window.addEventListener('composer-input-change', event => (${sendPhoto})(event.detail));</script>`
+    : `<!doctype html><meta charset="utf-8"><title>Owned direct thread</title>
   <style>body{margin:0;font:16px sans-serif} nav{position:fixed;left:0;top:0;width:330px;height:700px}
   header{position:fixed;left:350px;top:10px;width:600px;height:70px} #thread{position:fixed;left:350px;top:90px;width:600px;height:420px}
   footer{position:fixed;left:350px;top:600px;width:600px;height:60px} [contenteditable]{display:inline-block;width:420px;height:40px;border:1px solid #888}
@@ -148,18 +148,8 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
   <div id="thread" role="log"><div data-message-direction="incoming">Merhaba!</div></div>
   <footer><form id="composer" onsubmit="return false"><div role="textbox" contenteditable="true" aria-label="Message" id="body"></div>
   <div role="button" id="attach"><svg role="img" aria-label="Add Photo or Video"><title>Add Photo or Video</title><path d="M0 0h24v24H0z"/></svg></div>
-  <input type="file" accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg" multiple hidden></form></footer></main>`) + `
-  <script>
-  document.querySelector('input[type=file]').addEventListener('change', async event => {
-    const file = event.target.files[0]; if (!file) return;
-    const body = new FormData(); body.append('photo', file);
-    const result = await fetch('/api/v1/direct_v2/threads/17848282661759097/items/configure_photo/', { method: 'POST', body });
-    if (result.ok) {
-      const item = document.createElement('div'); item.dataset.messageDirection = 'outgoing'; item.textContent = 'You sent an attachment.';
-      document.querySelector('#thread').append(item);
-    }
-  });
-  </script>`;
+  <input type="file" accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg" multiple hidden></form></footer></main>
+  <script>document.querySelector('input[type=file]').addEventListener('change', event => (${sendPhoto})(event.target));</script>`;
   const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'webbrain-recipient-clarify-mv3-'));
   let context;
   try {
@@ -200,7 +190,7 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
       contextWindow: 1000000, supportsAskStreaming: false } })).ok, true);
     assert.equal((await message('set_active_provider', { providerId: 'openrouter' })).ok, true);
     await worker.evaluate(() => { recipientFixtureAgent.clarifyTimeoutSec = -1; });
-    const page = await context.newPage(); await page.goto(threadUrl);
+    const page = await context.newPage(); await page.goto(threadUrl); threadTab = page;
     const tabId = await harness.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, threadUrl);
     // Answer the model's question the way the user did, and WebBrain's card
     // with the variant's choice.
@@ -244,8 +234,12 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
       assert.equal(card.question, `Send to ${recipient}?`);
     }
     if (approved) {
-      assert.equal(uploads.length, 1, JSON.stringify(uploads));
-      assert.equal(uploads[0].success, true, JSON.stringify(uploads[0]));
+      assert.equal(uploads.length, steps.filter(kind => kind === 'upload').length, JSON.stringify(uploads));
+      assert.equal(uploads.at(-1).success, true, JSON.stringify(uploads.at(-1)));
+      if (threadPage === 'instagram-rerendered') {
+        assert.equal(uploads[0].success, false, JSON.stringify(uploads[0]));
+        assert.match(uploads[0].error || '', /not covered by the observed action context/, JSON.stringify(uploads[0]));
+      }
       assert.deepEqual(sends, [{ method: 'POST', path: '/api/v1/direct_v2/threads/17848282661759097/items/configure_photo/', containsPhoto: true }]);
       if (clarifications.length) {
         const clarify = toolResults.find(item => item.name === 'clarify');

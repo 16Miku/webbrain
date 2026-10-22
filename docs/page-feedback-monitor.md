@@ -297,14 +297,18 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   rejected call, opens a chooser, or grants upload permission. A file input no
   certificate covers (`target_uncovered`; Instagram's direct-message composer
   keeps a formless, `display:none` input deep in a thread too large for the
-  owner bounds) has no ref, so an `upload_file` whose selector is exactly one
-  that `get_interactive_elements` returned for the current top document and URL
-  names the input the model observed: with nothing pending and Strict checks
-  off it is sent with the ordinary unbound semantics and a
-  `page-feedback-target-binding` note, and the recipient checks of a protected
-  conversation still bind the attachment. Any other selector keeps its refusal.
-  A blocked native chooser names its input with the selector the inventory
-  uses.
+  owner bounds) has no ref; the model observes it through
+  `get_interactive_elements`. Each such inventory carries a token, and the
+  monitor keeps the very nodes it listed with the selector it gave each. An
+  `upload_file` whose selector is exactly one that inventory returned for the
+  current top document and URL, and whose target the monitor reports as that
+  same node (`inventoried`), is sent with nothing pending and Strict checks off,
+  with the ordinary unbound semantics and a `page-feedback-target-binding`
+  note; the recipient checks of a protected conversation still bind the
+  attachment. A node the page re-mounts later under the same selector was
+  never listed and keeps the refusal until a fresh inventory lists it, as does
+  any other selector. A blocked native chooser names its input with the
+  selector the inventory uses.
 - Native `summary` controls and authored click/tab-focus targets use the same
   observed owner and exact action footprint as native and ARIA buttons. Changed
   handler identity, disclosure state, target/owner identity and user intervention

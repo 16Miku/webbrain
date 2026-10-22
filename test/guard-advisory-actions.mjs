@@ -710,7 +710,8 @@ for (const build of ['chrome', 'firefox']) {
     agent._pageFeedbackRuns = new Map([[tab, run]]);
     return run;
   }
-  async function bindingCall(strict, reason, events = [], { name = 'click_ax', args = { ref_id: 'ref_uncovered' }, prepare = null, lean = false } = {}) {
+  async function bindingCall(strict, reason, events = [], { name = 'click_ax', args = { ref_id: 'ref_uncovered' }, prepare = null, lean = false,
+    listedNode = true } = {}) {
     const agent = new Agent({ getVisionProvider: async () => null });
     agent.strictGuards = strict;
     const tab = nextTab++;
@@ -722,12 +723,20 @@ for (const build of ['chrome', 'firefox']) {
     const impl = [];
     agent._executeToolImpl = async (_tab, name) => { impl.push(name); return { success: true, dispatched: true }; };
     const oldSend = api.tabs.sendMessage;
-    api.tabs.sendMessage = async (_id, message) => message.action === 'page_monitor_validate_model'
-      ? { ready: false, reason, runToken: message.params.runToken, documentToken: 'content-1', snapshotToken: message.params.snapshotToken }
-      : { ready: true };
+    const validations = [];
+    // The page monitor says whether the upload's node is the one the
+    // inventory with this token listed under this selector.
+    api.tabs.sendMessage = async (_id, message) => {
+      if (message.action !== 'page_monitor_validate_model') return { ready: true };
+      validations.push(message.params);
+      const inventoried = listedNode && reason === 'target_uncovered' && message.params.tool === 'upload_file'
+        && message.params.fileInventoryToken === INVENTORY_TOKEN;
+      return { ready: false, reason, ...(inventoried ? { inventoried: true } : {}),
+        runToken: message.params.runToken, documentToken: 'content-1', snapshotToken: message.params.snapshotToken };
+    };
     try {
       const result = await Agent.prototype.executeTool.call(agent, tab, name, args, null, { guardAdvisories: [] });
-      return { result, impl };
+      return { result, impl, validations };
     } finally { api.tabs.sendMessage = oldSend; }
   }
   // Instagram's direct-message composer (trace b71fd1dc): the one file input
@@ -736,9 +745,10 @@ for (const build of ['chrome', 'firefox']) {
   // get_interactive_elements returned. That inventory is the observation an
   // input without a ref has.
   const INSTAGRAM_UPLOAD = 'input[type="file"][accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg"][multiple]';
+  const INVENTORY_TOKEN = 'file-inventory-1';
   const inventoried = (selectors = [INSTAGRAM_UPLOAD], { documentToken = 'content-1', url = PAGE_URL } = {}) => run => {
     run.frames.set(0, { token: 'content-1', id: 'document-1' });
-    run.uploadObservationScope = { documentToken, url, selectors };
+    run.uploadObservationScope = { documentToken, url, selectors, token: INVENTORY_TOKEN };
   };
   const upload = (prepare, selector = INSTAGRAM_UPLOAD) => ({ name: 'upload_file', args: { selector, downloadId: 2157 }, prepare });
   for (const [mode, strict] of MODES) {
@@ -764,7 +774,8 @@ for (const build of ['chrome', 'firefox']) {
     });
 
     test(`${build}: page-feedback-target-binding ${mode} mode ${strict ? 'refuses' : 'sends'} an upload to the file input the inventory named`, async () => {
-      const { result, impl } = await bindingCall(strict, 'target_uncovered', [], upload(inventoried()));
+      const { result, impl, validations } = await bindingCall(strict, 'target_uncovered', [], upload(inventoried()));
+      assert.equal(validations[0]?.fileInventoryToken, INVENTORY_TOKEN, 'the monitor is asked about that inventory\'s node');
       if (strict) {
         assert.deepEqual(impl, []);
         assert.equal(result.errorCode, 'action_binding_unavailable');
@@ -795,6 +806,9 @@ for (const build of ['chrome', 'firefox']) {
         ['another URL\'s inventory', 'target_uncovered', [], upload(inventoried(undefined, { url: 'https://example.com/other' }))],
         ['an ambiguous inventory selector', 'target_ambiguous', [], upload(inventoried())],
         ['pending page activity', 'target_uncovered', [{ kind: 'dom', source: 'unknown', frameId: 0, target: 'div#thread' }], upload(inventoried())],
+        // Codex review of #502: a node the page rendered after the inventory
+        // under the same selector (a re-mounted composer's input).
+        ['a node the inventory did not list', 'target_uncovered', [], { ...upload(inventoried()), listedNode: false }],
       ];
       for (const [label, reason, events, options] of cases) {
         const { result, impl } = await bindingCall(strict, reason, events, options);
