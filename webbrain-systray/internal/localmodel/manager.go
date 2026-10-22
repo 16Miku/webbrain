@@ -674,13 +674,20 @@ func (m *Manager) Start() (startErr error) {
 				Models: []core.LocalModel{{Upstream: upstream, Alias: ModelID, DisplayName: ModelName + " (local)",
 					Vision: vision, ContextLength: plan.Context}},
 			}}); err != nil {
-				logx.Printf("register local model: %v", err)
+				m.registrationFailed(err)
+				return
 			}
 			now := time.Now()
 			m.mu.Lock()
+			if m.cmd != cmd || m.stopping {
+				m.mu.Unlock()
+				_ = m.register(nil)
+				return
+			}
 			m.startedAt = &now
+			m.phase, m.step, m.err = PhaseRunning, "", ""
 			m.mu.Unlock()
-			m.setPhase(PhaseRunning, "", nil)
+			m.changed()
 			return
 		}
 		logx.Printf("local model: not ready after 10 minutes, stopping it")
@@ -690,6 +697,14 @@ func (m *Manager) Start() (startErr error) {
 		m.Stop()
 	}()
 	return nil
+}
+
+func (m *Manager) registrationFailed(err error) {
+	logx.Printf("register local model: %v", err)
+	m.mu.Lock()
+	m.stopErr = fmt.Errorf("could not register the local model with the proxy: %w", err)
+	m.mu.Unlock()
+	m.Stop()
 }
 
 // waitForExit finishes cleanup before Stop can return and Restart can launch

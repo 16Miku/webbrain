@@ -34,11 +34,12 @@ type login struct {
 }
 
 type App struct {
-	Version string
-	Store   *settings.Store
-	Proxy   *core.Proxy
-	Local   *localmodel.Manager
-	D1      *d1.Manager
+	Version   string
+	Store     *settings.Store
+	Proxy     *core.Proxy
+	Local     *localmodel.Manager
+	D1        *d1.Manager
+	restartMu sync.Mutex // serializes settings changes and their proxy restarts
 
 	mu        sync.Mutex
 	creds     []core.Credential
@@ -83,9 +84,15 @@ func New(version string, store *settings.Store) *App {
 		internalKey: "wbc-local-" + settings.RandomSecret(),
 	}
 	a.ctx, a.cancel = context.WithCancel(context.Background())
-	a.Local = localmodel.NewManager(store, a.Proxy.SetLocal, a.changed)
+	a.Local = localmodel.NewManager(store, a.registerLocal, a.changed)
 	a.D1 = d1.NewManager(store, a.changed)
 	return a
+}
+
+func (a *App) registerLocal(local []core.LocalUpstream) error {
+	a.restartMu.Lock()
+	defer a.restartMu.Unlock()
+	return a.Proxy.SetLocal(local)
 }
 
 // changed notifies panel listeners and the tray.
@@ -414,6 +421,8 @@ func (a *App) SetAccountDisabled(name string, disabled bool) error {
 
 // RotateKey issues a new client API key and restarts the proxy with it.
 func (a *App) RotateKey() error {
+	a.restartMu.Lock()
+	defer a.restartMu.Unlock()
 	s, err := a.Store.Update(func(s *settings.Settings) { s.APIKey = settings.NewAPIKey() })
 	if err != nil {
 		return err
@@ -451,6 +460,8 @@ func (a *App) proxyOptionsOn(s settings.Settings, local []core.LocalUpstream, po
 // key, or 127.0.0.1 only) and restarts the proxy on the same port, so open
 // panels and configured apps keep working.
 func (a *App) SetNetwork(on bool) error {
+	a.restartMu.Lock()
+	defer a.restartMu.Unlock()
 	s, err := a.Store.Update(func(s *settings.Settings) { s.Network = on })
 	if err != nil {
 		return err
@@ -476,6 +487,8 @@ func (a *App) SetPort(port int) error {
 	if port < 1024 || port > 65535 {
 		return errors.New("choose a port between 1024 and 65535")
 	}
+	a.restartMu.Lock()
+	defer a.restartMu.Unlock()
 	previous := a.Store.Get()
 	previousPort := a.Proxy.Port()
 	panelOpen := a.listeners() > 0

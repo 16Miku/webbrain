@@ -65,6 +65,7 @@ type Options struct {
 }
 
 type Proxy struct {
+	opMu     sync.Mutex // serializes start, stop, and config rewrites
 	mu       sync.Mutex
 	opts     Options
 	port     int
@@ -171,6 +172,8 @@ func (p *Proxy) Host() string {
 
 // Start launches the service and waits until it answers HTTP requests.
 func (p *Proxy) Start(opts Options) error {
+	p.opMu.Lock()
+	defer p.opMu.Unlock()
 	p.mu.Lock()
 	if p.done != nil {
 		select {
@@ -266,6 +269,8 @@ func (p *Proxy) Start(opts Options) error {
 
 // Stop shuts the service down and waits for it to exit.
 func (p *Proxy) Stop() {
+	p.opMu.Lock()
+	defer p.opMu.Unlock()
 	p.mu.Lock()
 	cancel, done := p.cancel, p.done
 	p.mu.Unlock()
@@ -293,6 +298,8 @@ func (p *Proxy) Local() []LocalUpstream {
 // SetLocal rewrites the registered local upstreams; the service hot-reloads
 // its config file.
 func (p *Proxy) SetLocal(local []LocalUpstream) error {
+	p.opMu.Lock()
+	defer p.opMu.Unlock()
 	p.mu.Lock()
 	p.opts.Local = local
 	opts, port, secret := p.opts, p.port, p.secret

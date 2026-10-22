@@ -3,8 +3,10 @@ package localmodel
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +19,34 @@ import (
 func TestLocalModelExitHelper(t *testing.T) {
 	if os.Getenv("WBC_EXIT_HELPER") == "1" {
 		os.Exit(0)
+	}
+}
+
+func TestLocalModelWaitHelper(t *testing.T) {
+	if os.Getenv("WBC_WAIT_HELPER") == "1" {
+		time.Sleep(30 * time.Second)
+	}
+}
+
+func TestRegistrationFailureStopsServerAndReportsError(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := osutil.Command(executable, "-test.run=^TestLocalModelWaitHelper$")
+	cmd.Env = append(os.Environ(), "WBC_WAIT_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	m := NewManager(nil, func([]core.LocalUpstream) error { return nil }, nil)
+	m.cmd, m.exited, m.phase = cmd, make(chan struct{}), PhaseStarting
+	go m.waitForExit(cmd, m.exited)
+	m.registrationFailed(errors.New("data volume full"))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cmd != nil || m.phase != PhaseError || !strings.Contains(m.err, "data volume full") {
+		t.Fatalf("registration failure left cmd=%v phase=%q error=%q", m.cmd, m.phase, m.err)
 	}
 }
 
