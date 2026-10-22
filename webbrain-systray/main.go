@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/esokullu/webbrain-systray/internal/app"
 	"github.com/esokullu/webbrain-systray/internal/icons"
+	"github.com/esokullu/webbrain-systray/internal/instance"
 	"github.com/esokullu/webbrain-systray/internal/logx"
 	"github.com/esokullu/webbrain-systray/internal/osutil"
 	"github.com/esokullu/webbrain-systray/internal/paths"
@@ -36,8 +38,8 @@ type runtimeInfo struct {
 func runtimeFile() string { return filepath.Join(paths.Config(), "companion.runtime.json") }
 
 // existingInstance finds a companion that is already running for this user.
-func existingInstance(store *settings.Store) (int, bool) {
-	ports := []int{store.Get().Port}
+func existingInstance(s settings.Settings) (int, bool) {
+	ports := []int{s.Port}
 	if data, err := os.ReadFile(runtimeFile()); err == nil {
 		var ri runtimeInfo
 		if json.Unmarshal(data, &ri) == nil && ri.Port > 0 && ri.Port != ports[0] {
@@ -62,6 +64,27 @@ func existingInstance(store *settings.Store) (int, bool) {
 	return 0, false
 }
 
+// A second launch waits for the lock holder to finish starting, then opens
+// its panel. Reading settings here must stay read-only: the owner may still
+// be creating its settings and proxy files.
+func waitForInstance(timeout time.Duration) (int, settings.Settings, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if data, err := os.ReadFile(paths.Settings()); err == nil {
+			var s settings.Settings
+			if json.Unmarshal(data, &s) == nil && s.PanelToken != "" {
+				if port, ok := existingInstance(s); ok {
+					return port, s, true
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return 0, settings.Settings{}, false
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
 func isTerminal() bool {
 	st, err := os.Stdout.Stat()
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
@@ -81,6 +104,23 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cannot create data folders:", err)
 		os.Exit(1)
 	}
+	instanceLock, err := instance.TryAcquire(paths.LockFile())
+	if errors.Is(err, instance.ErrHeld) {
+		if port, s, ok := waitForInstance(15 * time.Second); ok {
+			if !*background {
+				url := fmt.Sprintf("http://127.0.0.1:%d/companion/#k=%s", port, s.PanelToken)
+				_ = osutil.OpenAppWindow(url, 460, 820)
+			}
+			return
+		}
+		fmt.Fprintln(os.Stderr, "another companion instance is starting; try opening the app again")
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cannot lock companion data:", err)
+		os.Exit(1)
+	}
+	defer instanceLock.Close()
 	// logx redirects os.Stdout/os.Stderr into the log file when no terminal is
 	// attached; keep the originals for the headless banner and fatal errors.
 	stdout, stderr := os.Stdout, os.Stderr
@@ -91,7 +131,7 @@ func main() {
 		fmt.Fprintln(stderr, "cannot read settings:", err)
 		os.Exit(1)
 	}
-	if port, ok := existingInstance(store); ok {
+	if port, ok := existingInstance(store.Get()); ok {
 		url := fmt.Sprintf("http://127.0.0.1:%d/companion/#k=%s", port, store.Get().PanelToken)
 		if !*background {
 			_ = osutil.OpenAppWindow(url, 460, 820)

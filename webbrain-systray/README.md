@@ -21,7 +21,8 @@ WebBrain's d1 decision model natively.
   Apple Silicon. The companion sizes it to your machine and decides whether the
   vision projector runs on the GPU, on the CPU, or not at all.
 - **d1 decision model.** `webbrain-one/d1-browser-decision-fp32` on ONNX Runtime,
-  answering the same requests as WebBrain's in-browser WebGPU adapter.
+  answering the same requests as WebBrain's in-browser WebGPU adapter on
+  Windows, Linux and Apple Silicon Macs. The Intel Mac build does not include d1.
 
 ## Install
 
@@ -39,7 +40,7 @@ language, network access, the port, the log file and *Quit*.
 | System | Package | First start |
 |---|---|---|
 | Windows 10/11 (x64, Arm64) | `WebBrain-Companion-*-windows-setup.exe` | One installer for both architectures. It installs for the current user (no administrator prompt) into `%LOCALAPPDATA%\Programs\WebBrain Companion`, adds a Start menu entry and an uninstaller in *Settings, Apps*. Until it is code-signed, SmartScreen says *Windows protected your PC*: *More info*, *Run anyway*. |
-| macOS 12+ (Apple Silicon and Intel) | `WebBrain-Companion-*-macos-universal.zip` | Move *WebBrain Companion.app* to Applications first (run from Downloads, macOS uses a temporary copy and start at login cannot work). The build is ad-hoc signed, not notarized: allow it once in *System Settings, Privacy & Security* (*Open Anyway*); on macOS 14 and earlier Control-click it and choose *Open*. If the menu bar is full, macOS hides the icon; the panel says so, and opening the app again always brings the panel back. |
+| macOS 12+ (Apple Silicon and Intel; d1 requires Apple Silicon) | `WebBrain-Companion-*-macos-universal.zip` | Move *WebBrain Companion.app* to Applications first (run from Downloads, macOS uses a temporary copy and start at login cannot work). The build is ad-hoc signed, not notarized: allow it once in *System Settings, Privacy & Security* (*Open Anyway*); on macOS 14 and earlier Control-click it and choose *Open*. If the menu bar is full, macOS hides the icon; the panel says so, and opening the app again always brings the panel back. |
 | Linux (x64, Arm64) | `WebBrain-Companion-*-linux-*.tar.gz` | Run `webbrain-companion`. The tray uses StatusNotifierItem (KDE, XFCE, GNOME with the AppIndicator extension). |
 
 `--headless` runs the proxy and APIs without a tray icon, `--background` starts
@@ -99,6 +100,11 @@ Downloads are pinned to exact Hugging Face revisions and checked against
 SHA-256; interrupted downloads resume.
 
 ## Decision model (d1)
+
+The native d1 model is available on Windows and Linux (x64 and Arm64) and on
+Apple Silicon Macs. The Intel Mac app runs the proxy, tray and local Bonsai
+model, but cannot install d1 because the pinned ONNX Runtime release has no
+Intel macOS archive.
 
 ```bash
 curl http://127.0.0.1:8327/companion/v1/decide \

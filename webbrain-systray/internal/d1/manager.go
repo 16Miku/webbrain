@@ -6,9 +6,12 @@ package d1
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -122,8 +125,16 @@ type Manager struct {
 	cancel   context.CancelFunc
 	eng      *engine
 	evalMu   sync.Mutex
+	verifyMu sync.Mutex
+	verified map[string]verifiedFile
 	requests int64
 	latency  float64
+}
+
+type verifiedFile struct {
+	size    int64
+	modTime time.Time
+	sha     string
 }
 
 func NewManager(store *settings.Store, onChange func()) *Manager {
@@ -141,13 +152,52 @@ func okFile(path string, size int64) bool {
 	return err == nil && st.Size() == size
 }
 
+// validFile checks the pinned hash once per unchanged file in this process.
+// Status calls this often, so rehashing the 1.9 GB model on every refresh
+// would make the panel unusable.
+func (m *Manager) validFile(path string, size int64, sha string) bool {
+	m.verifyMu.Lock()
+	defer m.verifyMu.Unlock()
+	st, err := os.Stat(path)
+	if err != nil || !st.Mode().IsRegular() || st.Size() != size {
+		delete(m.verified, path)
+		return false
+	}
+	if sha == "" {
+		return true
+	}
+	if v, ok := m.verified[path]; ok && v.size == size && v.modTime.Equal(st.ModTime()) && v.sha == sha {
+		return true
+	}
+	delete(m.verified, path)
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	h := sha256.New()
+	_, err = io.Copy(h, f)
+	_ = f.Close()
+	if err != nil || !strings.EqualFold(hex.EncodeToString(h.Sum(nil)), sha) {
+		return false
+	}
+	after, err := os.Stat(path)
+	if err != nil || after.Size() != size || !after.ModTime().Equal(st.ModTime()) {
+		return false
+	}
+	if m.verified == nil {
+		m.verified = make(map[string]verifiedFile)
+	}
+	m.verified[path] = verifiedFile{size: size, modTime: st.ModTime(), sha: sha}
+	return true
+}
+
 // Installed reports whether the model files and runtime are present.
 func (m *Manager) Installed() bool {
 	if _, ok := ortForPlatform(); !ok {
 		return false
 	}
 	for _, f := range modelFiles {
-		if !okFile(filepath.Join(modelDir(), filepath.FromSlash(f.name)), f.size) {
+		if !m.validFile(filepath.Join(modelDir(), filepath.FromSlash(f.name)), f.size, f.sha) {
 			return false
 		}
 	}
@@ -161,7 +211,7 @@ func (m *Manager) Status() Status {
 		License: "LFM Open License v1.0"}
 	for _, f := range modelFiles {
 		p := filepath.Join(modelDir(), filepath.FromSlash(f.name))
-		if okFile(p, f.size) {
+		if m.validFile(p, f.size, f.sha) {
 			st.DiskBytes += f.size
 			continue
 		}
@@ -265,12 +315,12 @@ func (m *Manager) install(ctx context.Context, asset ortAsset) error {
 	}
 	var total, done int64
 	for _, it := range items {
-		if !okFile(it.dest, it.size) {
+		if !m.validFile(it.dest, it.size, it.sha) {
 			total += it.size
 		}
 	}
 	for _, it := range items {
-		if okFile(it.dest, it.size) {
+		if m.validFile(it.dest, it.size, it.sha) {
 			continue
 		}
 		var before int64

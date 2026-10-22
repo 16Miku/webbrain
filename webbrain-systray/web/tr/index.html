@@ -122,7 +122,7 @@
   <div class="wrap">
     <h2 id="d1-h">WebBrain&#x27;in karar modeli, tarayıcının dışında</h2>
     <div class="split">
-      <p class="intro">WebBrain&#x27;in d1 modeli bir sayfa ve en fazla dört ekran görüntüsü hakkında evet/hayır, seçim ve puan sorularını yanıtlar; örneğin bir görevin bitip bitmediğini. Companion modeli ONNX Runtime ile çalıştırır ve HTTP üzerinden yanıtlar; böylece 1,9 GB&#x27;lık modeli bir tarayıcı sekmesi yüklemek zorunda kalmaz. Go&#x27;ya taşınan sürüm, WebBrain&#x27;in JavaScript adaptörüyle aynı token&#x27;ları ve olasılıkları verir.</p>
+      <p class="intro">WebBrain&#x27;in d1 modeli bir sayfa ve en fazla dört ekran görüntüsü hakkında evet/hayır, seçim ve puan sorularını yanıtlar; örneğin bir görevin bitip bitmediğini. Companion modeli ONNX Runtime ile çalıştırır ve HTTP üzerinden yanıtlar; böylece 1,9 GB&#x27;lık modeli bir tarayıcı sekmesi yüklemek zorunda kalmaz. Go&#x27;ya taşınan sürüm, WebBrain&#x27;in JavaScript adaptörüyle aynı token&#x27;ları ve olasılıkları verir. Yerel d1 Windows, Linux ve Apple Silicon Mac&#x27;lerde kullanılabilir; Intel Mac&#x27;lerde kullanılamaz.</p>
       <div>
         <p class="code-label">Soru</p>
         <pre><code>curl http://127.0.0.1:8327/companion/v1/decide \
@@ -167,7 +167,7 @@
     <p class="intro">Sürüm 0.1.2. Her paket tek bir program içerir; ayarların ve girişlerin kullanıcı klasöründe durur.</p>
     <div class="downloads">
       <div class="dl" data-os="mac">
-        <div><h3>macOS</h3><p class="req">macOS 12 ve sonrası, Apple Silicon ve Intel</p><span class="yours">Senin sistemin</span></div>
+        <div><h3>macOS</h3><p class="req">macOS 12 ve sonrası, Apple Silicon ve Intel (d1 için Apple Silicon gerekli)</p><span class="yours">Senin sistemin</span></div>
         <ul class="files"><li><a href="https://github.com/esokullu/webbrain-systray/releases/download/v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip">Universal uygulama <small>zip, 36 MB</small></a></li></ul>
         <p class="how">WebBrain Companion&#x27;ı Uygulamalar klasörüne taşı. Sürüm Apple onayından (notarization) geçmedi: ilk açılışta Sistem Ayarları, Gizlilik ve Güvenlik bölümünden izin ver (Yine de Aç). macOS 14 ve öncesinde Control tuşuyla tıklayıp Aç&#x27;ı seçmen yeterli.</p>
       </div>

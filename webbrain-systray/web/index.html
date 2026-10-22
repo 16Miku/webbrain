@@ -122,7 +122,7 @@
   <div class="wrap">
     <h2 id="d1-h">WebBrain&#x27;s decision model, outside the browser</h2>
     <div class="split">
-      <p class="intro">WebBrain&#x27;s d1 model answers yes/no, choice and score questions about a page and up to four screenshots, such as whether a task is finished. The companion runs it on ONNX Runtime and answers over HTTP, so a browser tab doesn&#x27;t have to load 1.9 GB. Its Go port returns the same tokens and probabilities as WebBrain&#x27;s JavaScript adapter.</p>
+      <p class="intro">WebBrain&#x27;s d1 model answers yes/no, choice and score questions about a page and up to four screenshots, such as whether a task is finished. The companion runs it on ONNX Runtime and answers over HTTP, so a browser tab doesn&#x27;t have to load 1.9 GB. Its Go port returns the same tokens and probabilities as WebBrain&#x27;s JavaScript adapter. Native d1 is available on Windows, Linux and Apple Silicon Macs; it is unavailable on Intel Macs.</p>
       <div>
         <p class="code-label">Ask</p>
         <pre><code>curl http://127.0.0.1:8327/companion/v1/decide \
@@ -167,7 +167,7 @@
     <p class="intro">Version 0.1.2. Each package holds a single program; your settings and logins live in your user folder.</p>
     <div class="downloads">
       <div class="dl" data-os="mac">
-        <div><h3>macOS</h3><p class="req">macOS 12 or later, Apple Silicon and Intel</p><span class="yours">Your system</span></div>
+        <div><h3>macOS</h3><p class="req">macOS 12 or later, Apple Silicon and Intel (d1 requires Apple Silicon)</p><span class="yours">Your system</span></div>
         <ul class="files"><li><a href="https://github.com/esokullu/webbrain-systray/releases/download/v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip">Universal app <small>zip, 36 MB</small></a></li></ul>
         <p class="how">Move WebBrain Companion to Applications. The build is not notarized by Apple: the first time, allow it in System Settings, Privacy &amp; Security (Open Anyway). On macOS 14 and earlier, Control-click it and choose Open.</p>
       </div>
