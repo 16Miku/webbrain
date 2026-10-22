@@ -1,9 +1,35 @@
 package core
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestHealthProbeRequiresExpectedResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{"error response", http.StatusNotFound, "wrong", false},
+		{"another service", http.StatusOK, "wrong", false},
+		{"expected service", http.StatusOK, "my-instance", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			if got := healthReady(&http.Client{Timeout: time.Second}, server.URL, "my-instance"); got != tc.want {
+				t.Fatalf("healthReady = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestPickPortMaximum(t *testing.T) {
 	const host = "127.0.0.1"

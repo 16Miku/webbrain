@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -78,6 +79,19 @@ type Proxy struct {
 }
 
 func New() *Proxy { return &Proxy{} }
+
+func healthReady(client *http.Client, url, token string) bool {
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(len(token)+1)))
+	return err == nil && string(body) == token
+}
 
 // Port is the port the proxy is listening on (0 when stopped).
 func (p *Proxy) Port() int {
@@ -209,6 +223,7 @@ func (p *Proxy) Start(opts Options) error {
 	}
 	gin.SetMode(gin.ReleaseMode)
 	pass := settings.RandomSecret()
+	healthToken := settings.RandomSecret()
 	routes := opts.Routes
 	svc, err := cliproxy.NewBuilder().
 		WithConfig(cfg).
@@ -217,7 +232,7 @@ func (p *Proxy) Start(opts Options) error {
 		WithServerOptions(
 			api.WithMiddleware(opts.Middleware...),
 			api.WithRouterConfigurator(func(e *gin.Engine, _ *handlers.BaseAPIHandler, _ *sdkconfig.Config) {
-				e.GET("/healthz-companion", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+				e.GET("/healthz-companion", func(c *gin.Context) { c.String(http.StatusOK, healthToken) })
 				if routes != nil {
 					routes(e)
 				}
@@ -241,7 +256,14 @@ func (p *Proxy) Start(opts Options) error {
 	p.mu.Unlock()
 
 	go func() {
-		defer close(done)
+		defer func() {
+			p.mu.Lock()
+			if p.done == done {
+				p.port = 0
+			}
+			close(done)
+			p.mu.Unlock()
+		}()
 		err := svc.Run(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			logx.Printf("proxy exited: %v", err)
@@ -263,13 +285,16 @@ func (p *Proxy) Start(opts Options) error {
 			return errors.New("proxy stopped during startup")
 		default:
 		}
-		resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz-companion", port))
-		if err == nil {
-			_ = resp.Body.Close()
+		if healthReady(client, fmt.Sprintf("http://127.0.0.1:%d/healthz-companion", port), healthToken) {
 			logx.Printf("proxy listening on %s:%d", opts.host(), port)
 			return nil
 		}
 		time.Sleep(150 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if err := p.LastError(); err != nil {
+		return err
 	}
 	return errors.New("proxy did not start listening in time")
 }
