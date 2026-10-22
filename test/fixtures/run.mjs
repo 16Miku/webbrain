@@ -35,6 +35,7 @@ import {
 import { registerRichTextToolbarFixtures } from './rich-text-toolbar.mjs';
 import { registerMessageRecipientNavigationFixtures } from './message-recipient-navigation.mjs';
 import { registerInteractionReviewRegressions } from './interaction-review-regressions.mjs';
+import { xComposeUploadHtml } from '../lib/upload-release-fixture.mjs';
 
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -4422,6 +4423,88 @@ for (const browserKind of ['chrome', 'firefox']) {
       throw new Error(`selector did not uniquely target the repository drop zone: ${JSON.stringify(selectorCheck)}`);
     }
   });
+
+  // Trace e6187b5f (WebBrain 42.3.1, x.com/compose/post): neither of X's two
+  // identical file-input records carried a selector, so the upload recovery
+  // never released and all 15 upload_file calls were refused until the run's
+  // cost limit.
+  test(`get_interactive_elements (${browserKind}): tells X's dialog composer file input from the timeline copy behind it`, async (page) => {
+    const setupHtml = browserKind === 'firefox' ? setupFirefoxHtml : setupChromeHtml;
+    await setupHtml(page, xComposeUploadHtml);
+
+    // The selectors the run tried first match both inputs.
+    const bareMatches = await page.evaluate(() => document.querySelectorAll('input[data-testid="fileInput"]').length);
+    if (bareMatches !== 2) throw new Error(`fixture must reproduce X's duplicate file input, got ${bareMatches}`);
+
+    const resolve = (selector) => page.evaluate((selector) => {
+      const matches = document.querySelectorAll(selector);
+      return {
+        count: matches.length,
+        inDialog: !!matches[0]?.closest('[role="dialog"]'),
+        inTimeline: !!matches[0]?.closest('main'),
+      };
+    }, selector);
+    for (const action of ['get_interactive_elements_cdp', 'get_file_input_targets']) {
+      const records = (await call(page, action, {})).filter((element) => element.type === 'file');
+      if (records.length !== 2) throw new Error(`${action}: expected both X file inputs, got ${JSON.stringify(records)}`);
+      if (!records.every((record) => typeof record.selector === 'string' && record.selector)) {
+        throw new Error(`${action}: every X file input needs a selector the model may use: ${JSON.stringify(records)}`);
+      }
+      const dialogInput = records.find((record) => record.inDialog === true);
+      const timelineInput = records.find((record) => record !== dialogInput);
+      if (!dialogInput || Object.hasOwn(timelineInput, 'inDialog')) {
+        throw new Error(`${action}: only the dialog composer's input may be marked inDialog: ${JSON.stringify(records)}`);
+      }
+      if (!dialogInput.selector.startsWith('[role="dialog"] ')) {
+        throw new Error(`${action}: the dialog composer's selector should name its dialog: ${JSON.stringify(dialogInput)}`);
+      }
+      const dialogTarget = await resolve(dialogInput.selector);
+      const timelineTarget = await resolve(timelineInput.selector);
+      if (dialogTarget.count !== 1 || !dialogTarget.inDialog
+        || timelineTarget.count !== 1 || !timelineTarget.inTimeline) {
+        throw new Error(`${action}: selectors must each match only their own input: ${JSON.stringify({ records, dialogTarget, timelineTarget })}`);
+      }
+    }
+
+    // This inventory is what releases the recovery an ambiguous upload
+    // selector sets; in the trace no inspection could.
+    const inventory = await call(page, 'get_interactive_elements_cdp', {});
+    const recovery = { _uploadSelectorRecoveryRequired: new Map([[77, 2]]) };
+    const AgentClass = browserKind === 'firefox' ? FirefoxAgent : Agent;
+    if (!AgentClass.prototype._clearUploadSelectorRecoveryAfterInspection.call(recovery, 77, 'get_interactive_elements', inventory)
+      || recovery._uploadSelectorRecoveryRequired.has(77)) {
+      throw new Error('the X inventory did not release upload recovery');
+    }
+  });
+
+  // A closed dialog a page keeps in the DOM holds no composer the model
+  // opened: its input is not marked inDialog, and no selector is scoped to it.
+  // Both inputs share their ten nearest ancestors, so a dialog scope would
+  // otherwise be the first candidate that tells them apart.
+  const fileSlot = `<div><div><div><div><div><div><div><div><div>
+    <input type="file" accept="image/*">
+  </div></div></div></div></div></div></div></div></div>`;
+  for (const [state, open, close] of [
+    ['hidden', '<div role="dialog" hidden>', '</div>'],
+    ['aria-hidden', '<div role="dialog" aria-hidden="true">', '</div>'],
+    ['inert', '<div role="dialog" aria-modal="true" inert>', '</div>'],
+    ['unrendered', '<div role="dialog" style="display: none">', '</div>'],
+    ['closed native', '<dialog role="dialog">', '</dialog>'],
+  ]) {
+    test(`get_interactive_elements (${browserKind}): a file input in a closed dialog (${state}) is not marked inDialog`, async (page) => {
+      const setupHtml = browserKind === 'firefox' ? setupFirefoxHtml : setupChromeHtml;
+      await setupHtml(page, `<!doctype html>
+        <section aria-label="Cover image">${fileSlot}</section>
+        ${open}<p>Avatar</p>${fileSlot}${close}`);
+      const records = (await call(page, 'get_interactive_elements_cdp', {})).filter((element) => element.type === 'file');
+      if (records.length !== 2 || records.some((record) => Object.hasOwn(record, 'inDialog'))) {
+        throw new Error(`a closed dialog (${state}) must not mark its input inDialog: ${JSON.stringify(records)}`);
+      }
+      if (records.some((record) => !record.selector || /\[role="dialog"\]|\[aria-modal="true"\]|dialog\[open\]/.test(record.selector))) {
+        throw new Error(`each input needs a selector not scoped to a closed dialog (${state}): ${JSON.stringify(records)}`);
+      }
+    });
+  }
 
   test(`file picker guard (${browserKind}): blocks the native chooser and returns the exact input`, async (page) => {
     await setupContentHtml(page, `<!doctype html>
