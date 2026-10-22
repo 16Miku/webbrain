@@ -13,9 +13,9 @@ import re
 
 SITE = "https://webbrain.one/companion"  # where the pages are published
 VERSION = "0.1.2"
-RELEASES = "https://github.com/esokullu/webbrain-systray/releases"
-SOURCE = "https://github.com/esokullu/webbrain-systray"
-DL = f"{RELEASES}/download/v{VERSION}/WebBrain-Companion-{VERSION}-"
+RELEASES = "https://github.com/esokullu/webbrain/releases"
+SOURCE = "https://github.com/esokullu/webbrain/tree/main/webbrain-systray"
+DL = f"{RELEASES}/download/systray-v{VERSION}/WebBrain-Companion-{VERSION}-"
 FILES = {
     "mac": DL + "macos-universal.zip",
     "win": DL + "windows-setup.exe",

@@ -209,7 +209,7 @@ func (a *App) refreshAccounts() {
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
 	defer cancel()
 	creds, err := m.Credentials(ctx)
-	models, _ := m.Models(ctx)
+	models, modelErr := m.Models(ctx)
 	a.mu.Lock()
 	if err != nil {
 		a.credsErr = err.Error()
@@ -227,8 +227,10 @@ func (a *App) refreshAccounts() {
 			}
 		}
 	}
-	sort.Strings(models)
-	a.models = models
+	if modelErr == nil {
+		sort.Strings(models)
+		a.models = models
+	}
 	a.mu.Unlock()
 	a.changed()
 }

@@ -141,6 +141,30 @@ func TestUVRejectsUnverifiedInstall(t *testing.T) {
 	}
 }
 
+func TestMLXEnvironmentRejectsStaleDependencies(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	bin := filepath.Join(mlxVenv(), "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "python"), []byte("python"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(mlxVenv(), ".installed")
+	if err := os.WriteFile(marker, []byte("old packages\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if mlxEnvironmentInstalled() {
+		t.Fatal("stale MLX dependency marker was accepted")
+	}
+	if err := os.WriteFile(marker, []byte(strings.Join(mlxRequirements, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !mlxEnvironmentInstalled() {
+		t.Fatal("current MLX dependency marker was rejected")
+	}
+}
+
 func TestGGUFInstalledRejectsSameSizeCorruption(t *testing.T) {
 	t.Setenv("WBC_HOME", t.TempDir())
 	previous := gguf

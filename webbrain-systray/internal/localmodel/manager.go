@@ -164,6 +164,14 @@ func uvInstalled(arch string) bool {
 	return err == nil && string(data) == asset+" "+pinned.SHA256+"\n"
 }
 
+func mlxEnvironmentInstalled() bool {
+	if !fileOK(filepath.Join(mlxVenv(), "bin", "python"), 0) {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(mlxVenv(), ".installed"))
+	return err == nil && string(data) == strings.Join(mlxRequirements, "\n")+"\n"
+}
+
 func (m *Manager) ggufInstalled(p Plan) bool {
 	return m.verified.Valid(filepath.Join(ggufDir(), gguf.Model.Name), gguf.Model.Size, gguf.Model.SHA256) &&
 		m.verified.Valid(filepath.Join(ggufDir(), gguf.Proj.Name), gguf.Proj.Size, gguf.Proj.SHA256) &&
@@ -176,7 +184,7 @@ func (m *Manager) mlxInstalled() bool {
 			return false
 		}
 	}
-	return fileOK(filepath.Join(mlxVenv(), ".installed"), 0)
+	return mlxEnvironmentInstalled()
 }
 
 func dirSize(dir string) int64 {
@@ -465,7 +473,7 @@ func (m *Manager) installMLX(ctx context.Context, info sysinfo.Info) error {
 		}
 		_ = os.Remove(src)
 	}
-	if fileOK(filepath.Join(mlxVenv(), ".installed"), 0) {
+	if mlxEnvironmentInstalled() {
 		return nil
 	}
 	env := append(os.Environ(),

@@ -29,8 +29,8 @@ The site never shows a real desktop.
 
 - `SITE` in `build.py` is the public address used for canonical and social
   links (`https://webbrain.one/companion` by default).
-- Download links point at the GitHub release `v0.1.2` of
-  `esokullu/webbrain-systray`; the CI workflow drafts that release when the tag
-  is pushed. While the repository is private those links only work for people
+- Download links point at the GitHub release `systray-v0.1.2` of
+  `esokullu/webbrain`; the CI workflow drafts that release when the tag is
+  pushed. While the repository is private those links only work for people
   with access. Update `VERSION` and the file sizes in `build.py` for new
   releases.
