@@ -27168,23 +27168,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // For the planner's second look (_plannerClarifyRetry): whether the user
   // turn at `index` answers the planner's previous question, and what the
-  // user backed (_plannerSecondLookRejection): the submission, message target
-  // and schedule tool that question stored, and the user's own words in the
-  // task. A correction or a scheduled run answers no question.
+  // user backed (_plannerSecondLookRejection): the message target and
+  // schedule tool that question stored, and the user's own words in the task.
+  // A correction or a scheduled run answers no question.
   _plannerQuestionAnswerContext(messages, index, runOptions = {}) {
     const answersPlannerQuestion = runOptions?.steeringRevision == null
       && runOptions?.scheduledRun !== true && runOptions?.scheduledResume !== true
       && this._turnAnswersPlannerQuestion(messages, index);
     if (!answersPlannerQuestion) {
-      return {
-        answersPlannerQuestion: false, answeredQuestionRequiresSubmission: false,
-        answeredQuestionSchedulingTool: null, answeredQuestionMessageTarget: null, taskUserText: '',
-      };
+      return { answersPlannerQuestion: false, answeredQuestionSchedulingTool: null, answeredQuestionMessageTarget: null, taskUserText: '' };
     }
     const question = messages[this._plannerClarificationIndexBefore(messages, index)]?.webbrainPlannerClarification || {};
     return {
       answersPlannerQuestion: true,
-      answeredQuestionRequiresSubmission: question.requiresSubmission === true,
       answeredQuestionSchedulingTool: question.schedulingTool || null,
       answeredQuestionMessageTarget: normalizeMessageTarget(question.messageTarget),
       // The task binding is built from user turns only: the request and each
@@ -27245,46 +27241,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // What a second look told not to re-ask may run, measured against what the
   // user backed: the question they just answered, as the app stored it (a
-  // question keeps the submission, the people to address and the schedule of
-  // the task it asks about), and their own words in the task. The first
-  // answer on this turn is model output like the second look itself: it may
-  // keep the question but never authorizes more. Returns why an execute plan
-  // is rejected, or null. Another question, an answer or a plan to show runs
+  // question keeps the people to address and the schedule of the task it
+  // asks about), and their own words in the task. The first answer on this
+  // turn is model output like the second look itself: it may keep the
+  // question but never authorizes more. Returns why an execute plan is
+  // rejected, or null. Another question, an answer or a plan to show runs
   // nothing and passes. A rejected plan leaves the question with the user.
-  // What the user's answer itself settles (which person, what timing,
-  // whether to send) only an independent reading of their words can tell.
-  // The full planner gate checks the plan for alignment with them next
-  // (alignmentChecks); the intent check (Planner off) has no such check, so
-  // there a second look may run only what the answered question carried.
-  // - adds_submission: a submission the answered question did not carry,
-  //   unless the alignment check follows: the answer may be the approval
-  //   ("yes, send it").
+  // A second look re-asks only in the full planner gate, whose alignment
+  // check then reads the plan against the user's words, answer included. It
+  // alone tells which person the answer chose, whether it gave a schedule's
+  // timing ("every five minutes", not "I'm not sure yet") and whether it
+  // approved sending ("yes, send it"); these rules keep out what it could
+  // take from the page or from an earlier model answer.
   // - adds_recipient: a recipient, for a message or a draft (normalizePlan
   //   keeps a draft's addressees in draft_recipients), other than the people
-  //   the answered question addressed, unless the alignment check follows
-  //   and the user's own words name every person. The open conversation is
-  //   never taken from the page.
+  //   the answered question addressed, unless the user's own words name every
+  //   person. The open conversation is never taken from the page.
   // - adds_schedule: a schedule of another kind than the answered question
   //   carried: a schedule_resume pause never becomes a recurring
   //   schedule_task.
-  // - unchecked_schedule: a schedule of the kind it carried without the
-  //   alignment check, which alone reads whether the answer gave its timing
-  //   ("every five minutes", not "I'm not sure yet").
   // - drops_schedule: no schedule_task where the answered question or the
   //   first answer carried one: the run would do the task once instead.
-  _plannerSecondLookRejection(firstPlan, plan, followUpContext = {}, { alignmentChecks = false } = {}) {
+  _plannerSecondLookRejection(firstPlan, plan, followUpContext = {}) {
     if (plan?.request_kind !== 'execute') return null;
-    if (plan.requires_submission === true && followUpContext?.answeredQuestionRequiresSubmission !== true
-        && !alignmentChecks) return 'adds_submission';
     for (const target of [plan.messaging, plan.draft_recipients]) {
       if (!target || this._sameMessageTarget(followUpContext?.answeredQuestionMessageTarget, target)) continue;
-      if (alignmentChecks && target.target_kind === 'named'
+      if (target.target_kind === 'named'
           && this._userTextNamesRecipients(followUpContext?.taskUserText, target.recipients)) continue;
       return 'adds_recipient';
     }
     const carriedSchedule = followUpContext?.answeredQuestionSchedulingTool || null;
     if (plan.scheduling && plan.scheduling.tool !== carriedSchedule) return 'adds_schedule';
-    if (plan.scheduling && !alignmentChecks) return 'unchecked_schedule';
     if (plan.scheduling?.tool !== 'schedule_task'
         && [carriedSchedule, firstPlan?.scheduling?.tool].includes('schedule_task')) return 'drops_schedule';
     return null;
@@ -27300,11 +27287,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   //   Qwen asked for values its prompt says to look up first. The retry lets
   //   it think.
   // - No re-asking: when the user has just answered the planner's previous
-  //   question, PLANNER_REASK_GUIDANCE reminds the planner that the executor
-  //   can see what it cannot, and leaves a question only for values that have
-  //   to come from the user. An execute plan from it may not add a
-  //   submission, a recipient or a schedule the user did not back, or drop a
-  //   recurring schedule the task carried (_plannerSecondLookRejection).
+  //   question, in the full planner gate, PLANNER_REASK_GUIDANCE reminds the
+  //   planner that the executor can see what it cannot, and leaves a question
+  //   only for values that have to come from the user. An execute plan from
+  //   it may not add a recipient or a schedule the user did not back, or drop
+  //   a recurring schedule the task carried (_plannerSecondLookRejection), and
+  //   the alignment check then reads it against the user's words.
   // The answer is parsed and checked like the first one, and an execute plan
   // then goes through alignment, recipient pinning and review like any other.
   // Returns null to keep the first answer: nothing to retry, or the retry
@@ -27312,7 +27300,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // consistency repair.
   async _plannerClarifyRetry(tabId, provider, plannerMessages, {
     parseOptions = {}, intentOnly = false, reask = false, portable = false, costState = null, runId = null,
-    runtimeMode = 'act', onUpdate = null, followUpContext = {}, firstPlan = null, alignmentChecks = false,
+    runtimeMode = 'act', onUpdate = null, followUpContext = {}, firstPlan = null,
   } = {}) {
     const rethink = this._plannerCanRethink(provider);
     if (!rethink && !reask) return null;
@@ -27343,7 +27331,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._tracePlannerAttemptResponse(runId, 0, provider, result, phase, 1, startedAt, chatOptions);
     const plan = parsePlanFromContent(result?.content, parseOptions);
     if (!plan || this._plannerIntentConsistencyIssue(plan, followUpContext)) return null;
-    const rejection = reask ? this._plannerSecondLookRejection(firstPlan, plan, followUpContext, { alignmentChecks }) : null;
+    const rejection = reask ? this._plannerSecondLookRejection(firstPlan, plan, followUpContext) : null;
     if (rejection) {
       this._tracePlannerSecondLookRejection(runId, phase, rejection);
       return null;
@@ -28251,9 +28239,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
           return { proceed: false, steeringSuperseded: true };
         }
+        // A rethink only. The intent check has no alignment check that could
+        // read the user's answer, so it never re-asks (_plannerSecondLookRejection).
         const secondLook = await this._plannerClarifyRetry(tabId, provider, plannerMessages, {
-          parseOptions: plannerParseOptions, intentOnly: true, firstPlan: plan,
-          reask: !recheckOnly && followUpContext.answersPlannerQuestion === true,
+          parseOptions: plannerParseOptions, intentOnly: true,
           portable: plannerPortable, costState, runId, runtimeMode, onUpdate, followUpContext,
         });
         if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
@@ -28573,7 +28562,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       hasValidPlannerResponse = true;
       // History is present on every turn that answers a planner question, so
       // a plan for it is checked for alignment with the user's words below.
+      // Only then may the second look re-ask: that check reads the answer.
       const checksAlignment = !!(historyDigest || followUpContext.priorUserTask || followUpContext.scratchpadFacts);
+      const reask = checksAlignment && followUpContext.answersPlannerQuestion === true;
       // The question a re-ask second look answered for the user. A plan that
       // later replaces that answer is held to the same limits, or the user
       // keeps this question (alignment repair below).
@@ -28583,15 +28574,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { proceed: false, steeringSuperseded: true };
         }
         const secondLook = await this._plannerClarifyRetry(tabId, provider, plannerMessages, {
-          parseOptions: plannerParseOptions, reask: followUpContext.answersPlannerQuestion === true, firstPlan: plan,
-          alignmentChecks: checksAlignment, portable: plannerPortable, costState, runId, runtimeMode, onUpdate, followUpContext,
+          parseOptions: plannerParseOptions, reask, firstPlan: plan,
+          portable: plannerPortable, costState, runId, runtimeMode, onUpdate, followUpContext,
         });
         if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
         if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
           return { proceed: false, steeringSuperseded: true };
         }
         if (secondLook) {
-          if (followUpContext.answersPlannerQuestion === true) reaskFirstPlan = plan;
+          if (reask) reaskFirstPlan = plan;
           plan = secondLook;
         }
       }
@@ -28794,7 +28785,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // limits, and is checked for alignment next. Otherwise the user
             // keeps the question that plan answered.
             const replacementRejection = reaskFirstPlan
-              ? this._plannerSecondLookRejection(reaskFirstPlan, plan, followUpContext, { alignmentChecks: true })
+              ? this._plannerSecondLookRejection(reaskFirstPlan, plan, followUpContext)
               : null;
             if (replacementRejection) {
               this._tracePlannerSecondLookRejection(runId, 'planner_alignment_repair', replacementRejection);
