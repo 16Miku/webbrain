@@ -161,7 +161,27 @@ type runtimeInstallation struct {
 	Files    []runtimeFile `json:"files"`
 }
 
+type uvInstallation struct {
+	Archive string `json:"archive"`
+	Size    int64  `json:"size"`
+	SHA256  string `json:"sha256"`
+}
+
 var runtimeVerifier download.Verifier
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	_, copyErr := io.Copy(h, f)
+	closeErr := f.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
 
 // installedRuntimeManifest records the contents of the verified archives
 // after extraction and macOS signing. It lets later installs repair damaged
@@ -187,21 +207,15 @@ func installedRuntimeManifest(p Plan) ([]byte, error) {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("runtime entry is not a file: %s", path)
 		}
-		f, err := os.Open(path)
+		sha, err := fileSHA256(path)
 		if err != nil {
-			return err
-		}
-		h := sha256.New()
-		_, copyErr := io.Copy(h, f)
-		closeErr := f.Close()
-		if err := errors.Join(copyErr, closeErr); err != nil {
 			return err
 		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
 			return err
 		}
-		installed.Files = append(installed.Files, runtimeFile{filepath.ToSlash(rel), info.Size(), hex.EncodeToString(h.Sum(nil))})
+		installed.Files = append(installed.Files, runtimeFile{filepath.ToSlash(rel), info.Size(), sha})
 		return nil
 	})
 	if err != nil {
@@ -249,11 +263,43 @@ func runtimeInstalled(p Plan) bool {
 func uvInstalled(arch string) bool {
 	asset := uvAsset(arch)
 	pinned, ok := uvAssets[asset]
-	if !ok || !fileOK(filepath.Join(uvDir(), "uv"), 0) {
+	if !ok {
+		return false
+	}
+	bin := filepath.Join(uvDir(), "uv")
+	info, err := os.Stat(bin)
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
 		return false
 	}
 	data, err := os.ReadFile(filepath.Join(uvDir(), ".installed"))
-	return err == nil && string(data) == asset+" "+pinned.SHA256+"\n"
+	if err != nil {
+		return false
+	}
+	var installed uvInstallation
+	return json.Unmarshal(data, &installed) == nil &&
+		installed.Archive == asset+" "+pinned.SHA256 && installed.Size == info.Size() &&
+		len(installed.SHA256) == 64 && runtimeVerifier.Valid(bin, installed.Size, installed.SHA256)
+}
+
+func installedUVManifest(arch string) ([]byte, error) {
+	asset := uvAsset(arch)
+	pinned, ok := uvAssets[asset]
+	if !ok {
+		return nil, fmt.Errorf("no pinned SHA-256 for uv runtime %s", asset)
+	}
+	bin := filepath.Join(uvDir(), "uv")
+	info, err := os.Stat(bin)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+		return nil, errors.New("uv executable is missing or not executable")
+	}
+	sha, err := fileSHA256(bin)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(uvInstallation{Archive: asset + " " + pinned.SHA256, Size: info.Size(), SHA256: sha})
 }
 
 func mlxEnvironmentInstalled() bool {
@@ -568,8 +614,11 @@ func (m *Manager) installMLX(ctx context.Context, info sysinfo.Info) error {
 			return errors.New("uv binary missing from the archive")
 		}
 		trustMacBinaries(uvDir())
-		asset := uvAsset(info.Arch)
-		if err := os.WriteFile(filepath.Join(uvDir(), ".installed"), []byte(asset+" "+uvAssets[asset].SHA256+"\n"), 0o600); err != nil {
+		manifest, err := installedUVManifest(info.Arch)
+		if err != nil {
+			return fmt.Errorf("verify unpacked uv: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(uvDir(), ".installed"), manifest, 0o600); err != nil {
 			return err
 		}
 		_ = os.Remove(src)

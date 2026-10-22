@@ -507,7 +507,11 @@ func (a *App) routes(e *gin.Engine) {
 		if req.Network != nil {
 			on := *req.Network
 			a.queueRestart("network access", func() error {
-				if a.Store.Get().Network == on {
+				host := "127.0.0.1"
+				if on {
+					host = "0.0.0.0"
+				}
+				if a.Store.Get().Network == on && a.Proxy.Host() == host {
 					return nil
 				}
 				return a.SetNetwork(on)

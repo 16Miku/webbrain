@@ -256,6 +256,54 @@ func TestUVRejectsUnverifiedInstall(t *testing.T) {
 	}
 }
 
+func TestUVInstalledRejectsCorruptOrNonExecutableBinary(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	if err := os.MkdirAll(uvDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(uvDir(), "uv")
+	if err := os.WriteFile(bin, []byte("working uv"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := installedUVManifest("arm64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(uvDir(), ".installed"), manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !uvInstalled("arm64") {
+		t.Fatal("valid extracted uv executable was rejected")
+	}
+	if err := os.WriteFile(bin, []byte("Working uv"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	modified := time.Now().Add(time.Minute)
+	if err := os.Chtimes(bin, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	if uvInstalled("arm64") {
+		t.Fatal("same-sized corrupted uv executable was accepted")
+	}
+	if err := os.WriteFile(bin, []byte("working uv"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(bin, modified.Add(time.Minute), modified.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if !uvInstalled("arm64") {
+		t.Fatal("repaired uv executable was rejected")
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(bin, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if uvInstalled("arm64") {
+			t.Fatal("uv executable without execute permission was accepted")
+		}
+	}
+}
+
 func TestMLXEnvironmentRejectsStaleDependencies(t *testing.T) {
 	t.Setenv("WBC_HOME", t.TempDir())
 	bin := filepath.Join(mlxVenv(), "bin")

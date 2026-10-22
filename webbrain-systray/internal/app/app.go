@@ -162,6 +162,11 @@ func (a *App) Start() error {
 		logx.Printf("network access: %v; listening on 127.0.0.1 only", err)
 		s.Network = false
 		err = a.Proxy.Start(a.proxyOptions(s, nil))
+		if err == nil {
+			if _, saveErr := a.Store.Update(func(saved *settings.Settings) { saved.Network = false }); saveErr != nil {
+				logx.Printf("save loopback fallback: %v", saveErr)
+			}
+		}
 	}
 	if err != nil {
 		return err

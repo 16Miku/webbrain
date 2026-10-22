@@ -138,6 +138,49 @@ func TestRapidNetworkTogglesApplyInRequestOrder(t *testing.T) {
 	}
 }
 
+func TestNetworkRetryUsesActualListenerWhenSavedSettingIsStale(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("WBC_HOME", t.TempDir())
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New("test", store)
+	if err := a.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Shutdown()
+	// Model a startup fallback whose attempt to persist Network=false failed.
+	if _, err := store.Update(func(s *settings.Settings) { s.Network = true }); err != nil {
+		t.Fatal(err)
+	}
+	e := gin.New()
+	a.routes(e)
+	r := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1/companion/api/settings", strings.NewReader(`{"network":true}`))
+	r.RemoteAddr = "127.0.0.1:50000"
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Companion-Key", store.Get().PanelToken)
+	w := httptest.NewRecorder()
+	e.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("settings update returned %d: %s", w.Code, w.Body.String())
+	}
+	a.queueMu.Lock()
+	done := a.queueTail
+	a.queueMu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(45 * time.Second):
+		t.Fatal("network retry did not finish")
+	}
+	if got := a.Proxy.Host(); got != "0.0.0.0" {
+		t.Fatalf("stale saved network setting skipped the requested listener restart: %q", got)
+	}
+}
+
 func TestConcurrentSettingsRestartsKeepProxyConfigCurrent(t *testing.T) {
 	t.Setenv("WBC_HOME", t.TempDir())
 	if err := paths.Ensure(); err != nil {
