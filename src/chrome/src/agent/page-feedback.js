@@ -241,7 +241,7 @@ function actionBindingUnavailableResult(run, name) {
       errorCode: 'action_binding_unavailable',
       ...(['target_ambiguous', 'target_unresolved', 'target_uncovered'].includes(reason) ? { bindingFailure: reason } : {}),
       recoveryRequired: 'get_interactive_elements',
-      error: explanation + ' Nothing was attached. Call get_interactive_elements again, identify the intended file-input record by its upload widget context, and copy its exact selector into a new upload_file call with the same attachmentId, downloadId, or filePath. Do not guess a selector or click the upload control.' };
+      error: explanation + ' Nothing was attached. Call get_interactive_elements again, identify the intended file-input record by its upload widget context (inDialog marks one inside an open dialog, such as a composer you opened), and copy its exact selector into a new upload_file call with the same attachmentId, downloadId, or filePath. Do not guess a selector or click the upload control. If no file-input record has a selector, no selector can single out the input: report the upload as blocked instead of retrying.' };
   }
   return { success: false, skipped: true, dispatched: false, noDispatch: true, retryable: false,
     errorCode: 'action_binding_unavailable',

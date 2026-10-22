@@ -10330,6 +10330,9 @@ export class Agent extends LoopDetector {
         ...(element.accept != null ? { accept: String(element.accept).slice(0, 200) } : {}),
         multiple: element.multiple === true,
         inShadowDOM: element.inShadowDOM === true,
+        // X's dialog composer and the timeline composer behind it carry the
+        // same unlabelled input: this says which one the open dialog owns.
+        ...(element.inDialog === true ? { inDialog: true } : {}),
       };
     });
 
@@ -49856,7 +49859,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ambiguous: true,
           matchCount: Number(this._uploadSelectorRecoveryRequired.get(tabId)) || 0,
           recoveryRequired: 'get_interactive_elements',
-          error: 'A previous upload selector matched multiple file inputs. Call get_interactive_elements now and use the exact selector returned on the intended file-input record before retrying upload_file; do not guess another selector variant.',
+          error: 'A previous upload selector matched multiple file inputs. Call get_interactive_elements now and use the exact selector returned on the intended file-input record before retrying upload_file; do not guess another selector variant. A record marked inDialog belongs to an open dialog, such as a composer you opened. If no file-input record has a selector, no selector can single out the input: report the upload as blocked instead of retrying.',
         };
       }
       if (!attachmentPayload && args.attachmentId != null) {
@@ -49956,7 +49959,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             ambiguous: true,
             matchCount: objectIds.length,
             recoveryRequired: 'get_interactive_elements',
-            error: `Selector "${args.selector}" matched ${objectIds.length} elements across the document and open shadow roots. Call get_interactive_elements and use the exact, unique selector returned on the intended file-input record; do not guess another selector variant.`,
+            error: `Selector "${args.selector}" matched ${objectIds.length} elements across the document and open shadow roots. Call get_interactive_elements and use the exact, unique selector returned on the intended file-input record; do not guess another selector variant. A record marked inDialog belongs to an open dialog, such as a composer you opened. If no file-input record has a selector, no selector can single out the input: report the upload as blocked instead of retrying.`,
           };
         }
 
