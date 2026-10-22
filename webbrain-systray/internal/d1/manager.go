@@ -96,6 +96,14 @@ func ortLibPath() string {
 	return filepath.Join(ortDir(), filepath.FromSlash(a.lib))
 }
 
+type ortMarker struct {
+	ArchiveSHA  string `json:"archive_sha"`
+	LibrarySize int64  `json:"library_size"`
+	LibrarySHA  string `json:"library_sha"`
+}
+
+func ortMarkerPath() string { return filepath.Join(ortDir(), ".installed") }
+
 type Status struct {
 	Model         string             `json:"model"`
 	Phase         string             `json:"phase"`
@@ -125,16 +133,9 @@ type Manager struct {
 	cancel   context.CancelFunc
 	eng      *engine
 	evalMu   sync.Mutex
-	verifyMu sync.Mutex
-	verified map[string]verifiedFile
+	verified download.Verifier
 	requests int64
 	latency  float64
-}
-
-type verifiedFile struct {
-	size    int64
-	modTime time.Time
-	sha     string
 }
 
 func NewManager(store *settings.Store, onChange func()) *Manager {
@@ -152,48 +153,57 @@ func okFile(path string, size int64) bool {
 	return err == nil && st.Size() == size
 }
 
-// validFile checks the pinned hash once per unchanged file in this process.
-// Status calls this often, so rehashing the 1.9 GB model on every refresh
-// would make the panel unusable.
 func (m *Manager) validFile(path string, size int64, sha string) bool {
-	m.verifyMu.Lock()
-	defer m.verifyMu.Unlock()
-	st, err := os.Stat(path)
-	if err != nil || !st.Mode().IsRegular() || st.Size() != size {
-		delete(m.verified, path)
-		return false
-	}
-	if sha == "" {
-		return true
-	}
-	if v, ok := m.verified[path]; ok && v.size == size && v.modTime.Equal(st.ModTime()) && v.sha == sha {
-		return true
-	}
-	delete(m.verified, path)
-	f, err := os.Open(path)
+	return m.verified.Valid(path, size, sha)
+}
+
+// The library may exist after an interrupted extraction. Only a marker
+// written after the full extraction and verified against the library makes
+// this runtime usable.
+func (m *Manager) ortReady(asset ortAsset) bool {
+	data, err := os.ReadFile(ortMarkerPath())
 	if err != nil {
 		return false
+	}
+	var marker ortMarker
+	if json.Unmarshal(data, &marker) != nil || marker.ArchiveSHA != asset.sha || marker.LibrarySize <= 0 || marker.LibrarySHA == "" {
+		return false
+	}
+	return m.validFile(ortLibPath(), marker.LibrarySize, marker.LibrarySHA)
+}
+
+func (m *Manager) markORT(asset ortAsset) error {
+	path := ortLibPath()
+	st, err := os.Stat(path)
+	if err != nil || !st.Mode().IsRegular() || st.Size() == 0 {
+		return errors.New("ONNX Runtime library missing from the archive")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
 	}
 	h := sha256.New()
 	_, err = io.Copy(h, f)
 	_ = f.Close()
-	if err != nil || !strings.EqualFold(hex.EncodeToString(h.Sum(nil)), sha) {
-		return false
+	if err != nil {
+		return err
 	}
-	after, err := os.Stat(path)
-	if err != nil || after.Size() != size || !after.ModTime().Equal(st.ModTime()) {
-		return false
+	marker := ortMarker{ArchiveSHA: asset.sha, LibrarySize: st.Size(), LibrarySHA: hex.EncodeToString(h.Sum(nil))}
+	data, err := json.Marshal(marker)
+	if err != nil {
+		return err
 	}
-	if m.verified == nil {
-		m.verified = make(map[string]verifiedFile)
+	tmp := ortMarkerPath() + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
 	}
-	m.verified[path] = verifiedFile{size: size, modTime: st.ModTime(), sha: sha}
-	return true
+	return os.Rename(tmp, ortMarkerPath())
 }
 
 // Installed reports whether the model files and runtime are present.
 func (m *Manager) Installed() bool {
-	if _, ok := ortForPlatform(); !ok {
+	asset, ok := ortForPlatform()
+	if !ok || !m.ortReady(asset) {
 		return false
 	}
 	for _, f := range modelFiles {
@@ -201,8 +211,7 @@ func (m *Manager) Installed() bool {
 			return false
 		}
 	}
-	_, err := os.Stat(ortLibPath())
-	return err == nil
+	return true
 }
 
 func (m *Manager) Status() Status {
@@ -222,7 +231,7 @@ func (m *Manager) Status() Status {
 		st.DownloadBytes += rem
 	}
 	if a, ok := ortForPlatform(); ok {
-		if _, err := os.Stat(ortLibPath()); err != nil {
+		if !m.ortReady(a) {
 			st.DownloadBytes += a.size
 		}
 	}
@@ -308,7 +317,7 @@ func (m *Manager) install(ctx context.Context, asset ortAsset) error {
 			filepath.Join(modelDir(), filepath.FromSlash(f.name)), f.size, f.sha})
 	}
 	archive := filepath.Join(paths.Runtimes(), "_downloads", asset.archive)
-	needORT := !okFileAny(ortLibPath())
+	needORT := !m.ortReady(asset)
 	if needORT {
 		items = append(items, item{"ONNX Runtime " + ortVersion, "https://github.com/microsoft/onnxruntime/releases/download/v" + ortVersion + "/" + asset.archive,
 			archive, asset.size, asset.sha})
@@ -346,7 +355,9 @@ func (m *Manager) install(ctx context.Context, asset ortAsset) error {
 	}
 	if needORT {
 		m.set(PhaseInstalling, "Unpacking ONNX Runtime", nil)
-		_ = os.RemoveAll(ortDir())
+		if err := os.RemoveAll(ortDir()); err != nil {
+			return fmt.Errorf("replace ONNX Runtime: %w", err)
+		}
 		keep := func(rel string) bool {
 			// Only the runtime libraries: skip headers, symbols (a 430 MB .pdb) and test data.
 			if !strings.HasPrefix(rel, "lib/") || strings.Contains(rel, ".dSYM") {
@@ -360,17 +371,12 @@ func (m *Manager) install(ctx context.Context, asset ortAsset) error {
 		if runtime.GOOS == "darwin" {
 			trustMac(ortDir())
 		}
-		if !okFileAny(ortLibPath()) {
-			return errors.New("ONNX Runtime library missing from the archive")
+		if err := m.markORT(asset); err != nil {
+			return err
 		}
 		_ = os.Remove(archive)
 	}
 	return nil
-}
-
-func okFileAny(p string) bool {
-	st, err := os.Stat(p)
-	return err == nil && !st.IsDir()
 }
 
 // Load creates the ONNX Runtime sessions (about 2 GB of memory).

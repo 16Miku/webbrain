@@ -60,6 +60,7 @@ type Status struct {
 
 type Manager struct {
 	mu       sync.Mutex
+	verified download.Verifier
 	store    *settings.Store
 	register func([]core.LocalUpstream) error
 	onChange func()
@@ -73,6 +74,7 @@ type Manager struct {
 	plan      Plan
 	cancel    context.CancelFunc
 	cmd       *exec.Cmd
+	starting  chan struct{} // closed after Start either publishes cmd or fails
 	exited    chan struct{}
 	stopping  bool
 	stopErr   error // why the server was stopped, when it was not the user
@@ -131,15 +133,15 @@ func fileOK(path string, size int64) bool {
 	return err == nil && !st.IsDir() && (size <= 0 || st.Size() == size)
 }
 
-func ggufInstalled(p Plan) bool {
-	return fileOK(filepath.Join(ggufDir(), gguf.Model.Name), gguf.Model.Size) &&
-		fileOK(filepath.Join(ggufDir(), gguf.Proj.Name), gguf.Proj.Size) &&
+func (m *Manager) ggufInstalled(p Plan) bool {
+	return m.verified.Valid(filepath.Join(ggufDir(), gguf.Model.Name), gguf.Model.Size, gguf.Model.SHA256) &&
+		m.verified.Valid(filepath.Join(ggufDir(), gguf.Proj.Name), gguf.Proj.Size, gguf.Proj.SHA256) &&
 		fileOK(filepath.Join(runtimeDir(p), ".installed"), 0)
 }
 
-func mlxInstalled() bool {
+func (m *Manager) mlxInstalled() bool {
 	for _, f := range mlxPack.Files {
-		if !fileOK(filepath.Join(mlxDir(), filepath.FromSlash(f.Name)), f.Size) {
+		if !m.verified.Valid(filepath.Join(mlxDir(), filepath.FromSlash(f.Name)), f.Size, f.SHA256) {
 			return false
 		}
 	}
@@ -159,8 +161,8 @@ func dirSize(dir string) int64 {
 	return n
 }
 
-func remaining(path string, size int64) int64 {
-	if fileOK(path, size) {
+func (m *Manager) remaining(path string, size int64, sha string) int64 {
+	if m.verified.Valid(path, size, sha) {
 		return 0
 	}
 	if st, err := os.Stat(path + ".part"); err == nil && st.Size() < size {
@@ -179,17 +181,17 @@ func (m *Manager) Status() Status {
 	st := Status{
 		ModelID: ModelID, ModelName: ModelName, Vendor: ModelVendor, PageURL: ModelPageURL,
 		Format: format, Formats: Formats(info), Plan: plan,
-		Installed:  map[string]bool{"gguf": ggufInstalled(MakePlan(info, s.Local, "gguf"))},
+		Installed:  map[string]bool{"gguf": m.ggufInstalled(MakePlan(info, s.Local, "gguf"))},
 		AutoStart:  s.Local.AutoStart,
 		VisionMode: s.Local.Vision,
 		System:     info, SystemSummary: info.Summary(),
 	}
 	if info.AppleSilicon {
-		st.Installed["mlx"] = mlxInstalled()
+		st.Installed["mlx"] = m.mlxInstalled()
 	}
 	if format == "gguf" {
-		st.DownloadBytes = remaining(filepath.Join(ggufDir(), gguf.Model.Name), gguf.Model.Size) +
-			remaining(filepath.Join(ggufDir(), gguf.Proj.Name), gguf.Proj.Size)
+		st.DownloadBytes = m.remaining(filepath.Join(ggufDir(), gguf.Model.Name), gguf.Model.Size, gguf.Model.SHA256) +
+			m.remaining(filepath.Join(ggufDir(), gguf.Proj.Name), gguf.Proj.Size, gguf.Proj.SHA256)
 		if !fileOK(filepath.Join(runtimeDir(plan), ".installed"), 0) {
 			for _, a := range plan.Assets {
 				st.DownloadBytes += llamaAssetSizes[a]
@@ -198,7 +200,7 @@ func (m *Manager) Status() Status {
 		st.DiskBytes = dirSize(ggufDir())
 	} else {
 		for _, f := range mlxPack.Files {
-			st.DownloadBytes += remaining(filepath.Join(mlxDir(), filepath.FromSlash(f.Name)), f.Size)
+			st.DownloadBytes += m.remaining(filepath.Join(mlxDir(), filepath.FromSlash(f.Name)), f.Size, f.SHA256)
 		}
 		st.DiskBytes = dirSize(mlxDir())
 	}
@@ -303,13 +305,13 @@ func (m *Manager) Cancel() {
 func (m *Manager) fetchAll(ctx context.Context, items []item) error {
 	var total, done int64
 	for _, it := range items {
-		total += remaining(it.dest, it.size)
+		total += m.remaining(it.dest, it.size, it.sha)
 	}
 	for _, it := range items {
-		if fileOK(it.dest, it.size) && it.sha == "" {
+		if m.verified.Valid(it.dest, it.size, it.sha) {
 			continue
 		}
-		before := it.size - remaining(it.dest, it.size)
+		before := it.size - m.remaining(it.dest, it.size, it.sha)
 		step := it.label
 		if fileOK(it.dest, it.size) {
 			step = "Verifying " + it.label // complete file: download.File only re-checks its SHA-256
@@ -490,18 +492,34 @@ func freePort(preferred int) int {
 
 // Start launches the local server for the selected format and registers it
 // with the proxy once it answers.
-func (m *Manager) Start() error {
+func (m *Manager) Start() (startErr error) {
 	info := sysinfo.Get()
 	s := m.store.Get()
 	format := m.format(info)
 	plan := MakePlan(info, s.Local, format)
 
 	m.mu.Lock()
-	if m.cmd != nil {
+	if m.cmd != nil || m.starting != nil {
 		m.mu.Unlock()
 		return nil
 	}
+	starting := make(chan struct{})
+	m.starting = starting
+	m.phase, m.step, m.err = PhaseStarting, "Preparing the local model", ""
 	m.mu.Unlock()
+	m.changed()
+	defer func() {
+		m.mu.Lock()
+		m.starting = nil
+		if startErr != nil {
+			m.phase, m.step, m.err = PhaseError, "", startErr.Error()
+		}
+		close(starting)
+		m.mu.Unlock()
+		if startErr != nil {
+			m.changed()
+		}
+	}()
 
 	port := freePort(max(s.Local.Port, 18081))
 	var (
@@ -511,7 +529,7 @@ func (m *Manager) Start() error {
 	)
 	switch format {
 	case "mlx":
-		if !mlxInstalled() {
+		if !m.mlxInstalled() {
 			return errors.New("the MLX pack is not installed")
 		}
 		py := filepath.Join(mlxVenv(), "bin", "python")
@@ -521,7 +539,7 @@ func (m *Manager) Start() error {
 		cmd.Env = append(os.Environ(), "HF_HOME="+filepath.Join(paths.Runtimes(), "hf-home"), "HF_HUB_OFFLINE=1")
 		health = fmt.Sprintf("http://127.0.0.1:%d/v1/models", port)
 	default:
-		if !ggufInstalled(plan) {
+		if !m.ggufInstalled(plan) {
 			return errors.New("the GGUF model or its runtime is not installed")
 		}
 		bin := findBinary(runtimeDir(plan), "llama-server")
@@ -639,6 +657,12 @@ func (m *Manager) waitForExit(cmd *exec.Cmd, exited chan struct{}) {
 // Stop terminates the local server.
 func (m *Manager) Stop() {
 	m.mu.Lock()
+	if starting := m.starting; starting != nil {
+		m.mu.Unlock()
+		<-starting
+		m.Stop()
+		return
+	}
 	cmd, exited := m.cmd, m.exited
 	m.stopping = true
 	if cmd != nil {

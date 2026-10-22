@@ -40,3 +40,34 @@ func TestValidFileRejectsSameSizeCorruption(t *testing.T) {
 		t.Fatal("changed file reused a previous successful checksum")
 	}
 }
+
+func TestORTRuntimeNeedsCompletedExtraction(t *testing.T) {
+	asset, ok := ortForPlatform()
+	if !ok {
+		t.Skip("no runtime archive for this platform")
+	}
+	t.Setenv("WBC_HOME", t.TempDir())
+	path := ortLibPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("complete runtime"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(nil, nil)
+	if m.ortReady(asset) {
+		t.Fatal("library without completed-extraction marker was accepted")
+	}
+	if err := m.markORT(asset); err != nil {
+		t.Fatal(err)
+	}
+	if !m.ortReady(asset) {
+		t.Fatal("marked runtime was rejected")
+	}
+	if err := os.WriteFile(path, []byte("short"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if m.ortReady(asset) {
+		t.Fatal("truncated runtime was accepted")
+	}
+}

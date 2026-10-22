@@ -476,11 +476,29 @@ func (a *App) SetPort(port int) error {
 	if port < 1024 || port > 65535 {
 		return errors.New("choose a port between 1024 and 65535")
 	}
+	previous := a.Store.Get()
+	previousPort := a.Proxy.Port()
+	panelOpen := a.listeners() > 0
 	s, err := a.Store.Update(func(s *settings.Settings) { s.Port = port })
 	if err != nil {
 		return err
 	}
-	return a.restartProxy(s)
+	if err := a.restartProxy(s); err != nil {
+		restored, saveErr := a.Store.Update(func(s *settings.Settings) { s.Port = previous.Port })
+		restorePort := previousPort
+		if restorePort == 0 {
+			restorePort = previous.Port
+		}
+		restartErr := a.restartOn(restored, restorePort, previousPort != 0)
+		if restartErr == nil {
+			a.setNotice(fmt.Sprintf(i18n.T("port_failed"), port, a.Proxy.Port()))
+			if panelOpen && a.OpenPanel != nil {
+				go a.OpenPanel("")
+			}
+		}
+		return errors.Join(err, saveErr, restartErr)
+	}
+	return nil
 }
 
 func (a *App) restartProxy(s settings.Settings) error {
