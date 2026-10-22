@@ -50538,8 +50538,9 @@ test('provider picker exposes both managed Compass tiers, configured providers, 
 
     assert.match(panel, /!\['webbrain_cloud', 'webbrain_cloud_max'\]\.includes\(id\) && config\?\.configured === true/, `${label}: picker should filter to configured non-cloud providers`);
     assert.match(panel, /cloudOption\.value = 'webbrain_cloud'/, `${label}: WebBrain Compass should always be offered`);
-    assert.match(panel, /cloudMaxOption\.value = 'webbrain_cloud_max'/, `${label}: WebBrain Compass XL should always be offered`);
-    assert.match(panel, /WebBrain Compass XL/, `${label}: XL should be offered with its Compass XL name`);
+    assert.match(panel, /cloudMaxOption\.value = 'webbrain_cloud_max'/, `${label}: the larger Compass tier should always be offered`);
+    assert.match(panel, /const cloudLabel = 'Compass Light';/, `${label}: the default tier should display Compass Light`);
+    assert.match(panel, /const cloudMaxLabel = 'Compass';/, `${label}: the max route should display Compass`);
     assert.match(panel, /get_providers', \{ includeSidepanelOnly: true \}/, `${label}: sidepanel should request its hidden managed provider`);
     assert.match(panel, /MORE_PROVIDERS_OPTION_VALUE = '__more_providers__'/, `${label}: More sentinel missing`);
     assert.match(panel, /providerSelect\.value = selectedProviderId;[\s\S]*?await openProvidersSettingsPage\(\);[\s\S]*?return;/, `${label}: More should restore the selection and stop before activation`);
