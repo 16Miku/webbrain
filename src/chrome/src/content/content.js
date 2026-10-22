@@ -4258,11 +4258,21 @@
   // /compose/post as a dialog over the home timeline, and the timeline's
   // inline composer keeps an identical hidden input (same accept and
   // multiple, no id or name, same ten nearest ancestors): only the dialog
-  // tells the two apart.
+  // tells the two apart. A closed dialog that a page keeps in the DOM
+  // (hidden, aria-hidden, inert or not rendered) holds no composer the model
+  // opened, so its input is neither marked nor scoped by it.
   function _fileInputDialogScopes(el) {
     return ['[role="dialog"]', '[role="alertdialog"]', '[aria-modal="true"]', 'dialog[open]']
       .filter(scope => {
-        try { return !!el.closest(scope); } catch { return false; }
+        try {
+          const dialog = el.closest(scope);
+          if (!dialog || dialog.closest('[hidden],[aria-hidden="true"],[inert]')) return false;
+          if (typeof dialog.checkVisibility === 'function') {
+            return dialog.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true });
+          }
+          const style = getComputedStyle(dialog);
+          return dialog.getClientRects().length > 0 && !['hidden', 'collapse'].includes(style.visibility);
+        } catch { return false; }
       });
   }
 

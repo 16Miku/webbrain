@@ -4477,6 +4477,35 @@ for (const browserKind of ['chrome', 'firefox']) {
     }
   });
 
+  // A closed dialog a page keeps in the DOM holds no composer the model
+  // opened: its input is not marked inDialog, and no selector is scoped to it.
+  // Both inputs share their ten nearest ancestors, so a dialog scope would
+  // otherwise be the first candidate that tells them apart.
+  const fileSlot = `<div><div><div><div><div><div><div><div><div>
+    <input type="file" accept="image/*">
+  </div></div></div></div></div></div></div></div></div>`;
+  for (const [state, open, close] of [
+    ['hidden', '<div role="dialog" hidden>', '</div>'],
+    ['aria-hidden', '<div role="dialog" aria-hidden="true">', '</div>'],
+    ['inert', '<div role="dialog" aria-modal="true" inert>', '</div>'],
+    ['unrendered', '<div role="dialog" style="display: none">', '</div>'],
+    ['closed native', '<dialog role="dialog">', '</dialog>'],
+  ]) {
+    test(`get_interactive_elements (${browserKind}): a file input in a closed dialog (${state}) is not marked inDialog`, async (page) => {
+      const setupHtml = browserKind === 'firefox' ? setupFirefoxHtml : setupChromeHtml;
+      await setupHtml(page, `<!doctype html>
+        <section aria-label="Cover image">${fileSlot}</section>
+        ${open}<p>Avatar</p>${fileSlot}${close}`);
+      const records = (await call(page, 'get_interactive_elements_cdp', {})).filter((element) => element.type === 'file');
+      if (records.length !== 2 || records.some((record) => Object.hasOwn(record, 'inDialog'))) {
+        throw new Error(`a closed dialog (${state}) must not mark its input inDialog: ${JSON.stringify(records)}`);
+      }
+      if (records.some((record) => !record.selector || /\[role="dialog"\]|\[aria-modal="true"\]|dialog\[open\]/.test(record.selector))) {
+        throw new Error(`each input needs a selector not scoped to a closed dialog (${state}): ${JSON.stringify(records)}`);
+      }
+    });
+  }
+
   test(`file picker guard (${browserKind}): blocks the native chooser and returns the exact input`, async (page) => {
     await setupContentHtml(page, `<!doctype html>
       <button id="choose">Select a file...</button>
