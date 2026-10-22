@@ -1244,8 +1244,9 @@ export function normalizePlan(obj, opts = {}) {
   // can be checked against the requested target without becoming sendable.
   // An open-thread draft arrives as target_kind="active_conversation" and is
   // pinned to its verified recipients before execution, so both kinds are kept
-  // here; dropping the conversation kind would leave the draft unbound.
-  const draftRecipients = executablePlan && requiresSubmission !== true
+  // here; dropping the conversation kind would leave the draft unbound. A
+  // question about such a draft keeps them too, as it keeps its schedule.
+  const draftRecipients = submissionBearingPlan && requiresSubmission !== true
     ? normalizeMessageTarget(obj.messaging)
     : null;
   const requiresDownload = executablePlan
@@ -1321,7 +1322,7 @@ export function normalizePlan(obj, opts = {}) {
     // A question keeps the schedule of the task it asks about, as it keeps
     // the submission. Nothing runs from it: the agent records that the task
     // carries a schedule, and the planner's second look at the user's answer
-    // may then plan one (Agent._plannerSecondLookWidens).
+    // may then plan one (Agent._plannerSecondLookRejection).
     scheduling: executablePlan || requestKind === 'clarify' ? normalizedScheduling : null,
     risks,
     localized,

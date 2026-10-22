@@ -27167,18 +27167,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // For the planner's second look (_plannerClarifyRetry): whether the user
-  // turn at `index` answers the planner's previous question, and the schedule
-  // tool of the task that question was about (_plannerSecondLookWidens). A
-  // correction or a scheduled run answers no question.
+  // turn at `index` answers the planner's previous question, and what the
+  // task carried (_plannerSecondLookRejection): the schedule tool and message
+  // target of the question it answers, and the user's own words in the task.
+  // A correction or a scheduled run answers no question.
   _plannerQuestionAnswerContext(messages, index, runOptions = {}) {
     const answersPlannerQuestion = runOptions?.steeringRevision == null
       && runOptions?.scheduledRun !== true && runOptions?.scheduledResume !== true
       && this._turnAnswersPlannerQuestion(messages, index);
-    const question = answersPlannerQuestion ? messages[this._plannerClarificationIndexBefore(messages, index)] : null;
+    if (!answersPlannerQuestion) {
+      return { answersPlannerQuestion: false, answeredQuestionSchedulingTool: null, answeredQuestionMessageTarget: null, taskUserText: '' };
+    }
+    const question = messages[this._plannerClarificationIndexBefore(messages, index)]?.webbrainPlannerClarification || {};
     return {
-      answersPlannerQuestion,
-      answeredQuestionSchedulingTool: question?.webbrainPlannerClarification?.schedulingTool || null,
+      answersPlannerQuestion: true,
+      answeredQuestionSchedulingTool: question.schedulingTool || null,
+      answeredQuestionMessageTarget: normalizeMessageTarget(question.messageTarget),
+      // The task binding is built from user turns only: the request and each
+      // answer, never the page or an assistant turn.
+      taskUserText: this._activeTaskBinding(messages.slice(0, index + 1)).text || '',
     };
+  }
+
+  // Whether the user's own words name every recipient: each identity appears
+  // as a whole token (an address may end a sentence). Only the text passed in
+  // counts, never a page title, OCR, an assistant turn or an address suffix.
+  _userTextNamesRecipients(text, recipients) {
+    if (!Array.isArray(recipients) || recipients.length === 0) return false;
+    const authored = normalizeAuthoredRecipientText(text).slice(0, 100000);
+    const tokenChar = /[\p{L}\p{N}@._%+-]/u;
+    return recipients.every(recipient => {
+      const identity = normalizeRecipientIdentity(recipient?.identity);
+      if (!identity) return false;
+      for (let at = authored.indexOf(identity); at >= 0; at = authored.indexOf(identity, at + 1)) {
+        const before = authored[at - 1] || '';
+        const end = at + identity.length;
+        const after = authored[end] || '';
+        const sentencePeriod = after === '.' && !tokenChar.test(authored[end + 1] || '');
+        if ((!before || !tokenChar.test(before)) && (!after || !tokenChar.test(after) || sentencePeriod)) return true;
+      }
+      return false;
+    });
   }
 
   // Whether a second look may think: only a model planning tells not to
@@ -27197,25 +27226,42 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .reasoningEffort !== 'off';
   }
 
-  // A second look told not to re-ask may not take on more than the user's
-  // task already carried: a submission or a schedule that neither the first
-  // answer nor the question the user just answered held, or a recipient the
-  // first answer did not name. Those stay questions for the user. A schedule
-  // of the kind the task carried may be planned (a pause for schedule_resume
-  // never becomes a recurring schedule_task): the user's answer is often its
-  // timing ("every five minutes"), and in the planner gate the plan is still
-  // checked for alignment with the task and that answer. A recipient counts for a draft
-  // too: normalizePlan moves the addressees of a message that is not sent
-  // into draft_recipients, and a draft written into the open conversation is
-  // still a recipient taken from the page.
-  _plannerSecondLookWidens(firstPlan, plan, followUpContext = {}) {
+  // What a second look told not to re-ask may plan, measured against what
+  // the user's task already carried: the first answer on this turn (a
+  // question keeps the submission, the people to address and the schedule of
+  // the task it asks about) and the question the user just answered. Returns
+  // why the plan is rejected, or null. A rejected plan leaves the question
+  // with the user.
+  // - adds_submission: a submission neither of them carried.
+  // - adds_recipient: a recipient, for a message or a draft (normalizePlan
+  //   keeps a draft's addressees in draft_recipients), that neither of them
+  //   named, unless the user's own words in the task name every person. The
+  //   open conversation is never taken from the page on a second look.
+  // - adds_schedule: a schedule of a kind neither of them carried. The user's
+  //   answer is often the timing of a schedule the task carried ("every five
+  //   minutes"), but a schedule_resume pause never becomes a recurring
+  //   schedule_task.
+  // - drops_schedule: an execute plan without the schedule_task the task
+  //   carried. The intent check has no alignment check that would notice the
+  //   run doing the task once instead.
+  _plannerSecondLookRejection(firstPlan, plan, followUpContext = {}) {
     const submissionCarried = firstPlan?.requires_submission === true
       || followUpContext?.plannerClarification?.requiresSubmission === true;
-    if (plan?.requires_submission === true && !submissionCarried) return true;
-    const named = JSON.stringify(firstPlan?.messaging || firstPlan?.draft_recipients || null);
-    if ([plan?.messaging, plan?.draft_recipients].some(target => target && JSON.stringify(target) !== named)) return true;
+    if (plan?.requires_submission === true && !submissionCarried) return 'adds_submission';
+    const carriedTargets = [firstPlan?.messaging, firstPlan?.draft_recipients, followUpContext?.answeredQuestionMessageTarget]
+      .filter(Boolean)
+      .map(target => JSON.stringify(target));
+    for (const target of [plan?.messaging, plan?.draft_recipients]) {
+      if (!target || carriedTargets.includes(JSON.stringify(target))) continue;
+      if (target.target_kind === 'named'
+          && this._userTextNamesRecipients(followUpContext?.taskUserText, target.recipients)) continue;
+      return 'adds_recipient';
+    }
     const carriedSchedules = [firstPlan?.scheduling?.tool, followUpContext?.answeredQuestionSchedulingTool];
-    return !!plan?.scheduling && !carriedSchedules.includes(plan.scheduling.tool);
+    if (plan?.scheduling && !carriedSchedules.includes(plan.scheduling.tool)) return 'adds_schedule';
+    if (plan?.request_kind === 'execute' && carriedSchedules.includes('schedule_task')
+        && plan.scheduling?.tool !== 'schedule_task') return 'drops_schedule';
+    return null;
   }
 
   // A planner question gets one more look before it reaches the user. The
@@ -27231,7 +27277,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   //   question, PLANNER_REASK_GUIDANCE reminds the planner that the executor
   //   can see what it cannot, and leaves a question only for values that have
   //   to come from the user. Its plan may not add a submission, a recipient
-  //   or a schedule (_plannerSecondLookWidens).
+  //   or a schedule the task did not carry, or drop a recurring schedule it
+  //   did (_plannerSecondLookRejection).
   // The answer is parsed and checked like the first one, and an execute plan
   // then goes through alignment, recipient pinning and review like any other.
   // Returns null to keep the first answer: nothing to retry, or the retry
@@ -27270,10 +27317,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._tracePlannerAttemptResponse(runId, 0, provider, result, phase, 1, startedAt, chatOptions);
     const plan = parsePlanFromContent(result?.content, parseOptions);
     if (!plan || this._plannerIntentConsistencyIssue(plan, followUpContext)) return null;
-    if (reask && this._plannerSecondLookWidens(firstPlan, plan, followUpContext)) {
+    const rejection = reask ? this._plannerSecondLookRejection(firstPlan, plan, followUpContext) : null;
+    if (rejection) {
       if (runId) {
         try {
-          Promise.resolve(trace.recordNote(runId, 0, 'planner_second_look_rejected', { phase, reason: 'widens_task' }))
+          Promise.resolve(trace.recordNote(runId, 0, 'planner_second_look_rejected', { phase, reason: rejection }))
             .catch(() => {});
         } catch {}
       }
@@ -27372,9 +27420,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (gate.requestKind === 'clarify' && gate.plannerClarification === true) {
       message.webbrainPlannerClarification = {
         requiresSubmission: gate.requiresSubmission === true,
-        // The schedule of the task this question is about, so the second look
-        // at the user's answer may plan it (_plannerSecondLookWidens).
+        // The schedule and the people to address of the task this question is
+        // about, so the second look at the user's answer may plan them
+        // (_plannerSecondLookRejection).
         schedulingTool: ['schedule_task', 'schedule_resume'].includes(gate.schedulingTool) ? gate.schedulingTool : null,
+        messageTarget: normalizeMessageTarget(gate.messageTarget),
         pageUrl: String(tabInfo?.tabUrl || ''),
         taskText: this._progressTaskTextKey(activeTaskText).slice(0, 1600),
         taskKey: /^tk_[0-9a-f]{8}$/i.test(String(activeTaskKey || ''))
@@ -28220,6 +28270,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
           schedulingTool: plan.request_kind === 'clarify' ? plan.scheduling?.tool || null : null,
+          messageTarget: plan.request_kind === 'clarify' ? plan.messaging || plan.draft_recipients || null : null,
         };
       }
       if (runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
@@ -28227,20 +28278,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // Semantic intent is necessary but cannot invent a named destination.
         // The fresh authenticated task must itself contain each exact identity;
         // a page title, OCR, prior turn or address suffix cannot provide it.
-        const authored = normalizeAuthoredRecipientText(this._plannerUserAuthoredText(enriched)).slice(0, 100000);
-        const tokenChar = /[\p{L}\p{N}@._%+-]/u;
-        const present = plan.messaging.recipients.every(recipient => {
-          const identity = normalizeRecipientIdentity(recipient.identity);
-          if (!identity) return false;
-          for (let at = authored.indexOf(identity); at >= 0; at = authored.indexOf(identity, at + 1)) {
-            const before = authored[at - 1] || '';
-            const end = at + identity.length;
-            const after = authored[end] || '';
-            const sentencePeriod = after === '.' && !tokenChar.test(authored[end + 1] || '');
-            if ((!before || !tokenChar.test(before)) && (!after || !tokenChar.test(after) || sentencePeriod)) return true;
-          }
-          return false;
-        });
+        const present = this._userTextNamesRecipients(this._plannerUserAuthoredText(enriched), plan.messaging.recipients);
         if (!present) return {
           proceed: false, reason: 'active_recipient_unverified', requestKind: 'clarify', plannerClarification: true,
           requiresStateChange: false, requiresSubmission: false, schedulingTool: plan.scheduling?.tool || null, messaging: null,
@@ -28550,6 +28588,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             requiresStateChange: false,
             requiresSubmission: candidate.request_kind === 'clarify' && candidate.requires_submission === true,
             schedulingTool: candidate.request_kind === 'clarify' ? candidate.scheduling?.tool || null : null,
+            messageTarget: candidate.request_kind === 'clarify' ? candidate.messaging || candidate.draft_recipients || null : null,
           };
         }
         return null;
