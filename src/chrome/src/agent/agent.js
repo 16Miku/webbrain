@@ -28252,12 +28252,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
           return { proceed: false, steeringSuperseded: true };
         }
-        // A rethink only. The intent check has no alignment check that could
-        // read the user's answer, so it never re-asks (_plannerSecondLookRejection).
-        const secondLook = await this._plannerClarifyRetry(tabId, provider, plannerMessages, {
-          parseOptions: plannerParseOptions, intentOnly: true,
-          portable: plannerPortable, costState, runId, runtimeMode, onUpdate, followUpContext,
-        });
+        // A rethink only, and none on a turn that answers a planner question:
+        // the intent check has no alignment check that could read the user's
+        // answer, so it never re-asks, and a retry that read the answer could
+        // run a recipient, schedule or submission nothing checked
+        // (_plannerSecondLookRejection). There the first answer stands.
+        const secondLook = followUpContext.answersPlannerQuestion === true ? null
+          : await this._plannerClarifyRetry(tabId, provider, plannerMessages, {
+            parseOptions: plannerParseOptions, intentOnly: true,
+            portable: plannerPortable, costState, runId, runtimeMode, onUpdate, followUpContext,
+          });
         if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
         if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
           return { proceed: false, steeringSuperseded: true };

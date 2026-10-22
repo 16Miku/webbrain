@@ -12,7 +12,7 @@
 //   that must come from the user. That plan may not take a recipient or a
 //   schedule the user did not back, and the alignment check then reads it
 //   against the user's words. The intent check, which has no alignment
-//   check, never re-asks.
+//   check, takes no second look at an answer.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -323,17 +323,18 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(second.options, first.options, 'a model that may think gets the usual options');
   });
 
-  test(`${build}: the intent check never re-asks, and a model told not to think only rethinks there`, async () => {
-    const followUpContext = { answersPlannerQuestion: true };
-    const plain = scriptedAgent({ provider: PLAIN_MODEL, answers: [intentPlan(clarifyPlan()), intentPlan(plannerPlan())] });
-    const kept = await intentGate(plain.agent, { followUpContext });
-    assert.deepEqual([kept.proceed, kept.requestKind, kept.message], [false, 'clarify', QUESTION], JSON.stringify(kept));
-    assert.equal(plain.calls.length, 1, 'no alignment check could read the answer, so no second look');
+  test(`${build}: the intent check takes no second look at an answer, and only rethinks a first question`, async () => {
+    for (const provider of [PLAIN_MODEL, VLLM_QWEN]) {
+      const { agent, calls } = scriptedAgent({ provider, answers: [intentPlan(clarifyPlan()), intentPlan(plannerPlan())] });
+      const kept = await intentGate(agent, { followUpContext: { answersPlannerQuestion: true } });
+      assert.deepEqual([kept.proceed, kept.requestKind, kept.message], [false, 'clarify', QUESTION], `${provider.model}: ${JSON.stringify(kept)}`);
+      assert.equal(calls.length, 1, `${provider.model}: nothing there could read the answer, so the first answer stands`);
+    }
     const qwen = scriptedAgent({ answers: [intentPlan(clarifyPlan()), intentPlan(plannerPlan())] });
-    const rethought = await intentGate(qwen.agent, { followUpContext });
+    const rethought = await intentGate(qwen.agent, { message: user('Post the same thing on LinkedIn too') });
     assert.equal(rethought.requestKind, 'execute', JSON.stringify(rethought));
-    assert.equal(qwen.calls.length, 2);
-    assert.doesNotMatch(qwen.calls[1].messages[0].content, REASK, 'the same request with thinking on, judged like a first answer');
+    assert.equal(qwen.calls.length, 2, 'a first question is rethought by a model told not to think');
+    assert.doesNotMatch(qwen.calls[1].messages[0].content, REASK, 'the same request with thinking on');
     assert.ok(!contentText(qwen.calls[1].messages[1].content).startsWith('/no_think'));
   });
 
@@ -606,11 +607,11 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   test(`${build}: the intent recheck gets no re-ask guidance, and a pending correction no second look`, async () => {
-    for (const [provider, expectedCalls] of [[PLAIN_MODEL, 1], [VLLM_QWEN, 2]]) {
+    for (const [provider, answered, expectedCalls] of [[PLAIN_MODEL, false, 1], [VLLM_QWEN, false, 2], [VLLM_QWEN, true, 1]]) {
       const recheck = scriptedAgent({ provider, answers: [intentPlan(clarifyPlan())] });
-      const result = await intentGate(recheck.agent, { runOptions: { plannerIntentRecheckOnly: true }, followUpContext: { answersPlannerQuestion: true } });
+      const result = await intentGate(recheck.agent, { runOptions: { plannerIntentRecheckOnly: true }, followUpContext: { answersPlannerQuestion: answered } });
       assert.deepEqual([result.proceed, result.requestKind], [false, 'clarify'], JSON.stringify(result));
-      assert.equal(recheck.calls.length, expectedCalls, `${provider.model}: only a no-think model rethinks`);
+      assert.equal(recheck.calls.length, expectedCalls, `${provider.model}, answer turn ${answered}: only a no-think model rethinks, and never an answer`);
       assert.ok(recheck.calls.every(call => !REASK.test(call.messages[0].content)), `${provider.model}: no re-ask guidance`);
     }
 
