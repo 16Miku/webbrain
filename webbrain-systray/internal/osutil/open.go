@@ -15,12 +15,20 @@ import (
 func OpenURL(url string) error {
 	switch runtime.GOOS {
 	case "darwin":
-		return Command("/usr/bin/open", url).Start()
+		return startAndReap(Command("/usr/bin/open", url))
 	case "windows":
-		return Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		return startAndReap(Command("rundll32", "url.dll,FileProtocolHandler", url))
 	default:
-		return Command("xdg-open", url).Start()
+		return startAndReap(Command("xdg-open", url))
 	}
+}
+
+func startAndReap(cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 // Reveal opens a folder (or the folder containing a file) in the file manager.
@@ -28,19 +36,19 @@ func Reveal(path string) error {
 	switch runtime.GOOS {
 	case "darwin":
 		if st, err := os.Stat(path); err == nil && !st.IsDir() {
-			return Command("/usr/bin/open", "-R", path).Start()
+			return startAndReap(Command("/usr/bin/open", "-R", path))
 		}
-		return Command("/usr/bin/open", path).Start()
+		return startAndReap(Command("/usr/bin/open", path))
 	case "windows":
 		if st, err := os.Stat(path); err == nil && !st.IsDir() {
-			return Command("explorer", "/select,", path).Start()
+			return startAndReap(Command("explorer", "/select,", path))
 		}
-		return Command("explorer", path).Start()
+		return startAndReap(Command("explorer", path))
 	default:
 		if st, err := os.Stat(path); err == nil && !st.IsDir() {
 			path = filepath.Dir(path)
 		}
-		return Command("xdg-open", path).Start()
+		return startAndReap(Command("xdg-open", path))
 	}
 }
 
@@ -104,8 +112,7 @@ func OpenAppWindow(url string, width, height int) error {
 		} else {
 			cmd = Command(c, "--app="+url, size)
 		}
-		if err := cmd.Start(); err == nil {
-			go func() { _ = cmd.Wait() }()
+		if err := startAndReap(cmd); err == nil {
 			return nil
 		}
 	}
