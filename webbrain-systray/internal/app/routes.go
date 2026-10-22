@@ -487,28 +487,34 @@ func (a *App) routes(e *gin.Engine) {
 		if req.Welcomed != nil {
 			_, _ = a.Store.Update(func(s *settings.Settings) { s.Welcomed = *req.Welcomed })
 		}
-		if req.Network != nil && *req.Network != a.Store.Get().Network {
-			on := *req.Network
-			// Reply first: the proxy restarts on the new address.
-			c.JSON(http.StatusOK, gin.H{"ok": true, "restart": true})
-			go func() {
-				time.Sleep(300 * time.Millisecond)
-				if err := a.SetNetwork(on); err != nil {
-					logx.Printf("network access: %v", err)
-				}
-			}()
+		if req.Port != nil && (*req.Port < 1024 || *req.Port > 65535) {
+			fail(c, http.StatusBadRequest, errors.New("choose a port between 1024 and 65535"))
 			return
 		}
-		if req.Port != nil && *req.Port != a.Store.Get().Port {
-			port := *req.Port
-			// Reply first: the panel will reconnect on the new port.
-			c.JSON(http.StatusOK, gin.H{"ok": true, "restart": true})
-			go func() {
-				time.Sleep(300 * time.Millisecond)
-				if err := a.SetPort(port); err != nil {
-					logx.Printf("change port: %v", err)
+		restart := false
+		if req.Network != nil {
+			on := *req.Network
+			a.queueRestart("network access", func() error {
+				if a.Store.Get().Network == on {
+					return nil
 				}
-			}()
+				return a.SetNetwork(on)
+			})
+			restart = true
+		}
+		if req.Port != nil {
+			port := *req.Port
+			a.queueRestart("change port", func() error {
+				if a.Store.Get().Port == port {
+					return nil
+				}
+				return a.SetPort(port)
+			})
+			restart = true
+		}
+		if restart {
+			// Reply before queued changes restart the proxy.
+			c.JSON(http.StatusOK, gin.H{"ok": true, "restart": true})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -523,13 +529,8 @@ func (a *App) routes(e *gin.Engine) {
 		}
 	})
 	api.POST("/key/rotate", func(c *gin.Context) {
+		a.queueRestart("rotate key", a.RotateKey)
 		c.JSON(http.StatusOK, gin.H{"ok": true})
-		go func() {
-			time.Sleep(300 * time.Millisecond)
-			if err := a.RotateKey(); err != nil {
-				logx.Printf("rotate key: %v", err)
-			}
-		}()
 	})
 	api.POST("/open", func(c *gin.Context) {
 		var req struct {

@@ -215,6 +215,10 @@ func (m *Mgmt) Models(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<10))
+		return nil, &APIError{Status: resp.StatusCode, Body: string(data)}
+	}
 	var out struct {
 		Data []struct {
 			ID string `json:"id"`

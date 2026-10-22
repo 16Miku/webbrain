@@ -40,6 +40,8 @@ type App struct {
 	Local     *localmodel.Manager
 	D1        *d1.Manager
 	restartMu sync.Mutex // serializes settings changes and their proxy restarts
+	queueMu   sync.Mutex // orders restarts requested by the panel before they run
+	queueTail chan struct{}
 
 	mu        sync.Mutex
 	creds     []core.Credential
@@ -93,6 +95,33 @@ func (a *App) registerLocal(local []core.LocalUpstream) error {
 	a.restartMu.Lock()
 	defer a.restartMu.Unlock()
 	return a.Proxy.SetLocal(local)
+}
+
+// The panel must receive its response before a restart drops its connection.
+// Chain delayed operations in request order so rapid changes apply in order.
+func (a *App) queueRestart(label string, change func() error) {
+	a.queueMu.Lock()
+	previous := a.queueTail
+	done := make(chan struct{})
+	a.queueTail = done
+	a.queueMu.Unlock()
+	go func() {
+		defer close(done)
+		if previous != nil {
+			<-previous
+		}
+		select {
+		case <-time.After(300 * time.Millisecond):
+		case <-a.ctx.Done():
+			return
+		}
+		if a.ctx.Err() != nil {
+			return
+		}
+		if err := change(); err != nil {
+			logx.Printf("%s: %v", label, err)
+		}
+	}()
 }
 
 // changed notifies panel listeners and the tray.

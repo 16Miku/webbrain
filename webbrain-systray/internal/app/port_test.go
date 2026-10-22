@@ -3,10 +3,15 @@ package app
 import (
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/esokullu/webbrain-systray/internal/paths"
 	"github.com/esokullu/webbrain-systray/internal/settings"
@@ -44,6 +49,57 @@ func TestSetPortRestoresWorkingProxyWhenLastPortIsOccupied(t *testing.T) {
 	}
 	if !strings.Contains(a.Snapshot().Notice, "65535") {
 		t.Fatal("panel has no notice explaining the rejected port")
+	}
+}
+
+func TestRapidNetworkTogglesApplyInRequestOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("WBC_HOME", t.TempDir())
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New("test", store)
+	if err := a.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Shutdown()
+	e := gin.New()
+	a.routes(e)
+	send := func(network bool) chan struct{} {
+		body := fmt.Sprintf(`{"network":%t}`, network)
+		r := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1:8327/companion/api/settings", strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:50000"
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Companion-Key", store.Get().PanelToken)
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("settings update returned %d: %s", w.Code, w.Body.String())
+		}
+		a.queueMu.Lock()
+		done := a.queueTail
+		a.queueMu.Unlock()
+		return done
+	}
+	onDone := send(true)
+	offDone := send(false) // arrives while the first change is still delayed
+	for _, step := range []struct {
+		done chan struct{}
+		want bool
+		host string
+	}{{onDone, true, "0.0.0.0"}, {offDone, false, "127.0.0.1"}} {
+		select {
+		case <-step.done:
+		case <-time.After(45 * time.Second):
+			t.Fatal("queued network change did not finish")
+		}
+		if store.Get().Network != step.want || a.Proxy.Host() != step.host {
+			t.Fatalf("queued network change finished with network=%v host=%q, want %v and %q", store.Get().Network, a.Proxy.Host(), step.want, step.host)
+		}
 	}
 }
 
