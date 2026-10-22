@@ -65,19 +65,20 @@ type Manager struct {
 	register func([]core.LocalUpstream) error
 	onChange func()
 
-	phase     string
-	step      string
-	progress  *download.Progress
-	err       string
-	port      int
-	startedAt *time.Time
-	plan      Plan
-	cancel    context.CancelFunc
-	cmd       *exec.Cmd
-	starting  chan struct{} // closed after Start either publishes cmd or fails
-	exited    chan struct{}
-	stopping  bool
-	stopErr   error // why the server was stopped, when it was not the user
+	phase       string
+	step        string
+	progress    *download.Progress
+	err         string
+	port        int
+	startedAt   *time.Time
+	plan        Plan
+	cancel      context.CancelFunc
+	installDone chan struct{}
+	cmd         *exec.Cmd
+	starting    chan struct{} // closed after Start either publishes cmd or fails
+	exited      chan struct{}
+	stopping    bool
+	stopErr     error // why the server was stopped, when it was not the user
 }
 
 func NewManager(store *settings.Store, register func([]core.LocalUpstream) error, onChange func()) *Manager {
@@ -307,12 +308,15 @@ func (m *Manager) Install(format string) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
+	done := make(chan struct{})
+	m.installDone = done
 	m.phase, m.step, m.err, m.progress = PhaseDownloading, "Preparing the local model", "", nil
 	m.mu.Unlock()
 	m.changed()
 
 	go func() {
 		defer cancel()
+		defer close(done)
 		var err error
 		if format == "mlx" {
 			err = m.installMLX(ctx, info)

@@ -94,7 +94,19 @@ func TestInstallClaimsPhaseBeforeWorkerStarts(t *testing.T) {
 	if err := m.Install("gguf"); err != nil {
 		t.Fatal(err)
 	}
-	defer m.Cancel()
+	t.Cleanup(func() {
+		m.Cancel()
+		m.mu.Lock()
+		done := m.installDone
+		m.mu.Unlock()
+		if done != nil {
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Error("install did not stop after cancellation")
+			}
+		}
+	})
 	if err := m.Install("gguf"); err == nil {
 		t.Fatal("overlapping install was accepted")
 	}
