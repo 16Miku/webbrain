@@ -388,6 +388,10 @@ for (const build of ['chrome', 'firefox']) {
     const first = scriptedAgent({ provider, answers: [clarifyPlan()] });
     await fullGate(first.agent);
     assert.equal(first.calls.length, 1, 'no second look that could not think anyway');
+    const offInBody = { ...VLLM_QWEN, config: { ...VLLM_QWEN.config, extraBody: { reasoning: { effort: 'none' } } } };
+    const viaBody = scriptedAgent({ provider: offInBody, answers: [clarifyPlan()] });
+    await fullGate(viaBody.agent);
+    assert.equal(viaBody.calls.length, 1, 'nor when the extra request body turns it off');
     const answered = scriptedAgent({ provider, answers: [clarifyPlan(), plannerPlan()] });
     const result = await fullGate(answered.agent, { digest: ANSWERED_DIGEST, followUpContext: { answersPlannerQuestion: true } });
     assert.equal(result.requestKind, 'execute');
@@ -559,6 +563,14 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._plannerCanRethink(withConfig({ compat: { reasoningEffort: 'off' } })), false);
     assert.equal(agent._plannerCanRethink(withConfig({ extraBody: { chat_template_kwargs: { enable_thinking: false } } })), false);
     assert.equal(agent._plannerCanRethink(withConfig({ extraBody: { reasoning: { enabled: false } } })), false);
+    for (const extraBody of [
+      { reasoning: { effort: 'none' } }, { reasoning: { effort: 'OFF' } }, { reasoning: false },
+      { reasoning_effort: 'none' }, { reasoning_effort: 'off' },
+      { chat_template_kwargs: { thinking: false } }, { thinking: { type: 'disabled' } }, { thinking: false }, { enable_thinking: false },
+    ]) assert.equal(agent._plannerCanRethink(withConfig({ extraBody })), false, `reasoning off: ${JSON.stringify(extraBody)}`);
+    for (const extraBody of [{ reasoning_effort: 'high' }, { reasoning: { effort: 'low' } }, { chat_template_kwargs: { enable_thinking: true } }]) {
+      assert.equal(agent._plannerCanRethink(withConfig({ extraBody })), true, `reasoning on: ${JSON.stringify(extraBody)}`);
+    }
     assert.equal(agent._plannerCanRethink(withConfig({}, 'Qwen3-235B-A22B-Instruct-2507')), false, 'no thinking mode');
     assert.equal(agent._plannerCanRethink(withConfig({}, 'qwen3-coder-30b-a3b')), false, 'no thinking mode');
     assert.equal(agent._plannerCanRethink(withConfig({}, 'Qwen3-235B-A22B-Thinking-2507')), true);

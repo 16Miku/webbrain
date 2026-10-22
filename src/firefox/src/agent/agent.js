@@ -24264,17 +24264,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // Whether a second look may think: only a model planning tells not to
   // think (/no_think). Reasoning turned off in the provider's settings or in
   // its extra request body stays off (mergeProviderRequestBody merges both
-  // under every request), and a model without a thinking mode (Qwen3
-  // Instruct-2507, Qwen3 Coder) would only repeat its first answer.
+  // under every request), so the retry could not think and would only cost
+  // another request; a model without a thinking mode (Qwen3 Instruct-2507,
+  // Qwen3 Coder) would only repeat its first answer.
   _plannerCanRethink(provider) {
     if (!this._plannerPrefersNoThinkPrompt(provider)) return false;
     const config = provider?.config && typeof provider.config === 'object' ? provider.config : {};
     if (/instruct-2507|coder/i.test(String(provider?.model || config.model || ''))) return false;
-    const extra = config.extraBody && typeof config.extraBody === 'object' ? config.extraBody : {};
-    if (extra.chat_template_kwargs?.enable_thinking === false || extra.enable_thinking === false
-        || extra.reasoning?.enabled === false || extra.thinking?.type === 'disabled') return false;
+    if (this._extraBodyDisablesReasoning(config.extraBody)) return false;
     return normalizeProviderCompatibility({ ...config, providerName: config.providerName || provider?.name || '' })
       .reasoningEffort !== 'off';
+  }
+
+  // The request-body shapes that turn reasoning off: Qwen and vLLM chat
+  // template switches (enable_thinking, thinking), DeepSeek's thinking type
+  // and its Responses effort, OpenRouter's reasoning object, and a top-level
+  // reasoning_effort of none or off.
+  _extraBodyDisablesReasoning(extraBody) {
+    const extra = extraBody && typeof extraBody === 'object' ? extraBody : {};
+    const kwargs = extra.chat_template_kwargs && typeof extra.chat_template_kwargs === 'object' ? extra.chat_template_kwargs : {};
+    const effortOff = value => typeof value === 'string' && ['none', 'off'].includes(value.trim().toLowerCase());
+    return kwargs.enable_thinking === false || kwargs.thinking === false || extra.enable_thinking === false
+      || extra.thinking === false || extra.thinking?.type === 'disabled'
+      || extra.reasoning === false || extra.reasoning?.enabled === false || effortOff(extra.reasoning?.effort)
+      || effortOff(extra.reasoning_effort);
   }
 
   // What a second look told not to re-ask may run, measured against what the
