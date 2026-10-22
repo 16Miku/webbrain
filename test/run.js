@@ -4699,6 +4699,21 @@ test('matches Hugging Face upload pages with staged-upload guidance and rejects 
   }
 });
 
+// Trace b71fd1dc: the model clicked "Add Photo or Video", which only opens an
+// OS file dialog, and finally sent a link to the picture instead of the file.
+test('Instagram adapter attaches direct-message media through the composer file input', () => {
+  const url = 'https://www.instagram.com/direct/t/17848282661759097/';
+  const chromeAdapter = getActiveAdapter(url);
+  const firefoxAdapter = getActiveAdapterFx(url);
+
+  assert.equal(chromeAdapter?.name, 'instagram');
+  assert.equal(firefoxAdapter?.name, 'instagram');
+  assert.equal(firefoxAdapter?.notes, chromeAdapter?.notes);
+  assert.match(chromeAdapter?.notes || '', /\/direct\/t\/<thread>.*hidden input\[type="file"\] beside "Add Photo or Video"/s);
+  assert.match(chromeAdapter?.notes || '', /selector get_interactive_elements returns for it to upload_file and never click that button/);
+  assert.match(chromeAdapter?.notes || '', /A link to the image is not the image/);
+});
+
 test('matches Mozilla Add-ons Developer Hub and guides version submission', () => {
   const sourceUrl = 'https://addons.mozilla.org/en-US/developers/addon/example-addon/versions/submit/6358210/source';
   const chromeAdapter = getActiveAdapter(sourceUrl);

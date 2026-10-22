@@ -710,11 +710,13 @@ for (const build of ['chrome', 'firefox']) {
     agent._pageFeedbackRuns = new Map([[tab, run]]);
     return run;
   }
-  async function bindingCall(strict, reason, events = []) {
+  async function bindingCall(strict, reason, events = [], { name = 'click_ax', args = { ref_id: 'ref_uncovered' }, prepare = null, lean = false } = {}) {
     const agent = new Agent({ getVisionProvider: async () => null });
     agent.strictGuards = strict;
     const tab = nextTab++;
-    boundRun(agent, tab, events);
+    if (lean) agent._leanRuns.set(tab, { active: true, setting: 'on', reason: 'setting_on' });
+    const run = boundRun(agent, tab, events);
+    prepare?.(run);
     agent._uncertainTextMutationBlock = async () => null;
     agent._finalizeToolResultOnce = async (_tab, _name, _args, result) => result;
     const impl = [];
@@ -724,10 +726,21 @@ for (const build of ['chrome', 'firefox']) {
       ? { ready: false, reason, runToken: message.params.runToken, documentToken: 'content-1', snapshotToken: message.params.snapshotToken }
       : { ready: true };
     try {
-      const result = await Agent.prototype.executeTool.call(agent, tab, 'click_ax', { ref_id: 'ref_uncovered' }, null, { guardAdvisories: [] });
+      const result = await Agent.prototype.executeTool.call(agent, tab, name, args, null, { guardAdvisories: [] });
       return { result, impl };
     } finally { api.tabs.sendMessage = oldSend; }
   }
+  // Instagram's direct-message composer (trace b71fd1dc): the one file input
+  // is formless and display:none deep in a large thread, so no certificate
+  // covers it, and every upload_file was refused even with the exact selector
+  // get_interactive_elements returned. That inventory is the observation an
+  // input without a ref has.
+  const INSTAGRAM_UPLOAD = 'input[type="file"][accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg"][multiple]';
+  const inventoried = (selectors = [INSTAGRAM_UPLOAD], { documentToken = 'content-1', url = PAGE_URL } = {}) => run => {
+    run.frames.set(0, { token: 'content-1', id: 'document-1' });
+    run.uploadObservationScope = { documentToken, url, selectors };
+  };
+  const upload = (prepare, selector = INSTAGRAM_UPLOAD) => ({ name: 'upload_file', args: { selector, downloadId: 2157 }, prepare });
   for (const [mode, strict] of MODES) {
     test(`${build}: page-feedback-target-binding ${mode} mode ${strict ? 'refuses an uncovered target' : 'sends an uncovered target with a note'}`, async () => {
       const { result, impl } = await bindingCall(strict, 'target_uncovered');
@@ -747,6 +760,47 @@ for (const build of ['chrome', 'firefox']) {
         assert.deepEqual(impl, [], reason);
         assert.equal(result.errorCode, 'action_binding_unavailable', reason);
         assert.deepEqual(guardsOf(result), [], reason);
+      }
+    });
+
+    test(`${build}: page-feedback-target-binding ${mode} mode ${strict ? 'refuses' : 'sends'} an upload to the file input the inventory named`, async () => {
+      const { result, impl } = await bindingCall(strict, 'target_uncovered', [], upload(inventoried()));
+      if (strict) {
+        assert.deepEqual(impl, []);
+        assert.equal(result.errorCode, 'action_binding_unavailable');
+        assert.equal(result.bindingFailure, 'target_uncovered');
+      } else {
+        assert.deepEqual(impl, ['upload_file']);
+        assert.deepEqual(guardsOf(result), ['page-feedback-target-binding']);
+        assert.match(result.guardAdvisories[0].note, /file-input inventory/);
+      }
+    });
+
+    // The trace's runs were lean: lean mode skips this quality guard, but the
+    // selector rule refused before the guard was ever asked.
+    test(`${build}: page-feedback-target-binding lean run with ${mode} checks sends the inventory's upload without a note, not a guessed one`, async () => {
+      const sent = await bindingCall(strict, 'target_uncovered', [], { ...upload(inventoried()), lean: true });
+      assert.deepEqual(sent.impl, ['upload_file']);
+      assert.deepEqual(guardsOf(sent.result), []);
+      const guessed = await bindingCall(strict, 'target_uncovered', [], { ...upload(inventoried(), 'input[type="file"]'), lean: true });
+      assert.deepEqual(guessed.impl, []);
+      assert.equal(guessed.result.errorCode, 'action_binding_unavailable');
+    });
+
+    test(`${build}: page-feedback-target-binding ${mode} mode keeps an upload selector the inventory did not name refused`, async () => {
+      const cases = [
+        ['a guessed selector', 'target_uncovered', [], upload(inventoried(), 'input[type="file"]')],
+        ['no inventory', 'target_uncovered', [], upload(null)],
+        ['another document\'s inventory', 'target_uncovered', [], upload(inventoried(undefined, { documentToken: 'content-0' }))],
+        ['another URL\'s inventory', 'target_uncovered', [], upload(inventoried(undefined, { url: 'https://example.com/other' }))],
+        ['an ambiguous inventory selector', 'target_ambiguous', [], upload(inventoried())],
+        ['pending page activity', 'target_uncovered', [{ kind: 'dom', source: 'unknown', frameId: 0, target: 'div#thread' }], upload(inventoried())],
+      ];
+      for (const [label, reason, events, options] of cases) {
+        const { result, impl } = await bindingCall(strict, reason, events, options);
+        assert.deepEqual(impl, [], label);
+        assert.equal(result.errorCode, 'action_binding_unavailable', label);
+        assert.deepEqual(guardsOf(result), [], label);
       }
     });
   }

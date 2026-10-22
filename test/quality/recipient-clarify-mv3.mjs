@@ -22,16 +22,43 @@ const question = `Send the photo to ${recipient} on Instagram?`;
 const selector = 'input[type="file"][accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg"][multiple]';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS3kAAAAASUVORK5CYII=', 'base64');
 
-// [variant, model steps, model-question answer, its source, card answer, sends expected]
+// [variant, model steps, model-question answer, its source, card answer, sends expected, thread page]
 const variants = [
   ['card-send', ['download', 'list', 'upload', 'tree', 'done'], null, null, 'once', 1],
   ['card-dont-send', ['download', 'list', 'upload', 'done'], null, null, 'deny', 0],
   ['model-asks-first', ['download', 'list', 'clarify', 'upload', 'tree', 'done'], recipient, 'option', 'once', 1],
   ['typed-refusal', ['download', 'list', 'clarify', 'upload', 'done'], `No, not ${recipient}`, 'user', 'deny', 0],
+  // Trace b71fd1dc: on Instagram's own composer every upload_file was refused
+  // (action_binding_unavailable) after the user had confirmed the recipient.
+  ['instagram-composer', ['download', 'list', 'inventory', 'upload', 'tree', 'done'], null, null, 'once', 1, 'instagram'],
 ];
 for (const variant of variants) await runVariant(...variant);
 
-async function runVariant(variant, steps, answer, source, cardAnswer, expectedSends) {
+// Instagram's composer as trace b71fd1dc read it (2026-10): no form, header or
+// footer, and the one file input, display:none by class between Voice Clip and
+// Add Photo or Video, sits several wrappers deep in a thread too large for the
+// page monitor's owner bounds. No certificate covers that input, so the model
+// names it by the selector get_interactive_elements returned.
+function instagramThreadPage() {
+  const icon = label => `<div role="button" tabindex="0"><svg role="img" aria-label="${label}"><title>${label}</title><path d="M0 0h24v24H0z"/></svg></div>`;
+  const nest = (html, depth) => Array.from({ length: depth }).reduce(inner => `<div>${inner}</div>`, html);
+  const threads = ['Ungvb', recipient, 'Owned Contact One', 'Owned Contact Two', 'Owned Contact Three']
+    .map(name => `<div role="button" tabindex="0"><img alt="user-profile-picture" src="data:,"><span>${name}</span></div>`).join('');
+  const history = Array.from({ length: 60 }, (_, index) => nest(`<div role="group"><div role="article" data-message-direction="incoming">Message ${index + 1}</div></div>`, 5)).join('');
+  const composer = `<div class="composer">${icon('Choose an emoji')}<div role="textbox" contenteditable="true" aria-placeholder="Message..." id="body"><p><br></p></div>`
+    + `${icon('Voice Clip')}<input accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg" class="x1s85apg" multiple type="file">${icon('Add Photo or Video')}${icon('Choose a GIF or sticker')}</div>`;
+  return `<!doctype html><meta charset="utf-8"><title>Instagram • Messages</title>
+  <style>body{margin:0;font:14px sans-serif}.x1s85apg{display:none}#threads{position:fixed;left:72px;top:0;width:400px;height:700px;overflow:auto}
+  #pane{position:fixed;left:480px;top:0;width:640px;height:700px;display:flex;flex-direction:column}#head{height:75px}
+  #thread{flex:1;overflow:auto}.composer{display:flex;align-items:center;height:44px;margin:12px;border:1px solid #888;border-radius:22px}
+  [contenteditable]{flex:1;min-height:20px}[role=button]{display:inline-flex;width:40px;height:40px}svg{width:24px;height:24px}</style>
+  <div role="main"><div id="threads"><nav aria-label="Thread list"><h1>owned.account</h1>${threads}</nav></div>
+  <div id="pane"><div id="head"><a href="/dr.gamzec_/" aria-label="Open the profile page of dr.gamzec_"><img alt="user-profile-picture" src="data:,"><h2>${recipient}</h2><span>dr.gamzec_</span></a>
+  ${icon('Audio call')}${icon('Video call')}${icon('Conversation information')}</div>
+  <div id="thread" role="log">${history}</div>${nest(composer, 6)}</div></div>`;
+}
+
+async function runVariant(variant, steps, answer, source, cardAnswer, expectedSends, threadPage = 'owned') {
   const approved = expectedSends > 0;
   const out = path.resolve(process.env.WEBBRAIN_QUALITY_ARTIFACTS
     ? path.join(process.env.WEBBRAIN_QUALITY_ARTIFACTS, variant)
@@ -86,6 +113,7 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
       const kind = steps[Math.min(step, steps.length - 1)];
       const call = kind === 'download' ? { name: 'download_files', args: { urls: [`${base}/photo.png`] } }
         : kind === 'list' ? { name: 'list_downloads', args: { limit: 5 } }
+        : kind === 'inventory' ? { name: 'get_interactive_elements', args: {} }
         : kind === 'upload' ? { name: 'upload_file', args: { selector, downloadId: downloadIdIn(input) } }
           : kind === 'clarify' ? { name: 'clarify', args: { options: [recipient, 'Cancel'], question } }
             : kind === 'tree' ? { name: 'get_accessibility_tree', args: { filter: 'all' } }
@@ -110,7 +138,7 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
-  const pageBody = `<!doctype html><meta charset="utf-8"><title>Owned direct thread</title>
+  const pageBody = (threadPage === 'instagram' ? instagramThreadPage() : `<!doctype html><meta charset="utf-8"><title>Owned direct thread</title>
   <style>body{margin:0;font:16px sans-serif} nav{position:fixed;left:0;top:0;width:330px;height:700px}
   header{position:fixed;left:350px;top:10px;width:600px;height:70px} #thread{position:fixed;left:350px;top:90px;width:600px;height:420px}
   footer{position:fixed;left:350px;top:600px;width:600px;height:60px} [contenteditable]{display:inline-block;width:420px;height:40px;border:1px solid #888}
@@ -120,7 +148,7 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
   <div id="thread" role="log"><div data-message-direction="incoming">Merhaba!</div></div>
   <footer><form id="composer" onsubmit="return false"><div role="textbox" contenteditable="true" aria-label="Message" id="body"></div>
   <div role="button" id="attach"><svg role="img" aria-label="Add Photo or Video"><title>Add Photo or Video</title><path d="M0 0h24v24H0z"/></svg></div>
-  <input type="file" accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg" multiple hidden></form></footer></main>
+  <input type="file" accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg" multiple hidden></form></footer></main>`) + `
   <script>
   document.querySelector('input[type=file]').addEventListener('change', async event => {
     const file = event.target.files[0]; if (!file) return;

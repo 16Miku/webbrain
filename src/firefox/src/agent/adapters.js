@@ -17504,6 +17504,7 @@ const ADAPTERS = [
 - Story bar at top of profile / feed is keyboard-driven: left/right arrows advance, Esc closes. Clicking is unreliable.
 - Profile grid (/<user>) lazy-loads via IntersectionObserver — scroll the page (not a sub-container) to load more posts.
 - DMs at /direct/inbox — sign-in required.
+- In a /direct/t/<thread> conversation, a photo or video attaches through the composer's hidden input[type="file"] beside "Add Photo or Video" (accept "audio/*,.mp4,.mov,.png,.jpg,.jpeg"): pass the selector get_interactive_elements returns for it to upload_file and never click that button, which opens an OS file dialog. A link to the image is not the image: when the user asks to send a picture, send the file (as of 2026-10).
 - Hashtag pages: /explore/tags/<tag>. Location pages: /explore/locations/<id>.
 - Post carousels at /p/<id>/ expose deterministic ?img_index=N routes. Use carousel_navigate({index:N}) to visit slides directly and monotonically; decrease only for a fresh user-requested reverse scan. Never use ArrowLeft/ArrowRight, coordinate clicks, or alternate Next/Go back while enumerating a carousel.
 - "Add to story / Add to post" actions require the mobile app for most content types — surface the limitation.

@@ -250,6 +250,17 @@ function actionBindingUnavailableResult(run, name) {
       : { error: 'The exact target could not be bound to the observed action context. Fresh available target/page context will be observed before the next decision; inspect it or read the exact target inventory before trying the action again.' }) };
 }
 
+// Whether a selector is one that WebBrain's own file-input inventory
+// (get_interactive_elements) returned on the run's current top document and
+// URL: the selectors that inventory recorded are this run's observed upload
+// targets, and an exact copy of one names the input the model observed.
+function uploadSelectorObserved(run, selector) {
+  const scope = run?.uploadObservationScope;
+  return typeof selector === 'string' && selector.length > 0 && !!scope
+    && scope.documentToken === run.frames?.get(0)?.token && scope.url === run.url
+    && Array.isArray(scope.selectors) && scope.selectors.includes(selector);
+}
+
 function preparationVetoDiagnostics(veto) {
   const facts = {};
   if (!veto || typeof veto !== 'object') return facts;
@@ -1433,27 +1444,36 @@ export const pageFeedbackMethods = {
         || pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage).kind !== 'bound_target') return null;
     if (await this._validatePageFeedbackAction(tabId, name, args, run.modelState, null, { answerOnly: true }) !== false) return null;
     if (run.actionBindingUnavailable !== `${name}:${JSON.stringify(args)}`) return null;
-    return this._pageFeedbackBindingAdvises(tabId, run, args, advisories) ? null : actionBindingUnavailableResult(run, name);
+    return this._pageFeedbackBindingAdvises(tabId, run, args, advisories, name) ? null : actionBindingUnavailableResult(run, name);
   },
 
   // page-feedback-target-binding (quality): the observed action certificate
-  // does not cover this call's ref (target_uncovered: the element the model
-  // read exists and is unique, but the certified observation did not include
-  // it). With nothing else pending (no page activity, so no human input or
-  // unknown attribution, and no correction), Strict checks off sends the call
-  // with the ordinary unbound semantics and a note; the dispatch fences at the
-  // transport still run. A selector may name an element the model never
+  // does not cover this call's target (target_uncovered: the element exists
+  // and is unique, but the certified observation did not include it). With
+  // nothing else pending (no page activity, so no human input or unknown
+  // attribution, and no correction), Strict checks off sends the call with the
+  // ordinary unbound semantics and a note; the dispatch fences at the
+  // transport still run. A ref is what the model read. A hidden file input has
+  // no ref, so upload_file names it by selector: one that WebBrain's own
+  // file-input inventory gave for this document and URL is the input the
+  // model observed. Instagram's direct-message composer keeps such an input,
+  // formless and display:none, deep in a large thread, where no certificate
+  // can reach it. Any other selector may name an element the model never
   // observed (an upload slot it guessed, say), and a selector naming several
   // elements or none has no single element to send to: those keep their
   // answer, as does anything pending.
-  _pageFeedbackBindingAdvises(tabId, run, args = {}, advisories = null) {
+  _pageFeedbackBindingAdvises(tabId, run, args = {}, advisories = null, name = '') {
     if (!run || run.events.size || run.actionBindingUnavailableReason !== 'target_uncovered'
-        || typeof args?.ref_id !== 'string' || !/^ref_[A-Za-z0-9_-]+$/.test(args.ref_id)
-        || (typeof args?.selector === 'string' && args.selector.trim())
         || this._hasPendingSteering?.(tabId) || typeof this._guardAdvisesFor !== 'function') return false;
-    return this._guardAdvisesFor(advisories, 'page-feedback-target-binding',
-      'This target was outside the page observation WebBrain certified for this action, so its binding to what you observed was not checked. It was sent anyway; read the page to confirm what it changed.',
-      { tabId, decided: false });
+    const hasSelector = typeof args?.selector === 'string' && !!args.selector.trim();
+    const observedRef = typeof args?.ref_id === 'string' && /^ref_[A-Za-z0-9_-]+$/.test(args.ref_id) && !hasSelector;
+    const observedUpload = name === 'upload_file' && args?.ref_id == null && hasSelector
+      && uploadSelectorObserved(run, args.selector);
+    if (!observedRef && !observedUpload) return false;
+    return this._guardAdvisesFor(advisories, 'page-feedback-target-binding', observedUpload
+      ? 'WebBrain could not certify the page context of this file input, so the attachment was sent to the exact input your file-input inventory named without that check. Read the page to confirm the file landed where you intended.'
+      : 'This target was outside the page observation WebBrain certified for this action, so its binding to what you observed was not checked. It was sent anyway; read the page to confirm what it changed.',
+    { tabId, decided: false });
   },
 
   _pageFeedbackBlocksCall(tabId, name, args = {}) {
@@ -1839,7 +1859,7 @@ export function installPageFeedback(Agent) {
       // A pure binding failure with nothing else pending may advise instead
       // (it then dispatches with the ordinary, unbound semantics below).
       if (validated === false && !(unbindable
-          && this._pageFeedbackBindingAdvises(tabId, run, args, executionContext?.guardAdvisories))) return unbindable
+          && this._pageFeedbackBindingAdvises(tabId, run, args, executionContext?.guardAdvisories, name))) return unbindable
         ? actionBindingUnavailableResult(run, name)
         : run.actionContextUnverified === true
           ? { ...pageFeedbackPendingResult(), actionContextUnverified: true, errorCode: 'action_context_unverified',

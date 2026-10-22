@@ -2144,8 +2144,12 @@
     const isFileInput = (input) =>
       input?.tagName === 'INPUT'
       && String(input.getAttribute?.('type') || input.type || '').toLowerCase() === 'file';
+    // Name the input as the file-input inventory does, so the selector the
+    // model is told to use is one get_interactive_elements also returns.
     const blockFileInput = (input) => {
-      state.blocked = { selector: uniqueFileInputSelector(input) };
+      let selector = '';
+      try { selector = _uniqueFileInputSelector(input); } catch {}
+      state.blocked = { selector: selector || uniqueFileInputSelector(input) };
     };
     const guard = (event) => {
       const path = typeof event.composedPath === 'function'
@@ -2167,13 +2171,24 @@
         root.setAttribute(guardAttr, guardId);
         document.dispatchEvent(new Event('webbrain:file-picker-guard-arm'));
       };
+      // The page world names the input by its path from the root. When that
+      // path still singles out one file input, name it as the inventory does.
+      const inventorySelector = (selector) => {
+        try {
+          const matches = _deepSelectorMatches(selector);
+          if (matches.length === 1 && matches[0] instanceof HTMLInputElement && matches[0].type === 'file') {
+            return _uniqueFileInputSelector(matches[0]) || selector;
+          }
+        } catch {}
+        return selector;
+      };
       const onBlocked = () => {
         try {
           const payload = JSON.parse(root.getAttribute(blockedAttr) || 'null');
           if (payload?.guardId !== guardId) return;
           state.blocked = {
             selector: typeof payload.selector === 'string' && payload.selector
-              ? payload.selector
+              ? inventorySelector(payload.selector)
               : null,
           };
         } catch {}

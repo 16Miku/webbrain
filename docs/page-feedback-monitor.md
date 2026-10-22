@@ -294,7 +294,17 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   and one activation purpose; the actual input, widget, form, owner and document
   remain bound. The current observation pairs the selector with its visible
   widget as untrusted page data. Discovery never repairs or dispatches an old
-  rejected call, opens a chooser, or grants upload permission.
+  rejected call, opens a chooser, or grants upload permission. A file input no
+  certificate covers (`target_uncovered`; Instagram's direct-message composer
+  keeps a formless, `display:none` input deep in a thread too large for the
+  owner bounds) has no ref, so an `upload_file` whose selector is exactly one
+  that `get_interactive_elements` returned for the current top document and URL
+  names the input the model observed: with nothing pending and Strict checks
+  off it is sent with the ordinary unbound semantics and a
+  `page-feedback-target-binding` note, and the recipient checks of a protected
+  conversation still bind the attachment. Any other selector keeps its refusal.
+  A blocked native chooser names its input with the selector the inventory
+  uses.
 - Native `summary` controls and authored click/tab-focus targets use the same
   observed owner and exact action footprint as native and ARIA buttons. Changed
   handler identity, disclosure state, target/owner identity and user intervention
