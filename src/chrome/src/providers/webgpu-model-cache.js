@@ -7,13 +7,13 @@
  * ask this on hot paths (each completion check, each screenshot route), so it
  * stays one cache lookup and never starts the offscreen document to find out.
  */
-import { WEBGPU_BONSAI2_VL_2B_MODEL_ID, webgpuModelDtype } from './webgpu.js';
+import { WEBGPU_BONSAI2_VL_2B_MODEL_ID, WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID, webgpuModelDtype } from './webgpu.js';
 
 const TRANSFORMERS_CACHE_NAME = 'transformers-cache';
 
-// Ternary Bonsai 2 2B Vision chats, sees and answers decisions on the device,
-// so the Auto decision and vision settings follow whether it is downloaded.
-export const WEBGPU_LOCAL_ASSIST_MODEL_ID = WEBGPU_BONSAI2_VL_2B_MODEL_ID;
+// Compass VLD Tiny v5 chats, sees and answers decisions on the device, so the
+// Auto decision and vision settings follow whether it is downloaded.
+export const WEBGPU_LOCAL_ASSIST_MODEL_ID = WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID;
 
 // Mirrors textDtypeKey()/textModelKey() in offscreen/inference-worker.js.
 function textDtypeKey(dtype) {
@@ -46,4 +46,18 @@ export async function hasWebgpuTextModelCache(modelId, dtype) {
 
 export async function isLocalAssistModelReady() {
   return await hasWebgpuTextModelCache(WEBGPU_LOCAL_ASSIST_MODEL_ID) === true;
+}
+
+/** Whether Ternary Bonsai 2 2B Vision, the earlier screenshot-reading preset, is downloaded. */
+export async function isBonsaiVisionModelReady() {
+  return await hasWebgpuTextModelCache(WEBGPU_BONSAI2_VL_2B_MODEL_ID) === true;
+}
+
+/** Which chat presets that read screenshots are downloaded, for the vision choice. */
+export async function webgpuChatVisionReadiness() {
+  const [compassVldReady, bonsaiReady] = await Promise.all([
+    isLocalAssistModelReady().catch(() => false),
+    isBonsaiVisionModelReady().catch(() => false),
+  ]);
+  return { compassVldReady, bonsaiReady };
 }

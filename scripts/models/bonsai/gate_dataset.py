@@ -9,6 +9,14 @@ Arabic are in training; their test questions are still hand-written. Training te
 the test phrasings (no "Buy button", no flamingo, no melanoma).
 
     python scripts/models/bonsai/gate_dataset.py <out dir>   # writes train.json, validation.json, test.json
+
+--follow-ups also adds short follow-ups to a turn answered from a screenshot
+("And the banner?", "Thank you, that helps!"), split 80/20 into train and
+validation on their own, so the other rows keep their split; they are also
+written alone as train_follow_ups.json and validation_follow_ups.json. Their
+phrasings differ from the hand-written follow-ups that
+scripts/check-tiny-ask-screenshot-gate.mjs --follow-ups scores. Compass VLD
+Tiny v5's probe is trained with them; Ternary Bonsai 2 2B Vision's is not.
 """
 import json
 import random
@@ -37,6 +45,11 @@ L = {
            'How do I {task}?', 'Explain {concept} simply.', 'Tell me a short joke.'],
   other_att=['What is in this picture?', 'Describe my photo.', 'What breed is the dog in my image?', 'Read the text in the screenshot I sent.'],
   other_link=['Summarise {url}.', 'What colour is the logo on {url}?'],
+  fu_visual=['And the {el}?', 'Is the {el} {hue} as well?', 'And what colour is the {el}?', 'Is it brighter than the {el}?',
+             'And the {media} below it?', 'Is there a {obj} in it too?', 'Which side is the {el} on?', 'Is it the same colour as the {el}?'],
+  fu_text=['And the {plan} plan?', 'Thank you, that helps!', 'Can you say that more briefly?', 'And who was {person}?',
+           'Is the {product} still available?', 'Okay, and what about {topic}?',
+           'How much is the {product}?', 'And what is {concept}?', 'And how do I {task}?'],
   plan=['Basic', 'Team', 'Enterprise'], topic=['shipping', 'refunds', 'the warranty'], product=['blue kettle', 'desk lamp'],
   animal=['zebra', 'peacock', 'axolotl'], thing=['ruby', 'banana', 'lime'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=['inflation', 'photosynthesis', 'a black hole'], task=['change a tyre', 'boil an egg', 'reset a router']),
@@ -55,6 +68,11 @@ L = {
            '{concept} konusunu basitçe anlat.', 'Bana kısa bir fıkra anlat.'],
   other_att=['Bu resimde ne var?', 'Fotoğrafımı anlat.', 'Gönderdiğim resimdeki köpek hangi cins?', 'Gönderdiğim ekran görüntüsündeki yazıyı oku.'],
   other_link=['{url} adresini özetle.', '{url} sayfasındaki logo ne renk?'],
+  fu_visual=['Peki {el}?', '{el} de {hue} mi?', 'Ya {el} ne renk?', '{el} daha mı açık renk?',
+             'Alttaki {media} nasıl?', 'İçinde bir {obj} var mı?', '{el} hangi tarafta?', '{el} ile aynı renk mi?'],
+  fu_text=['Peki {plan} paketi?', 'Teşekkürler, işime yaradı!', 'Bunu daha kısa söyler misin?', 'Peki {person} kimdi?',
+           '{product} hâlâ satışta mı?', 'Tamam, {topic} konusunda ne diyor?',
+           '{product} ne kadar?', 'Peki {concept} nedir?', 'Peki nasıl {task}?'],
   plan=['Temel', 'Ekip', 'Kurumsal'], topic=['kargo', 'iade', 'garanti'], product=['mavi su ısıtıcısı', 'masa lambası'],
   animal=['Zebra', 'Tavus kuşu', 'Aksolotl'], thing=['Yakut', 'Muz', 'Misket limonu'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=['Enflasyon', 'Fotosentez', 'Kara delik'], task=['lastik değiştirilir', 'yumurta haşlanır', 'modem sıfırlanır']),
@@ -74,6 +92,11 @@ L = {
            'Wie kann ich {task}?', 'Erkläre {concept} einfach.', 'Erzähl mir einen kurzen Witz.'],
   other_att=['Was ist auf diesem Bild?', 'Beschreibe mein Foto.', 'Welche Rasse hat der Hund auf meinem Bild?', 'Lies den Text in meinem Screenshot.'],
   other_link=['Fasse {url} zusammen.', 'Welche Farbe hat das Logo auf {url}?'],
+  fu_visual=['Und das {el}?', 'Ist das {el} auch {hue}?', 'Und welche Farbe hat das {el}?', 'Ist es heller als das {el}?',
+             'Und das {media} darunter?', 'Ist darauf auch ein {obj}?', 'Auf welcher Seite ist das {el}?', 'Hat es dieselbe Farbe wie das {el}?'],
+  fu_text=['Und der Tarif {plan}?', 'Danke, das hilft mir!', 'Kannst du das kürzer sagen?', 'Und wer war {person}?',
+           'Gibt es den {product} noch?', 'Okay, und was steht zu {topic}?',
+           'Was kostet der {product}?', 'Und was ist {concept}?', 'Und wie kann ich {task}?'],
   plan=['Basis', 'Team', 'Enterprise'], topic=['Versand', 'Rückgabe', 'Garantie'], product=['blaue Wasserkocher', 'Schreibtischlampe'],
   animal=['Zebra', 'Pfau', 'Axolotl'], thing=['Banane', 'Limette', 'Tomate'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=['Inflation', 'Photosynthese', 'ein Schwarzes Loch'], task=['einen Reifen wechseln', 'ein Ei kochen', 'den Router zurücksetzen']),
@@ -92,6 +115,11 @@ L = {
            '¿Cómo puedo {task}?', 'Explica {concept} de forma sencilla.', 'Cuéntame un chiste corto.'],
   other_att=['¿Qué hay en esta imagen?', 'Describe mi foto.', '¿De qué raza es el perro de mi imagen?', 'Lee el texto de la captura que envié.'],
   other_link=['Resume {url}.', '¿De qué color es el logotipo de {url}?'],
+  fu_visual=['¿Y el {el}?', '¿El {el} también es {hue}?', '¿Y de qué color es el {el}?', '¿Es más claro que el {el}?',
+             '¿Y la {media} de debajo?', '¿También sale un {obj}?', '¿En qué lado está el {el}?', '¿Es del mismo color que el {el}?'],
+  fu_text=['¿Y el plan {plan}?', '¡Gracias, me sirve!', '¿Puedes decirlo más corto?', '¿Y quién fue {person}?',
+           '¿Todavía venden el {product}?', 'Vale, ¿y qué dice sobre {topic}?',
+           '¿Cuánto cuesta el {product}?', '¿Y qué es {concept}?', '¿Y cómo puedo {task}?'],
   plan=['Básico', 'Equipo', 'Empresa'], topic=['envíos', 'devoluciones', 'la garantía'], product=['hervidor azul', 'lámpara de escritorio'],
   animal=['cebra', 'pavo real', 'ajolote'], thing=['rubí', 'plátano', 'limón'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=['la inflación', 'la fotosíntesis', 'un agujero negro'], task=['cambiar una rueda', 'cocer un huevo', 'reiniciar el router']),
@@ -112,6 +140,11 @@ L = {
            'Comment {task} ?', 'Explique {concept} simplement.', 'Raconte-moi une blague courte.'],
   other_att=["Qu'y a-t-il sur cette image ?", 'Décris ma photo.', 'De quelle race est le chien sur mon image ?', "Lis le texte de la capture d'écran envoyée."],
   other_link=['Résume {url}.', 'De quelle couleur est le logo de {url} ?'],
+  fu_visual=['Et le {el} ?', 'Le {el} est-il aussi {hue} ?', 'Et de quelle couleur est le {el} ?', 'Est-ce plus clair que le {el} ?',
+             'Et la {media} en dessous ?', 'Y a-t-il aussi une {obj} dessus ?', 'De quel côté se trouve le {el} ?', 'Est-ce la même couleur que le {el} ?'],
+  fu_text=['Et la formule {plan} ?', "Merci, ça m'aide !", 'Tu peux le dire plus court ?', 'Et qui était {person} ?',
+           'La {product} est-elle toujours vendue ?', "D'accord, et que dit-elle sur {topic} ?",
+           'Combien coûte la {product} ?', "Et qu'est-ce que {concept} ?", 'Et comment {task} ?'],
   plan=['Essentiel', 'Équipe', 'Entreprise'], topic=['la livraison', 'les retours', 'la garantie'], product=['bouilloire bleue', 'lampe de bureau'],
   animal=['zèbre', 'paon', 'axolotl'], thing=['rubis', 'citron vert', 'kiwi'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=["l'inflation", 'la photosynthèse', 'un trou noir'], task=['changer un pneu', 'cuire un œuf', 'réinitialiser la box']),
@@ -131,6 +164,11 @@ L = {
            'Come si fa a {task}?', 'Spiega {concept} in modo semplice.', 'Raccontami una barzelletta breve.'],
   other_att=["Cosa c'è in questa immagine?", 'Descrivi la mia foto.', "Di che razza è il cane nella mia immagine?", 'Leggi il testo nello screenshot che ho inviato.'],
   other_link=['Riassumi {url}.', 'Di che colore è il logo su {url}?'],
+  fu_visual=['E il {el}?', 'Anche il {el} è {hue}?', 'E di che colore è il {el}?', 'È più chiaro del {el}?',
+             'E la {media} sotto?', "C'è anche un {obj}?", 'Da che lato è il {el}?', 'È dello stesso colore del {el}?'],
+  fu_text=['E il piano {plan}?', 'Grazie, mi è utile!', 'Puoi dirlo più in breve?', 'E chi era {person}?',
+           'Il {product} è ancora in vendita?', 'Ok, e cosa dice su {topic}?',
+           'Quanto costa il {product}?', "E che cos'è {concept}?", 'E come si fa a {task}?'],
   plan=['Base', 'Team', 'Azienda'], topic=['le spedizioni', 'i resi', 'la garanzia'], product=['bollitore blu', 'lampada da scrivania'],
   animal=['zebra', 'pavone', 'axolotl'], thing=['rubino', 'limone', 'kiwi'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=["l'inflazione", 'la fotosintesi', 'un buco nero'], task=['cambiare una gomma', 'cuocere un uovo', 'resettare il router']),
@@ -149,6 +187,11 @@ L = {
            'Como faço para {task}?', 'Explique {concept} de forma simples.', 'Conte uma piada curta.'],
   other_att=['O que há nesta imagem?', 'Descreva minha foto.', 'De que raça é o cachorro na minha imagem?', 'Leia o texto da captura de tela que enviei.'],
   other_link=['Resuma {url}.', 'De que cor é o logotipo em {url}?'],
+  fu_visual=['E quanto ao {el}?', 'O {el} também é {hue}?', 'E de que cor é o {el}?', 'É mais claro que o {el}?',
+             'E a {media} de baixo?', 'Também aparece um {obj}?', 'De que lado fica o {el}?', 'É da mesma cor que o {el}?'],
+  fu_text=['E o plano {plan}?', 'Obrigado, ajudou!', 'Pode dizer isso mais curto?', 'E quem foi {person}?',
+           'A {product} ainda está à venda?', 'Certo, e o que diz sobre {topic}?',
+           'Quanto custa a {product}?', 'E o que é {concept}?', 'E como faço para {task}?'],
   plan=['Básico', 'Equipe', 'Empresa'], topic=['frete', 'devoluções', 'a garantia'], product=['chaleira azul', 'luminária de mesa'],
   animal=['zebra', 'pavão', 'axolote'], thing=['rubi', 'limão', 'kiwi'], person=['Marie Curie', 'Alan Turing', 'Frida Kahlo'],
   concept=['a inflação', 'a fotossíntese', 'um buraco negro'], task=['trocar um pneu', 'cozinhar um ovo', 'reiniciar o roteador']),
@@ -168,6 +211,11 @@ L = {
            'Как {task}?', 'Объясни простыми словами: {concept}.', 'Расскажи короткий анекдот.'],
   other_att=['Что на этой картинке?', 'Опиши моё фото.', 'Какой породы собака на моём изображении?', 'Прочитай текст на скриншоте, который я отправил.'],
   other_link=['Перескажи {url}.', 'Какого цвета логотип на {url}?'],
+  fu_visual=['А {el}?', '{el} тоже {hue}?', 'А какого цвета {el}?', 'Это светлее, чем {el}?',
+             'А {media} ниже?', 'Там тоже есть {obj}?', 'С какой стороны {el}?', 'Это того же цвета, что и {el}?'],
+  fu_text=['А тариф «{plan}»?', 'Спасибо, это помогло!', 'Можешь сказать короче?', 'А кем был(а) {person}?',
+           '{product} ещё продаётся?', 'Хорошо, а что там про тему «{topic}»?',
+           'Сколько стоит {product}?', 'А что такое {concept}?', 'А как {task}?'],
   plan=['Базовый', 'Команда', 'Бизнес'], topic=['доставка', 'возврат', 'гарантия'], product=['Синий чайник', 'Настольная лампа'],
   animal=['зебра', 'павлин', 'аксолотль'], thing=['рубин', 'банан', 'лайм'], person=['Мария Кюри', 'Алан Тьюринг', 'Фрида Кало'],
   concept=['инфляция', 'фотосинтез', 'чёрная дыра'], task=['поменять колесо', 'сварить яйцо', 'сбросить роутер']),
@@ -187,6 +235,11 @@ L = {
            '{task}方法を教えてください。', '{concept}を簡単に説明してください。', '短いジョークを言ってください。'],
   other_att=['この画像には何が写っていますか？', '私の写真を説明してください。', '私の画像の犬は何という犬種ですか？', '送ったスクリーンショットの文字を読んでください。'],
   other_link=['{url} を要約してください。', '{url} のロゴは何色ですか？'],
+  fu_visual=['{el}は？', '{el}も{hue}ですか？', 'じゃあ{el}は何色？', '{el}より明るいですか？',
+             '下の{media}は？', '{obj}も写っていますか？', '{el}はどちら側にありますか？', '{el}と同じ色ですか？'],
+  fu_text=['{plan}プランは？', 'ありがとう、助かりました！', 'もっと短く言ってくれますか？', 'じゃあ{person}とは誰ですか？',
+           '{product}はまだ売っていますか？', 'わかりました。{topic}については？',
+           '{product}はいくらですか？', 'じゃあ{concept}とは何ですか？', 'じゃあ{task}方法は？'],
   plan=['ベーシック', 'チーム', 'エンタープライズ'], topic=['配送', '返品', '保証'], product=['青いケトル', 'デスクライト'],
   animal=['シマウマ', 'クジャク', 'ウーパールーパー'], thing=['ルビー', 'バナナ', 'ライム'], person=['マリー・キュリー', 'アラン・チューリング', 'フリーダ・カーロ'],
   concept=['インフレ', '光合成', 'ブラックホール'], task=['タイヤを交換する', '卵をゆでる', 'ルーターをリセットする']),
@@ -204,6 +257,11 @@ L = {
   general=['{animal}长什么样？', '{thing}是什么颜色的？', '{person}是谁？', '什么是{concept}？', '怎么{task}？', '简单解释一下{concept}。', '讲个短笑话。'],
   other_att=['这张图片里有什么？', '描述一下我的照片。', '我图片里的狗是什么品种？', '读一下我发的截图里的文字。'],
   other_link=['总结 {url}。', '{url} 上的标志是什么颜色？'],
+  fu_visual=['{el}又是什么颜色？', '{el}也是{hue}的吗？', '那{el}是什么颜色？', '它比{el}亮吗？',
+             '下面的{media}呢？', '里面也有{obj}吗？', '{el}在哪一边？', '它和{el}颜色一样吗？'],
+  fu_text=['那{plan}套餐呢？', '谢谢，很有帮助！', '能说得更简短一点吗？', '那{person}是谁？',
+           '{product}还在卖吗？', '好的，那关于{topic}呢？',
+           '{product}多少钱？', '那什么是{concept}？', '那怎么{task}？'],
   plan=['基础', '团队', '企业'], topic=['配送', '退货', '保修'], product=['蓝色水壶', '台灯'],
   animal=['斑马', '孔雀', '美西螈'], thing=['红宝石', '香蕉', '青柠'], person=['居里夫人', '图灵', '弗里达·卡罗'],
   concept=['通货膨胀', '光合作用', '黑洞'], task=['换轮胎', '煮鸡蛋', '重置路由器']),
@@ -221,6 +279,11 @@ L = {
   general=['كيف يبدو {animal}؟', 'ما لون {thing}؟', 'من هو {person}؟', 'ما هو {concept}؟', 'كيف {task}؟', 'اشرح {concept} ببساطة.', 'أخبرني نكتة قصيرة.'],
   other_att=['ماذا يوجد في هذه الصورة؟', 'صف صورتي.', 'ما سلالة الكلب في صورتي؟', 'اقرأ النص في لقطة الشاشة التي أرسلتها.'],
   other_link=['لخص {url}.', 'ما لون الشعار في {url}؟'],
+  fu_visual=['و{el}؟', 'هل {el} {hue} أيضًا؟', 'وما لون {el}؟', 'هل هو أفتح من {el}؟',
+             'و{media} في الأسفل؟', 'هل يظهر فيها {obj} أيضًا؟', 'في أي جهة {el}؟', 'هل لونه مثل لون {el}؟'],
+  fu_text=['وباقة {plan}؟', 'شكرًا، هذا مفيد!', 'هل يمكنك قول ذلك باختصار؟', 'ومن هو {person}؟',
+           'هل ما زال {product} معروضًا للبيع؟', 'حسنًا، وماذا عن {topic}؟',
+           'كم سعر {product}؟', 'وما هو {concept}؟', 'وكيف {task}؟'],
   plan=['الأساسية', 'الفريق', 'الشركات'], topic=['الشحن', 'الإرجاع', 'الضمان'], product=['الغلاية الزرقاء', 'مصباح المكتب'],
   animal=['الحمار الوحشي', 'الطاووس', 'الأكسولوتل'], thing=['الياقوت', 'الموز', 'الليمون الأخضر'], person=['ماري كوري', 'آلان تورينغ', 'فريدا كاهلو'],
   concept=['التضخم', 'التمثيل الضوئي', 'الثقب الأسود'], task=['أغير إطار السيارة', 'أسلق بيضة', 'أعيد ضبط الراوتر']),
@@ -303,6 +366,10 @@ def generate(seed=7):
             add(0, 'attachment', template, TEXT, attached=1)
         for template in slots['other_link']:
             add(0, 'linked', template, TEXT, linked=1)
+    return unique_rows(rows)
+
+
+def unique_rows(rows):
     # One row per distinct question and context.
     seen, unique = set(), []
     for row in rows:
@@ -313,7 +380,27 @@ def generate(seed=7):
     return unique
 
 
-def main(out):
+# Follow-ups scripts/check-webgpu-ask.mjs asks. The templates can produce
+# them, so they are dropped (after the split, which keeps the rest in place).
+ASK_EVAL_FOLLOW_UPS = {'And the Team plan?', 'And the background?'}
+
+
+def generate_follow_ups(seed=13):
+    # The readout sees only the follow-up, never the earlier question, so these
+    # are short questions about something the screenshot shows (label 1) or
+    # not (label 0), on a page with text.
+    rng = random.Random(seed)
+    rows = []
+    for lang, slots in L.items():
+        for label, kind in ((1, 'fu_visual'), (0, 'fu_text')):
+            for template in slots[kind]:
+                for _ in range(2):
+                    rows.append(dict(label=label, kind=kind, language=lang, question=fill(template, slots, rng),
+                                     pageChars=TEXT, imageAttachment=False, linkedPage=False))
+    return unique_rows(rows)
+
+
+def main(out, follow_ups=False):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     rows = generate()
@@ -322,10 +409,19 @@ def main(out):
     cut = int(len(rows) * 0.8)
     test = [dict(label=label, kind='test', language=lang, question=q, pageChars=chars, imageAttachment=bool(att), linkedPage=bool(link))
             for label, lang, q, chars, att, link in TEST]
-    for name, part in (('train', rows[:cut]), ('validation', rows[cut:]), ('test', test)):
+    parts = {'train': rows[:cut], 'validation': rows[cut:], 'test': test}
+    if follow_ups:
+        extra = generate_follow_ups()
+        random.Random(17).shuffle(extra)
+        split = int(len(extra) * 0.8)
+        keep = lambda part: [row for row in part if row['question'] not in ASK_EVAL_FOLLOW_UPS]
+        parts['train_follow_ups'], parts['validation_follow_ups'] = keep(extra[:split]), keep(extra[split:])
+        parts['train'] = parts['train'] + parts['train_follow_ups']
+        parts['validation'] = parts['validation'] + parts['validation_follow_ups']
+    for name, part in parts.items():
         (out / f'{name}.json').write_text(json.dumps(part, ensure_ascii=False, indent=1) + '\n', encoding='utf-8')
         print(name, len(part), 'positive', sum(r['label'] for r in part))
 
 
 if __name__ == '__main__':
-    main(sys.argv[1])
+    main(sys.argv[1], follow_ups='--follow-ups' in sys.argv[2:])

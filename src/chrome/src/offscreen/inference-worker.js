@@ -19,6 +19,18 @@ import {
 } from './webgpu-decisions.js';
 import { BONSAI_DECISION_PROBE, bonsaiProbeScores } from './bonsai-decision-probe.js';
 import { tinyAskGateProbability } from './tiny-ask-gate-probe.js';
+import {
+  COMPASS_VLD_DTYPE,
+  CompassVldRuntime,
+  compassVldFilesCached,
+  createCompassVldSessions,
+  createCompassVldTokenizer,
+  downloadCompassVld,
+  isCompassVldModel,
+  preprocessImage as preprocessCompassVldImage,
+  toRGB,
+} from './compass-vld-runtime.js';
+import { COMPASS_VLD_DECISION_PROBE, compassVldProbeScores } from './compass-vld-decision-probe.js';
 
 let libraryPromise = null;
 let libraryVersion = null;
@@ -256,7 +268,7 @@ function isLfm25VlModel(modelId) {
 }
 
 function isMultimodalTextModel(modelId) {
-  return isLfm25VlModel(modelId) || WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId);
+  return isLfm25VlModel(modelId) || WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId) || isCompassVldModel(modelId);
 }
 
 export function bonsai2CompatibilityMetadata(input) {
@@ -648,6 +660,14 @@ async function isTextModelReady(modelId, dtype) {
     const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
     const marker = await cache.match(textReadyMarkerUrl(modelId, dtype));
     if (!marker) return false;
+    // The marker does not name Compass VLD Tiny v5's pinned revision. When its
+    // files are not all cached and checked (a newer pin, or a file stored but
+    // never checked), drop the marker so the model reads as not downloaded and
+    // Download fetches or checks them.
+    if (isCompassVldModel(modelId) && !await compassVldFilesCached(cache, modelId, dtype)) {
+      await cache.delete(textReadyMarkerUrl(modelId, dtype));
+      return false;
+    }
     readyTextModelKeys.add(key);
     return true;
   } catch {
@@ -1249,7 +1269,88 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
   }
 }
 
+/**
+ * Compass VLD Tiny v5 (compass-vld-runtime.js): ONNX Runtime sessions on the
+ * same WebGPU device as Transformers.js, a Transformers.js tokenizer, and the
+ * model's own processor port. It is one multimodal model for chat, screenshots
+ * and decisions, so it lives in the resident multimodal slot (owner `text`)
+ * that those requests share; nothing reloads between them. A download fetches
+ * and verifies the files first; inference loads only from the cache.
+ */
+async function getCompassVldRuntime(modelId, dtype, device, { localFilesOnly = false } = {}) {
+  const key = `vision|${modelId}|${device}|${JSON.stringify(dtype)}`;
+  await disposeWebgpuRuntimesIfDirty();
+  if (visionRuntime && visionRuntimeKey === key) {
+    visionRuntimeOwner = 'text';
+    return visionRuntime;
+  }
+  if (visionRuntimeLoadPromise) {
+    if (visionRuntimeLoadKey === key) return visionRuntimeLoadPromise;
+    await visionRuntimeLoadPromise.catch(() => {});
+    if (visionRuntime && visionRuntimeKey === key) {
+      visionRuntimeOwner = 'text';
+      return visionRuntime;
+    }
+  }
+  const loadPromise = (async () => {
+    if (typeof caches === 'undefined') throw new Error('Cache Storage is unavailable in the WebGPU worker.');
+    const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
+    if (localFilesOnly) {
+      if (!await compassVldFilesCached(cache, modelId, dtype)) {
+        const error = new Error(`${modelId} is not cached locally.`);
+        error.code = 'text_model_not_downloaded';
+        throw error;
+      }
+    } else {
+      await downloadCompassVld({
+        cache,
+        fetchImpl: controlledFetch,
+        modelId,
+        dtype,
+        onProgress: event => postProgress(modelId, event),
+        isCancelled: () => !!textDownloadCancelMode,
+      });
+    }
+    const library = await loadLibrary();
+    await captureWebGpuAdapterSummary();
+    await disposeTextRuntime();
+    await disposeVisionRuntime();
+    const ort = await import(new URL('ort.webgpu.mjs', workerConfig.transformersUrl).href);
+    const tokenizer = await createCompassVldTokenizer(library, cache, modelId);
+    let sessions;
+    try {
+      sessions = await createCompassVldSessions(ort, cache, modelId, dtype, { sessionOptions: createWebGpuTextSessionOptions() });
+    } catch (error) {
+      if (isWebGpuExecutionFailure(error)) {
+        markWebgpuRuntimeDirty();
+        await disposeAllRuntimes();
+        noteWebgpuExecutionFailure(error);
+        throw await enrichWebGpuExecutionError(error);
+      }
+      throw error;
+    }
+    const engine = new CompassVldRuntime(ort, tokenizer, sessions);
+    bindWebGpuDeviceDiagnostics(library);
+    visionRuntime = { library, tokenizer, compassVld: engine, model: { dispose: () => engine.dispose() } };
+    visionRuntimeKey = key;
+    visionRuntimeModelKey = textModelKey(modelId, dtype);
+    visionRuntimeOwner = 'text';
+    return visionRuntime;
+  })();
+  visionRuntimeLoadPromise = loadPromise;
+  visionRuntimeLoadKey = key;
+  try {
+    return await loadPromise;
+  } finally {
+    if (visionRuntimeLoadPromise === loadPromise) {
+      visionRuntimeLoadPromise = null;
+      visionRuntimeLoadKey = '';
+    }
+  }
+}
+
 async function getDownloadedTextRuntime(modelId, dtype, device, { localFilesOnly = false } = {}) {
+  if (isCompassVldModel(modelId)) return getCompassVldRuntime(modelId, dtype, device, { localFilesOnly });
   if (isMultimodalTextModel(modelId)) {
     return getVisionRuntime(modelId, dtype, device, {
       localFilesOnly,
@@ -1793,10 +1894,79 @@ function addLegacyVlTools(messages, tools) {
   return prepared;
 }
 
+async function loadCompassVldImages(runtime, urls, beforeImage = null) {
+  const images = [];
+  for (const url of urls) {
+    beforeImage?.();
+    const image = await runtime.library.load_image(url);
+    images.push(preprocessCompassVldImage(toRGB(image.data, image.width, image.height, image.channels), image.width, image.height));
+  }
+  return images;
+}
+
+// Chat, tool calls and screenshot reading on Compass VLD Tiny v5. Tool calls
+// come back as the template's <tool_call> XML in the text, which the agent's
+// tool-call parser reads, as for the other Qwen-template presets.
+async function runCompassVldText(payload) {
+  const requestKey = textRequestKey(payload);
+  throwIfTextCancelled(requestKey);
+  const modelId = assertOnnxTextModel(payload?.modelId);
+  const device = payload?.device || 'webgpu';
+  const dtype = payload?.dtype || COMPASS_VLD_DTYPE;
+  if (!await isTextModelReady(modelId, dtype)) {
+    throw new Error(`${modelId} is not downloaded. Open Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
+  }
+  const runtime = await getCompassVldRuntime(modelId, dtype, device, { localFilesOnly: true });
+  throwIfTextCancelled(requestKey);
+  if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
+  const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
+  const { messages, imageUrls } = prepareMultimodalMessages(payload?.messages);
+  // Page text and tool descriptions stay text even where they spell a special token.
+  const prompt = runtime.tokenizer.apply_chat_template(runtime.compassVld.plainStrings(messages), {
+    add_generation_prompt: true,
+    tokenize: false,
+    enable_thinking: false,
+    tools: tools.length ? runtime.compassVld.plainStrings(tools) : undefined,
+  });
+  const stopIfCancelled = () => throwIfTextCancelled(requestKey);
+  const images = await loadCompassVldImages(runtime, imageUrls, stopIfCancelled);
+  const requestedTokens = Number(payload?.options?.maxTokens);
+  const maxNewTokens = Number.isFinite(requestedTokens)
+    ? Math.max(1, Math.min(1600, Math.round(requestedTokens)))
+    : 800;
+  lastWebGpuDeviceError = '';
+  lastWebGpuDeviceLost = '';
+  // A cancel marks the key; the generation loop stops at its next step.
+  if (requestKey) activeTextGenerations.set(requestKey, { interrupt() {} });
+  let output;
+  try {
+    output = await runtime.compassVld.generate(prompt, images, {
+      maxNewTokens,
+      sliceTokens: bonsai2PrefillSliceTokens(payload?.options?.prefillSliceTokens),
+      shouldStop: stopIfCancelled,
+    });
+  } catch (error) {
+    if (isWebGpuExecutionFailure(error)) throw await handleWebGpuExecutionFailure(error);
+    throw error;
+  } finally {
+    endTextGeneration(requestKey);
+  }
+  throwIfTextCancelled(requestKey);
+  const decoded = runtime.tokenizer.decode(output.ids, { skip_special_tokens: true });
+  const result = splitThinking(String(decoded || '').trim());
+  noteWebgpuExecutionSuccess();
+  return {
+    content: result.content,
+    reasoningContent: result.reasoningContent,
+    outputTruncated: !output.finished,
+  };
+}
+
 async function runMultimodalText(payload) {
   const requestKey = textRequestKey(payload);
   throwIfTextCancelled(requestKey);
   const modelId = assertOnnxTextModel(payload?.modelId);
+  if (isCompassVldModel(modelId)) return runCompassVldText(payload);
   if (!isMultimodalTextModel(modelId)) {
     throw new Error(`${modelId} is not a shipped WebGPU multimodal model.`);
   }
@@ -1909,10 +2079,154 @@ function decisionCancelledError() {
 // `isCancelled` reports a `cancel` for this request (a judge timeout or Stop).
 // It is checked before loading, between prefill slices and before every
 // continuation, so a timed-out decision frees the model queue promptly.
+// The same protocol on Compass VLD Tiny v5, which was fine-tuned on these
+// prompts (d1's train split): the page state and screenshots are prefilled
+// once and each question continues that cache.
+async function runCompassVldDecision(payload, { isCancelled = () => false } = {}) {
+  const stopIfCancelled = () => { if (isCancelled()) throw decisionCancelledError(); };
+  stopIfCancelled();
+  const modelId = assertOnnxTextModel(payload?.modelId);
+  const request = normalizeDecisionRequest(payload);
+  const dtype = payload?.dtype || COMPASS_VLD_DTYPE;
+  if (!await isTextModelReady(modelId, dtype)) {
+    throw new Error(`${modelId} is not downloaded. Open Providers > WebGPU or Apocalypse Mode > WebGPU to download it first.`);
+  }
+  const runtime = await getCompassVldRuntime(modelId, dtype, payload?.device || 'webgpu', { localFilesOnly: true });
+  stopIfCancelled();
+  const temperature = Number(payload?.temperature) > 0 ? Number(payload.temperature) : 1;
+  const variant = ['readout', 'default', 'strict', 'verify', 'probe', 'gate'].includes(payload?.promptVariant) ? payload.promptVariant : 'probe';
+  if (variant === 'probe' && modelId !== COMPASS_VLD_DECISION_PROBE.model) {
+    throw new Error(`No decision probe is trained for ${modelId}.`);
+  }
+  const engine = runtime.compassVld;
+  // The page state, the user's message and the questions stay text even where
+  // they spell a special token.
+  const plain = text => engine.plainText(text);
+  const messages = [
+    { role: 'system', content: [{ type: 'text', text: decisionSystemPrompt(payload?.promptVariant) }] },
+    { role: 'user', content: [
+      ...request.images.map(() => ({ type: 'image' })),
+      { type: 'text', text: `${plain(variant === 'gate' ? String(request.state || '') : decisionStateText(request.state))}\n\n${DECISION_QUESTION_MARKER}` },
+    ] },
+  ];
+  const rendered = runtime.tokenizer.apply_chat_template(messages, { add_generation_prompt: true, enable_thinking: false, tokenize: false });
+  const split = rendered.indexOf(DECISION_QUESTION_MARKER);
+  if (split < 0 || rendered.indexOf(DECISION_QUESTION_MARKER, split + 1) >= 0) {
+    throw new Error('The decision prompt did not render as expected.');
+  }
+  const prefixText = rendered.slice(0, split);
+  const tailText = rendered.slice(split + DECISION_QUESTION_MARKER.length);
+  const codeIds = new Map();
+  const codeId = code => {
+    if (!codeIds.has(code)) {
+      const ids = engine.encode(code);
+      if (ids.length !== 1) throw new Error(`Decision answer code ${code} is not a single token.`);
+      codeIds.set(code, ids[0]);
+    }
+    return codeIds.get(code);
+  };
+  lastWebGpuDeviceError = '';
+  lastWebGpuDeviceLost = '';
+  const started = performance.now();
+  let prefill = null;
+  const answers = {};
+  const questionMs = [];
+  let suffixTokens = 0;
+  try {
+    const images = await loadCompassVldImages(runtime, request.images, stopIfCancelled);
+    const prefix = await engine.buildInputs(prefixText, images, { beforeImage: stopIfCancelled });
+    prefill = await engine.prefill(prefix, {
+      sliceTokens: bonsai2PrefillSliceTokens(payload?.prefillSliceTokens),
+      beforeSlice: stopIfCancelled,
+    });
+    const prefillMs = performance.now() - started;
+    const returnHidden = payload?.returnHidden === true;
+    const verify = variant === 'verify' || variant === 'probe';
+    const yesNo = verify || variant === 'gate';
+    const yesId = yesNo ? codeId('Yes') : null, noId = yesNo ? codeId('No') : null;
+    for (const [id, question] of request.entries) {
+      const questionStarted = performance.now();
+      if (verify) {
+        const margins = [], hidden = [];
+        const count = decisionOptions(question).names.length;
+        for (let index = 0; index < count; index++) {
+          stopIfCancelled();
+          const output = await engine.continuation(prefix, prefill.cache, `${plain(decisionVerifyText(question, index))}${tailText}`);
+          suffixTokens += output.tokens;
+          margins.push(output.logits[yesId] - output.logits[noId]);
+          hidden.push(output.hidden);
+        }
+        const scores = variant === 'probe' ? compassVldProbeScores(margins, hidden) : margins;
+        answers[id] = {
+          ...decisionAnswer(question, scores, { temperature }),
+          ...(returnHidden ? { margins, hidden: hidden.map(vector => (vector ? encodeFloat16Base64(vector) : null)) } : {}),
+        };
+        questionMs.push(Math.round(performance.now() - questionStarted));
+        continue;
+      }
+      if (variant === 'gate') {
+        if (question.type !== 'noul') throw new Error('The screenshot gate takes Yes/No questions only.');
+        stopIfCancelled();
+        const output = await engine.continuation(prefix, prefill.cache, `${plain(decisionQuestionText(question))}${tailText}`);
+        suffixTokens += output.tokens;
+        const margin = output.logits[yesId] - output.logits[noId];
+        const probability = tinyAskGateProbability(modelId, margin, output.hidden);
+        // Without a trained probe the gate fails and tiny Ask stays text-only;
+        // the margin and hidden state still go to the probe's training script.
+        if (probability === null && !(returnHidden && output.hidden)) {
+          throw new Error(`No screenshot gate probe is trained for ${modelId}.`);
+        }
+        answers[id] = {
+          type: 'noul',
+          noul: probability,
+          ...(returnHidden ? { margins: [margin], hidden: [output.hidden ? encodeFloat16Base64(output.hidden) : null] } : {}),
+        };
+        questionMs.push(Math.round(performance.now() - questionStarted));
+        continue;
+      }
+      stopIfCancelled();
+      const output = await engine.continuation(prefix, prefill.cache, `${plain(decisionQuestionText(question))}${tailText}`);
+      suffixTokens += output.tokens;
+      const logits = output.logits;
+      const ids = decisionOptions(question).codes.map(codeId);
+      let top = -Infinity;
+      for (const value of logits) if (value > top) top = value;
+      let total = 0;
+      for (const value of logits) total += Math.exp(value - top);
+      const mass = ids.reduce((sum, tokenId) => sum + Math.exp(logits[tokenId] - top), 0) / total;
+      answers[id] = decisionAnswer(question, ids.map(tokenId => logits[tokenId]), { temperature, mass });
+      questionMs.push(Math.round(performance.now() - questionStarted));
+    }
+    noteWebgpuExecutionSuccess();
+    return {
+      model: modelId,
+      provider: 'webgpu',
+      answers,
+      usage: { input_tokens: prefix.ids.length + suffixTokens, output_tokens: 0 },
+      diagnostics: {
+        generated_tokens: 0,
+        prefix_tokens: prefix.ids.length,
+        images: request.images.length,
+        prefill_ms: Math.round(prefillMs),
+        question_ms: questionMs,
+        total_ms: Math.round(performance.now() - started),
+        temperature,
+        prompt_variant: variant,
+      },
+    };
+  } catch (error) {
+    if (isWebGpuExecutionFailure(error)) throw await handleWebGpuExecutionFailure(error);
+    throw error;
+  } finally {
+    if (prefill) CompassVldRuntime.disposeCache(prefill.cache);
+  }
+}
+
 async function runMultimodalDecision(payload, { isCancelled = () => false } = {}) {
   const stopIfCancelled = () => { if (isCancelled()) throw decisionCancelledError(); };
   stopIfCancelled();
   const modelId = assertOnnxTextModel(payload?.modelId);
+  if (isCompassVldModel(modelId)) return runCompassVldDecision(payload, { isCancelled });
   if (!WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
     throw new Error(`${modelId} does not support in-browser decisions.`);
   }

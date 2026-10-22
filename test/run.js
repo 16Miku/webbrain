@@ -1062,10 +1062,13 @@ const { refreshSubscription: refreshSubscriptionFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/providers/oauth-subscriptions.js').replace(/\\/g, '/')
 );
 const {
-  WebGPUBonsaiVisionProvider,
+  WebGPUChatVisionProvider,
   WebGPUProvider,
   WebGPUVisionProvider,
   WEBGPU_DTYPE,
+  WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID,
+  WEBGPU_COMPASS_VLD_DTYPE,
+  WEBGPU_DEFAULT_MODEL_ID,
   WEBGPU_LFM25_MODEL_ID,
   WEBGPU_LFM25_12B_INSTRUCT_MODEL_ID,
   WEBGPU_LFM25_12B_THINKING_MODEL_ID,
@@ -1096,6 +1099,7 @@ const {
   WEBGPU_VISION_MODEL_ID,
   WEBGPU_VISION_READY_MARKER_VERSION,
   WEBGPU_VISION_BONSAI_MODEL_ID,
+  WEBGPU_VISION_COMPASS_VLD_MODEL_ID,
   WEBGPU_VISION_CHOICE_KEY,
   resolveWebgpuVisionChoice,
   storedWebgpuVisionChoice,
@@ -43356,7 +43360,7 @@ test('vision Settings copy is explicit, bounded, and mirrored across every local
     assert.ok(chromeLocale['st.display.auto_screenshot.desc']?.trim(),
       `${label}: automatic screenshot policy copy is missing`);
     assert.ok(chromeLocale['st.vision.local.title']?.trim(), `${label}: in-browser vision title is missing`);
-    for (const model of ['Ternary Bonsai 2 2B Vision', 'WebBrain VL 2 450M']) {
+    for (const model of ['Compass VLD Tiny v5', 'WebBrain VL 2 450M']) {
       assert.ok(chromeLocale['st.vision.local.desc'].includes(model),
         `${label}: in-browser vision copy does not name ${model}`);
     }
@@ -43364,8 +43368,14 @@ test('vision Settings copy is explicit, bounded, and mirrored across every local
       `${label}: local vision copy does not identify the explicit hardware probe`);
     assert.match(chromeLocale['st.vision.local.desc'], /810/,
       `${label}: local vision copy omits the WebBrain VL download size`);
-    assert.match(chromeLocale['st.vision.local.desc'], /1[.,]45/,
-      `${label}: local vision copy omits the Ternary Bonsai download size`);
+    assert.match(chromeLocale['st.vision.local.desc'], /2[.,]2/,
+      `${label}: local vision copy omits the Compass VLD Tiny v5 download size`);
+    assert.ok(chromeLocale['st.vision.local.choice.compass_vld']?.includes('Compass VLD Tiny v5'),
+      `${label}: the Compass VLD Tiny v5 vision choice is missing`);
+    for (const key of ['st.vision.local.download_chat_model', 'st.vision.local.status.chat_downloading']) {
+      assert.match(chromeLocale[key] || '', /\{model\}/, `${label}: ${key} must name the model it downloads`);
+    }
+    assert.match(chromeLocale['st.vision.local.status.chat_downloading'], /\{progress\}/, `${label}: download progress is missing`);
     assert.match(chromeLocale['st.vision.local.status.needs_consent'], /WebGPU[\s\S]*810/,
       `${label}: the WebBrain VL consent line must name the probe and the download size`);
     for (const key of ['st.vision.local.choice.auto', 'st.vision.local.choice.off', 'st.vision.local.status.auto_off', 'st.vision.local.status.off']) {
@@ -43766,8 +43776,9 @@ test('public Apocalypse Mode guide and launch essay document the offline boundar
     'docs: the guide should distinguish preparation downloads from offline operation');
   assert.match(guide, /Chromium, with compatible WebGPU hardware[\s\S]*?Firefox[\s\S]*?Chromium-only WebGPU text and vision download stack is not shown/,
     'docs: the guide should state the browser-specific WebGPU boundary');
-  assert.match(guide, /LiquidAI\/LFM2\.5-2\.6B-ONNX[\s\S]*?does not silently change the provider/,
-    'docs: the local text model should be named without implying global provider selection');
+  assert.match(guide, /webbrain-one\/webbrain-compass-vld-tiny-v5-onnx[\s\S]*?does not silently change the provider/,
+    'docs: the default local text model should be named without implying global provider selection');
+  assert.match(chineseGuide, /webbrain-one\/webbrain-compass-vld-tiny-v5-onnx/, 'docs: the Chinese guide names the same default text model');
   assert.match(guide, /about 810 MB[\s\S]*?WebBrain VL 2 450M/,
     'docs: the shipped local vision model and approximate download size should be current');
   assert.match(guide, /Wikipedia reader[\s\S]*?Emergency Box[\s\S]*?Medical guidance becomes outdated/,
@@ -45308,10 +45319,13 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
       assert.ok(chromeLocale[`install.local_model.${key}`].includes('{progress}'), `${filename}: ${key} must keep its placeholder`);
     }
     assert.ok(chromeLocale['install.local_model.d1_error'].includes('{error}'), `${filename}: the D1 error must keep its placeholder`);
-    // The note is the D1 consent the click gives: it names D1, says it is
-    // experimental and from Hugging Face, and states both sizes.
-    assert.ok(/D1/.test(chromeLocale['install.local_model.note']) && /Hugging Face/.test(chromeLocale['install.local_model.note']),
-      `${filename}: the note should name D1 and Hugging Face`);
+    // The note is the consent the click gives: it names the one model it
+    // downloads, where from, and its size.
+    // Persian and Arabic write the size with their own digits.
+    const latinDigits = (text) => String(text || '').replace(/[۰-۹]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d)).replace(/[٠-٩]/g, (d) => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/٫/g, '.');
+    assert.ok(/Compass VLD Tiny v5/.test(chromeLocale['install.local_model.note']) && /Hugging Face/.test(chromeLocale['install.local_model.note'])
+      && /2[.,]2/.test(latinDigits(chromeLocale['install.local_model.note'])), `${filename}: the note should name Compass VLD Tiny v5, Hugging Face and its size`);
+    assert.doesNotMatch(chromeLocale['install.local_model.note'], /\bD1\b/, `${filename}: the guide no longer downloads D1`);
     assert.ok(chromeLocale['install.shot.body_html'].includes('<code>/screenshot --full-page</code>'), `${filename}: the screenshot command must survive translation verbatim`);
     assert.ok(chromeLocale['install.record.body_html'].includes('<code>/record</code>'), `${filename}: the record command must survive translation verbatim`);
     assert.ok(chromeLocale['install.pin.confirm'], `${filename}: pin coachmark should translate its confirmation action`);
@@ -45342,7 +45356,8 @@ test('chrome install page offers the shipped in-browser model with progress inst
 
   const hero = chromeHtml.match(/<section class="install-hero"[\s\S]*?<\/section>/)[0];
   const modelId = hero.match(/<div id="local-model" class="local-model" data-model="([^"]+)"/)?.[1];
-  assert.equal(modelId, webgpu.WEBGPU_BONSAI2_VL_2B_MODEL_ID, 'the install page should download the Ternary Bonsai 2 2B Vision preset');
+  assert.equal(modelId, webgpu.WEBGPU_DEFAULT_MODEL_ID, 'the install page should download the default preset, Compass VLD Tiny v5');
+  assert.equal(modelId, webgpu.WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID);
   assert.ok(webgpu.isSelectableWebgpuPreset(modelId), 'the install page should offer a model the WebGPU pickers already offer');
   assert.match(hero, /id="local-model-button"[^>]*\sdisabled(?:\s|>)/, 'the download button should start disabled until its state is known');
   assert.match(hero, /id="local-model-progress"[^>]*role="progressbar"[^>]*hidden/, 'progress should be an accessible progress bar, hidden until a transfer runs');
@@ -45352,16 +45367,16 @@ test('chrome install page offers the shipped in-browser model with progress inst
   assert.doesNotMatch(firefoxHtml, /id="local-model"|install\.local_model\./, 'firefox: no in-browser model runtime, so the page keeps its sidebar button');
   assert.match(css, /\.local-model-note \{[\s\S]*?color: var\(--quiet\);[\s\S]*?font-size: 12px;/, 'the optional note should be small and gray');
   assert.match(english['install.local_model.note'], /^Optional\b/, 'the note should say up front that the download is optional');
-  assert.match(english['install.local_model.note'], /1\.45 GB/, 'the note should state the download size of the preset');
-  assert.match(english['install.local_model.note'], /0\.95 GB for D1, WebBrain’s experimental decision model from Hugging Face/,
-    'the note is the D1 consent: its size, that it is experimental, and where it comes from');
-  assert.match(english['install.local_model.note'], /GPU memory/, 'the note states the memory D1 needs, like the Settings consent');
-  assert.match(hero, /id="local-model-button"[^>]*aria-describedby="local-model-status local-model-d1 local-model-note"/,
-    'the button is described by both download lines and the note');
-  assert.match(hero, /<p id="local-model-d1" class="local-model-status local-model-d1" aria-live="polite" hidden><\/p>/,
-    'D1 has its own announced status line, hidden until it starts');
+  assert.match(english['install.local_model.note'], /2\.2 GB from Hugging Face: Compass VLD Tiny v5/,
+    'the note is the consent the click gives: the size of the one model it downloads, and where from');
+  assert.match(english['install.local_model.note'], /chats, reads screenshots and answers WebBrain’s quick questions/,
+    'the note says what the model does on this device');
+  assert.match(english['install.local_model.note'], /GPU memory/, 'the note states the memory the model needs');
+  assert.match(hero, /id="local-model-button"[^>]*aria-describedby="local-model-status local-model-note"/,
+    'the button is described by its status line and the note');
+  assert.doesNotMatch(hero, /local-model-d1/, 'the guide no longer downloads D1: the chat model answers decisions itself');
   const preset = webgpu.WEBGPU_MODEL_PRESETS.find((entry) => entry.id === modelId);
-  assert.equal(preset.size, '1.45 GB', 'the note quotes the preset size; update the copy if the preset changes');
+  assert.equal(preset.size, '2.2 GB', 'the note quotes the preset size; update the copy if the preset changes');
 
   const normalize = install.normalizeLocalModelSnapshot;
   assert.deepEqual(normalize({ status: 'starting' }, modelId), { status: 'downloading', progress: 0, error: '' });
@@ -68891,12 +68906,13 @@ test('failed sensitive field-tool readbacks are annotated and redacted', () => {
 console.log('\nprovider categorization');
 
 test('Bonsai WebGPU presets preserve ordered selection and model-specific image capabilities', async () => {
-  const pickerIds = [WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_BONSAI2_2B_MODEL_ID, WEBGPU_BONSAI2_4B_MODEL_ID,
+  const pickerIds = [WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID, WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_BONSAI2_2B_MODEL_ID, WEBGPU_BONSAI2_4B_MODEL_ID,
     WEBGPU_BONSAI2_VL_2B_MODEL_ID, WEBGPU_BONSAI2_VL_4B_MODEL_ID];
   assert.deepEqual(WEBGPU_PICKER_MODEL_IDS, pickerIds);
-  // Only Compass Tiny and Bonsai 2 2B Vision are offered for now; the rest
-  // stay shipped and loadable until they are shown again.
-  const offeredIds = [WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_BONSAI2_VL_2B_MODEL_ID];
+  assert.equal(WEBGPU_DEFAULT_MODEL_ID, WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID, 'the default comes first');
+  // Compass VLD Tiny v5, Compass Tiny and Bonsai 2 2B Vision are offered for
+  // now; the rest stay shipped and loadable until they are shown again.
+  const offeredIds = [WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID, WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_BONSAI2_VL_2B_MODEL_ID];
   assert.deepEqual(WEBGPU_SELECTABLE_MODEL_PRESETS.map(preset => preset.id), offeredIds);
   assert.deepEqual(WEBGPU_HIDDEN_MODEL_IDS, [WEBGPU_BONSAI2_2B_MODEL_ID, WEBGPU_BONSAI2_4B_MODEL_ID, WEBGPU_BONSAI2_VL_4B_MODEL_ID]);
   for (const id of WEBGPU_HIDDEN_MODEL_IDS) {
@@ -68937,7 +68953,7 @@ test('Bonsai WebGPU presets preserve ordered selection and model-specific image 
     if (preset.supportsVision) {
       await provider.chat(messages, { maxTokens: 32 });
       assert.equal(sent.at(-1).runtime, 'onnx-vl');
-      assert.deepEqual(sent.at(-1).dtype, WEBGPU_BONSAI2_VL_DTYPE);
+      assert.deepEqual(sent.at(-1).dtype, preset.id === WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID ? WEBGPU_COMPASS_VLD_DTYPE : WEBGPU_BONSAI2_VL_DTYPE);
       assert.deepEqual(sent.at(-1).messages, messages);
     } else {
       await assert.rejects(provider.chat(messages), /text-only/);
@@ -68953,6 +68969,57 @@ test('Bonsai WebGPU presets preserve ordered selection and model-specific image 
   await manager.updateProvider('webgpu', { model: WEBGPU_BONSAI2_VL_4B_MODEL_ID });
   assert.equal(manager.getAll().webgpu.contextWindow, 4096, 'saving the same preset must preserve a lowered context budget');
   assert.equal(manager.getAll().webgpu.promptTier, 'mid');
+});
+
+test('an untouched Compass Tiny v2.1 WebGPU setting moves to Compass VLD Tiny v5 once, and a later choice of v2.1 stays', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousCaches = globalThis.caches;
+  const local = {};
+  const cachedModels = new Set();
+  globalThis.chrome = { storage: { local: {
+    get: async key => (Object.hasOwn(local, key) ? { [key]: local[key] } : {}),
+    set: async patch => { Object.assign(local, patch); },
+  } } };
+  const readableCaches = { match: async url => ([...cachedModels].some(id => decodeURIComponent(url).includes(`/${id}|`)) ? new Response('{}') : undefined) };
+  // A profile whose WebGPU provider holds Compass Tiny v2.1, never marked configured.
+  const profile = async () => {
+    const manager = new ProviderManagerCh();
+    manager.save = async () => {};
+    manager.providers.set('webgpu', new WebGPUProvider(manager._defaultConfigs().webgpu));
+    await manager.updateProvider('webgpu', { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID }, { markConfigured: false });
+    assert.notEqual(manager.getAll().webgpu.configured, true);
+    return manager;
+  };
+  try {
+    globalThis.caches = undefined;
+    const unreadable = await profile();
+    assert.equal(await unreadable.migrateUntouchedWebgpuDefault(), false);
+    assert.equal(unreadable.getAll().webgpu.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.deepEqual(local, {}, 'an unreadable cache leaves the decision for a later start');
+
+    globalThis.caches = readableCaches;
+    const untouched = await profile();
+    assert.equal(await untouched.migrateUntouchedWebgpuDefault(), true);
+    assert.equal(untouched.getAll().webgpu.model, WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID);
+    assert.deepEqual(untouched.getAll().webgpu.dtype, WEBGPU_COMPASS_VLD_DTYPE);
+    assert.notEqual(untouched.getAll().webgpu.configured, true, 'the move does not mark the provider configured');
+
+    // Picking Compass Tiny v2.1 in Apocalypse Mode saves it unconfigured; a
+    // service worker restart must not move it again.
+    const chosen = await profile();
+    assert.equal(await chosen.migrateUntouchedWebgpuDefault(), false);
+    assert.equal(chosen.getAll().webgpu.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+
+    for (const key of Object.keys(local)) delete local[key];
+    cachedModels.add(WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    const downloaded = await profile();
+    assert.equal(await downloaded.migrateUntouchedWebgpuDefault(), false, 'a downloaded Compass Tiny v2.1 stays');
+    assert.equal(downloaded.getAll().webgpu.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.equal(local.webgpuDefaultMigration, WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID, 'that decision is final too');
+  } finally {
+    globalThis.chrome = previousChrome;
+    if (previousCaches === undefined) delete globalThis.caches; else globalThis.caches = previousCaches;
+  }
 });
 
 test('Apocalypse hydrates every selectable Bonsai preset and inspects sibling cache state without changing selection', async () => {
@@ -69108,7 +69175,14 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     };
 
     const manager = new ProviderManagerCh();
-    const webgpuConfig = manager._defaultConfigs().webgpu;
+    const defaultWebgpuConfig = manager._defaultConfigs().webgpu;
+    assert.equal(defaultWebgpuConfig.model, WEBGPU_DEFAULT_MODEL_ID);
+    assert.equal(defaultWebgpuConfig.model, WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID, 'Compass VLD Tiny v5 is the WebGPU default');
+    assert.deepEqual(defaultWebgpuConfig.dtype, WEBGPU_COMPASS_VLD_DTYPE);
+    assert.equal(defaultWebgpuConfig.contextWindow, 32768);
+    assert.equal(defaultWebgpuConfig.supportsVision, true, 'the default reads screenshots itself');
+    // The text-only paths below run on Compass Tiny v2.1.
+    const webgpuConfig = { ...defaultWebgpuConfig, model: WEBGPU_COMPASS_TINY_V2_MODEL_ID, dtype: WEBGPU_DTYPE, supportsVision: false };
     manager.providers.set('webbrain_cloud', manager._createProvider('webbrain_cloud', manager._defaultConfigs().webbrain_cloud));
     assert.equal(WEBGPU_VISION_MODEL_ID, 'webbrain-one/webbrain-vl-2-450M-onnx');
     assert.equal(WEBGPU_VISION_CONSENT_VERSION, 2,
@@ -69136,6 +69210,7 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       'custom-owner/custom-model',
     );
     assert.deepEqual(WEBGPU_MODEL_PRESETS.map(option => ({ id: option.id, label: option.label, runtime: option.runtime, contextWindow: option.contextWindow, supportsVision: option.supportsVision })), [
+      { id: WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID, label: 'Compass VLD Tiny v5', runtime: 'onnx-vl', contextWindow: 32768, supportsVision: true },
       { id: WEBGPU_LFM25_MODEL_ID, label: 'Minimal text model', runtime: 'onnx', contextWindow: 16384, supportsVision: false },
       { id: WEBGPU_LFM25_12B_INSTRUCT_MODEL_ID, label: 'LFM2.5-1.2B-Instruct', runtime: 'onnx', contextWindow: 16384, supportsVision: false },
       { id: WEBGPU_LFM25_12B_THINKING_MODEL_ID, label: 'LFM2.5-1.2B-Thinking', runtime: 'onnx', contextWindow: 16384, supportsVision: false },
@@ -69153,12 +69228,14 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).dtype, 'q1');
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).requiresToolTemplate, false);
     assert.equal(normalizeWebgpuModelId(' custom-owner/custom-model '), 'custom-owner/custom-model');
-    assert.equal(normalizeWebgpuModelId(''), WEBGPU_COMPASS_TINY_V2_MODEL_ID);
-    assert.equal(normalizeWebgpuModelId(null), WEBGPU_COMPASS_TINY_V2_MODEL_ID);
-    assert.equal(normalizeWebgpuModelId('   '), WEBGPU_COMPASS_TINY_V2_MODEL_ID);
-    assert.equal(new WebGPUProvider({}).model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
-    assert.equal(new WebGPUProvider({ model: '' }).model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
-    assert.equal(new WebGPUProvider({ model: '   ' }).model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.equal(normalizeWebgpuModelId(''), WEBGPU_DEFAULT_MODEL_ID);
+    assert.equal(normalizeWebgpuModelId(null), WEBGPU_DEFAULT_MODEL_ID);
+    assert.equal(normalizeWebgpuModelId('   '), WEBGPU_DEFAULT_MODEL_ID);
+    assert.equal(new WebGPUProvider({}).model, WEBGPU_DEFAULT_MODEL_ID);
+    assert.equal(new WebGPUProvider({ model: '' }).model, WEBGPU_DEFAULT_MODEL_ID);
+    assert.equal(new WebGPUProvider({ model: '   ' }).model, WEBGPU_DEFAULT_MODEL_ID);
+    assert.equal(new WebGPUProvider({}).supportsVision, true);
+    assert.deepEqual(new WebGPUProvider({}).dtype, WEBGPU_COMPASS_VLD_DTYPE);
     assert.throws(() => new WebGPUProvider({ model: 'not-a-repository' }), /owner\/repository/);
     assert.throws(() => new WebGPUProvider({ model: 'https://example.com/owner/model' }), /huggingface\.co/);
     assert.equal(generalProvider.supportsTools, true);
@@ -69212,8 +69289,9 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
     await manager.updateProvider('webgpu', { model: 'custom-owner/custom-model' });
     assert.equal(manager.getAll().webgpu.model, 'custom-owner/custom-model');
     await manager.updateProvider('webgpu', { model: '' });
-    assert.equal(manager.getAll().webgpu.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
+    assert.equal(manager.getAll().webgpu.model, WEBGPU_DEFAULT_MODEL_ID);
     assert.equal(manager.getAll().webgpu.contextWindow, 32768);
+    assert.deepEqual(manager.getAll().webgpu.dtype, WEBGPU_COMPASS_VLD_DTYPE);
     await manager.updateProvider('webgpu', { model: WEBGPU_BONSAI27_MODEL_ID, dtype: 'q1' });
     assert.equal(manager.getAll().webgpu.dtype, 'q1');
     await manager.updateProvider('webgpu', { model: 'custom-owner/custom-model-2' });
@@ -69664,8 +69742,8 @@ test('local vision defaults off and migration requires re-consent without deleti
     };
 
     const fresh = new ProviderManagerCh();
-    // A fresh profile is on Auto, which stays off until Ternary Bonsai 2 2B
-    // Vision is downloaded.
+    // A fresh profile is on Auto, which stays off until Compass VLD Tiny v5
+    // (or Ternary Bonsai 2 2B Vision) is downloaded.
     assert.deepEqual(await fresh.getWebgpuVisionReadiness(), {
       enabled: false,
       consented: false,
@@ -69675,7 +69753,7 @@ test('local vision defaults off and migration requires re-consent without deleti
       total: 0,
       error: '',
       updatedAt: 0,
-      modelId: WEBGPU_VISION_BONSAI_MODEL_ID,
+      modelId: WEBGPU_VISION_COMPASS_VLD_MODEL_ID,
       choice: 'auto',
     });
     assert.equal(await fresh.getLocalVisionFallbackProvider(), null);
@@ -69824,24 +69902,29 @@ test('in-browser vision choice defaults to Auto and keeps a consented WebBrain V
     [WEBGPU_VISION_ENABLED_KEY]: true,
     [WEBGPU_VISION_CONSENT_VERSION_KEY]: 1,
   }), 'auto', 'consent for an older model version must not become an explicit choice');
-  for (const choice of ['auto', 'bonsai', 'webbrain-vl', 'off']) {
+  for (const choice of ['auto', 'compass-vld', 'bonsai', 'webbrain-vl', 'off']) {
     assert.equal(storedWebgpuVisionChoice({ [WEBGPU_VISION_CHOICE_KEY]: choice, [WEBGPU_VISION_ENABLED_KEY]: true, [WEBGPU_VISION_CONSENT_VERSION_KEY]: WEBGPU_VISION_CONSENT_VERSION }), choice);
   }
   assert.equal(storedWebgpuVisionChoice({ [WEBGPU_VISION_CHOICE_KEY]: 'gpt-4o' }), 'auto');
-  assert.equal(resolveWebgpuVisionChoice('auto', { bonsaiReady: false }), null, 'Auto stays off until Bonsai is downloaded');
-  assert.equal(resolveWebgpuVisionChoice('auto', { bonsaiReady: true }), 'bonsai');
-  assert.equal(resolveWebgpuVisionChoice('bonsai', { bonsaiReady: false }), 'bonsai');
-  assert.equal(resolveWebgpuVisionChoice('webbrain-vl', { bonsaiReady: true }), 'webbrain-vl');
-  assert.equal(resolveWebgpuVisionChoice('off', { bonsaiReady: true }), null);
+  assert.equal(resolveWebgpuVisionChoice('auto', { bonsaiReady: false }), null, 'Auto stays off until a chat model that reads images is downloaded');
+  assert.equal(resolveWebgpuVisionChoice('auto', { compassVldReady: true }), 'compass-vld', 'Auto uses Compass VLD Tiny v5 once it is downloaded');
+  assert.equal(resolveWebgpuVisionChoice('auto', { compassVldReady: true, bonsaiReady: true }), 'compass-vld', 'and prefers it to Bonsai');
+  assert.equal(resolveWebgpuVisionChoice('auto', { bonsaiReady: true }), 'bonsai', 'a profile with only Bonsai keeps it');
+  assert.equal(resolveWebgpuVisionChoice('compass-vld', { compassVldReady: false }), 'compass-vld');
+  assert.equal(resolveWebgpuVisionChoice('bonsai', { bonsaiReady: false, compassVldReady: true }), 'bonsai');
+  assert.equal(resolveWebgpuVisionChoice('webbrain-vl', { bonsaiReady: true, compassVldReady: true }), 'webbrain-vl');
+  assert.equal(resolveWebgpuVisionChoice('off', { bonsaiReady: true, compassVldReady: true }), null);
 });
 
-test('in-browser vision routes screenshots to Ternary Bonsai only through the choice and behind explicit and raw routes', async () => {
+test('in-browser vision routes screenshots to a chat model that reads images only through the choice and behind explicit and raw routes', async () => {
   const previousChrome = globalThis.chrome;
   const previousCaches = globalThis.caches;
   const state = {};
   const sentMessages = [];
   let bonsaiMarker = false;
+  let compassVldMarker = false;
   const bonsaiMarkerUrl = webgpuTextReadyMarkerUrl(WEBGPU_VISION_BONSAI_MODEL_ID);
+  const compassVldMarkerUrl = webgpuTextReadyMarkerUrl(WEBGPU_VISION_COMPASS_VLD_MODEL_ID);
   try {
     globalThis.chrome = {
       offscreen: { hasDocument: async () => true },
@@ -69871,7 +69954,8 @@ test('in-browser vision routes screenshots to Ternary Bonsai only through the ch
     globalThis.caches = {
       match: async (request, options = {}) => {
         const url = typeof request === 'string' ? request : request.url;
-        return options.cacheName === 'transformers-cache' && bonsaiMarker && url === bonsaiMarkerUrl ? { ok: true } : undefined;
+        if (options.cacheName !== 'transformers-cache') return undefined;
+        return (bonsaiMarker && url === bonsaiMarkerUrl) || (compassVldMarker && url === compassVldMarkerUrl) ? { ok: true } : undefined;
       },
     };
     const manager = new ProviderManagerCh();
@@ -69879,7 +69963,7 @@ test('in-browser vision routes screenshots to Ternary Bonsai only through the ch
     const textOnly = { name: 'text-only', supportsVision: false };
 
     let route = await manager.resolveVisionRoute(textOnly);
-    assert.equal(route.provider, null, 'Auto must not route screenshots before Bonsai is downloaded');
+    assert.equal(route.provider, null, 'Auto must not route screenshots before a model that reads them is downloaded');
     assert.equal(route.route, 'none');
     assert.equal(route.visionStatus.status, 'disabled');
     assert.equal(route.visionStatus.choice, 'auto');
@@ -69887,7 +69971,8 @@ test('in-browser vision routes screenshots to Ternary Bonsai only through the ch
 
     bonsaiMarker = true;
     route = await manager.resolveVisionRoute(textOnly);
-    assert.ok(route.provider instanceof WebGPUBonsaiVisionProvider, 'Auto must use Bonsai once its ready marker exists');
+    assert.ok(route.provider instanceof WebGPUChatVisionProvider, 'Auto must use Bonsai once its ready marker exists');
+    assert.equal(route.provider.model, WEBGPU_VISION_BONSAI_MODEL_ID);
     assert.equal(route.route, 'local_fallback');
     assert.equal(route.visionStatus.status, 'ready');
     assert.equal(route.visionStatus.modelId, WEBGPU_VISION_BONSAI_MODEL_ID);
@@ -69923,17 +70008,43 @@ test('in-browser vision routes screenshots to Ternary Bonsai only through the ch
     assert.equal(chat.options.maxTokens, 800);
     assert.ok(chat.requestKey, 'a deadline-bound vision call must carry a cancellation key');
 
+    // Compass VLD Tiny v5, the default chat model, reads screenshots too, and
+    // Auto prefers it once it is downloaded.
+    compassVldMarker = true;
+    route = await manager.resolveVisionRoute(textOnly);
+    assert.ok(route.provider instanceof WebGPUChatVisionProvider, 'Auto must use Compass VLD Tiny v5 once its ready marker exists');
+    assert.equal(route.provider.model, WEBGPU_VISION_COMPASS_VLD_MODEL_ID);
+    assert.equal(route.route, 'local_fallback');
+    assert.equal(route.visionStatus.modelId, WEBGPU_VISION_COMPASS_VLD_MODEL_ID);
+    assert.equal(route.provider.name, 'webgpu-vision-compass-vld');
+    assert.equal(route.provider.config.providerName, 'webgpu-vision');
+    assert.equal(route.provider.supportsTools, false);
+    sentMessages.length = 0;
+    await route.provider.chat(messages, { maxTokens: 800, tools: [{ type: 'function', function: { name: 'click' } }] });
+    const compassChat = sentMessages.find(message => message.type === 'webgpu-chat');
+    assert.equal(compassChat.model, WEBGPU_VISION_COMPASS_VLD_MODEL_ID);
+    assert.equal(compassChat.runtime, 'onnx-vl');
+    assert.deepEqual(compassChat.dtype, WEBGPU_COMPASS_VLD_DTYPE);
+    assert.deepEqual(compassChat.options.tools, [], 'the screenshot reader must never be offered tools');
+    state[WEBGPU_VISION_CHOICE_KEY] = 'bonsai';
+    assert.equal((await manager.resolveVisionRoute(textOnly)).provider?.model, WEBGPU_VISION_BONSAI_MODEL_ID, 'an explicit Bonsai choice keeps Bonsai');
+
     state[WEBGPU_VISION_CHOICE_KEY] = 'off';
-    assert.equal(await manager.getLocalVisionFallbackProvider(), null, 'Off must not use a downloaded Bonsai');
+    assert.equal(await manager.getLocalVisionFallbackProvider(), null, 'Off must not use a downloaded model');
     assert.equal((await manager.resolveVisionRoute(textOnly)).route, 'none');
 
     bonsaiMarker = false;
+    compassVldMarker = false;
     state[WEBGPU_VISION_CHOICE_KEY] = 'bonsai';
     route = await manager.resolveVisionRoute(textOnly);
     assert.equal(route.provider, null);
     assert.equal(route.route, 'local_fallback_unavailable', 'an explicit Bonsai choice reports that it is not downloaded');
     assert.equal(route.visionStatus.status, 'not-downloaded');
     assert.equal(route.visionStatus.modelId, WEBGPU_VISION_BONSAI_MODEL_ID);
+    state[WEBGPU_VISION_CHOICE_KEY] = 'compass-vld';
+    route = await manager.resolveVisionRoute(textOnly);
+    assert.equal(route.route, 'local_fallback_unavailable', 'so does an explicit Compass VLD Tiny v5 choice');
+    assert.equal(route.visionStatus.modelId, WEBGPU_VISION_COMPASS_VLD_MODEL_ID);
   } finally {
     if (previousCaches === undefined) delete globalThis.caches;
     else globalThis.caches = previousCaches;
@@ -70012,17 +70123,17 @@ test('the in-browser vision choice stays Chrome-local and only Providers or Apoc
   const providersHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/providers.html'), 'utf8');
   assert.ok(settingsPanelHtml(providersHtml, 'vision').includes('id="webgpu-vision-choice"'), 'the in-browser vision choice sits on the Vision tab');
   const choice = providersHtml.slice(providersHtml.indexOf('id="webgpu-vision-choice"'), providersHtml.indexOf('</select>', providersHtml.indexOf('id="webgpu-vision-choice"')));
-  assert.deepEqual([...choice.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), ['auto', 'bonsai', 'webbrain-vl', 'off']);
+  assert.deepEqual([...choice.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), ['auto', 'compass-vld', 'bonsai', 'webbrain-vl', 'off']);
   const apocalypseHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
   const apocalypseChoice = apocalypseHtml.slice(apocalypseHtml.indexOf('id="vision-model-choice"'), apocalypseHtml.indexOf('</select>', apocalypseHtml.indexOf('id="vision-model-choice"')));
-  assert.deepEqual([...apocalypseChoice.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), ['auto', 'bonsai', 'webbrain-vl', 'off']);
+  assert.deepEqual([...apocalypseChoice.matchAll(/<option value="([^"]+)"/g)].map(match => match[1]), ['auto', 'compass-vld', 'bonsai', 'webbrain-vl', 'off']);
   for (const page of ['settings.html', 'providers.html']) {
     assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui', page), 'utf8'), /webgpu-vision-choice/,
       `Firefox has no in-browser vision runtime to choose (${page})`);
   }
 });
 
-test('Apocalypse text download fixes the Compass preset and avoids duplicate starts', async () => {
+test('Apocalypse text download fixes the default preset and avoids duplicate starts', async () => {
   const previousChrome = globalThis.chrome;
   const sentMessages = [];
   const storageWrites = [];
@@ -70030,8 +70141,8 @@ test('Apocalypse text download fixes the Compass preset and avoids duplicate sta
   let downloadState = {
     status: 'not-downloaded',
     ready: false,
-    modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
-    dtype: WEBGPU_DTYPE,
+    modelId: WEBGPU_DEFAULT_MODEL_ID,
+    dtype: WEBGPU_COMPASS_VLD_DTYPE,
   };
   try {
     globalThis.chrome = {
@@ -70088,8 +70199,10 @@ test('Apocalypse text download fixes the Compass preset and avoids duplicate sta
       'webgpu-download-start',
     ]);
     const config = manager.getAll().webgpu;
-    assert.equal(config.model, WEBGPU_COMPASS_TINY_V2_MODEL_ID);
-    assert.equal(config.dtype, WEBGPU_DTYPE);
+    assert.equal(config.model, WEBGPU_DEFAULT_MODEL_ID, 'a custom model is replaced by the default, Compass VLD Tiny v5');
+    assert.deepEqual(config.dtype, WEBGPU_COMPASS_VLD_DTYPE);
+    assert.deepEqual(sentMessages.at(-1).dtype, WEBGPU_COMPASS_VLD_DTYPE);
+    assert.equal(sentMessages.at(-1).model, WEBGPU_DEFAULT_MODEL_ID);
     assert.equal(config.contextWindow, 32768);
     assert.equal(config.promptTier, 'compact');
     assert.equal(config.configured, true);
@@ -70104,7 +70217,7 @@ test('Apocalypse text download fixes the Compass preset and avoids duplicate sta
     assert.deepEqual(sentMessages.map(message => message.type), [
       'webgpu-probe',
       'webgpu-download-status',
-    ], 'an in-progress Compass download must not be queued twice');
+    ], 'an in-progress download must not be queued twice');
 
     await manager.updateProvider('webgpu', { model: WEBGPU_BONSAI2_VL_4B_MODEL_ID, contextWindow: 8192, promptTier: 'mid' });
     downloadState = { modelId: WEBGPU_BONSAI2_VL_4B_MODEL_ID, dtype: WEBGPU_BONSAI2_VL_DTYPE, status: 'ready', ready: true };
@@ -70121,13 +70234,13 @@ test('Apocalypse text download fixes the Compass preset and avoids duplicate sta
     downloadState = {
       status: 'not-downloaded',
       ready: false,
-      modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID,
-      dtype: WEBGPU_DTYPE,
+      modelId: WEBGPU_DEFAULT_MODEL_ID,
+      dtype: WEBGPU_COMPASS_VLD_DTYPE,
     };
     const unsupported = await manager.enableAndStartWebgpuTextDownload();
     assert.equal(unsupported.ok, false);
     assert.deepEqual(sentMessages.map(message => message.type), ['webgpu-probe'],
-      'unsupported hardware must fail before starting the Compass download');
+      'unsupported hardware must fail before starting the download');
   } finally {
     if (previousChrome === undefined) delete globalThis.chrome;
     else globalThis.chrome = previousChrome;
@@ -70388,6 +70501,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.ok(ortWasm.includes(Buffer.from('MatMulNBitsMlp')),
     'the vendored ONNX Runtime build must keep the WebGPU kernel the Nanbeige graph is fused around');
   for (const modelId of [
+    WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID,
     WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   ]) {
     assert.match(apocalypseHtml, new RegExp(modelId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
@@ -70728,14 +70842,16 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(apocalypseCopy, /'ap\.models\.text\.title': 'Text Model'/);
   assert.match(apocalypseCopy, /'ap\.models\.vision\.title': 'Vision Model'/);
   assert.match(apocalypseCopy, /'ap\.models\.wikipedia\.title': 'Wikipedia in Simple English'/);
-  assert.match(apocalypseHtml, /1\.87 GB · WebGPU/);
+  assert.match(apocalypseHtml, /2\.2 GB · WebGPU/, 'the Text Model card first shows the default preset\'s size');
   assert.match(apocalypseHtml, /data-webgpu-text-preset/);
+  assert.match(apocalypseHtml, /value="webbrain-one\/webbrain-compass-vld-tiny-v5-onnx" data-webgpu-text-preset checked/, 'the default preset is checked');
   assert.match(apocalypseHtml, /value="webbrain-one\/webbrain-compass-tiny-v2\.1"/);
   assert.doesNotMatch(apocalypseHtml, /value="prism-ml\/Bonsai-27B-gguf"/);
   assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.bonsai_warning"/);
   assert.match(apocalypseCopy, /'ap\.models\.text\.lfm': 'Minimal text model'/);
   assert.match(apocalypseCopy, /'ap\.models\.text\.bonsai': 'Basic text model'/);
   assert.match(apocalypseHtml, />Compass Tiny v2\.1<\/span>/);
+  assert.match(apocalypseHtml, />Compass VLD Tiny v5<\/span>/);
   assert.doesNotMatch(apocalypseHtml, />Minimal text model<\/span>/);
   assert.doesNotMatch(apocalypseHtml, />Basic text model<\/span>/);
   assert.doesNotMatch(apocalypseHtml, /· LFM2\.5 2\.6B/);
@@ -70761,11 +70877,11 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?config: preserveConfig \? \{\} : \{ model, dtype \}/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
-  assert.match(englishLocale, /Auto uses Ternary Bonsai 2 2B Vision once it is downloaded[\s\S]*WebBrain VL 2 450M[\s\S]*about 810 MB from Hugging Face[\s\S]*Nothing downloads until you click Download; tasks never wait for it, so keep Chrome open/);
+  assert.match(englishLocale, /Auto uses Compass VLD Tiny v5 once it is downloaded[\s\S]*WebBrain VL 2 450M[\s\S]*about 810 MB from Hugging Face[\s\S]*Nothing downloads until you click Download; tasks never wait for it, so keep Chrome open/);
   assert.match(englishLocale, /checks WebGPU, records your consent and fetches about 810 MB/,
     'the WebBrain VL 2 450M download button must say it records consent');
   assert.match(apocalypseCopy, /Local vision is optional and never downloads on its own/);
-  assert.match(apocalypseDocs, /Apocalypse Mode\s+never enables or downloads a vision model/);
+  assert.match(apocalypseDocs, /Apocalypse Mode\s+never enables or downloads a vision model of its own/);
   assert.doesNotMatch(apocalypseDocs, /enabling Apocalypse Mode also enables[\s\S]{0,80}vision/i);
   assert.match(englishLocale, /Download it in Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat[\s\S]*It does not replace your selected provider/);
 

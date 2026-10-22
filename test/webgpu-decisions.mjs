@@ -105,21 +105,29 @@ test('the worker routes decisions through the offscreen host and provider', asyn
   assert.match(branch, /strictSecretMode/);
 });
 
-test('the trained probe scores each option from its margin and hidden state', async () => {
+test('the trained probes score each option from its margin and hidden state', async () => {
   const { BONSAI_DECISION_PROBE, bonsaiProbeScores } = await import('../src/chrome/src/offscreen/bonsai-decision-probe.js');
-  const { WEBGPU_DECISION_MODEL_ID } = await import('../src/chrome/src/providers/webgpu.js');
-  const { WEBGPU_CHAT_DECISION_MODEL } = await import('../src/chrome/src/agent/decision-config.js');
-  assert.equal(BONSAI_DECISION_PROBE.model, WEBGPU_DECISION_MODEL_ID);
-  assert.equal(WEBGPU_CHAT_DECISION_MODEL, WEBGPU_DECISION_MODEL_ID, 'decision-config keeps the probe model id in sync');
-  const width = BONSAI_DECISION_PROBE.hiddenSize;
-  const zero = new Float32Array(width);
-  const [a, b] = bonsaiProbeScores([2, 0], [zero, zero]);
-  assert.ok(Math.abs(a - b - 2 * BONSAI_DECISION_PROBE.margin) < 1e-9, 'with equal hidden states only the margins differ');
-  const unit = new Float32Array(width).fill(1);
-  const [c, d] = bonsaiProbeScores([0, 0], [unit, zero]);
-  assert.ok(Number.isFinite(c - d) && c !== d, 'the hidden state moves the score');
-  assert.throws(() => bonsaiProbeScores([0], [null]), /hidden state/);
-  assert.throws(() => bonsaiProbeScores([0], [new Float32Array(3)]), /hidden state/);
+  const { COMPASS_VLD_DECISION_PROBE, compassVldProbeScores } = await import('../src/chrome/src/offscreen/compass-vld-decision-probe.js');
+  const webgpu = await import('../src/chrome/src/providers/webgpu.js');
+  const chromeConfig = await import('../src/chrome/src/agent/decision-config.js');
+  const firefoxConfig = await import('../src/firefox/src/agent/decision-config.js');
+  assert.equal(BONSAI_DECISION_PROBE.model, webgpu.WEBGPU_BONSAI2_VL_2B_MODEL_ID);
+  assert.equal(COMPASS_VLD_DECISION_PROBE.model, webgpu.WEBGPU_DECISION_MODEL_ID, 'the agent decision model has its probe');
+  for (const config of [chromeConfig, firefoxConfig]) {
+    assert.equal(config.WEBGPU_CHAT_DECISION_MODEL, webgpu.WEBGPU_DECISION_MODEL_ID, 'decision-config keeps the model id in sync');
+    assert.deepEqual(config.WEBGPU_CHAT_DECISION_DTYPE, webgpu.webgpuModelDtype(webgpu.WEBGPU_DECISION_MODEL_ID), 'and the dtype its ready marker is keyed by');
+  }
+  for (const [probe, scores] of [[BONSAI_DECISION_PROBE, bonsaiProbeScores], [COMPASS_VLD_DECISION_PROBE, compassVldProbeScores]]) {
+    const width = probe.hiddenSize;
+    const zero = new Float32Array(width);
+    const [a, b] = scores([2, 0], [zero, zero]);
+    assert.ok(Math.abs(a - b - 2 * probe.margin) < 1e-9, 'with equal hidden states only the margins differ');
+    const unit = new Float32Array(width).fill(1);
+    const [c, d] = scores([0, 0], [unit, zero]);
+    assert.ok(Number.isFinite(c - d) && c !== d, 'the hidden state moves the score');
+    assert.throws(() => scores([0], [null]), /hidden state/);
+    assert.throws(() => scores([0], [new Float32Array(3)]), /hidden state/);
+  }
 });
 
 test('decisions default to the probe and refuse a decoder without decision_hidden', async () => {
@@ -130,37 +138,39 @@ test('decisions default to the probe and refuse a decoder without decision_hidde
     'the 2B decoder pin is the graph that exposes decision_hidden');
 });
 
-test('saved Ternary decision selections stay local and disabled', async () => {
+test('a saved in-browser chat-model selection answers with Compass VLD Tiny v5 on this device', async () => {
   for (const build of ['chrome']) {
     const config = await import(`../src/${build}/src/agent/decision-config.js`);
     const transfer = await import(`../src/${build}/src/config-transfer.js`);
     const selected = config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
-    assert.equal(selected.provider, 'webgpu_chat');
+    assert.equal(selected.provider, 'webgpu_chat'); assert.equal(selected.source, 'configured');
     assert.equal(selected.model, config.WEBGPU_CHAT_DECISION_MODEL);
-    assert.equal(selected.local, true); assert.equal(selected.apiKey, ''); assert.equal(selected.enabled, false);
-    assert.equal(selected.unavailable, 'decision_validation_failed');
+    assert.deepEqual(selected.dtype, config.WEBGPU_CHAT_DECISION_DTYPE);
+    assert.equal(selected.local, true); assert.equal(selected.apiKey, ''); assert.equal(selected.enabled, true);
+    assert.equal(selected.unavailable, undefined);
     assert.equal(selected.doneEnabled, false, 'completion outsourcing stays opt-in');
-    assert.equal(selected.requiresIndependentSuccessConfirmation, true);
+    assert.equal(selected.requiresIndependentSuccessConfirmation, true, 'a positive completion still needs independent proof');
     assert.equal(selected.config.inputCostPerMillionUsd, 0);
     assert.equal(config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true }, { baseUrl: 'https://api.webbrain.one/v1' }).provider, 'webgpu_chat',
       'an explicit local choice overrides Compass, as D1 does');
-    assert.equal(config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat' }).enabled, false);
-    assert.equal((await config.listDecisionModels(selected, () => { throw new Error('no network'); })).length, 0);
+    assert.equal(config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat' }).enabled, false, 'Auto without the model downloaded uses nothing');
+    assert.equal(config.resolveDecisionConfig({ decisionMode: 'off', decisionProvider: 'webgpu_chat' }).enabled, false);
+    assert.deepEqual((await config.listDecisionModels(selected, () => { throw new Error('no network'); })).map(model => model.id), [config.WEBGPU_CHAT_DECISION_MODEL]);
     const imported = transfer.parseConfigImport(JSON.stringify({ schema: transfer.CONFIG_SCHEMA, settings: { decisionProvider: 'webgpu_chat' } })).settings;
     assert.equal(imported.decisionProvider, 'webgpu_chat');
   }
 });
 
-test('disabled Ternary keeps configured feature switches for a replacement provider', async () => {
+test('the in-browser chat model keeps its configured feature switches, and so does a replacement provider', async () => {
   const { resolveDecisionConfig, decisionFeatureEnabled } = await import('../src/chrome/src/agent/decision-config.js');
   for (const mode of [{ decisionMode: 'on' }, {}]) {
     const stored = { ...mode, decisionProvider: 'webgpu_chat', systemOneEnabled: true,
       systemOneDoneEnabled: true, systemOneWatchEnabled: false, systemOneCompletionEnabled: true,
       systemOneFastClassifications: false, systemOneFastBrowser: true };
     const selected = resolveDecisionConfig(stored);
-    assert.equal(selected.enabled, false);
+    assert.equal(selected.enabled, true);
     assert.deepEqual(selected.features, { done: true, watch: false, completion: true, classifications: false, browser: true, semantic: true });
-    for (const feature of Object.keys(selected.features)) assert.equal(decisionFeatureEnabled(selected, feature), false, feature);
+    for (const [feature, on] of Object.entries(selected.features)) assert.equal(decisionFeatureEnabled(selected, feature), on, feature);
     for (const provider of ['openrouter', 'typesafe', 'local']) {
       const replacement = resolveDecisionConfig({ ...stored, decisionProvider: provider });
       assert.deepEqual(replacement.features, selected.features, `${provider} keeps saved switches`);
@@ -192,7 +202,7 @@ test('Firefox never enables the Chrome-only chat-model provider and imports it w
   assert.equal(chrome.parseConfigImport(JSON.stringify(chromeExport)).settings.decisionProvider, 'webgpu_chat', 'Chrome round-trips it');
 });
 
-test('diagnostic Ternary readout stays available but the agent judge refuses it', async () => {
+test('the agent judge asks Compass VLD Tiny v5 in the offscreen worker, and Firefox refuses the Chrome-only model', async () => {
   const saved = { chrome: globalThis.chrome };
   const sent = [];
   const decideMessages = [];
@@ -219,18 +229,21 @@ test('diagnostic Ternary readout stays available but the agent judge refuses it'
     const config = resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
     const screenshot = 'data:image/png;base64,YQ==';
     const args = { state: [{ task: 'Save' }, { type: 'image_url', image_url: { url: screenshot } }], questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config };
-    await assert.rejects(createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0 }).evaluate(args),
-      error => error.code === 'JEV_MODEL_UNAVAILABLE');
-    assert.deepEqual(sent, [], 'disabled decisions never dispatch or allocate a model request');
+    const judged = await createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0 }).evaluate(args);
+    assert.deepEqual(judged.answers, answers);
+    assert.equal(judged.model, config.model); assert.equal(judged.estimatedCostUsd, 0);
+    assert.ok(sent.includes('webgpu-decide'), 'the decision runs in the offscreen worker');
+    const decide = decideMessages.at(-1);
+    assert.equal(decide.model, config.model);
+    assert.deepEqual(decide.images, [screenshot], 'screenshots in the state reach the model as images');
+    assert.doesNotMatch(JSON.stringify(decide.state), /base64/, 'no screenshot is left in the prompt text');
     const { evaluateWebgpuDecision } = await import('../src/chrome/src/providers/webgpu-decision.js');
     const result = await evaluateWebgpuDecision(args);
     assert.deepEqual(result.answers, answers);
-    const decide = decideMessages.at(-1);
-    assert.deepEqual(decide.images, [screenshot], 'screenshots in the state reach the model as images');
-    assert.doesNotMatch(JSON.stringify(decide.state), /base64/, 'no screenshot is left in the prompt text');
     assert.equal(result.usage.output_tokens, 0);
     assert.equal(result.provider, 'webgpu_chat');
-    assert.ok(sent.includes('webgpu-decide'));
+    await assert.rejects(evaluateWebgpuDecision({ ...args, config: { ...config, model: 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision' } }),
+      /Only Compass VLD Tiny v5 answers in-browser decisions/, 'Ternary Bonsai decisions stay off after failing validation');
     const firefox = await import('../src/firefox/src/agent/systemone-judge.js');
     const firefoxConfig = (await import('../src/firefox/src/agent/decision-config.js')).resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
     await assert.rejects(firefox.createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0 })
@@ -240,11 +253,11 @@ test('diagnostic Ternary readout stays available but the agent judge refuses it'
   }
 });
 
-test('Providers retains the disabled Ternary selection in Chrome only', async () => {
+test('Providers offers the in-browser chat model in Chrome only', async () => {
   const chromeHtml = await readFile(new URL('../src/chrome/src/ui/providers.html', import.meta.url), 'utf8');
   const firefoxHtml = await readFile(new URL('../src/firefox/src/ui/providers.html', import.meta.url), 'utf8');
-  assert.match(chromeHtml, /<option value="webgpu_chat" disabled data-i18n="st\.decision\.webgpu_chat"><\/option>/);
-  assert.match(chromeHtml, /id="webgpu-decision-note" hidden data-i18n="st\.decision\.mode\.off_desc"/);
+  assert.match(chromeHtml, /<option value="webgpu_chat" data-i18n="st\.decision\.webgpu_chat"><\/option>/);
+  assert.match(chromeHtml, /id="webgpu-decision-note" hidden data-i18n="st\.decision\.webgpu_chat_note"/);
   assert.doesNotMatch(firefoxHtml, /webgpu_chat/);
   const { decisionEnglish, decisionTranslations } = await import('../src/chrome/src/ui/locales/decision-copy.mjs');
   assert.ok(decisionEnglish['st.decision.webgpu_chat'] && decisionEnglish['st.decision.webgpu_chat_note']);
@@ -317,17 +330,34 @@ test('an aborted diagnostic request cancels the in-browser decision in the offsc
   }
 });
 
-test('disabled Ternary decisions reject before arming the old 15-second timer', async () => {
-  const { createSystemOneJudge } = await import('../src/chrome/src/agent/systemone-judge.js');
+test('in-browser chat decisions never reach the network and stop at their own deadline', async () => {
+  const { createSystemOneJudge, SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS } = await import('../src/chrome/src/agent/systemone-judge.js');
   const { resolveDecisionConfig } = await import('../src/chrome/src/agent/decision-config.js');
-  let requests = 0;
-  const client = createSystemOneJudge({ fetchImpl: async () => { requests++; throw new Error('unexpected fetch'); } });
-  const started = performance.now();
-  await assert.rejects(client.evaluate({ config: resolveDecisionConfig({ decisionMode: 'on', decisionProvider: 'webgpu_chat' }),
-    state: 'Page', questions: { q: { type: 'noul', instructions: 'Is it done?' } },
-    beforeRequest: () => { requests++; throw new Error('unexpected request'); } }), error => error.code === 'JEV_MODEL_UNAVAILABLE');
-  assert.equal(requests, 0);
-  assert.ok(performance.now() - started < 1000, 'the disabled model must not wait for its old deadline');
+  const saved = { chrome: globalThis.chrome };
+  let fetches = 0;
+  const sent = [];
+  globalThis.chrome = {
+    offscreen: { hasDocument: async () => true, createDocument: async () => {} },
+    runtime: {
+      lastError: null,
+      getURL: path => `chrome-extension://test/${path}`,
+      // The worker never answers this decision.
+      sendMessage(message, callback) { sent.push(message.type); if (message.type !== 'webgpu-decide') callback(message.type === 'webgpu-download-status' ? { ready: true } : { ok: true }); },
+    },
+    storage: { local: { get: async () => ({}) } },
+  };
+  try {
+    const client = createSystemOneJudge({ fetchImpl: async () => { fetches++; throw new Error('unexpected fetch'); }, timeoutMs: 50 });
+    const started = performance.now();
+    await assert.rejects(client.evaluate({ config: resolveDecisionConfig({ decisionMode: 'on', decisionProvider: 'webgpu_chat' }),
+      state: 'Page', questions: { q: { type: 'noul', instructions: 'Is it done?' } } }));
+    assert.equal(fetches, 0, 'nothing leaves the browser');
+    assert.ok(sent.includes('webgpu-decide'));
+    assert.ok(performance.now() - started < 1000, 'a caller deadline below the cap applies');
+    assert.equal(SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS, 15000, 'room for the first decision after a restart to load the model');
+  } finally {
+    if (saved.chrome === undefined) delete globalThis.chrome; else globalThis.chrome = saved.chrome;
+  }
 });
 
 test('Settings locks the model and key fields for both fixed in-browser providers and restores them otherwise', async () => {
@@ -403,16 +433,35 @@ test('Providers asks one Auto / On / Off question and shows provider fields and 
   }
 });
 
-test('the screenshot gate probe never falls back to the untrained readout', async () => {
-  const { TINY_ASK_GATE_PROBE, tinyAskGateProbability } = await import('../src/chrome/src/offscreen/tiny-ask-gate-probe.js');
-  assert.ok(TINY_ASK_GATE_PROBE.weightsBase64.length > 1000, 'trained weights ship with the extension');
-  const hidden = new Float32Array(TINY_ASK_GATE_PROBE.hiddenSize).fill(0.01);
-  const p = tinyAskGateProbability(TINY_ASK_GATE_PROBE.model, 1.5, hidden);
-  assert.ok(p > 0 && p < 1);
-  assert.equal(tinyAskGateProbability(TINY_ASK_GATE_PROBE.model, 1.5, null), null, 'a decoder graph without decision_hidden');
-  assert.equal(tinyAskGateProbability(TINY_ASK_GATE_PROBE.model, 1.5, new Float32Array(16)), null, 'a hidden state of the wrong size');
-  assert.equal(tinyAskGateProbability('webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision', 1.5, hidden), null, 'another model');
+test('the screenshot gate probes never fall back to the untrained readout', async () => {
+  const { TINY_ASK_GATE_PROBE, COMPASS_VLD_TINY_ASK_GATE_PROBE, tinyAskGateProbability } = await import('../src/chrome/src/offscreen/tiny-ask-gate-probe.js');
+  const { WEBGPU_BONSAI2_VL_2B_MODEL_ID, WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID } = await import('../src/chrome/src/providers/webgpu.js');
+  assert.equal(TINY_ASK_GATE_PROBE.model, WEBGPU_BONSAI2_VL_2B_MODEL_ID);
+  assert.equal(COMPASS_VLD_TINY_ASK_GATE_PROBE.model, WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID);
+  for (const probe of [TINY_ASK_GATE_PROBE, COMPASS_VLD_TINY_ASK_GATE_PROBE]) {
+    assert.ok(probe.weightsBase64.length > 1000, `${probe.model}: trained weights ship with the extension`);
+    assert.equal(probe.weightsBase64.length, Math.ceil(probe.hiddenSize * 4 / 3) * 4, `${probe.model}: one float32 weight per hidden unit`);
+    const hidden = new Float32Array(probe.hiddenSize).fill(0.01);
+    const p = tinyAskGateProbability(probe.model, 1.5, hidden);
+    assert.ok(p > 0 && p < 1);
+    assert.equal(tinyAskGateProbability(probe.model, 1.5, null), null, 'a decoder graph without decision_hidden');
+    assert.equal(tinyAskGateProbability(probe.model, 1.5, new Float32Array(16)), null, 'a hidden state of the wrong size');
+    assert.equal(tinyAskGateProbability(probe.model, Number.NaN, hidden), null, 'a margin that is not a number');
+  }
+  assert.equal(tinyAskGateProbability('webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision', 1.5, new Float32Array(2048).fill(0.01)), null, 'another model');
   const worker = await readFile(new URL('../src/chrome/src/offscreen/inference-worker.js', import.meta.url), 'utf8');
   assert.match(worker, /probability === null && !\(returnHidden && output\.hidden\)\) \{\n\s*throw new Error\('The screenshot gate needs the updated/,
     'without the probe the worker fails, so tiny Ask stays text-only');
+  const compassVld = worker.slice(worker.indexOf('async function runCompassVldDecision'), worker.indexOf('async function runMultimodalDecision'));
+  assert.match(compassVld, /const probability = tinyAskGateProbability\(modelId, margin, output\.hidden\);\n[\s\S]*?if \(probability === null && !\(returnHidden && output\.hidden\)\) \{\n\s*throw new Error\(`No screenshot gate probe is trained for/,
+    'Compass VLD Tiny v5 uses its own probe the same way');
+  // Page text, the user's message and the questions that spell a special token
+  // (`<|image_pad|>`, `<|im_end|>`) must reach Compass VLD Tiny v5 as text.
+  assert.match(compassVld, /text: `\$\{plain\(variant === 'gate' \? String\(request\.state \|\| ''\) : decisionStateText\(request\.state\)\)\}\\n\\n\$\{DECISION_QUESTION_MARKER\}`/);
+  assert.equal((compassVld.match(/engine\.continuation\(prefix, prefill\.cache, `\$\{plain\(decision(?:Verify|Question)Text\(question(?:, index)?\)\)\}\$\{tailText\}`\)/g) || []).length, 3,
+    'every question continuation is plain text');
+  assert.doesNotMatch(compassVld, /engine\.continuation\(prefix, prefill\.cache, `\$\{decision/);
+  const compassVldText = worker.slice(worker.indexOf('async function runCompassVldText'), worker.indexOf('async function runMultimodalText'));
+  assert.match(compassVldText, /apply_chat_template\(runtime\.compassVld\.plainStrings\(messages\), \{[\s\S]*?tools: tools\.length \? runtime\.compassVld\.plainStrings\(tools\) : undefined,/,
+    'chat messages and tool descriptions are plain text too');
 });

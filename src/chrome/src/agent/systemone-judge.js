@@ -308,7 +308,6 @@ export function createSystemOneJudge({
   if (typeof fetchImpl !== 'function') throw new Error('TypeSafe System One fetch is unavailable.');
   return {
     async evaluate({ apiKey, state, images, questions, signal, beforeRequest, onUsage, config, headers = {}, metadata = {} } = {}) {
-      if (config?.provider === 'webgpu_chat') throw systemOneError('JEV_MODEL_UNAVAILABLE', 'Ternary decision support is disabled after failing validation. Use the active chat model for decisions.');
       const key = normalizeTypesafeApiKey(config?.apiKey ?? apiKey);
       if (!key && !['local', 'compass', 'webgpu_d1', 'webgpu_chat'].includes(config?.provider)) throw new Error('Decision API key is not configured.');
       const model = config?.model || SYSTEM_ONE_MODEL;

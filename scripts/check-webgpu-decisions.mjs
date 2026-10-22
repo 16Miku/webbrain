@@ -1,24 +1,27 @@
 // Hardware eval for on-device decisions through the real extension: the d1
 // decision model (Settings fixture path, d1 worker) and the in-browser chat
-// model's decision readout (Bonsai 2 Vision, offscreen WebGPU worker). Both
-// answer the same labelled questions, so accuracy, calibration and latency
-// are comparable. See docs/webgpu-models.md.
+// models' decision readouts (Compass VLD Tiny v5 or Ternary Bonsai 2 2B
+// Vision, offscreen WebGPU worker). They answer the same labelled questions,
+// so accuracy, calibration and latency are comparable. See
+// docs/webgpu-models.md.
 //
 //   node scripts/check-webgpu-decisions.mjs --test <final_test.json> --images <dir> \
-//     --engines d1,bonsai --profile .build/decisions/profile --download \
+//     --engines d1,compass-vld --profile .build/decisions/profile --download \
 //     --adapter-luid 0,82094 --output .build/decisions/result.json
 //
 // --extension DIR   unpacked extension (default src/chrome). Use a fresh
 //                   --profile per build: a persistent profile keeps the old
 //                   service worker (docs/webgpu-models.md).
-// --engines LIST    d1, bonsai or both (default both)
+// --engines LIST    any of d1, compass-vld (Compass VLD Tiny v5) and bonsai
+//                   (Ternary Bonsai 2 2B Vision); default d1,compass-vld
+// --model ID        another in-browser chat model for a single chat engine
 // --stress          also run long text states with many questions through d1,
 //                   the case where dense attention memory used to grow
 // --limit N         first N test requests only
-// --temperature T   Bonsai readout temperature (default 1)
-// --prompt NAME     Bonsai decision mode: probe (default, what Settings uses),
-//                   readout, strict or verify
-// --decoder-graph F install a replacement decoder graph in the cache first
+// --temperature T   chat-model readout temperature (default 1)
+// --prompt NAME     chat-model decision mode: probe (default, what Settings
+//                   uses), readout, strict or verify
+// --decoder-graph F install a replacement Bonsai decoder graph in the cache first
 // --refresh         download a cached model again first, the Settings path
 //                   that replaces a stale decoder graph by hash
 // --cancel-check    after the run, cancel decisions in the offscreen worker
@@ -36,8 +39,13 @@ const option = (name, fallback) => { const i = args.indexOf(name); return i < 0 
 const extension = path.resolve(option('--extension', path.join(root, 'src/chrome')));
 const profile = path.resolve(option('--profile', '.build/decisions/profile'));
 const output = path.resolve(option('--output', '.build/decisions/result.json'));
-const engines = option('--engines', 'd1,bonsai').split(',');
-const bonsaiModel = option('--model', 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision');
+const engines = option('--engines', 'd1,compass-vld').split(',');
+const CHAT_ENGINES = {
+  'compass-vld': 'webbrain-one/webbrain-compass-vld-tiny-v5-onnx',
+  bonsai: 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision',
+};
+const chatEngines = engines.filter(name => Object.hasOwn(CHAT_ENGINES, name));
+if (option('--model', '') && chatEngines.length !== 1) throw new Error('--model replaces the model of a single chat engine');
 const test = JSON.parse(await fs.readFile(option('--test'), 'utf8'));
 const requests = test.requests.slice(0, Number(option('--limit', test.requests.length)));
 const imageDir = option('--images');
@@ -135,34 +143,36 @@ try {
     await control('reset');
   }
 
-  if (engines.includes('bonsai')) {
-    const preset = (await import('../src/chrome/src/providers/webgpu.js')).webgpuModelPreset(bonsaiModel);
-    await message('update_provider', { providerId: 'webgpu', config: { model: bonsaiModel, dtype: preset.dtype } });
-    let status = await message('get_webgpu_download_status', { model: bonsaiModel });
+  for (const engine of chatEngines) {
+    const chatModel = option('--model', CHAT_ENGINES[engine]);
+    const webgpu = await import('../src/chrome/src/providers/webgpu.js');
+    const preset = webgpu.webgpuModelPreset(chatModel);
+    await message('update_provider', { providerId: 'webgpu', config: { model: chatModel, dtype: preset.dtype } });
+    let status = await message('get_webgpu_download_status', { model: chatModel });
     if (!status?.ready) {
-      if (!args.includes('--download')) throw new Error(`${bonsaiModel} is not cached in this profile; rerun with --download`);
-      await message('start_webgpu_download', { model: bonsaiModel });
+      if (!args.includes('--download')) throw new Error(`${chatModel} is not cached in this profile; rerun with --download`);
+      await message('start_webgpu_download', { model: chatModel });
       const started = Date.now();
       while (!status?.ready) {
         await sleep(5000);
-        status = await message('get_webgpu_download_status', { model: bonsaiModel });
+        status = await message('get_webgpu_download_status', { model: chatModel });
         if (status?.error) throw new Error(`Download failed: ${status.error}`);
         if (Date.now() - started > 60 * 60_000) throw new Error('Download did not finish within an hour');
       }
     }
     if (status?.ready && args.includes('--refresh')) {
       const started = Date.now();
-      const refreshed = await message('start_webgpu_download', { model: bonsaiModel });
+      const refreshed = await message('start_webgpu_download', { model: chatModel });
       if (!refreshed || refreshed.error || refreshed.success === false) throw new Error(`Refresh failed: ${refreshed?.error}`);
       do {
         await sleep(2000);
-        status = await message('get_webgpu_download_status', { model: bonsaiModel });
+        status = await message('get_webgpu_download_status', { model: chatModel });
         if (status?.error) throw new Error(`Refresh failed: ${status.error}`);
         if (Date.now() - started > 10 * 60_000) throw new Error('Refresh did not finish within ten minutes');
       } while (!status?.ready || status?.status === 'downloading');
       result.refreshSeconds = (Date.now() - started) / 1000;
     }
-    const graphFile = option('--decoder-graph', '');
+    const graphFile = engine === 'bonsai' ? option('--decoder-graph', '') : '';
     if (graphFile) {
       // Replace the cached decoder graph (same external weights) before the
       // worker first loads the model, e.g. one that exposes decision_hidden.
@@ -171,26 +181,26 @@ try {
         const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0));
         const cache = await caches.open('transformers-cache');
         await cache.put(url, new Response(bytes, { headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.length) } }));
-      }, { url: `https://huggingface.co/${bonsaiModel}/resolve/main/onnx/decoder_model_merged_q2f16.onnx`, data });
+      }, { url: `https://huggingface.co/${chatModel}/resolve/main/onnx/decoder_model_merged_q2f16.onnx`, data });
       result.decoderGraph = graphFile;
     }
-    result.cachedDecoderGraphSha256 = await harness.evaluate(async url => {
+    if (engine === 'bonsai') result.cachedDecoderGraphSha256 = await harness.evaluate(async url => {
       const cached = await (await caches.open('transformers-cache')).match(url);
       if (!cached) return null;
       const digest = await crypto.subtle.digest('SHA-256', await cached.arrayBuffer());
       return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
-    }, `https://huggingface.co/${bonsaiModel}/resolve/main/onnx/decoder_model_merged_q2f16.onnx`);
-    console.log('cached decoder graph', result.cachedDecoderGraphSha256);
+    }, `https://huggingface.co/${chatModel}/resolve/main/onnx/decoder_model_merged_q2f16.onnx`);
+    if (engine === 'bonsai') console.log('cached decoder graph', result.cachedDecoderGraphSha256);
     const temperature = Number(option('--temperature', 1));
     const promptVariant = option('--prompt', 'probe');
     const returnHidden = args.includes('--return-hidden');
-    await run('bonsai', fixture => message('webgpu_decide_fixture', { fixture: { ...fixture, temperature, promptVariant, returnHidden } }));
+    await run(engine, fixture => message('webgpu_decide_fixture', { fixture: { ...fixture, temperature, promptVariant, returnHidden } }));
     if (args.includes('--cancel-check')) {
       // Cancellation in the offscreen host and worker: a decision cancelled
       // while it runs should end early and free the queue for the next one.
       const request = requests.at(-1);
-      const base = { model: bonsaiModel, runtime: 'onnx-vl', device: 'webgpu', dtype: preset.dtype, state: request.state, images: await Promise.all(request.images.map(dataUrl)), questions: questionsOf(request), promptVariant };
-      result.engines.bonsai.cancelCheck = await harness.evaluate(async ({ base, delayMs }) => {
+      const base = { model: chatModel, runtime: 'onnx-vl', device: 'webgpu', dtype: preset.dtype, state: request.state, images: await Promise.all(request.images.map(dataUrl)), questions: questionsOf(request), promptVariant };
+      result.engines[engine].cancelCheck = await harness.evaluate(async ({ base, delayMs }) => {
         const send = message => new Promise(resolve => chrome.runtime.sendMessage(message, resolve));
         const timed = async run => { const started = performance.now(); const reply = await run(); return { ok: reply?.ok !== false && !reply?.error, error: reply?.error || null, ms: Math.round(performance.now() - started) }; };
         const full = await timed(() => send({ ...base, type: 'webgpu-decide', decisionId: 'cancel-check-full' }));
@@ -205,14 +215,14 @@ try {
         const early = await timed(() => send({ ...base, type: 'webgpu-decide', decisionId: 'cancel-check-early' }));
         return { delayMs, full, cancelled, next, early };
       }, { base, delayMs: 300 });
-      console.log('cancel check', JSON.stringify(result.engines.bonsai.cancelCheck));
+      console.log('cancel check', JSON.stringify(result.engines[engine].cancelCheck));
     }
-    if (promptVariant === 'probe') {
+    if (promptVariant === 'probe' && chatModel === webgpu.WEBGPU_DECISION_MODEL_ID) {
       // The decision provider path Settings uses: judge -> provider -> worker.
       const started = Date.now();
-      const tested = await message('test_system_one', { settings: { decisionProvider: 'webgpu_chat', systemOneEnabled: true, decisionVisionMode: 'on' } });
-      result.engines.bonsai.settingsTest = { ...tested, seconds: (Date.now() - started) / 1000 };
-      console.log('settings test', JSON.stringify(result.engines.bonsai.settingsTest));
+      const tested = await message('test_system_one', { settings: { decisionMode: 'on', decisionProvider: 'webgpu_chat', systemOneEnabled: true, decisionVisionMode: 'on' } });
+      result.engines[engine].settingsTest = { ...tested, seconds: (Date.now() - started) / 1000 };
+      console.log('settings test', JSON.stringify(result.engines[engine].settingsTest));
     }
   }
 } catch (error) {

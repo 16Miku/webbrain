@@ -5,6 +5,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID, webgpuModelDtype } from '../src/chrome/src/providers/webgpu.js';
 
 // Runs the packaged production inference worker on hardware WebGPU. Local repo
 // mappings serve unpublished artifacts without changing model code or metadata.
@@ -36,9 +37,12 @@ const model = option('--model', 'danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU');
 const vision = args.includes('--vision');
 const ocr = args.includes('--ocr');
 assert(!ocr || vision, '--ocr requires --vision');
-const dtype = vision
-  ? { embed_tokens: 'q2f16', vision_encoder: 'fp16', decoder_model_merged: 'q2f16' }
-  : 'q2f16';
+// Compass VLD Tiny v5 runs with its preset's dtype; the Bonsai exports with Q2.
+const dtype = model === WEBGPU_COMPASS_VLD_TINY_V5_MODEL_ID
+  ? webgpuModelDtype(model)
+  : vision
+    ? { embed_tokens: 'q2f16', vision_encoder: 'fp16', decoder_model_merged: 'q2f16' }
+    : 'q2f16';
 const localRepos = {};
 for (let index = 0; index < args.length; index++) {
   if (args[index] !== '--local-repo') continue;

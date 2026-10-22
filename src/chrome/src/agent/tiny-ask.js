@@ -47,12 +47,13 @@ export const TINY_ASK_BACKGROUND_PAGE_MAX_CHARS = 3000;
 // up to this cap so the excerpt can come from anywhere in the document.
 export const TINY_ASK_READ_WINDOW_CHARS = 6000;
 export const TINY_ASK_READ_MAX_CHARS = 60000;
-// In-browser models that read images (Ternary Bonsai 2 2B Vision) can also be
-// shown the visible part of the page. Whether a question needs it is decided
-// by the model itself, so it works in any language: before the answer, one
-// Yes/No readout through WebGPUProvider.decide (no text generated) gives a
-// logit margin and the decoder's hidden state, which a small trained probe
-// scores (src/chrome/src/offscreen/tiny-ask-gate-probe.js). The readout sees
+// In-browser models that read images (Compass VLD Tiny v5, Ternary Bonsai 2 2B
+// Vision) can also be shown the visible part of the page. Whether a question
+// needs it is decided by the model itself, so it works in any language: before
+// the answer, one Yes/No readout through WebGPUProvider.decide (no text
+// generated) gives a logit margin and the decoder's hidden state, which a
+// small trained probe scores (src/chrome/src/offscreen/tiny-ask-gate-probe.js,
+// one probe per model; without one the turn stays text-only). The readout sees
 // only the user's message and facts WebBrain knows (how much page text there
 // is, an attached image, a linked page), never page content, so a page cannot
 // steer the decision.
