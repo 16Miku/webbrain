@@ -119,16 +119,29 @@ func (a *App) guardClient(c *gin.Context) {
 		deny(c, msgNetwork)
 		return
 	}
-	key := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	if key == "" {
-		key = r.Header.Get("X-Api-Key")
-	}
+	key := clientAPIKey(r)
 	want := a.Store.Get().APIKey
 	if key == "" || subtle.ConstantTimeCompare([]byte(key), []byte(want)) != 1 {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid API key"})
 		return
 	}
 	c.Next()
+}
+
+// Match the key forms accepted by the proxy's model endpoints.
+func clientAPIKey(r *http.Request) string {
+	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
+		if scheme, value, ok := strings.Cut(auth, " "); ok && strings.EqualFold(scheme, "Bearer") {
+			return strings.TrimSpace(value)
+		}
+		return auth
+	}
+	for _, key := range []string{r.Header.Get("X-Api-Key"), r.Header.Get("X-Goog-Api-Key"), r.URL.Query().Get("key"), r.URL.Query().Get("auth_token")} {
+		if key != "" {
+			return key
+		}
+	}
+	return ""
 }
 
 func fail(c *gin.Context, status int, err error) {

@@ -133,10 +133,41 @@ func fileOK(path string, size int64) bool {
 	return err == nil && !st.IsDir() && (size <= 0 || st.Size() == size)
 }
 
+func runtimeManifest(p Plan) (string, bool) {
+	var hashes []string
+	for _, asset := range p.Assets {
+		sha := llamaAssetSHA[asset]
+		if sha == "" {
+			return "", false
+		}
+		hashes = append(hashes, asset+" "+sha)
+	}
+	return llamaTag + "\n" + strings.Join(hashes, "\n") + "\n", len(hashes) > 0
+}
+
+func runtimeInstalled(p Plan) bool {
+	want, ok := runtimeManifest(p)
+	if !ok {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(runtimeDir(p), ".installed"))
+	return err == nil && string(data) == want
+}
+
+func uvInstalled(arch string) bool {
+	asset := uvAsset(arch)
+	pinned, ok := uvAssets[asset]
+	if !ok || !fileOK(filepath.Join(uvDir(), "uv"), 0) {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(uvDir(), ".installed"))
+	return err == nil && string(data) == asset+" "+pinned.SHA256+"\n"
+}
+
 func (m *Manager) ggufInstalled(p Plan) bool {
 	return m.verified.Valid(filepath.Join(ggufDir(), gguf.Model.Name), gguf.Model.Size, gguf.Model.SHA256) &&
 		m.verified.Valid(filepath.Join(ggufDir(), gguf.Proj.Name), gguf.Proj.Size, gguf.Proj.SHA256) &&
-		fileOK(filepath.Join(runtimeDir(p), ".installed"), 0)
+		runtimeInstalled(p)
 }
 
 func (m *Manager) mlxInstalled() bool {
@@ -192,7 +223,7 @@ func (m *Manager) Status() Status {
 	if format == "gguf" {
 		st.DownloadBytes = m.remaining(filepath.Join(ggufDir(), gguf.Model.Name), gguf.Model.Size, gguf.Model.SHA256) +
 			m.remaining(filepath.Join(ggufDir(), gguf.Proj.Name), gguf.Proj.Size, gguf.Proj.SHA256)
-		if !fileOK(filepath.Join(runtimeDir(plan), ".installed"), 0) {
+		if !runtimeInstalled(plan) {
 			for _, a := range plan.Assets {
 				st.DownloadBytes += llamaAssetSizes[a]
 			}
@@ -264,7 +295,9 @@ func (m *Manager) Install(format string) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
+	m.phase, m.step, m.err, m.progress = PhaseDownloading, "Preparing the local model", "", nil
 	m.mu.Unlock()
+	m.changed()
 	_, _ = m.store.Update(func(s *settings.Settings) { s.Local.Format = format })
 
 	go func() {
@@ -282,6 +315,10 @@ func (m *Manager) Install(format string) error {
 			}
 			logx.Printf("local model install failed: %v", err)
 			m.setPhase(PhaseError, "", err)
+			return
+		}
+		if err := ctx.Err(); err != nil {
+			m.setPhase(PhaseIdle, "", nil)
 			return
 		}
 		_, _ = m.store.Update(func(s *settings.Settings) { s.Local.AutoStart = true })
@@ -344,10 +381,14 @@ func (m *Manager) installGGUF(ctx context.Context, info sysinfo.Info) error {
 		{"Bonsai 2 27B weights (PTQ1_0)", hfURL(gguf.Repo, gguf.Rev, gguf.Model.Name), filepath.Join(ggufDir(), gguf.Model.Name), gguf.Model.Size, gguf.Model.SHA256},
 		{"Vision projector (mmproj Q8_0)", hfURL(gguf.Repo, gguf.Rev, gguf.Proj.Name), filepath.Join(ggufDir(), gguf.Proj.Name), gguf.Proj.Size, gguf.Proj.SHA256},
 	}
-	runtimeReady := fileOK(filepath.Join(rdir, ".installed"), 0)
+	runtimeReady := runtimeInstalled(plan)
 	if !runtimeReady {
 		for _, a := range plan.Assets {
-			items = append(items, item{"llama.cpp runtime (" + strings.Join(assetKeys([]string{a}), "") + ")", llamaURL(a), filepath.Join(dl, a), llamaAssetSizes[a], ""})
+			sha := llamaAssetSHA[a]
+			if sha == "" {
+				return fmt.Errorf("no pinned SHA-256 for llama.cpp runtime %s", a)
+			}
+			items = append(items, item{"llama.cpp runtime (" + strings.Join(assetKeys([]string{a}), "") + ")", llamaURL(a), filepath.Join(dl, a), llamaAssetSizes[a], sha})
 		}
 	}
 	if err := m.fetchAll(ctx, items); err != nil {
@@ -355,7 +396,9 @@ func (m *Manager) installGGUF(ctx context.Context, info sysinfo.Info) error {
 	}
 	if !runtimeReady {
 		m.setPhase(PhaseInstalling, "Unpacking llama.cpp runtime", nil)
-		_ = os.RemoveAll(rdir)
+		if err := os.RemoveAll(rdir); err != nil {
+			return fmt.Errorf("replace llama.cpp runtime: %w", err)
+		}
 		for _, a := range plan.Assets {
 			src := filepath.Join(dl, a)
 			if err := download.Extract(src, rdir, download.CommonPrefixDepth(src)); err != nil {
@@ -368,7 +411,11 @@ func (m *Manager) installGGUF(ctx context.Context, info sysinfo.Info) error {
 		if findBinary(rdir, "llama-server") == "" {
 			return errors.New("llama-server not found in the runtime archive")
 		}
-		if err := os.WriteFile(filepath.Join(rdir, ".installed"), []byte(llamaTag+"\n"), 0o644); err != nil {
+		manifest, ok := runtimeManifest(plan)
+		if !ok {
+			return errors.New("missing pinned llama.cpp runtime checksum")
+		}
+		if err := os.WriteFile(filepath.Join(rdir, ".installed"), []byte(manifest), 0o644); err != nil {
 			return err
 		}
 		for _, a := range plan.Assets {
@@ -388,19 +435,35 @@ func (m *Manager) installMLX(ctx context.Context, info sysinfo.Info) error {
 		items = append(items, item{label, hfURL(mlxPack.Repo, mlxPack.Rev, f.Name), filepath.Join(mlxDir(), filepath.FromSlash(f.Name)), f.Size, f.SHA256})
 	}
 	uvBin := filepath.Join(uvDir(), "uv")
-	if !fileOK(uvBin, 0) {
-		items = append(items, item{"uv (Python manager)", uvURL(info.Arch), filepath.Join(paths.Runtimes(), "_downloads", uvAsset(info.Arch)), 0, ""})
+	needUV := !uvInstalled(info.Arch)
+	if needUV {
+		asset := uvAsset(info.Arch)
+		pinned, ok := uvAssets[asset]
+		if !ok {
+			return fmt.Errorf("no pinned SHA-256 for uv runtime %s", asset)
+		}
+		items = append(items, item{"uv (Python manager)", uvURL(info.Arch), filepath.Join(paths.Runtimes(), "_downloads", asset), pinned.Size, pinned.SHA256})
 	}
 	if err := m.fetchAll(ctx, items); err != nil {
 		return err
 	}
-	if !fileOK(uvBin, 0) {
+	if needUV {
 		src := filepath.Join(paths.Runtimes(), "_downloads", uvAsset(info.Arch))
+		if err := os.RemoveAll(uvDir()); err != nil {
+			return fmt.Errorf("replace uv runtime: %w", err)
+		}
 		if err := download.Extract(src, uvDir(), download.CommonPrefixDepth(src)); err != nil {
 			return fmt.Errorf("unpack uv: %w", err)
 		}
-		_ = os.Remove(src)
+		if !fileOK(uvBin, 0) {
+			return errors.New("uv binary missing from the archive")
+		}
 		trustMacBinaries(uvDir())
+		asset := uvAsset(info.Arch)
+		if err := os.WriteFile(filepath.Join(uvDir(), ".installed"), []byte(asset+" "+uvAssets[asset].SHA256+"\n"), 0o600); err != nil {
+			return err
+		}
+		_ = os.Remove(src)
 	}
 	if fileOK(filepath.Join(mlxVenv(), ".installed"), 0) {
 		return nil

@@ -105,6 +105,31 @@ var llamaAssetSizes = map[string]int64{
 	"llama-" + llamaTag + "-bin-win-cpu-arm64.zip":          12412126,
 }
 
+// SHA-256 digests published with the pinned PrismML release assets.
+var llamaAssetSHA = map[string]string{
+	"llama-" + llamaTag + "-bin-macos-arm64.tar.gz":         "59230b0d3e90715095a3f1b9a42bb6723308e7cf3d2d3ef562f49213e95fcfc1",
+	"llama-" + llamaTag + "-bin-macos-x64.tar.gz":           "f7ade10b7367b9bc6c22f4890cf2b26702a40a1f4cd36dcdeca50663e4f0eff4",
+	"llama-" + llamaTag + "-bin-linux-cuda-12.4-x64.tar.gz": "a7003184559fc946a0109734a9de8a1d53d5a6b33e308bec381a293b912f7093",
+	"llama-" + llamaTag + "-bin-linux-cuda-12.8-x64.tar.gz": "f61ac818da2c8cddc47d75c955b6f5bf821738138760842dd50413c5181cdfe1",
+	"llama-" + llamaTag + "-bin-linux-cuda-13.3-x64.tar.gz": "e2d492f50d70f3e01b4b3ae68f670ae6825870d97206fb1bcb5b4376640c0e0c",
+	"llama-" + llamaTag + "-bin-ubuntu-vulkan-x64.tar.gz":   "4401c665506927f5c2ad44c4e2e139715de5bd5e92b693a0a1f515b9442af9bb",
+	"llama-" + llamaTag + "-bin-ubuntu-vulkan-arm64.tar.gz": "e7870fa961cb4344e601ad385dfd8fb141a827536963d64e4ee01e0e80dc99bc",
+	"llama-" + llamaTag + "-bin-ubuntu-x64.tar.gz":          "bff69881bdb2b09dcbf5e99a1cb532b2a6821c6dc42d33ac53b2fa2cd3e6f214",
+	"llama-" + llamaTag + "-bin-ubuntu-arm64.tar.gz":        "50171efa3706c4765e1948ccab840f7add207d9044c0978f9248c54054a01207",
+	"llama-" + llamaTag + "-bin-win-cuda-12.4-x64.zip":      "64ca6810aae0e6bbb28d22f888bd009b9bdd0c24c5af8a6a7490b3eaf75ccd57",
+	"llama-" + llamaTag + "-bin-win-cuda-13.3-x64.zip":      "20c45aecad3f4ede81c64ababc03f1dc10103fbd4cfb09244a16d21a3dd1db65",
+	"cudart-llama-bin-win-cuda-12.4-x64.zip":                "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+	"cudart-llama-bin-win-cuda-13.3-x64.zip":                "1462a050eb4c684921ba51dcc4cc488a036674c3e73e9945ee705b854808d03e",
+	"llama-" + llamaTag + "-bin-win-vulkan-x64.zip":         "16d9482224e53d462eb210a766c8d94f0461cdca4d1c7263b2ba7b97092bf739",
+	"llama-" + llamaTag + "-bin-win-cpu-x64.zip":            "ab1ea7cfc23fdac244088fd6f1762d0efa24d3d79fe18d4f16c496cc00775728",
+	"llama-" + llamaTag + "-bin-win-cpu-arm64.zip":          "cc808b33d35c72a3bd5c69a0d609d422426feb9dce23868e77992b6c33b8ddb3",
+}
+
+var uvAssets = map[string]File{
+	"uv-aarch64-apple-darwin.tar.gz": {Size: 14309841, SHA256: "bf1e4fb6f5f5079a2902ad3f3a9e2d337575b226a1378f2449d8404353650608"},
+	"uv-x86_64-apple-darwin.tar.gz":  {Size: 17182824, SHA256: "5c35634957db7ebd9c2e4cc6c66b8979fb2c26a6b0dbd1d214d6acbac4033a89"},
+}
+
 func uvAsset(arch string) string {
 	if arch == "arm64" {
 		return "uv-aarch64-apple-darwin.tar.gz"

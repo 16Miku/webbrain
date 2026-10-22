@@ -7,7 +7,28 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/esokullu/webbrain-systray/internal/settings"
 )
+
+func TestInstallClaimsPhaseBeforeWorkerStarts(t *testing.T) {
+	if _, ok := ortForPlatform(); !ok {
+		t.Skip("no runtime archive for this platform")
+	}
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, nil)
+	if err := m.Install(); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Cancel()
+	if err := m.Install(); err == nil {
+		t.Fatal("overlapping install was accepted")
+	}
+}
 
 func TestValidFileRejectsSameSizeCorruption(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "model.data")

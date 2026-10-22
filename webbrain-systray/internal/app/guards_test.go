@@ -121,3 +121,44 @@ func TestAccessMiddleware(t *testing.T) {
 		})
 	}
 }
+
+func TestDecisionEndpointAcceptsProxyKeyForms(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Update(func(s *settings.Settings) { s.Network = true; s.APIKey = "wb-user" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{Store: store}
+	e := gin.New()
+	e.POST("/companion/v1/decide", a.guardClient, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	cases := []struct {
+		name, url, header, value string
+		want                     int
+	}{
+		{"bearer", "/companion/v1/decide", "Authorization", "Bearer wb-user", http.StatusNoContent},
+		{"x-api-key", "/companion/v1/decide", "X-Api-Key", "wb-user", http.StatusNoContent},
+		{"x-goog-api-key", "/companion/v1/decide", "X-Goog-Api-Key", "wb-user", http.StatusNoContent},
+		{"query-key", "/companion/v1/decide?key=wb-user", "", "", http.StatusNoContent},
+		{"query-auth-token", "/companion/v1/decide?auth_token=wb-user", "", "", http.StatusNoContent},
+		{"wrong-key", "/companion/v1/decide?key=bad", "", "", http.StatusUnauthorized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "http://192.168.1.57:8327"+tc.url, nil)
+			r.RemoteAddr = "192.168.1.20:50000"
+			if tc.header != "" {
+				r.Header.Set(tc.header, tc.value)
+			}
+			w := httptest.NewRecorder()
+			e.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("status %d, want %d (%s)", w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}

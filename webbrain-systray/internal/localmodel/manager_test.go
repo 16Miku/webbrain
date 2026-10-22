@@ -53,6 +53,64 @@ func TestStartClaimPreventsOverlappingLaunches(t *testing.T) {
 	}
 }
 
+func TestInstallClaimsPhaseBeforeWorkerStarts(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, func([]core.LocalUpstream) error { return nil }, nil)
+	if err := m.Install("gguf"); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Cancel()
+	if err := m.Install("gguf"); err == nil {
+		t.Fatal("overlapping install was accepted")
+	}
+}
+
+func TestRuntimeArchivesHavePinnedChecksums(t *testing.T) {
+	for asset, size := range llamaAssetSizes {
+		if size <= 0 || len(llamaAssetSHA[asset]) != 64 {
+			t.Errorf("llama runtime %s has no valid size and SHA-256", asset)
+		}
+	}
+	for _, asset := range []string{uvAsset("arm64"), uvAsset("amd64")} {
+		pinned, ok := uvAssets[asset]
+		if !ok || pinned.Size <= 0 || len(pinned.SHA256) != 64 {
+			t.Errorf("uv runtime %s has no valid size and SHA-256", asset)
+		}
+	}
+}
+
+func TestRuntimeRejectsLegacyUnverifiedMarker(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	plan := Plan{Assets: []string{"llama-" + llamaTag + "-bin-win-cpu-x64.zip"}}
+	if err := os.MkdirAll(runtimeDir(plan), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(runtimeDir(plan), ".installed")
+	if err := os.WriteFile(marker, []byte(llamaTag+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeInstalled(plan) {
+		t.Fatal("legacy runtime marker bypassed pinned archive verification")
+	}
+}
+
+func TestUVRejectsUnverifiedInstall(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	if err := os.MkdirAll(uvDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(uvDir(), "uv"), []byte("old uv"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if uvInstalled("arm64") {
+		t.Fatal("uv without a pinned archive marker was accepted")
+	}
+}
+
 func TestGGUFInstalledRejectsSameSizeCorruption(t *testing.T) {
 	t.Setenv("WBC_HOME", t.TempDir())
 	previous := gguf
@@ -75,11 +133,15 @@ func TestGGUFInstalledRejectsSameSizeCorruption(t *testing.T) {
 	if err := os.WriteFile(projectorPath, projector, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	plan := Plan{Assets: []string{"llama-test.tar.gz"}}
+	plan := Plan{Assets: []string{"llama-" + llamaTag + "-bin-win-cpu-x64.zip"}}
 	if err := os.MkdirAll(runtimeDir(plan), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(runtimeDir(plan), ".installed"), []byte("ready"), 0o600); err != nil {
+	manifest, ok := runtimeManifest(plan)
+	if !ok {
+		t.Fatal("test runtime has no pinned checksum")
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir(plan), ".installed"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m := NewManager(nil, nil, nil)

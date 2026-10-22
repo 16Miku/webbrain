@@ -276,7 +276,9 @@ func (m *Manager) Install() error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
+	m.phase, m.step, m.err, m.progress = PhaseDownloading, "Preparing the decision model", "", nil
 	m.mu.Unlock()
+	m.changed()
 	go func() {
 		defer cancel()
 		if err := m.install(ctx, asset); err != nil {
@@ -286,6 +288,10 @@ func (m *Manager) Install() error {
 			}
 			logx.Printf("decision model install: %v", err)
 			m.set(PhaseError, "", err)
+			return
+		}
+		if err := ctx.Err(); err != nil {
+			m.set(PhaseIdle, "", nil)
 			return
 		}
 		_, _ = m.store.Update(func(s *settings.Settings) { s.Decision.Enabled = true })
