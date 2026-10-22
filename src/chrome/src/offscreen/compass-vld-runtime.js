@@ -87,18 +87,48 @@ export function compassVldFileUrl(modelId, path, revision = COMPASS_VLD_REVISION
   return `https://huggingface.co/${modelId}/resolve/${encodeURIComponent(revision)}/${path}`;
 }
 
+/**
+ * The Cache Storage key of the entry that records a file passed its SHA-256
+ * check, beside the file under the same revision (so removing the model or
+ * an earlier revision removes it too). Its body is the hash the file matched.
+ * A file's own headers are written before its body arrives, so they cannot
+ * say whether it was checked: a worker that stops between storing a file and
+ * checking it leaves the file unchecked.
+ */
+export function compassVldVerifiedUrl(modelId, path, revision = COMPASS_VLD_REVISION) {
+  return `${compassVldFileUrl(modelId, path, revision)}?webbrain-verified`;
+}
+
 async function sha256Hex(buffer) {
   const digest = await crypto.subtle.digest('SHA-256', buffer);
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-/** Whether every file is in the cache at its pinned size (no hashing). */
+async function fileVerified(cache, modelId, file) {
+  const [stored, verified] = await Promise.all([
+    cache.match(compassVldFileUrl(modelId, file.path)),
+    cache.match(compassVldVerifiedUrl(modelId, file.path)),
+  ]);
+  return !!stored && !!verified && await verified.text() === file.sha256;
+}
+
+/** Whether every file is in the cache and passed its SHA-256 check (no hashing). */
 export async function compassVldFilesCached(cache, modelId, dtype = COMPASS_VLD_DTYPE, files = compassVldFiles(dtype)) {
   for (const file of files) {
-    const response = await cache.match(compassVldFileUrl(modelId, file.path));
-    if (!response || Number(response.headers.get('content-length')) !== file.bytes) return false;
+    if (!await fileVerified(cache, modelId, file)) return false;
   }
   return true;
+}
+
+// Whether the file stored at `url` has its pinned size and SHA-256; one that
+// does not is removed.
+async function storedFileMatches(cache, url, file) {
+  const stored = await cache.match(url);
+  if (!stored) return false;
+  const bytes = await stored.arrayBuffer();
+  if (bytes.byteLength === file.bytes && await sha256Hex(bytes) === file.sha256) return true;
+  await cache.delete(url);
+  return false;
 }
 
 // A dropped connection or a server error fails a file's transfer; it is tried
@@ -113,7 +143,9 @@ const transient = error => error?.name !== 'AbortError' && (error instanceof Typ
  * Fetch the missing files into `cache`, one at a time. A file is stored only
  * once its whole body arrived (Cache.put is atomic), then read back and
  * checked against its pinned SHA-256; a mismatch removes it and fails the
- * download. `onProgress` gets Transformers.js-shaped events.
+ * download, and a match is recorded (compassVldVerifiedUrl). A file an earlier
+ * download stored but never checked is checked now instead of fetched again.
+ * `onProgress` gets Transformers.js-shaped events.
  */
 export async function downloadCompassVld({
   cache, fetchImpl, modelId, dtype = COMPASS_VLD_DTYPE, files = compassVldFiles(dtype), onProgress = () => {}, isCancelled = () => false,
@@ -125,30 +157,32 @@ export async function downloadCompassVld({
   for (const file of files) {
     if (isCancelled()) throw cancelledError();
     const url = compassVldFileUrl(modelId, file.path);
-    const cached = await cache.match(url);
-    if (cached && Number(cached.headers.get('content-length')) === file.bytes) {
+    const verifiedUrl = compassVldVerifiedUrl(modelId, file.path);
+    if (await fileVerified(cache, modelId, file)) {
       onProgress({ status: 'done', file: file.path, loaded: file.bytes, total: file.bytes });
       continue;
     }
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        await fetchIntoCache(cache, fetchImpl, url, file, onProgress);
-        break;
-      } catch (error) {
-        if (isCancelled()) throw cancelledError();
-        if (!transient(error) || attempt >= NETWORK_RETRIES) throw error;
-        await cache.delete(url).catch(() => {});
-        onProgress({ status: 'progress', file: file.path, loaded: 0, total: file.bytes });
-        await sleep(RETRY_DELAY_MS * (attempt + 1));
-        if (isCancelled()) throw cancelledError();
+    // Whatever is stored now has not been checked.
+    await cache.delete(verifiedUrl);
+    if (!await storedFileMatches(cache, url, file)) {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          await fetchIntoCache(cache, fetchImpl, url, file, onProgress);
+          break;
+        } catch (error) {
+          if (isCancelled()) throw cancelledError();
+          if (!transient(error) || attempt >= NETWORK_RETRIES) throw error;
+          await cache.delete(url).catch(() => {});
+          onProgress({ status: 'progress', file: file.path, loaded: 0, total: file.bytes });
+          await sleep(RETRY_DELAY_MS * (attempt + 1));
+          if (isCancelled()) throw cancelledError();
+        }
+      }
+      if (!await storedFileMatches(cache, url, file)) {
+        throw new Error(`${file.path} failed its integrity check; download the model again.`);
       }
     }
-    const stored = await cache.match(url);
-    const bytes = stored ? await stored.arrayBuffer() : null;
-    if (!bytes || bytes.byteLength !== file.bytes || await sha256Hex(bytes) !== file.sha256) {
-      await cache.delete(url);
-      throw new Error(`${file.path} failed its integrity check; download the model again.`);
-    }
+    await cache.put(verifiedUrl, new Response(file.sha256, { headers: { 'content-type': 'text/plain' } }));
     onProgress({ status: 'done', file: file.path, loaded: file.bytes, total: file.bytes });
   }
   await removeOtherCompassVldRevisions(cache, modelId);
@@ -181,8 +215,10 @@ async function fetchIntoCache(cache, fetchImpl, url, file, onProgress) {
       controller.enqueue(chunk);
     },
   });
+  // No content-length: the pinned size is not yet known to be the stored one,
+  // and nothing reads a file's size from its headers.
   await cache.put(url, new Response(response.body.pipeThrough(counter), {
-    headers: { 'content-type': 'application/octet-stream', 'content-length': String(file.bytes) },
+    headers: { 'content-type': 'application/octet-stream' },
   }));
 }
 

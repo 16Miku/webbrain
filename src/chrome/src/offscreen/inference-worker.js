@@ -661,8 +661,9 @@ async function isTextModelReady(modelId, dtype) {
     const marker = await cache.match(textReadyMarkerUrl(modelId, dtype));
     if (!marker) return false;
     // The marker does not name Compass VLD Tiny v5's pinned revision. When its
-    // files are not all cached (a newer pin), drop the marker so the model
-    // reads as not downloaded and Download fetches the missing files.
+    // files are not all cached and checked (a newer pin, or a file stored but
+    // never checked), drop the marker so the model reads as not downloaded and
+    // Download fetches or checks them.
     if (isCompassVldModel(modelId) && !await compassVldFilesCached(cache, modelId, dtype)) {
       await cache.delete(textReadyMarkerUrl(modelId, dtype));
       return false;

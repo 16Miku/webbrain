@@ -201,11 +201,16 @@ Ask) and decisions. Its training data and evaluations are on the model card.
 - **Download.** Files are read at a pinned commit (`COMPASS_VLD_REVISION`),
   one at a time. Each is stored only once it arrived whole and is then
   checked against its pinned size and SHA-256; a mismatch removes it and
-  fails the download. A dropped connection or a server error retries that
-  file twice. Inference reads only the cache. The ready marker does not name
-  the revision, so readiness also checks that every pinned file is cached;
-  after a new pin the model reads as not downloaded until Download fetches
-  the new files, and a finished download removes the earlier revision's.
+  fails the download, and a match is recorded in a small entry beside the
+  file (`compassVldVerifiedUrl`). A file's own headers are written before its
+  body arrives, so only that record says it was checked: a file stored by a
+  download that stopped before its check is checked by the next Download
+  instead of being trusted or fetched again. A dropped connection or a server
+  error retries that file twice. Inference reads only the cache. The ready
+  marker does not name the revision, so readiness also checks that every
+  pinned file is cached and recorded as checked; after a new pin the model
+  reads as not downloaded until Download fetches the new files, and a
+  finished download removes the earlier revision's.
 - **Checks on the published files** (RTX 5090, Chromium through Playwright):
   - `audit_webgpu_onnx.py` passes for every graph: no `Scan` or `Loop`, and
     decoder logits of shape `[batch, 1, 248094]`.

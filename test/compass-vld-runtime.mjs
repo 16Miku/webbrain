@@ -80,14 +80,16 @@ test('the tokenizer is built from the cached files alone: the class AutoTokenize
   }
 });
 
-// Cache Storage and fetch, enough for the download path.
+// Cache Storage and fetch, enough for the download path. Like Cache Storage,
+// an entry keeps the headers it was stored with, whatever its body holds.
 function memoryCache() {
   const entries = new Map();
+  const headers = new Map();
   return {
     entries,
-    async match(url) { const bytes = entries.get(url); return bytes ? new Response(bytes, { headers: { 'content-length': String(bytes.byteLength) } }) : undefined; },
-    async put(url, response) { entries.set(url, new Uint8Array(await response.arrayBuffer())); },
-    async delete(key) { return entries.delete(typeof key === 'string' ? key : key.url); },
+    async match(url) { const bytes = entries.get(url); return bytes ? new Response(bytes, { headers: headers.get(url) || {} }) : undefined; },
+    async put(url, response) { entries.set(url, new Uint8Array(await response.arrayBuffer())); headers.set(url, [...response.headers]); },
+    async delete(key) { const url = typeof key === 'string' ? key : key.url; headers.delete(url); return entries.delete(url); },
     async keys() { return [...entries.keys()].map(url => new Request(url)); },
   };
 }
@@ -133,6 +135,51 @@ test('a download stores each file only after its size and SHA-256 match, and ski
   assert.equal(notFound, 1, 'a missing file is not fetched again');
   await assert.rejects(runtime.downloadCompassVld({ cache: memoryCache(), modelId: MODEL, files, isCancelled: () => true,
     fetchImpl: async () => { throw new Error('nothing is fetched after a cancel'); } }), error => error.name === 'AbortError');
+});
+
+test('a file counts as downloaded only once its hash matched, also when the worker stopped before the check', async () => {
+  const files = [fileOf('config.json', '{"a":1}'), fileOf('onnx/model.onnx_data', 'weights'.repeat(1000))];
+  const [, weights] = files;
+  const url = runtime.compassVldFileUrl(MODEL, weights.path);
+  const verifiedUrl = runtime.compassVldVerifiedUrl(MODEL, weights.path);
+  assert.equal(verifiedUrl.startsWith(runtime.compassVldFileUrl(MODEL, '')), true, 'recorded beside the file, under its revision');
+  const fetched = [];
+  const fetchImpl = async requested => { fetched.push(requested); return new Response(files.find(file => requested.endsWith(`/${file.path}`)).body); };
+  // A transfer that completed with the wrong bytes, stored with the headers a
+  // download writes, by a worker that stopped before checking it.
+  const stopped = memoryCache();
+  await runtime.downloadCompassVld({ cache: stopped, fetchImpl, modelId: MODEL, files: [files[0]] });
+  await stopped.put(url, new Response(weights.body.slice(0, 100), { headers: { 'content-type': 'application/octet-stream', 'content-length': String(weights.bytes) } }));
+  assert.equal(await runtime.compassVldFilesCached(stopped, MODEL, undefined, files), false, 'an unchecked file is not downloaded');
+  fetched.length = 0;
+  await runtime.downloadCompassVld({ cache: stopped, fetchImpl, modelId: MODEL, files });
+  assert.deepEqual(fetched, [url], 'the next download checks it, removes it and fetches it again');
+  assert.deepEqual(stopped.entries.get(url), weights.body);
+  assert.equal(await runtime.compassVldFilesCached(stopped, MODEL, undefined, files), true);
+  assert.equal(new TextDecoder().decode(stopped.entries.get(verifiedUrl)), weights.sha256);
+
+  // The right bytes, stored but not checked: checked now, not fetched again.
+  const unchecked = memoryCache();
+  await unchecked.put(runtime.compassVldFileUrl(MODEL, files[0].path), new Response(files[0].body));
+  await unchecked.put(url, new Response(weights.body));
+  assert.equal(await runtime.compassVldFilesCached(unchecked, MODEL, undefined, files), false);
+  fetched.length = 0;
+  await runtime.downloadCompassVld({ cache: unchecked, fetchImpl, modelId: MODEL, files });
+  assert.deepEqual(fetched, []);
+  assert.equal(await runtime.compassVldFilesCached(unchecked, MODEL, undefined, files), true);
+
+  // A record whose file is gone, or that names another hash, does not count.
+  unchecked.entries.delete(url);
+  assert.equal(await runtime.compassVldFilesCached(unchecked, MODEL, undefined, files), false);
+  await unchecked.put(url, new Response(weights.body));
+  await unchecked.put(verifiedUrl, new Response('0'.repeat(64)));
+  assert.equal(await runtime.compassVldFilesCached(unchecked, MODEL, undefined, files), false);
+  // Removing an earlier revision removes its records too.
+  const earlier = runtime.compassVldVerifiedUrl(MODEL, weights.path, '0'.repeat(40));
+  unchecked.entries.set(earlier, new TextEncoder().encode(weights.sha256));
+  await runtime.downloadCompassVld({ cache: unchecked, fetchImpl, modelId: MODEL, files });
+  assert.equal(unchecked.entries.has(earlier), false);
+  assert.equal(await runtime.compassVldFilesCached(unchecked, MODEL, undefined, files), true);
 });
 
 test('a dropped connection or a server error retries that file twice, and a stop ends the retries', async () => {
