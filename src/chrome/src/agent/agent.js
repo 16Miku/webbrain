@@ -27168,20 +27168,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // For the planner's second look (_plannerClarifyRetry): whether the user
   // turn at `index` answers the planner's previous question, and what the
-  // user backed (_plannerSecondLookRejection): the message target and
-  // schedule tool that question stored, and the user's own words in the task.
-  // A correction or a scheduled run answers no question.
+  // user backed (_plannerSecondLookRejection): the message target that
+  // question stored, and the user's own words in the task. A correction or a
+  // scheduled run answers no question.
   _plannerQuestionAnswerContext(messages, index, runOptions = {}) {
     const answersPlannerQuestion = runOptions?.steeringRevision == null
       && runOptions?.scheduledRun !== true && runOptions?.scheduledResume !== true
       && this._turnAnswersPlannerQuestion(messages, index);
     if (!answersPlannerQuestion) {
-      return { answersPlannerQuestion: false, answeredQuestionSchedulingTool: null, answeredQuestionMessageTarget: null, taskUserText: '' };
+      return { answersPlannerQuestion: false, answeredQuestionMessageTarget: null, taskUserText: '' };
     }
     const question = messages[this._plannerClarificationIndexBefore(messages, index)]?.webbrainPlannerClarification || {};
     return {
       answersPlannerQuestion: true,
-      answeredQuestionSchedulingTool: question.schedulingTool || null,
       answeredQuestionMessageTarget: normalizeMessageTarget(question.messageTarget),
       // The task binding is built from user turns only: the request and each
       // answer, never the page or an assistant turn.
@@ -27252,30 +27251,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || effortOff(extra.reasoning_effort);
   }
 
-  // What a second look told not to re-ask may run, measured against what the
-  // user backed: the question they just answered, as the app stored it (a
-  // question keeps the people to address and the schedule of the task it
-  // asks about), and their own words in the task. The first answer on this
-  // turn is model output like the second look itself: it may keep the
-  // question but never authorizes more. Returns why an execute plan is
-  // rejected, or null. Another question, an answer or a plan to show runs
-  // nothing and passes. A rejected plan leaves the question with the user.
-  // A second look re-asks only in the full planner gate, whose alignment
-  // check then reads the plan against the user's words, answer included. It
-  // alone tells which person the answer chose, whether it gave a schedule's
-  // timing ("every five minutes", not "I'm not sure yet") and whether it
-  // approved sending ("yes, send it"); these rules keep out what it could
-  // take from the page or from an earlier model answer.
-  // - adds_recipient: a recipient, for a message or a draft (normalizePlan
-  //   keeps a draft's addressees in draft_recipients), other than the people
-  //   the answered question addressed, unless the user's own words name every
-  //   person. The open conversation is never taken from the page.
-  // - adds_schedule: a schedule of another kind than the answered question
-  //   carried: a schedule_resume pause never becomes a recurring
-  //   schedule_task.
-  // - drops_schedule: no schedule_task where the answered question or the
-  //   first answer carried one: the run would do the task once instead.
-  _plannerSecondLookRejection(firstPlan, plan, followUpContext = {}) {
+  // What a second look told not to re-ask may address, measured against what
+  // the user backed: the question they just answered, as the app stored it (a
+  // question keeps the people to address of the task it asks about), and
+  // their own words in the task. A second look re-asks only in the full
+  // planner gate, whose alignment check then reads the plan against the
+  // user's words, answer included: which person the answer chose, whether it
+  // approved sending ("yes, send it"), and a schedule it gave, changed or
+  // dropped ("every five minutes", "just do it once"). That check cannot keep
+  // a recipient taken from the page out when the answer points at it ("use
+  // the current chat", "look at the screen"), and the re-ask guidance forbids
+  // taking one, so an execute plan is rejected (adds_recipient) for a
+  // recipient, for a message or a draft (normalizePlan keeps a draft's
+  // addressees in draft_recipients), other than the people the answered
+  // question addressed, unless the user's own words name every person. The
+  // first answer on this turn is model output like the second look itself,
+  // so it addresses no one. Returns the reason, or null; another question, an
+  // answer or a plan to show runs nothing and passes. A rejected plan leaves
+  // the question with the user.
+  _plannerSecondLookRejection(plan, followUpContext = {}) {
     if (plan?.request_kind !== 'execute') return null;
     for (const target of [plan.messaging, plan.draft_recipients]) {
       if (!target || this._sameMessageTarget(followUpContext?.answeredQuestionMessageTarget, target)) continue;
@@ -27283,10 +27277,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && this._userTextNamesRecipients(followUpContext?.taskUserText, target.recipients)) continue;
       return 'adds_recipient';
     }
-    const carriedSchedule = followUpContext?.answeredQuestionSchedulingTool || null;
-    if (plan.scheduling && plan.scheduling.tool !== carriedSchedule) return 'adds_schedule';
-    if (plan.scheduling?.tool !== 'schedule_task'
-        && [carriedSchedule, firstPlan?.scheduling?.tool].includes('schedule_task')) return 'drops_schedule';
     return null;
   }
 
@@ -27303,9 +27293,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   //   question, in the full planner gate, PLANNER_REASK_GUIDANCE reminds the
   //   planner that the executor can see what it cannot, and leaves a question
   //   only for values that have to come from the user. An execute plan from
-  //   it may not add a recipient or a schedule the user did not back, or drop
-  //   a recurring schedule the task carried (_plannerSecondLookRejection), and
-  //   the alignment check then reads it against the user's words.
+  //   it may not address anyone the user did not back
+  //   (_plannerSecondLookRejection), and the alignment check then reads it
+  //   against the user's words.
   // The answer is parsed and checked like the first one, and an execute plan
   // then goes through alignment, recipient pinning and review like any other.
   // Returns null to keep the first answer: nothing to retry, or the retry
@@ -27313,7 +27303,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // consistency repair.
   async _plannerClarifyRetry(tabId, provider, plannerMessages, {
     parseOptions = {}, intentOnly = false, reask = false, portable = false, costState = null, runId = null,
-    runtimeMode = 'act', onUpdate = null, followUpContext = {}, firstPlan = null,
+    runtimeMode = 'act', onUpdate = null, followUpContext = {},
   } = {}) {
     const rethink = this._plannerCanRethink(provider);
     if (!rethink && !reask) return null;
@@ -27344,7 +27334,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._tracePlannerAttemptResponse(runId, 0, provider, result, phase, 1, startedAt, chatOptions);
     const plan = parsePlanFromContent(result?.content, parseOptions);
     if (!plan || this._plannerIntentConsistencyIssue(plan, followUpContext)) return null;
-    const rejection = reask ? this._plannerSecondLookRejection(firstPlan, plan, followUpContext) : null;
+    const rejection = reask ? this._plannerSecondLookRejection(plan, followUpContext) : null;
     if (rejection) {
       this._tracePlannerSecondLookRejection(runId, phase, rejection);
       return null;
@@ -27449,10 +27439,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (gate.requestKind === 'clarify' && gate.plannerClarification === true) {
       message.webbrainPlannerClarification = {
         requiresSubmission: gate.requiresSubmission === true,
-        // The schedule and the people to address of the task this question is
-        // about, so the second look at the user's answer may plan them
+        // The people to address of the task this question is about, so the
+        // second look at the user's answer may address them
         // (_plannerSecondLookRejection).
-        schedulingTool: ['schedule_task', 'schedule_resume'].includes(gate.schedulingTool) ? gate.schedulingTool : null,
         messageTarget: normalizeMessageTarget(gate.messageTarget),
         pageUrl: String(tabInfo?.tabUrl || ''),
         taskText: this._progressTaskTextKey(activeTaskText).slice(0, 1600),
@@ -28303,7 +28292,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
-          schedulingTool: plan.request_kind === 'clarify' ? plan.scheduling?.tool || null : null,
           messageTarget: plan.request_kind === 'clarify' ? plan.messaging || plan.draft_recipients || null : null,
         };
       }
@@ -28315,7 +28303,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const present = this._userTextNamesRecipients(this._plannerUserAuthoredText(enriched), plan.messaging.recipients);
         if (!present) return {
           proceed: false, reason: 'active_recipient_unverified', requestKind: 'clarify', plannerClarification: true,
-          requiresStateChange: false, requiresSubmission: false, schedulingTool: plan.scheduling?.tool || null, messaging: null,
+          requiresStateChange: false, requiresSubmission: false, messaging: null,
           message: 'The recipient could not be verified from the current task. Name the exact recipient and retry. No page tools ran.',
         };
       }
@@ -28330,7 +28318,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: true,
-          schedulingTool: plan.scheduling?.tool || null,
           // The open conversation could not be pinned yet. Once the user has
           // opened it, a second look may address it again, and it is pinned
           // again before anything is sent (_plannerSecondLookRejection).
@@ -28355,7 +28342,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: false,
-          schedulingTool: plan.scheduling?.tool || null,
           // The same for the conversation a draft is written into.
           messageTarget: plan.draft_recipients,
         };
@@ -28591,7 +28577,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { proceed: false, steeringSuperseded: true };
         }
         const secondLook = await this._plannerClarifyRetry(tabId, provider, plannerMessages, {
-          parseOptions: plannerParseOptions, reask, firstPlan: plan,
+          parseOptions: plannerParseOptions, reask,
           portable: plannerPortable, costState, runId, runtimeMode, onUpdate, followUpContext,
         });
         if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
@@ -28639,7 +28625,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             responseLanguagePolicy: candidate.response_language,
             requiresStateChange: false,
             requiresSubmission: candidate.request_kind === 'clarify' && candidate.requires_submission === true,
-            schedulingTool: candidate.request_kind === 'clarify' ? candidate.scheduling?.tool || null : null,
             messageTarget: candidate.request_kind === 'clarify' ? candidate.messaging || candidate.draft_recipients || null : null,
           };
         }
@@ -28802,7 +28787,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // limits, and is checked for alignment next. Otherwise the user
             // keeps the question that plan answered.
             const replacementRejection = reaskFirstPlan
-              ? this._plannerSecondLookRejection(reaskFirstPlan, plan, followUpContext)
+              ? this._plannerSecondLookRejection(plan, followUpContext)
               : null;
             if (replacementRejection) {
               this._tracePlannerSecondLookRejection(runId, 'planner_alignment_repair', replacementRejection);
@@ -28868,7 +28853,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: true,
-          schedulingTool: plan.scheduling?.tool || null,
           // The open conversation could not be pinned yet. Once the user has
           // opened it, a second look may address it again, and it is pinned
           // again before anything is sent (_plannerSecondLookRejection).
@@ -28893,7 +28877,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: false,
-          schedulingTool: plan.scheduling?.tool || null,
           // The same for the conversation a draft is written into.
           messageTarget: plan.draft_recipients,
         };

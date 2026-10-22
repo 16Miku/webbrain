@@ -9,10 +9,10 @@
 //   planner told not to think (/no_think) thinks, and in the full planner
 //   gate, on the turn that answers the planner's previous question, the
 //   planner is told it cannot see the page and may ask again only for values
-//   that must come from the user. That plan may not take a recipient or a
-//   schedule the user did not back, and the alignment check then reads it
-//   against the user's words. The intent check, which has no alignment
-//   check, takes no second look at an answer.
+//   that must come from the user. That plan may not address anyone the user
+//   did not back, and the alignment check then reads it against the user's
+//   words. The intent check, which has no alignment check, takes no second
+//   look at an answer.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -93,10 +93,8 @@ const user = (content, extra = {}) => ({ role: 'user', content, ...extra });
 const assistant = content => ({ role: 'assistant', content });
 const contentText = content => (Array.isArray(content) ? content.map(block => block?.text || '').join('') : String(content || ''));
 const REASK = /Second look before asking again/;
-const OPEN_SCHEDULE = { tool: 'schedule_task', hint: 'The user wants the page checked on a schedule; how often is still open.' };
 const EVERY_FIVE = { tool: 'schedule_task', hint: 'Every 5 minutes, as the user answered.' };
 const HOW_OFTEN = 'How often should I check this page for a new release?';
-const PAUSE = { tool: 'schedule_resume', hint: 'Wait until the deploy finishes, then continue.' };
 const ALI = { target_kind: 'named', recipients: [{ identity: 'Ali Veli', role: 'to' }] };
 const OPEN_CHAT = { target_kind: 'active_conversation', recipients: [] };
 const OPEN_CHAT_CC = { target_kind: 'active_conversation', recipients: [{ identity: 'Ali Veli', role: 'cc' }, { identity: 'Ayse Yilmaz', role: 'cc' }] };
@@ -251,53 +249,41 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._turnAnswersPlannerQuestion(messages, -1), false);
   });
 
-  test(`${build}: the answer context names what the question's task carried, and only for a direct answer`, () => {
+  test(`${build}: the answer context names the people the question's task addresses, and only for a direct answer`, () => {
     const agent = newAgent();
-    const answer = user('every five minutes');
+    const answer = user('It is Ali Veli');
     const asked = gate => {
-      const messages = [{ role: 'system', content: 'sys' }, user('Check this page for a new release on a schedule')];
-      messages.push(agent._plannerTerminalAssistantMessage({ requestKind: 'clarify', plannerClarification: true, message: HOW_OFTEN, ...gate },
+      const messages = [{ role: 'system', content: 'sys' }, user('Send the monthly report to my accountant')];
+      messages.push(agent._plannerTerminalAssistantMessage({ requestKind: 'clarify', plannerClarification: true, message: 'Who is your accountant?', ...gate },
         TAB, messages[1].content, agent._progressTaskKeyForText(messages[1].content)));
       return [...messages, answer];
     };
-    const scheduled = asked({ schedulingTool: 'schedule_task', messageTarget: ALI });
-    const stored = scheduled[2].webbrainPlannerClarification;
-    assert.deepEqual([stored.schedulingTool, stored.messageTarget], ['schedule_task', ALI], 'the question records the schedule and the people');
-    assert.deepEqual([asked({})[2].webbrainPlannerClarification.schedulingTool, asked({})[2].webbrainPlannerClarification.messageTarget], [null, null]);
-    const invalid = asked({ schedulingTool: 'schedule_everything', messageTarget: { target_kind: 'everyone', recipients: [] } })[2].webbrainPlannerClarification;
-    assert.deepEqual([invalid.schedulingTool, invalid.messageTarget], [null, null], 'only a known tool and a valid target');
-    const context = agent._plannerQuestionAnswerContext(scheduled, 3);
-    assert.deepEqual([context.answersPlannerQuestion, context.answeredQuestionSchedulingTool, context.answeredQuestionMessageTarget],
-      [true, 'schedule_task', ALI]);
-    assert.match(context.taskUserText, /Check this page for a new release on a schedule[\s\S]*every five minutes/, 'the user\'s words: request and answer');
-    assert.doesNotMatch(context.taskUserText, /How often/, 'never the question');
-    assert.deepEqual(agent._plannerQuestionAnswerContext(asked({}), 3).answeredQuestionSchedulingTool, null);
-    const none = { answersPlannerQuestion: false, answeredQuestionSchedulingTool: null, answeredQuestionMessageTarget: null, taskUserText: '' };
+    const addressed = asked({ messageTarget: ALI });
+    assert.deepEqual(addressed[2].webbrainPlannerClarification.messageTarget, ALI, 'the question records the people');
+    assert.equal(asked({})[2].webbrainPlannerClarification.messageTarget, null);
+    assert.equal(asked({ messageTarget: { target_kind: 'everyone', recipients: [] } })[2].webbrainPlannerClarification.messageTarget, null,
+      'only a valid target');
+    const context = agent._plannerQuestionAnswerContext(addressed, 3);
+    assert.deepEqual([context.answersPlannerQuestion, context.answeredQuestionMessageTarget], [true, ALI]);
+    assert.match(context.taskUserText, /Send the monthly report to my accountant[\s\S]*It is Ali Veli/, 'the user\'s words: request and answer');
+    assert.doesNotMatch(context.taskUserText, /Who is your accountant/, 'never the question');
+    const none = { answersPlannerQuestion: false, answeredQuestionMessageTarget: null, taskUserText: '' };
     for (const runOptions of [{ steeringRevision: 1 }, { scheduledRun: true }, { scheduledResume: true }]) {
-      assert.deepEqual(agent._plannerQuestionAnswerContext(scheduled, 3, runOptions), none, JSON.stringify(runOptions));
+      assert.deepEqual(agent._plannerQuestionAnswerContext(addressed, 3, runOptions), none, JSON.stringify(runOptions));
     }
-    const newRequest = [...scheduled.slice(0, 3), { ...answer, webbrainTurnKind: 'request' }];
+    const newRequest = [...addressed.slice(0, 3), { ...answer, webbrainTurnKind: 'request' }];
     assert.deepEqual(agent._plannerQuestionAnswerContext(newRequest, 3), none, 'a new request answers no question');
   });
 
-  test(`${build}: a question keeps the schedule and the people of the task it asks about, and nothing runs from it`, async () => {
+  test(`${build}: a question about a draft keeps its people, never send authority, and nothing runs from it`, async () => {
     const { parsePlanFromContent } = await import(`../src/${build}/src/agent/planner.js`);
     const parse = plan => parsePlanFromContent(JSON.stringify(plan), { requireIntent: true, locale: 'en' });
-    const question = parse(clarifyPlan({ requires_submission: false, summary: HOW_OFTEN, scheduling: OPEN_SCHEDULE }));
-    assert.deepEqual(question.scheduling, OPEN_SCHEDULE);
-    assert.deepEqual([question.request_kind, question.requires_state_change], ['clarify', false]);
     const aboutDraft = parse(clarifyPlan({ requires_submission: false, messaging: ALI }));
     assert.deepEqual([aboutDraft.messaging, aboutDraft.draft_recipients], [null, ALI], 'a draft\'s people, never send authority');
     const aboutMessage = parse(clarifyPlan({ messaging: ALI }));
     assert.deepEqual([aboutMessage.messaging, aboutMessage.draft_recipients], [ALI, null]);
-    assert.deepEqual(parse(plannerPlan({ requires_submission: false, scheduling: EVERY_FIVE })).scheduling, EVERY_FIVE);
-    for (const request_kind of ['respond', 'plan_only']) {
-      const plan = parse(plannerPlan({
-        request_kind, read_scope: 'none', requires_state_change: false, requires_submission: false, scheduling: EVERY_FIVE,
-      }));
-      assert.equal(plan?.request_kind, request_kind, `fixture: ${request_kind} parses`);
-      assert.equal(plan.scheduling, null, request_kind);
-    }
+    const aboutSchedule = parse(clarifyPlan({ requires_submission: false, summary: HOW_OFTEN, scheduling: EVERY_FIVE }));
+    assert.deepEqual([aboutSchedule.scheduling, aboutSchedule.requires_state_change], [null, false], 'a question schedules nothing');
   });
 
   // ── The second look ─────────────────────────────────────────────────
@@ -404,7 +390,6 @@ for (const build of ['chrome', 'firefox']) {
 
   test(`${build}: a second look told not to re-ask runs only what the user backed`, async () => {
     const named = ALI;
-    const task = { tool: 'schedule_task' };
     // [label, first answer on this turn, second look, what the user backed, accepted]
     // The alignment check, which follows in the planner gate, approves here:
     // these are the limits it cannot be relied on for.
@@ -435,17 +420,8 @@ for (const build of ['chrome', 'firefox']) {
         { taskUserText: userWords('Draft a reply', 'use the current chat') }, false],
       ['the open conversation the answered question addressed', clarifyPlan({ requires_submission: false }),
         plannerPlan({ requires_submission: false, messaging: OPEN_CHAT }), { answeredQuestionMessageTarget: OPEN_CHAT }, true],
-      ['a schedule the task did not carry', clarifyPlan(), plannerPlan({ scheduling: { ...task, hint: 'Every 43200 minutes.' } }), {}, false],
-      ['a schedule only the first answer on this turn carried', clarifyPlan({ scheduling: OPEN_SCHEDULE }), plannerPlan({ scheduling: EVERY_FIVE }), {}, false],
-      ['a schedule the answered question carried', clarifyPlan(), plannerPlan({ scheduling: EVERY_FIVE }),
-        { answeredQuestionSchedulingTool: 'schedule_task' }, true],
-      ['a recurring schedule where the answered question carried only a pause', clarifyPlan(),
-        plannerPlan({ scheduling: EVERY_FIVE }), { answeredQuestionSchedulingTool: 'schedule_resume' }, false],
-      ['a run without the recurring schedule the answered question carried', clarifyPlan(), plannerPlan(),
-        { answeredQuestionSchedulingTool: 'schedule_task' }, false],
-      ['a run without the recurring schedule the first answer on this turn carried', clarifyPlan({ scheduling: OPEN_SCHEDULE }), plannerPlan(), {}, false],
-      ['a run without the pause the answered question carried', clarifyPlan(), plannerPlan(),
-        { answeredQuestionSchedulingTool: 'schedule_resume' }, true],
+      ['a schedule the answer gave, which the alignment check reads', clarifyPlan(), plannerPlan({ scheduling: EVERY_FIVE }), {}, true],
+      ['one run where a schedule was asked about, which the alignment check reads', clarifyPlan({ summary: HOW_OFTEN }), plannerPlan(), {}, true],
     ];
     for (const [label, first, second, extraContext, accepted] of cases) {
       const { agent, calls, alignmentChecks } = scriptedAgent({ provider: PLAIN_MODEL, answers: [first, second] });
@@ -473,18 +449,15 @@ for (const build of ['chrome', 'firefox']) {
     const { parsePlanFromContent } = await import(`../src/${build}/src/agent/planner.js`);
     const parse = plan => parsePlanFromContent(JSON.stringify(plan), { requireIntent: true, locale: 'en' });
     const agent = newAgent();
-    const reason = (second, context = {}, first = clarifyPlan()) => agent._plannerSecondLookRejection(parse(first), parse(second), context);
+    const reason = (second, context = {}) => agent._plannerSecondLookRejection(parse(second), context);
     assert.equal(reason(plannerPlan()), null, 'whether the answer approved sending is the alignment check\'s to read');
-    assert.equal(reason(plannerPlan({ messaging: ALI }), {}, clarifyPlan({ messaging: ALI })), 'adds_recipient',
-      'a first answer on this turn authorizes no one');
+    assert.equal(reason(plannerPlan({ scheduling: EVERY_FIVE })), null, 'and so is a schedule it gave, changed or dropped');
+    assert.equal(reason(plannerPlan({ messaging: ALI })), 'adds_recipient', 'a first answer on this turn addresses no one');
     const namedByUser = { taskUserText: userWords('Send it to my accountant', 'Ali Veli') };
     assert.equal(reason(plannerPlan({ messaging: ALI }), namedByUser), null);
+    assert.equal(reason(plannerPlan({ messaging: OPEN_CHAT }), { taskUserText: userWords('Reply to her', 'use the current chat') }), 'adds_recipient',
+      'the open conversation is never taken from the page');
     assert.equal(reason(plannerPlan({ requires_submission: false, messaging: ALI })), 'adds_recipient', 'a draft\'s recipient too');
-    assert.equal(reason(plannerPlan({ scheduling: EVERY_FIVE }), {}, clarifyPlan({ scheduling: OPEN_SCHEDULE })), 'adds_schedule');
-    const carried = { answeredQuestionSchedulingTool: 'schedule_task' };
-    assert.equal(reason(plannerPlan({ scheduling: EVERY_FIVE }), carried), null);
-    assert.equal(reason(plannerPlan(), carried), 'drops_schedule');
-    assert.equal(reason(plannerPlan(), {}, clarifyPlan({ scheduling: OPEN_SCHEDULE })), 'drops_schedule', 'the first answer may keep the question');
     for (const request_kind of ['clarify', 'respond', 'plan_only']) {
       const second = request_kind === 'clarify'
         ? clarifyPlan({ summary: SECOND_QUESTION, messaging: ALI, scheduling: EVERY_FIVE })
@@ -537,7 +510,7 @@ for (const build of ['chrome', 'firefox']) {
     const followUpContext = { answersPlannerQuestion: true };
     for (const [label, replacement, accepted] of [
       ['a replacement that adds a recipient', plannerPlan({ messaging: ALI }), false],
-      ['a replacement that adds a recurring schedule', plannerPlan({ scheduling: EVERY_FIVE }), false],
+      ['a replacement that addresses the open conversation', plannerPlan({ messaging: OPEN_CHAT }), false],
       ['a replacement within what the user backed', plannerPlan({ summary: 'Publish the same post on LinkedIn and check that it is live.' }), true],
     ]) {
       const { agent, calls, alignmentChecks } = scriptedAgent({
@@ -646,39 +619,35 @@ for (const build of ['chrome', 'firefox']) {
     assert.ok(!JSON.stringify(messages).includes('Second look before asking again'), 'the guidance is not stored in the conversation');
   });
 
-  test(`${build}: an answer that gives a scheduled task its timing is planned, not asked again`, async () => {
+  test(`${build}: an answer that sets or drops a schedule is planned, and the alignment check reads it`, async () => {
     const timed = plannerPlan({
       requires_submission: false, deliverables: ['A recurring check of this page for a new release'],
       summary: 'Schedule a check of this page every 5 minutes.', scheduling: EVERY_FIVE,
     });
-    for (const [label, firstQuestion, accepted] of [
-      ['a question about a scheduled task', clarifyPlan({ requires_submission: false, summary: HOW_OFTEN, scheduling: OPEN_SCHEDULE }), true],
-      ['a question about a task without a schedule', clarifyPlan({ requires_submission: false, summary: HOW_OFTEN }), false],
+    const once = plannerPlan({ requires_submission: false, summary: 'Check this page for a new release now.' });
+    for (const [label, answerText, plan, tool] of [
+      ['a timing', 'every five minutes', timed, 'schedule_task'],
+      ['one run instead', 'never mind, just check it once now', once, null],
     ]) {
-      const tabId = accepted ? 37 : 38;
-      // Asked on the first turn; on the answer the planner asks again without
-      // naming the schedule, and its second look plans the schedule.
-      const repeated = clarifyPlan({ requires_submission: false, summary: HOW_OFTEN });
-      const { agent, calls, alignmentChecks } = scriptedAgent({ provider: PLAIN_MODEL, answers: [firstQuestion, repeated, timed] });
+      const tabId = tool ? 37 : 38;
+      // Asked on the first turn; on the answer the planner asks again, and
+      // its second look plans what the answer said.
+      const question = clarifyPlan({ requires_submission: false, summary: HOW_OFTEN });
+      const { agent, calls, alignmentChecks } = scriptedAgent({ provider: PLAIN_MODEL, answers: [question, question, plan] });
       const messages = [{ role: 'system', content: 'sys' }];
       agent.conversations.set(tabId, messages);
       agent._persistSubmittedTurn = async () => {};
       agent._persist = () => {};
       const asked = await agent._maybeRunPlannerGate(tabId, messages, user('Check this page for a new release on a schedule'), () => {}, 'act', null, null, TAB, {});
       assert.deepEqual([asked.proceed, asked.requestKind, asked.message], [false, 'clarify', HOW_OFTEN], `${label}: ${JSON.stringify(asked)}`);
-      assert.equal(messages.at(-1).webbrainPlannerClarification?.schedulingTool, accepted ? 'schedule_task' : null,
-        `${label}: the question records its task's schedule`);
-      const gate = await agent._maybeRunPlannerGate(tabId, messages, user('every five minutes'), () => {}, 'act', null, null, TAB, {});
+      const gate = await agent._maybeRunPlannerGate(tabId, messages, user(answerText), () => {}, 'act', null, null, TAB, {});
       assert.equal(calls.length, 3, label);
       assert.match(calls[2].messages[0].content, REASK, `${label}: the answer got a second look`);
-      if (accepted) {
-        assert.equal(gate.proceed, true, `${label}: ${JSON.stringify(gate)}`);
-        assert.equal(gate.requiredSchedulingTool, 'schedule_task', label);
-        assert.equal(alignmentChecks.length, 1, `${label}: the schedule is checked against the task and the answer`);
-        assert.match(String(alignmentChecks[0].current_request), /every five minutes/);
-      } else {
-        assert.deepEqual([gate.proceed, gate.requestKind, gate.message], [false, 'clarify', HOW_OFTEN], `${label}: ${JSON.stringify(gate)}`);
-      }
+      assert.equal(gate.proceed, true, `${label}: ${JSON.stringify(gate)}`);
+      assert.equal(gate.requiredSchedulingTool ?? null, tool, label);
+      assert.equal(alignmentChecks.length, 1, `${label}: the alignment check reads the plan against the answer`);
+      assert.deepEqual(alignmentChecks[0].proposed_plan.scheduling ?? null, plan.scheduling, label);
+      assert.ok(String(alignmentChecks[0].current_request).includes(answerText), label);
     }
   });
 
@@ -706,20 +675,19 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
-  test(`${build}: a question about a conversation that could not be pinned records it and the schedule`, async () => {
+  test(`${build}: a question about a conversation that could not be pinned records it`, async () => {
     const cases = [
-      ['a scheduled message', plannerPlan({ messaging: OPEN_CHAT, scheduling: EVERY_FIVE }), true, 'schedule_task'],
-      ['a message', plannerPlan({ messaging: OPEN_CHAT }), true, null],
-      ['a draft', plannerPlan({ requires_submission: false, messaging: OPEN_CHAT }), false, null],
+      ['a message', plannerPlan({ messaging: OPEN_CHAT }), true],
+      ['a draft', plannerPlan({ requires_submission: false, messaging: OPEN_CHAT }), false],
     ];
     for (const gate of ['planner', 'intent']) {
-      for (const [label, plan, sends, schedulingTool] of cases) {
+      for (const [label, plan, sends] of cases) {
         const { agent } = scriptedAgent({ provider: PLAIN_MODEL, answers: [gate === 'planner' ? plan : intentPlan(plan)] });
         agent._pinActiveConversationMessagingTarget = async (_tabId, target) => (target
           ? { ok: false, error: 'Open the conversation first.' } : { ok: true, target: null });
         const result = gate === 'planner' ? await fullGate(agent) : await intentGate(agent);
-        assert.deepEqual([result.reason, result.plannerClarification, result.requiresSubmission, result.schedulingTool, result.messageTarget],
-          ['active_recipient_unverified', true, sends, schedulingTool, OPEN_CHAT], `${gate} ${label}: ${JSON.stringify(result)}`);
+        assert.deepEqual([result.reason, result.plannerClarification, result.requiresSubmission, result.messageTarget],
+          ['active_recipient_unverified', true, sends, OPEN_CHAT], `${gate} ${label}: ${JSON.stringify(result)}`);
       }
     }
   });
