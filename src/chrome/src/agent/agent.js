@@ -27168,19 +27168,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // For the planner's second look (_plannerClarifyRetry): whether the user
   // turn at `index` answers the planner's previous question, and what the
-  // task carried (_plannerSecondLookRejection): the schedule tool and message
-  // target of the question it answers, and the user's own words in the task.
-  // A correction or a scheduled run answers no question.
+  // user backed (_plannerSecondLookRejection): the submission, message target
+  // and schedule tool that question stored, and the user's own words in the
+  // task. A correction or a scheduled run answers no question.
   _plannerQuestionAnswerContext(messages, index, runOptions = {}) {
     const answersPlannerQuestion = runOptions?.steeringRevision == null
       && runOptions?.scheduledRun !== true && runOptions?.scheduledResume !== true
       && this._turnAnswersPlannerQuestion(messages, index);
     if (!answersPlannerQuestion) {
-      return { answersPlannerQuestion: false, answeredQuestionSchedulingTool: null, answeredQuestionMessageTarget: null, taskUserText: '' };
+      return {
+        answersPlannerQuestion: false, answeredQuestionRequiresSubmission: false,
+        answeredQuestionSchedulingTool: null, answeredQuestionMessageTarget: null, taskUserText: '',
+      };
     }
     const question = messages[this._plannerClarificationIndexBefore(messages, index)]?.webbrainPlannerClarification || {};
     return {
       answersPlannerQuestion: true,
+      answeredQuestionRequiresSubmission: question.requiresSubmission === true,
       answeredQuestionSchedulingTool: question.schedulingTool || null,
       answeredQuestionMessageTarget: normalizeMessageTarget(question.messageTarget),
       // The task binding is built from user turns only: the request and each
@@ -27210,6 +27214,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
   }
 
+  // Whether two message targets address the same people: the same kind and
+  // the same roles and identities, in any order and casing.
+  _sameMessageTarget(a, b) {
+    const key = value => {
+      const target = normalizeMessageTarget(value);
+      return target && JSON.stringify([target.target_kind, target.recipients
+        .map(recipient => `${recipient.role}:${normalizeRecipientIdentity(recipient.identity)}`)
+        .sort()]);
+    };
+    const left = key(a);
+    return !!left && left === key(b);
+  }
+
   // Whether a second look may think: only a model planning tells not to
   // think (/no_think). Reasoning turned off in the provider's settings or in
   // its extra request body stays off (mergeProviderRequestBody merges both
@@ -27226,41 +27243,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .reasoningEffort !== 'off';
   }
 
-  // What a second look told not to re-ask may plan, measured against what
-  // the user's task already carried: the first answer on this turn (a
+  // What a second look told not to re-ask may run, measured against what the
+  // user backed: the question they just answered, as the app stored it (a
   // question keeps the submission, the people to address and the schedule of
-  // the task it asks about) and the question the user just answered. Returns
-  // why the plan is rejected, or null. A rejected plan leaves the question
-  // with the user.
-  // - adds_submission: a submission neither of them carried.
+  // the task it asks about), and their own words in the task. The first
+  // answer on this turn is model output like the second look itself: it may
+  // keep the question but never authorizes more. Returns why an execute plan
+  // is rejected, or null. Another question, an answer or a plan to show runs
+  // nothing and passes. A rejected plan leaves the question with the user.
+  // - adds_submission: a submission the answered question did not carry.
   // - adds_recipient: a recipient, for a message or a draft (normalizePlan
-  //   keeps a draft's addressees in draft_recipients), that neither of them
-  //   named, unless the user's own words in the task name every person. The
-  //   open conversation is never taken from the page on a second look.
-  // - adds_schedule: a schedule of a kind neither of them carried. The user's
-  //   answer is often the timing of a schedule the task carried ("every five
-  //   minutes"), but a schedule_resume pause never becomes a recurring
-  //   schedule_task.
-  // - drops_schedule: an execute plan without the schedule_task the task
-  //   carried. The intent check has no alignment check that would notice the
-  //   run doing the task once instead.
+  //   keeps a draft's addressees in draft_recipients), other than the people
+  //   the answered question addressed, unless the user's own words name every
+  //   person. The open conversation is never taken from the page.
+  // - adds_schedule: a schedule of another kind than the answered question
+  //   carried. The user's answer is often its timing ("every five minutes"),
+  //   but a schedule_resume pause never becomes a recurring schedule_task.
+  // - drops_schedule: no schedule_task where the answered question or the
+  //   first answer carried one. The intent check has no alignment check that
+  //   would notice the run doing the task once instead.
   _plannerSecondLookRejection(firstPlan, plan, followUpContext = {}) {
-    const submissionCarried = firstPlan?.requires_submission === true
-      || followUpContext?.plannerClarification?.requiresSubmission === true;
-    if (plan?.requires_submission === true && !submissionCarried) return 'adds_submission';
-    const carriedTargets = [firstPlan?.messaging, firstPlan?.draft_recipients, followUpContext?.answeredQuestionMessageTarget]
-      .filter(Boolean)
-      .map(target => JSON.stringify(target));
-    for (const target of [plan?.messaging, plan?.draft_recipients]) {
-      if (!target || carriedTargets.includes(JSON.stringify(target))) continue;
+    if (plan?.request_kind !== 'execute') return null;
+    if (plan.requires_submission === true && followUpContext?.answeredQuestionRequiresSubmission !== true) return 'adds_submission';
+    for (const target of [plan.messaging, plan.draft_recipients]) {
+      if (!target || this._sameMessageTarget(followUpContext?.answeredQuestionMessageTarget, target)) continue;
       if (target.target_kind === 'named'
           && this._userTextNamesRecipients(followUpContext?.taskUserText, target.recipients)) continue;
       return 'adds_recipient';
     }
-    const carriedSchedules = [firstPlan?.scheduling?.tool, followUpContext?.answeredQuestionSchedulingTool];
-    if (plan?.scheduling && !carriedSchedules.includes(plan.scheduling.tool)) return 'adds_schedule';
-    if (plan?.request_kind === 'execute' && carriedSchedules.includes('schedule_task')
-        && plan.scheduling?.tool !== 'schedule_task') return 'drops_schedule';
+    const carriedSchedule = followUpContext?.answeredQuestionSchedulingTool || null;
+    if (plan.scheduling && plan.scheduling.tool !== carriedSchedule) return 'adds_schedule';
+    if (plan.scheduling?.tool !== 'schedule_task'
+        && [carriedSchedule, firstPlan?.scheduling?.tool].includes('schedule_task')) return 'drops_schedule';
     return null;
   }
 
@@ -27276,9 +27290,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // - No re-asking: when the user has just answered the planner's previous
   //   question, PLANNER_REASK_GUIDANCE reminds the planner that the executor
   //   can see what it cannot, and leaves a question only for values that have
-  //   to come from the user. Its plan may not add a submission, a recipient
-  //   or a schedule the task did not carry, or drop a recurring schedule it
-  //   did (_plannerSecondLookRejection).
+  //   to come from the user. An execute plan from it may not add a
+  //   submission, a recipient or a schedule the user did not back, or drop a
+  //   recurring schedule the task carried (_plannerSecondLookRejection).
   // The answer is parsed and checked like the first one, and an execute plan
   // then goes through alignment, recipient pinning and review like any other.
   // Returns null to keep the first answer: nothing to retry, or the retry
