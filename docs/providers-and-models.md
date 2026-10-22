@@ -572,7 +572,8 @@ browser actions. The standalone chat window keeps its own page-free profile.
   emits Qwen3.5 XML tool calls (`<tool_call><function=...><parameter=...>`),
   which the local fallback parser accepts. Files are fetched at a pinned
   revision and each is checked against its pinned size and SHA-256. Message
-  text that spells a special token (`<|image_pad|>`, `<|im_end|>`) is encoded
+  text that spells one of its added tokens (`<|image_pad|>`, `<|im_end|>`,
+  and `</tool_response>`, which is added without being special) is encoded
   as ordinary text. On the first start after the update, a profile that never
   set up WebGPU moves from the previous default, Compass Tiny v2.1, to it when
   Compass Tiny v2.1 was never downloaded there; choosing Compass Tiny v2.1

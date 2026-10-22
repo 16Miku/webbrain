@@ -190,10 +190,14 @@ Ask) and decisions. Its training data and evaluations are on the model card.
   caches that, so the lookup would go to Hugging Face on every load and fail
   offline. With the published files it renders the reference's prompts and
   produces its token ids exactly. Message text, tool descriptions and decision
-  questions that spell one of its special tokens get a zero-width space after
-  the first character, so a page quoting `<|image_pad|>` or `<|im_end|>`
-  cannot add an image slot or end a turn. Decoding is greedy with thinking
-  off; tool calls use Qwen3.5's XML format.
+  questions that spell one of its added tokens get a zero-width space after
+  the first character, so a page quoting `<|image_pad|>`, `<|im_end|>` or
+  `</tool_response>` cannot add an image slot, end a turn or close a tool
+  result. That covers every added token, not only the special ones: the
+  tokenizer adds `<tool_call>`, `<tool_response>` and `<think>` (and their
+  closing tags) without marking them special, and Transformers.js encodes
+  them as single tokens all the same. Decoding is greedy with thinking off;
+  tool calls use Qwen3.5's XML format.
 - **Download.** Files are read at a pinned commit (`COMPASS_VLD_REVISION`),
   one at a time. Each is stored only once it arrived whole and is then
   checked against its pinned size and SHA-256; a mismatch removes it and

@@ -655,16 +655,30 @@ export function argmax(values) {
 }
 
 /**
- * Text that spells one of the tokenizer's special tokens (`<|image_pad|>`,
- * `<|im_end|>`, `<slice>`, …) would be encoded as that token: an image slot
- * with no image behind it, or a turn boundary that page text could inject.
- * The returned function puts a zero-width space after the first character of
- * each such spelling, so it stays readable and is encoded as ordinary text.
- * It is for message text before the chat template renders it; the template's
- * own special tokens are added afterwards.
+ * Every string the tokenizer encodes as one added token. Transformers.js
+ * splits text on all of a tokenizer's added tokens, special or not, and this
+ * model's tokenizer adds `<tool_call>`, `<tool_response>` and `<think>`
+ * (with their closing tags) without marking them special, so
+ * `all_special_tokens` leaves them out.
  */
-export function plainTextFor(specialTokens = []) {
-  const tokens = [...new Set(Array.from(specialTokens, String))].filter(token => token.length > 1)
+export function addedTokenContents(tokenizer) {
+  const added = tokenizer?._tokenizer?.get_added_tokens_decoder?.();
+  if (!added) return Array.from(tokenizer?.all_special_tokens || []);
+  return Array.from(added.values(), token => token.content);
+}
+
+/**
+ * Text that spells one of the tokenizer's added tokens (`<|image_pad|>`,
+ * `<|im_end|>`, `</tool_response>`, `<slice>`, …; addedTokenContents) would
+ * be encoded as that token: an image slot with no image behind it, or a turn
+ * or tool-result boundary that page text could inject. The returned function
+ * puts a zero-width space after the first character of each such spelling,
+ * so it stays readable and is encoded as ordinary text. It is for message
+ * text before the chat template renders it; the template's own tokens are
+ * added afterwards.
+ */
+export function plainTextFor(addedTokens = []) {
+  const tokens = [...new Set(Array.from(addedTokens, String))].filter(token => token.length > 1)
     .sort((a, b) => b.length - a.length);
   if (!tokens.length) return text => String(text ?? '');
   const pattern = new RegExp(tokens.map(token => token.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&')).join('|'), 'g');
@@ -685,7 +699,7 @@ export class CompassVldRuntime {
     this.decoder = sessions.decoder_model_merged;
     this.cfg = cfg;
     this.layerKinds = Array.from({ length: cfg.layers }, (_, i) => ((i + 1) % cfg.fullAttentionInterval === 0 ? 'attn' : 'gdn'));
-    this.plainText = plainTextFor(tokenizer?.all_special_tokens || []);
+    this.plainText = plainTextFor(addedTokenContents(tokenizer));
   }
 
   /** A copy of messages or tools with every string passed through plainText. */
