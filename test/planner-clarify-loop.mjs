@@ -108,8 +108,9 @@ for (const build of ['chrome', 'firefox']) {
 
   // A planner that answers from a script and records what it was sent. An
   // Error in the script is thrown instead of answered. The plan alignment
-  // check, which runs when there is conversation history, approves.
-  function scriptedAgent({ provider = VLLM_QWEN, answers, planning = 'try', review = 'never' }) {
+  // check, which runs when there is conversation history, approves unless
+  // `alignment` lists its verdicts in order.
+  function scriptedAgent({ provider = VLLM_QWEN, answers, planning = 'try', review = 'never', alignment = [] }) {
     const agent = newAgent(provider);
     agent.setPlanBeforeActMode(planning);
     agent.setPlanReviewSettings({ mode: review });
@@ -119,7 +120,9 @@ for (const build of ['chrome', 'firefox']) {
       if (meta?.generationName === 'planner_alignment') {
         const request = JSON.parse(contentText(messages.at(-1).content));
         alignmentChecks.push(request);
-        return { content: JSON.stringify({ task_binding: request.task_binding, aligned: true, reason: 'The plan does what the user asked.' }) };
+        const aligned = alignment.length ? alignment.shift() : true;
+        return { content: JSON.stringify({ task_binding: request.task_binding, aligned,
+          reason: aligned ? 'The plan does what the user asked.' : 'The plan does something the user did not ask for.' }) };
       }
       calls.push({ name: meta?.generationName, messages, options });
       const next = answers.length > 1 ? answers.shift() : answers[0];
@@ -462,6 +465,10 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(reason(plannerPlan(), { ...ASKED, answeredQuestionSchedulingTool: 'schedule_task' }), 'drops_schedule');
     assert.equal(reason(plannerPlan(), ASKED, clarifyPlan({ scheduling: OPEN_SCHEDULE })), 'drops_schedule', 'the first answer may keep the question');
     assert.equal(reason(plannerPlan({ scheduling: EVERY_FIVE }), { ...ASKED, answeredQuestionSchedulingTool: 'schedule_task' }), null);
+    assert.equal(agent._plannerSecondLookRejection(parse(clarifyPlan()), parse(plannerPlan()), {}, { alignmentChecks: true }), null,
+      'the alignment check reads a send the answer approved');
+    assert.equal(agent._plannerSecondLookRejection(parse(clarifyPlan()), parse(plannerPlan({ messaging: ALI })), {}, { alignmentChecks: true }),
+      'adds_recipient', 'but it never stands in for a recipient');
     for (const request_kind of ['clarify', 'respond', 'plan_only']) {
       const second = request_kind === 'clarify'
         ? clarifyPlan({ summary: SECOND_QUESTION, messaging: ALI, scheduling: EVERY_FIVE })
@@ -493,6 +500,44 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._userTextNamesRecipients('mail ali@example.com.tr', people('ali@example.com')), false, 'not an address prefix');
     assert.equal(agent._userTextNamesRecipients('Send it to Ali', []), false, 'no one is not a recipient');
     assert.equal(agent._userTextNamesRecipients('', people('Ali')), false);
+  });
+
+  test(`${build}: a send the answer approves is planned where the alignment check reads it, and stays a question in the intent check`, async () => {
+    const SEND = 'Should I send it now, or keep it as a draft?';
+    const followUpContext = { answersPlannerQuestion: true };
+    const planner = scriptedAgent({ provider: PLAIN_MODEL, answers: [clarifyPlan({ requires_submission: false, summary: SEND }), plannerPlan()] });
+    const planned = await fullGate(planner.agent, { message: user('yes, send it'), digest: `User: Reply to Ali\nAssistant: ${SEND}`, followUpContext });
+    assert.equal(planned.proceed, true, JSON.stringify(planned));
+    assert.equal(planned.requiresSubmission, true);
+    assert.equal(planner.alignmentChecks.length, 1, 'the alignment check read the approval');
+    assert.equal(planner.alignmentChecks[0].proposed_plan.requires_submission, true);
+    const intent = scriptedAgent({ provider: PLAIN_MODEL, answers: [intentPlan(clarifyPlan({ requires_submission: false, summary: SEND })), intentPlan(plannerPlan())] });
+    const kept = await intentGate(intent.agent, { message: user('yes, send it'), followUpContext });
+    assert.deepEqual([kept.proceed, kept.requestKind, kept.message], [false, 'clarify', SEND], JSON.stringify(kept));
+  });
+
+  test(`${build}: a plan the alignment check has replaced stays within what the user backed`, async () => {
+    const digest = `User: Post the same thing on LinkedIn too\nAssistant: ${QUESTION}`;
+    const followUpContext = { answersPlannerQuestion: true, ...ASKED };
+    for (const [label, replacement, accepted] of [
+      ['a replacement that adds a recipient', plannerPlan({ messaging: ALI }), false],
+      ['a replacement that adds a recurring schedule', plannerPlan({ scheduling: EVERY_FIVE }), false],
+      ['a replacement within what the user backed', plannerPlan({ summary: 'Publish the same post on LinkedIn and check that it is live.' }), true],
+    ]) {
+      const { agent, calls, alignmentChecks } = scriptedAgent({
+        provider: PLAIN_MODEL, answers: [clarifyPlan(), plannerPlan(), replacement], alignment: [false, true],
+      });
+      const result = await fullGate(agent, { digest, followUpContext });
+      assert.equal(calls.length, 3, `${label}: the first answer, the second look and the replacement`);
+      if (accepted) {
+        assert.equal(result.proceed, true, `${label}: ${JSON.stringify(result)}`);
+        assert.equal(alignmentChecks.length, 2, `${label}: the replacement is checked too`);
+        assert.match(result.approvedScratchpadText, /check that it is live/);
+      } else {
+        assert.deepEqual([result.proceed, result.requestKind, result.message], [false, 'clarify', QUESTION], `${label}: ${JSON.stringify(result)}`);
+        assert.equal(alignmentChecks.length, 1, label);
+      }
+    }
   });
 
   test(`${build}: only a model with a thinking mode it may use rethinks`, () => {

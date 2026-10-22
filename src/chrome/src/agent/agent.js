@@ -27251,7 +27251,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // keep the question but never authorizes more. Returns why an execute plan
   // is rejected, or null. Another question, an answer or a plan to show runs
   // nothing and passes. A rejected plan leaves the question with the user.
-  // - adds_submission: a submission the answered question did not carry.
+  // - adds_submission: a submission the answered question did not carry,
+  //   unless the plan is then checked for alignment with the user's words
+  //   (alignmentChecks, the full planner gate): the answer may itself be the
+  //   approval ("yes, send it"), and only that independent check can read it.
+  //   The intent check has none, so there the user keeps the question.
   // - adds_recipient: a recipient, for a message or a draft (normalizePlan
   //   keeps a draft's addressees in draft_recipients), other than the people
   //   the answered question addressed, unless the user's own words name every
@@ -27262,9 +27266,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // - drops_schedule: no schedule_task where the answered question or the
   //   first answer carried one. The intent check has no alignment check that
   //   would notice the run doing the task once instead.
-  _plannerSecondLookRejection(firstPlan, plan, followUpContext = {}) {
+  _plannerSecondLookRejection(firstPlan, plan, followUpContext = {}, { alignmentChecks = false } = {}) {
     if (plan?.request_kind !== 'execute') return null;
-    if (plan.requires_submission === true && followUpContext?.answeredQuestionRequiresSubmission !== true) return 'adds_submission';
+    if (plan.requires_submission === true && followUpContext?.answeredQuestionRequiresSubmission !== true
+        && !alignmentChecks) return 'adds_submission';
     for (const target of [plan.messaging, plan.draft_recipients]) {
       if (!target || this._sameMessageTarget(followUpContext?.answeredQuestionMessageTarget, target)) continue;
       if (target.target_kind === 'named'
@@ -27300,7 +27305,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // consistency repair.
   async _plannerClarifyRetry(tabId, provider, plannerMessages, {
     parseOptions = {}, intentOnly = false, reask = false, portable = false, costState = null, runId = null,
-    runtimeMode = 'act', onUpdate = null, followUpContext = {}, firstPlan = null,
+    runtimeMode = 'act', onUpdate = null, followUpContext = {}, firstPlan = null, alignmentChecks = false,
   } = {}) {
     const rethink = this._plannerCanRethink(provider);
     if (!rethink && !reask) return null;
@@ -27331,17 +27336,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._tracePlannerAttemptResponse(runId, 0, provider, result, phase, 1, startedAt, chatOptions);
     const plan = parsePlanFromContent(result?.content, parseOptions);
     if (!plan || this._plannerIntentConsistencyIssue(plan, followUpContext)) return null;
-    const rejection = reask ? this._plannerSecondLookRejection(firstPlan, plan, followUpContext) : null;
+    const rejection = reask ? this._plannerSecondLookRejection(firstPlan, plan, followUpContext, { alignmentChecks }) : null;
     if (rejection) {
-      if (runId) {
-        try {
-          Promise.resolve(trace.recordNote(runId, 0, 'planner_second_look_rejected', { phase, reason: rejection }))
-            .catch(() => {});
-        } catch {}
-      }
+      this._tracePlannerSecondLookRejection(runId, phase, rejection);
       return null;
     }
     return plan;
+  }
+
+  _tracePlannerSecondLookRejection(runId, phase, reason) {
+    if (!runId) return;
+    try {
+      Promise.resolve(trace.recordNote(runId, 0, 'planner_second_look_rejected', { phase, reason })).catch(() => {});
+    } catch {}
   }
 
   _plannerIntentRecheckFallback() {
@@ -28557,19 +28564,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : this._plannerActContinuation(runOptions, onUpdate, runId, 'invalid_output');
       }
       hasValidPlannerResponse = true;
+      // History is present on every turn that answers a planner question, so
+      // a plan for it is checked for alignment with the user's words below.
+      const checksAlignment = !!(historyDigest || followUpContext.priorUserTask || followUpContext.scratchpadFacts);
+      // The question a re-ask second look answered for the user. A plan that
+      // later replaces that answer is held to the same limits, or the user
+      // keeps this question (alignment repair below).
+      let reaskFirstPlan = null;
       if (plan.request_kind === 'clarify') {
         if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
           return { proceed: false, steeringSuperseded: true };
         }
         const secondLook = await this._plannerClarifyRetry(tabId, provider, plannerMessages, {
           parseOptions: plannerParseOptions, reask: followUpContext.answersPlannerQuestion === true, firstPlan: plan,
-          portable: plannerPortable, costState, runId, runtimeMode, onUpdate, followUpContext,
+          alignmentChecks: checksAlignment, portable: plannerPortable, costState, runId, runtimeMode, onUpdate, followUpContext,
         });
         if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
         if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
           return { proceed: false, steeringSuperseded: true };
         }
-        if (secondLook) plan = secondLook;
+        if (secondLook) {
+          if (followUpContext.answersPlannerQuestion === true) reaskFirstPlan = plan;
+          plan = secondLook;
+        }
       }
       if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
         if (runOptions.steeringRevision != null) return this._plannerActContinuation(runOptions, onUpdate, runId, 'inconsistent_intent');
@@ -28644,7 +28661,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // authorize a plan for an earlier task. Check the exact current candidate
       // before pinning recipients, execution guards, or review approval.
       let alignmentReplanned = false;
-      if (historyDigest || followUpContext.priorUserTask || followUpContext.scratchpadFacts) {
+      if (checksAlignment) {
         let aligned = false;
         let alignmentFailure = null;
         let alignmentDenialReason = '';
@@ -28765,6 +28782,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 || this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
               alignmentFailure = 'invalid_replacement_plan';
               break;
+            }
+            // A replacement for a second look's plan is held to the same
+            // limits, and is checked for alignment next. Otherwise the user
+            // keeps the question that plan answered.
+            const replacementRejection = reaskFirstPlan
+              ? this._plannerSecondLookRejection(reaskFirstPlan, plan, followUpContext, { alignmentChecks: true })
+              : null;
+            if (replacementRejection) {
+              this._tracePlannerSecondLookRejection(runId, 'planner_alignment_repair', replacementRejection);
+              return await routeNonExecutionPlan(reaskFirstPlan);
             }
             alignmentReplanned = true;
             // A validated correction can remove execution entirely. Preserve
