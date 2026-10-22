@@ -439,17 +439,23 @@ func (a *App) routes(e *gin.Engine) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	api.POST("/decision/load", func(c *gin.Context) {
+		if _, err := a.Store.Update(func(s *settings.Settings) { s.Decision.Enabled = true }); err != nil {
+			fail(c, http.StatusInternalServerError, err)
+			return
+		}
 		go func() {
 			if err := a.D1.Load(); err != nil {
 				logx.Printf("decision load: %v", err)
 			}
 		}()
-		_, _ = a.Store.Update(func(s *settings.Settings) { s.Decision.Enabled = true })
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	api.POST("/decision/unload", func(c *gin.Context) {
+		if _, err := a.Store.Update(func(s *settings.Settings) { s.Decision.Enabled = false }); err != nil {
+			fail(c, http.StatusInternalServerError, err)
+			return
+		}
 		a.D1.Unload()
-		_, _ = a.Store.Update(func(s *settings.Settings) { s.Decision.Enabled = false })
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	api.POST("/decision/test", func(c *gin.Context) {
@@ -482,10 +488,16 @@ func (a *App) routes(e *gin.Engine) {
 			}
 		}
 		if req.Language != nil {
-			a.SetLanguage(*req.Language)
+			if err := a.SetLanguage(*req.Language); err != nil {
+				fail(c, http.StatusInternalServerError, err)
+				return
+			}
 		}
 		if req.Welcomed != nil {
-			_, _ = a.Store.Update(func(s *settings.Settings) { s.Welcomed = *req.Welcomed })
+			if _, err := a.Store.Update(func(s *settings.Settings) { s.Welcomed = *req.Welcomed }); err != nil {
+				fail(c, http.StatusInternalServerError, err)
+				return
+			}
 		}
 		if req.Port != nil && (*req.Port < 1024 || *req.Port > 65535) {
 			fail(c, http.StatusBadRequest, errors.New("choose a port between 1024 and 65535"))

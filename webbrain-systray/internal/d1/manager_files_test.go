@@ -30,6 +30,36 @@ func TestInstallClaimsPhaseBeforeWorkerStarts(t *testing.T) {
 	}
 }
 
+func TestRemoveWaitsForCanceledInstall(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, nil)
+	installDone := make(chan struct{})
+	canceled := make(chan struct{})
+	m.installDone = installDone
+	m.cancel = func() { close(canceled) }
+	removed := make(chan error, 1)
+	go func() { removed <- m.Remove() }()
+	<-canceled
+	select {
+	case err := <-removed:
+		t.Fatalf("Remove returned before install finished: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(installDone)
+	select {
+	case err := <-removed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Remove did not finish after install stopped")
+	}
+}
+
 func TestValidFileRejectsSameSizeCorruption(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "model.data")
 	good := []byte("pinned model contents")

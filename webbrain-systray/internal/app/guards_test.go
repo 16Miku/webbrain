@@ -3,10 +3,12 @@ package app
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/esokullu/webbrain-systray/internal/paths"
 	"github.com/esokullu/webbrain-systray/internal/settings"
 )
 
@@ -21,6 +23,31 @@ func TestLocalHost(t *testing.T) {
 	for _, h := range bad {
 		if localHost(h) {
 			t.Errorf("%q accepted", h)
+		}
+	}
+}
+
+func TestDecisionControlsRejectFailedSettingsSave(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(paths.Settings()+".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a := New("test", store)
+	e := gin.New()
+	a.routes(e)
+	for _, route := range []string{"/companion/api/decision/load", "/companion/api/decision/unload"} {
+		r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8327"+route, nil)
+		r.RemoteAddr = "127.0.0.1:50000"
+		r.Header.Set("X-Companion-Key", store.Get().PanelToken)
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, r)
+		if w.Code != http.StatusInternalServerError || store.Get().Decision.Enabled {
+			t.Fatalf("%s: status %d decision enabled %v, want save error and unchanged state", route, w.Code, store.Get().Decision.Enabled)
 		}
 	}
 }

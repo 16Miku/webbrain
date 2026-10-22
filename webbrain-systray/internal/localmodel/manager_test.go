@@ -13,6 +13,7 @@ import (
 
 	"github.com/esokullu/webbrain-systray/internal/core"
 	"github.com/esokullu/webbrain-systray/internal/osutil"
+	"github.com/esokullu/webbrain-systray/internal/paths"
 	"github.com/esokullu/webbrain-systray/internal/settings"
 )
 
@@ -96,6 +97,26 @@ func TestInstallClaimsPhaseBeforeWorkerStarts(t *testing.T) {
 	defer m.Cancel()
 	if err := m.Install("gguf"); err == nil {
 		t.Fatal("overlapping install was accepted")
+	}
+}
+
+func TestInstallRejectsFailedSettingsSaveBeforeDownload(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(paths.Settings()+".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, func([]core.LocalUpstream) error { return nil }, nil)
+	if err := m.Install("gguf"); err == nil {
+		t.Fatal("install accepted a format preference that could not be saved")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.phase != PhaseIdle || m.cancel != nil {
+		t.Fatal("failed preference save started an install worker")
 	}
 }
 

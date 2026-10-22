@@ -123,19 +123,21 @@ type Status struct {
 }
 
 type Manager struct {
-	mu       sync.Mutex
-	store    *settings.Store
-	onChange func()
-	phase    string
-	step     string
-	progress *download.Progress
-	err      string
-	cancel   context.CancelFunc
-	eng      *engine
-	evalMu   sync.Mutex
-	verified download.Verifier
-	requests int64
-	latency  float64
+	mu          sync.Mutex
+	store       *settings.Store
+	onChange    func()
+	phase       string
+	step        string
+	progress    *download.Progress
+	err         string
+	cancel      context.CancelFunc
+	installDone chan struct{}
+	removing    bool
+	eng         *engine
+	evalMu      sync.Mutex
+	verified    download.Verifier
+	requests    int64
+	latency     float64
 }
 
 func NewManager(store *settings.Store, onChange func()) *Manager {
@@ -270,17 +272,20 @@ func (m *Manager) Install() error {
 		return errors.New("ONNX Runtime " + ortVersion + " has no build for this platform")
 	}
 	m.mu.Lock()
-	if m.phase == PhaseDownloading || m.phase == PhaseInstalling || m.phase == PhaseLoading {
+	if m.removing || m.phase == PhaseDownloading || m.phase == PhaseInstalling || m.phase == PhaseLoading {
 		m.mu.Unlock()
 		return errors.New("already installing")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
+	done := make(chan struct{})
+	m.installDone = done
 	m.phase, m.step, m.err, m.progress = PhaseDownloading, "Preparing the decision model", "", nil
 	m.mu.Unlock()
 	m.changed()
 	go func() {
 		defer cancel()
+		defer close(done)
 		if err := m.install(ctx, asset); err != nil {
 			if errors.Is(err, context.Canceled) {
 				m.set(PhaseIdle, "", nil)
@@ -294,7 +299,10 @@ func (m *Manager) Install() error {
 			m.set(PhaseIdle, "", nil)
 			return
 		}
-		_, _ = m.store.Update(func(s *settings.Settings) { s.Decision.Enabled = true })
+		if _, err := m.store.Update(func(s *settings.Settings) { s.Decision.Enabled = true }); err != nil {
+			m.set(PhaseError, "", fmt.Errorf("save decision-model preference: %w", err))
+			return
+		}
 		if err := m.Load(); err != nil {
 			logx.Printf("decision model load: %v", err)
 		}
@@ -442,14 +450,35 @@ func (m *Manager) unload() {
 
 // Remove deletes the model files.
 func (m *Manager) Remove() error {
-	m.Cancel()
+	m.mu.Lock()
+	if m.removing {
+		m.mu.Unlock()
+		return errors.New("already removing the decision model")
+	}
+	m.removing = true
+	cancel := m.cancel
+	done := m.installDone
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.removing = false
+		m.mu.Unlock()
+	}()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+	if _, err := m.store.Update(func(s *settings.Settings) { s.Decision.Enabled = false }); err != nil {
+		return err
+	}
 	m.evalMu.Lock()
 	defer m.evalMu.Unlock()
 	m.unload()
 	if err := os.RemoveAll(modelDir()); err != nil {
 		return err
 	}
-	_, _ = m.store.Update(func(s *settings.Settings) { s.Decision.Enabled = false })
 	m.set(PhaseIdle, "", nil)
 	return nil
 }

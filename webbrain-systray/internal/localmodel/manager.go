@@ -301,12 +301,15 @@ func (m *Manager) Install(format string) error {
 		m.mu.Unlock()
 		return errors.New("an install is already running")
 	}
+	if _, err := m.store.Update(func(s *settings.Settings) { s.Local.Format = format }); err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.phase, m.step, m.err, m.progress = PhaseDownloading, "Preparing the local model", "", nil
 	m.mu.Unlock()
 	m.changed()
-	_, _ = m.store.Update(func(s *settings.Settings) { s.Local.Format = format })
 
 	go func() {
 		defer cancel()
@@ -329,7 +332,10 @@ func (m *Manager) Install(format string) error {
 			m.setPhase(PhaseIdle, "", nil)
 			return
 		}
-		_, _ = m.store.Update(func(s *settings.Settings) { s.Local.AutoStart = true })
+		if _, err := m.store.Update(func(s *settings.Settings) { s.Local.AutoStart = true }); err != nil {
+			m.setPhase(PhaseError, "", fmt.Errorf("save local-model preference: %w", err))
+			return
+		}
 		if err := m.Start(); err != nil {
 			m.setPhase(PhaseError, "", err)
 		}
@@ -781,6 +787,9 @@ func (m *Manager) Remove(format string) error {
 	if m.Busy() && !m.Running() {
 		return errors.New("wait for the current operation to finish")
 	}
+	if _, err := m.store.Update(func(s *settings.Settings) { s.Local.AutoStart = false }); err != nil {
+		return err
+	}
 	m.Stop()
 	switch format {
 	case "mlx":
@@ -795,7 +804,6 @@ func (m *Manager) Remove(format string) error {
 			}
 		}
 	}
-	_, _ = m.store.Update(func(s *settings.Settings) { s.Local.AutoStart = false })
 	m.setPhase(PhaseIdle, "", nil)
 	return nil
 }

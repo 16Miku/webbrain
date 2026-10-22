@@ -504,11 +504,20 @@ func (a *App) SetNetwork(on bool) error {
 	if err := a.restartOn(s, port, true); err != nil {
 		if on {
 			// Could not listen on the network on this port: back to this computer only.
-			s, _ = a.Store.Update(func(s *settings.Settings) { s.Network = false })
-			_ = a.restartOn(s, port, false)
-			a.setNotice(fmt.Sprintf(i18n.T("network_failed"), port))
+			restored, saveErr := a.Store.Update(func(s *settings.Settings) { s.Network = false })
+			restored.Network = false // keep the listener local even if disk is full
+			restartErr := a.restartOn(restored, port, false)
+			if restartErr == nil {
+				a.setNotice(fmt.Sprintf(i18n.T("network_failed"), port))
+			}
+			return errors.Join(err, saveErr, restartErr)
 		}
-		return err
+		// Disabling network access must stay local; a nearby loopback port is
+		// preferable to restoring the externally reachable listener.
+		if fallbackErr := a.restartOn(s, port, false); fallbackErr != nil {
+			return errors.Join(err, fallbackErr)
+		}
+		return nil
 	}
 	return nil
 }
@@ -529,6 +538,7 @@ func (a *App) SetPort(port int) error {
 	}
 	if err := a.restartProxy(s); err != nil {
 		restored, saveErr := a.Store.Update(func(s *settings.Settings) { s.Port = previous.Port })
+		restored.Port = previous.Port // restore the listener even if disk is full
 		restorePort := previousPort
 		if restorePort == 0 {
 			restorePort = previous.Port
@@ -585,16 +595,22 @@ func (a *App) listeners() int {
 }
 
 func (a *App) SetAutostart(on bool) error {
+	previous := osutil.AutostartEnabled()
 	if err := osutil.SetAutostart(on); err != nil {
 		return err
 	}
-	_, err := a.Store.Update(func(s *settings.Settings) { s.Autostart = on })
+	if _, err := a.Store.Update(func(s *settings.Settings) { s.Autostart = on }); err != nil {
+		return errors.Join(err, osutil.SetAutostart(previous))
+	}
 	a.changed()
-	return err
+	return nil
 }
 
-func (a *App) SetLanguage(l string) {
-	_, _ = a.Store.Update(func(s *settings.Settings) { s.Language = l })
+func (a *App) SetLanguage(l string) error {
+	if _, err := a.Store.Update(func(s *settings.Settings) { s.Language = l }); err != nil {
+		return err
+	}
 	i18n.Set(l)
 	a.changed()
+	return nil
 }
