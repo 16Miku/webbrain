@@ -556,8 +556,7 @@ for (const build of ['chrome', 'firefox']) {
       ['unparseable', ['not JSON'], {}],
       ['request error', [new Error('vLLM: 400 max_tokens is too large')], {}],
       ['cost allowance', [costAgent._costAllowanceError('The cloud cost allowance for this session is used up.')], {}],
-      ['drops the submission the earlier question kept', [plannerPlan({ requires_submission: false })],
-        { plannerClarification: { requiresSubmission: true, pageUrl: TWEET_URL } }],
+      ['an answer-only plan that lists tools', [plannerPlan({ request_kind: 'respond', read_scope: 'none', requires_state_change: false, requires_submission: false })], {}],
     ];
     for (const [label, retryAnswers, extraContext] of cases) {
       const { agent, calls } = scriptedAgent({ provider: PLAIN_MODEL, answers: [clarifyPlan(), ...retryAnswers] });
@@ -565,6 +564,21 @@ for (const build of ['chrome', 'firefox']) {
       assert.deepEqual([result.proceed, result.requestKind, result.message], [false, 'clarify', QUESTION], `${label}: ${JSON.stringify(result)}`);
       assert.equal(calls.length, 2, label);
     }
+  });
+
+  test(`${build}: an answer that takes back the send is planned, and the alignment check reads it`, async () => {
+    const draftOnly = plannerPlan({ requires_submission: false, summary: 'Write the same post on LinkedIn as a draft without publishing it.' });
+    const { agent, calls, alignmentChecks } = scriptedAgent({ provider: PLAIN_MODEL, answers: [clarifyPlan(), draftOnly] });
+    const result = await fullGate(agent, {
+      message: user("don't post it, just save a draft"), digest: ANSWERED_DIGEST,
+      followUpContext: { answersPlannerQuestion: true, plannerClarification: { requiresSubmission: true, pageUrl: TWEET_URL } },
+    });
+    assert.equal(result.proceed, true, JSON.stringify(result));
+    assert.equal(result.requiresSubmission, false, 'the answer took the send back');
+    assert.equal(calls.length, 2);
+    assert.equal(alignmentChecks.length, 1, 'the alignment check read the plan against the answer');
+    assert.equal(alignmentChecks[0].proposed_plan.requires_submission, false);
+    assert.match(String(alignmentChecks[0].current_request), /just save a draft/);
   });
 
   test(`${build}: a second look after a portable repair stays portable`, async () => {

@@ -24371,7 +24371,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     await this._tracePlannerAttemptResponse(runId, 0, provider, result, phase, 1, startedAt, chatOptions);
     const plan = parsePlanFromContent(result?.content, parseOptions);
-    if (!plan || this._plannerIntentConsistencyIssue(plan, followUpContext)) return null;
+    if (!plan) return null;
+    const consistencyIssue = this._plannerIntentConsistencyIssue(plan, followUpContext);
+    // An answer may take back the submission its question carried ("don't
+    // send it, save a draft"). On a re-ask the alignment check that follows
+    // reads that against the answer, as a first answer's focused recheck
+    // would (_plannerIntentConsistencyRepairMessages). Any other issue keeps
+    // the question.
+    if (consistencyIssue && !(reask && consistencyIssue.kind === 'clarification_submit_intent_dropped')) return null;
     const rejection = reask ? this._plannerSecondLookRejection(plan, followUpContext) : null;
     if (rejection) {
       this._tracePlannerSecondLookRejection(runId, phase, rejection);
@@ -25612,6 +25619,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plan = secondLook;
         }
       }
+      // A plan from a re-ask may take back the submission the answered
+      // question carried; the alignment check below reads that against the
+      // answer (_plannerClarifyRetry).
+      if (reaskFirstPlan) consistencyRepairKind = 'clarification_submit_intent_dropped';
       if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
         if (runOptions.steeringRevision != null) return this._plannerActContinuation(runOptions, onUpdate, runId, 'inconsistent_intent');
         return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
