@@ -171,6 +171,8 @@ chrome.runtime.onConnect.addListener((port) => {
         method: msg.method || 'POST',
         headers: msg.headers || {},
         body,
+        ...(msg.redirect ? { redirect: msg.redirect } : {}),
+        ...(msg.credentials ? { credentials: msg.credentials } : {}),
         signal: fetchController.signal,
       });
       await cleanupFormData();

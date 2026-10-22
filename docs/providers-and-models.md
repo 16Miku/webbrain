@@ -126,7 +126,14 @@ evidence goes to the main model.
 
 Local [Kev](https://github.com/jaredpalmer/kev) defaults to
 `http://127.0.0.1:8009`, model `kev-latest`, using `/v1/systemone`. A key is optional
-and loopback requests work offline. Custom remote endpoints require HTTPS.
+and loopback requests work offline. A server elsewhere on your own network may
+also use plain HTTP: private IPv4 (`10/8`, `172.16/12`, `192.168/16`), shared
+`100.64/10` (Tailscale), link-local, unique-local IPv6, and `.local`,
+`.home.arpa` and `.internal` names (`isPrivateNetworkHost` in
+`decision-config.js`). Such a server is not treated as this device: it gets the
+credential-redacted texts other routes get and needs the browser to be online.
+Chrome sends its requests through the offscreen proxy the LAN chat providers
+use. Any other remote endpoint requires HTTPS.
 Image support follows available model capabilities or the custom override. Test
 Connection checks typed answers and, when enabled, two independent image-only
 facts. A successful HTTP response alone does not establish image support.
