@@ -1,0 +1,15 @@
+# build output
+/dist/
+*.syso
+/wbc
+/webbrain-companion
+*.exe
+
+# local runs
+/.wbc-home/
+*.log
+
+# editors and OS
+.DS_Store
+.idea/
+.vscode/
