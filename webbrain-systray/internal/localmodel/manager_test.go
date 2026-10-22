@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -180,6 +181,68 @@ func TestRuntimeRejectsLegacyUnverifiedMarker(t *testing.T) {
 	}
 }
 
+func TestRuntimeInstalledRejectsMissingAndCorruptExtractedFiles(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	plan := Plan{Assets: []string{"llama-" + llamaTag + "-bin-win-cpu-x64.zip"}}
+	dir := runtimeDir(plan)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	server := "llama-server"
+	if runtime.GOOS == "windows" {
+		server += ".exe"
+	}
+	serverPath := filepath.Join(dir, server)
+	libraryPath := filepath.Join(dir, "libggml.so")
+	if err := os.WriteFile(serverPath, []byte("server"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(libraryPath, []byte("library"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := installedRuntimeManifest(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".installed"), manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeInstalled(plan) {
+		t.Fatal("valid extracted runtime was rejected")
+	}
+	if err := os.Remove(libraryPath); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeInstalled(plan) {
+		t.Fatal("runtime with a missing library was accepted")
+	}
+	if err := os.WriteFile(libraryPath, []byte("Library"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	modified := time.Now().Add(time.Minute)
+	if err := os.Chtimes(libraryPath, modified, modified); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeInstalled(plan) {
+		t.Fatal("runtime with a same-sized corrupt library was accepted")
+	}
+	if err := os.WriteFile(libraryPath, []byte("library"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(libraryPath, modified.Add(time.Minute), modified.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeInstalled(plan) {
+		t.Fatal("repaired runtime was rejected")
+	}
+	if err := os.Remove(serverPath); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeInstalled(plan) {
+		t.Fatal("runtime with a missing llama-server was accepted")
+	}
+}
+
 func TestUVRejectsUnverifiedInstall(t *testing.T) {
 	t.Setenv("WBC_HOME", t.TempDir())
 	if err := os.MkdirAll(uvDir(), 0o700); err != nil {
@@ -243,11 +306,18 @@ func TestGGUFInstalledRejectsSameSizeCorruption(t *testing.T) {
 	if err := os.MkdirAll(runtimeDir(plan), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	manifest, ok := runtimeManifest(plan)
-	if !ok {
-		t.Fatal("test runtime has no pinned checksum")
+	server := "llama-server"
+	if runtime.GOOS == "windows" {
+		server += ".exe"
 	}
-	if err := os.WriteFile(filepath.Join(runtimeDir(plan), ".installed"), []byte(manifest), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(runtimeDir(plan), server), []byte("server"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := installedRuntimeManifest(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir(plan), ".installed"), manifest, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	m := NewManager(nil, nil, nil)

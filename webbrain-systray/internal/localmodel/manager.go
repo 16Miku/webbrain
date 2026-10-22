@@ -2,8 +2,12 @@ package localmodel
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -146,13 +150,100 @@ func runtimeManifest(p Plan) (string, bool) {
 	return llamaTag + "\n" + strings.Join(hashes, "\n") + "\n", len(hashes) > 0
 }
 
+type runtimeFile struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+}
+
+type runtimeInstallation struct {
+	Archives string        `json:"archives"`
+	Files    []runtimeFile `json:"files"`
+}
+
+var runtimeVerifier download.Verifier
+
+// installedRuntimeManifest records the contents of the verified archives
+// after extraction and macOS signing. It lets later installs repair damaged
+// runtime files without downloading the unchanged model weights.
+func installedRuntimeManifest(p Plan) ([]byte, error) {
+	archives, ok := runtimeManifest(p)
+	if !ok {
+		return nil, errors.New("missing pinned llama.cpp runtime checksum")
+	}
+	dir := runtimeDir(p)
+	installed := runtimeInstallation{Archives: archives}
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || path == filepath.Join(dir, ".installed") {
+			return nil
+		}
+		info, err := os.Stat(path) // follow archive symlinks to their contents
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("runtime entry is not a file: %s", path)
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		h := sha256.New()
+		_, copyErr := io.Copy(h, f)
+		closeErr := f.Close()
+		if err := errors.Join(copyErr, closeErr); err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		installed.Files = append(installed.Files, runtimeFile{filepath.ToSlash(rel), info.Size(), hex.EncodeToString(h.Sum(nil))})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(installed.Files) == 0 {
+		return nil, errors.New("llama.cpp runtime archive is empty")
+	}
+	return json.Marshal(installed)
+}
+
 func runtimeInstalled(p Plan) bool {
 	want, ok := runtimeManifest(p)
 	if !ok {
 		return false
 	}
-	data, err := os.ReadFile(filepath.Join(runtimeDir(p), ".installed"))
-	return err == nil && string(data) == want
+	dir := runtimeDir(p)
+	data, err := os.ReadFile(filepath.Join(dir, ".installed"))
+	if err != nil {
+		return false
+	}
+	var installed runtimeInstallation
+	if json.Unmarshal(data, &installed) != nil || installed.Archives != want || len(installed.Files) == 0 {
+		return false
+	}
+	binary := "llama-server"
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	binaryVerified := false
+	for _, f := range installed.Files {
+		if !filepath.IsLocal(filepath.FromSlash(f.Path)) || f.Size < 0 || len(f.SHA256) != 64 {
+			return false
+		}
+		if !runtimeVerifier.Valid(filepath.Join(dir, filepath.FromSlash(f.Path)), f.Size, f.SHA256) {
+			return false
+		}
+		if filepath.Base(f.Path) == binary {
+			binaryVerified = true
+		}
+	}
+	return binaryVerified
 }
 
 func uvInstalled(arch string) bool {
@@ -429,11 +520,11 @@ func (m *Manager) installGGUF(ctx context.Context, info sysinfo.Info) error {
 		if findBinary(rdir, "llama-server") == "" {
 			return errors.New("llama-server not found in the runtime archive")
 		}
-		manifest, ok := runtimeManifest(plan)
-		if !ok {
-			return errors.New("missing pinned llama.cpp runtime checksum")
+		manifest, err := installedRuntimeManifest(plan)
+		if err != nil {
+			return fmt.Errorf("verify unpacked llama.cpp runtime: %w", err)
 		}
-		if err := os.WriteFile(filepath.Join(rdir, ".installed"), []byte(manifest), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(rdir, ".installed"), manifest, 0o644); err != nil {
 			return err
 		}
 		for _, a := range plan.Assets {
