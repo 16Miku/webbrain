@@ -52,6 +52,41 @@ func TestSetPortRestoresWorkingProxyWhenLastPortIsOccupied(t *testing.T) {
 	}
 }
 
+func TestRotateKeyRestoresSavedKeyWhenProxyCannotRestart(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	if err := paths.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New("test", store)
+	if err := a.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Shutdown()
+	previous := store.Get().APIKey
+	// A directory at the config's temporary path makes both restart attempts
+	// fail after the new key has been saved.
+	if err := os.Mkdir(paths.ProxyConfig()+".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.RotateKey(); err == nil {
+		t.Fatal("RotateKey succeeded although the proxy config could not be written")
+	}
+	if got := store.Get().APIKey; got != previous {
+		t.Fatal("failed rotation left the new key in memory")
+	}
+	reopened, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reopened.Get().APIKey; got != previous {
+		t.Fatal("failed rotation left the new key on disk")
+	}
+}
+
 func TestRapidNetworkTogglesApplyInRequestOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("WBC_HOME", t.TempDir())

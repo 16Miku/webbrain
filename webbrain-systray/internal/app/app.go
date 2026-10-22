@@ -454,15 +454,30 @@ func (a *App) SetAccountDisabled(name string, disabled bool) error {
 func (a *App) RotateKey() error {
 	a.restartMu.Lock()
 	defer a.restartMu.Unlock()
+	previous := a.Store.Get()
+	previousPort := a.Proxy.Port()
 	s, err := a.Store.Update(func(s *settings.Settings) { s.APIKey = settings.NewAPIKey() })
 	if err != nil {
 		return err
 	}
-	port := a.Proxy.Port()
+	port := previousPort
 	if port == 0 {
 		port = s.Port
 	}
-	return a.restartOn(s, port, false)
+	if err := a.restartOn(s, port, false); err != nil {
+		restored, saveErr := a.Store.Update(func(s *settings.Settings) { s.APIKey = previous.APIKey })
+		restored.APIKey = previous.APIKey // restore the listener even if disk is full
+		restorePort := previousPort
+		if restorePort == 0 {
+			restorePort = previous.Port
+		}
+		restartErr := a.restartOn(restored, restorePort, previousPort != 0)
+		if restartErr == nil {
+			a.setNotice(i18n.T("key_failed"))
+		}
+		return errors.Join(err, saveErr, restartErr)
+	}
+	return nil
 }
 
 // proxyOptions builds the proxy configuration from the settings. The internal

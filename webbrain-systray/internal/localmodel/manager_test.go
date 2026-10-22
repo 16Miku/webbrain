@@ -132,6 +132,25 @@ func TestInstallRejectsFailedSettingsSaveBeforeDownload(t *testing.T) {
 	}
 }
 
+func TestRemoveReportsRuntimeDirectoryReadError(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Runtimes(), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, func([]core.LocalUpstream) error { return nil }, nil)
+	if err := m.Remove("gguf"); err == nil {
+		t.Fatal("Remove reported success when runtime files could not be listed")
+	}
+	status := m.Status()
+	if status.Phase != PhaseError || status.Error == "" {
+		t.Fatalf("failed removal was not shown as an error: phase=%q error=%q", status.Phase, status.Error)
+	}
+}
+
 func TestRuntimeArchivesHavePinnedChecksums(t *testing.T) {
 	for asset, size := range llamaAssetSizes {
 		if size <= 0 || len(llamaAssetSHA[asset]) != 64 {

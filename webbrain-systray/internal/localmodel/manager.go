@@ -795,18 +795,36 @@ func (m *Manager) Remove(format string) error {
 		return err
 	}
 	m.Stop()
+	var removeErrs []error
+	remove := func(path string) {
+		if err := os.RemoveAll(path); err != nil {
+			removeErrs = append(removeErrs, fmt.Errorf("remove %s: %w", path, err))
+		}
+	}
 	switch format {
 	case "mlx":
-		_ = os.RemoveAll(mlxDir())
-		_ = os.RemoveAll(mlxVenv())
+		remove(mlxDir())
+		remove(mlxVenv())
 	default:
-		_ = os.RemoveAll(ggufDir())
-		entries, _ := os.ReadDir(paths.Runtimes())
-		for _, e := range entries {
-			if strings.HasPrefix(e.Name(), "llama-") {
-				_ = os.RemoveAll(filepath.Join(paths.Runtimes(), e.Name()))
+		remove(ggufDir())
+		entries, err := os.ReadDir(paths.Runtimes())
+		if err != nil {
+			// Some platforms classify "path is a file" as not-exist for
+			// ReadDir. Only an actually missing path means there is nothing
+			// left to remove.
+			if _, statErr := os.Stat(paths.Runtimes()); !os.IsNotExist(statErr) {
+				removeErrs = append(removeErrs, fmt.Errorf("list runtimes: %w", err))
 			}
 		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "llama-") {
+				remove(filepath.Join(paths.Runtimes(), e.Name()))
+			}
+		}
+	}
+	if err := errors.Join(removeErrs...); err != nil {
+		m.setPhase(PhaseError, "", err)
+		return err
 	}
 	m.setPhase(PhaseIdle, "", nil)
 	return nil

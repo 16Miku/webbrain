@@ -34,6 +34,7 @@ func (r *rotating) Write(p []byte) (int, error) {
 	}
 	if r.size+int64(len(p)) > maxSize {
 		_ = r.f.Close()
+		r.f = nil
 		_ = os.Remove(r.path + ".1")
 		_ = os.Rename(r.path, r.path+".1")
 		if err := r.open(); err != nil {
@@ -42,7 +43,12 @@ func (r *rotating) Write(p []byte) (int, error) {
 	}
 	n, err := r.f.Write(p)
 	r.size += int64(n)
-	return n, err
+	if err != nil {
+		_ = r.f.Close()
+		r.f = nil // retry opening on the next write; keep draining stdout
+		return len(p), nil
+	}
+	return n, nil
 }
 
 func (r *rotating) open() error {
@@ -85,9 +91,15 @@ func Init(dir string, alsoConsole bool) {
 	logrus.SetFormatter(&logrus.TextFormatter{DisableColors: true, FullTimestamp: true})
 	if !alsoConsole {
 		// The embedded proxy prints a few progress lines with fmt.Println.
-		if f, err := os.OpenFile(file.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
-			os.Stdout = f
-			os.Stderr = f
+		// Send those writes through the rotating writer too, so they cannot
+		// keep appending to the old file after it has been renamed.
+		if reader, writer, err := os.Pipe(); err == nil {
+			os.Stdout = writer
+			os.Stderr = writer
+			go func() {
+				_, _ = io.Copy(file, reader)
+				_ = reader.Close()
+			}()
 		}
 	}
 	fmt.Fprintf(w, "\n==== WebBrain Companion started %s ====\n", time.Now().Format(time.RFC3339))

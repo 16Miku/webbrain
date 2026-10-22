@@ -26,6 +26,7 @@ var catalog = map[string]map[string]string{
 		"dur_minutes":    "%dm",
 		"port_moved":     "Another app (often CLIProxyAPI or EasyCLIProxyAPI) uses port %d, so the companion runs on %d. Use the address shown here in WebBrain.",
 		"port_failed":    "Port %d is unavailable. The companion is still running on port %d.",
+		"key_failed":     "Could not rotate the API key. The previous key is still in use.",
 		"network_failed": "Network access stays off: another app uses port %d on the network. Pick another port in Settings and try again.",
 	},
 	"tr": {
@@ -45,6 +46,7 @@ var catalog = map[string]map[string]string{
 		"dur_minutes":    "%d dk",
 		"port_moved":     "%d portunu başka bir uygulama (çoğu zaman CLIProxyAPI ya da EasyCLIProxyAPI) kullanıyor, bu yüzden Companion %d portunda çalışıyor. WebBrain'de burada gösterilen adresi kullan.",
 		"port_failed":    "%d portu kullanılamıyor. Companion hâlâ %d portunda çalışıyor.",
+		"key_failed":     "API anahtarı yenilenemedi. Önceki anahtar kullanılmaya devam ediyor.",
 		"network_failed": "Ağ erişimi kapalı kaldı: %d portunu ağda başka bir uygulama kullanıyor. Ayarlar'dan başka bir port seçip tekrar dene.",
 	},
 }
