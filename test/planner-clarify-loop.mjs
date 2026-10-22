@@ -608,17 +608,49 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
-  test(`${build}: a recipient question about a scheduled task records the schedule`, async () => {
-    const scheduledMessage = plannerPlan({ messaging: { target_kind: 'active_conversation', recipients: [] }, scheduling: EVERY_FIVE });
+  test(`${build}: a question about a conversation that could not be pinned records it and the schedule`, async () => {
+    const cases = [
+      ['a scheduled message', plannerPlan({ messaging: OPEN_CHAT, scheduling: EVERY_FIVE }), true, 'schedule_task'],
+      ['a message', plannerPlan({ messaging: OPEN_CHAT }), true, null],
+      ['a draft', plannerPlan({ requires_submission: false, messaging: OPEN_CHAT }), false, null],
+    ];
     for (const gate of ['planner', 'intent']) {
-      for (const [label, plan, scheduled] of [['scheduled', scheduledMessage, true], ['unscheduled', plannerPlan({ messaging: scheduledMessage.messaging }), false]]) {
+      for (const [label, plan, sends, schedulingTool] of cases) {
         const { agent } = scriptedAgent({ provider: PLAIN_MODEL, answers: [gate === 'planner' ? plan : intentPlan(plan)] });
-        agent._pinActiveConversationMessagingTarget = async () => ({ ok: false, error: 'Open the conversation first.' });
+        agent._pinActiveConversationMessagingTarget = async (_tabId, target) => (target
+          ? { ok: false, error: 'Open the conversation first.' } : { ok: true, target: null });
         const result = gate === 'planner' ? await fullGate(agent) : await intentGate(agent);
-        assert.deepEqual([result.reason, result.plannerClarification, result.schedulingTool],
-          ['active_recipient_unverified', true, scheduled ? 'schedule_task' : null],
-          `${gate} ${label}: ${JSON.stringify(result)}`);
+        assert.deepEqual([result.reason, result.plannerClarification, result.requiresSubmission, result.schedulingTool, result.messageTarget],
+          ['active_recipient_unverified', true, sends, schedulingTool, OPEN_CHAT], `${gate} ${label}: ${JSON.stringify(result)}`);
       }
     }
+  });
+
+  test(`${build}: once the user opens the conversation a question asked for, the reply is planned and pinned again`, async () => {
+    const tabId = 41;
+    const reply = plannerPlan({ messaging: OPEN_CHAT, summary: 'Reply in the open conversation that I will be late.' });
+    const pinned = { target_kind: 'named', recipients: [{ identity: 'Bob', role: 'to' }] };
+    const { agent, calls } = scriptedAgent({ provider: PLAIN_MODEL, answers: [reply, clarifyPlan({ summary: 'Which conversation?' }), reply] });
+    let open = false;
+    const pins = [];
+    agent._pinActiveConversationMessagingTarget = async (_tabId, target) => {
+      if (target) pins.push(open);
+      if (!target) return { ok: true, target: null };
+      return open ? { ok: true, target: pinned } : { ok: false, error: 'Open the conversation first.' };
+    };
+    const messages = [{ role: 'system', content: 'sys' }];
+    agent.conversations.set(tabId, messages);
+    agent._persistSubmittedTurn = async () => {};
+    agent._persist = () => {};
+    const asked = await agent._maybeRunPlannerGate(tabId, messages, user('Reply in this chat that I will be late'), () => {}, 'act', null, null, TAB, {});
+    assert.deepEqual([asked.proceed, asked.message], [false, 'Open the conversation first.'], JSON.stringify(asked));
+    assert.deepEqual(messages.at(-1).webbrainPlannerClarification?.messageTarget, OPEN_CHAT, 'the question records the conversation');
+    open = true;
+    const gate = await agent._maybeRunPlannerGate(tabId, messages, user('It is open now'), () => {}, 'act', null, null, TAB, {});
+    assert.equal(calls.length, 3);
+    assert.match(calls[2].messages[0].content, REASK, 'the answer got a second look');
+    assert.equal(gate.proceed, true, JSON.stringify(gate));
+    assert.deepEqual(gate.messaging, pinned, 'the conversation is pinned again before anything is sent');
+    assert.deepEqual(pins, [false, true]);
   });
 }

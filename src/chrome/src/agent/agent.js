@@ -28297,6 +28297,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requiresStateChange: false,
           requiresSubmission: true,
           schedulingTool: plan.scheduling?.tool || null,
+          // The open conversation could not be pinned yet. Once the user has
+          // opened it, a second look may address it again, and it is pinned
+          // again before anything is sent (_plannerSecondLookRejection).
+          messageTarget: plan.messaging,
         };
       }
       plan.messaging = messagingPin.target;
@@ -28318,6 +28322,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requiresStateChange: false,
           requiresSubmission: false,
           schedulingTool: plan.scheduling?.tool || null,
+          // The same for the conversation a draft is written into.
+          messageTarget: plan.draft_recipients,
         };
       }
       plan.draft_recipients = draftPin.target;
@@ -28807,6 +28813,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requiresStateChange: false,
           requiresSubmission: true,
           schedulingTool: plan.scheduling?.tool || null,
+          // The open conversation could not be pinned yet. Once the user has
+          // opened it, a second look may address it again, and it is pinned
+          // again before anything is sent (_plannerSecondLookRejection).
+          messageTarget: plan.messaging,
         };
       }
       plan.messaging = messagingPin.target;
@@ -28828,6 +28838,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           requiresStateChange: false,
           requiresSubmission: false,
           schedulingTool: plan.scheduling?.tool || null,
+          // The same for the conversation a draft is written into.
+          messageTarget: plan.draft_recipients,
         };
       }
       plan.draft_recipients = draftPin.target;
