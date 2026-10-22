@@ -22,10 +22,10 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: full and sparse imports reject invalid decision enums and endpoints before persistence`, () => {
     for (const parser of [transfer.parseConfigImport, transfer.parseConfigPatchImport]) {
       for (const settings of [{ decisionProvider: 'unknown' }, { decisionVisionMode: 'maybe' }, { decisionProvider: 'local', decisionBaseUrl: 'not a URL' },
-        { decisionBaseUrl: 'javascript:alert(1)' }, { decisionBaseUrl: 'http://remote.example.com' }, { decisionBaseUrl: 'https://user:secret@example.com' }]) {
+        { decisionBaseUrl: 'javascript:alert(1)' }, { decisionBaseUrl: 'http://remote.example.com' }, { decisionBaseUrl: 'http://8.8.8.8:8009' }, { decisionBaseUrl: 'https://user:secret@example.com' }]) {
         assert.throws(() => parser(JSON.stringify({ schema: transfer.CONFIG_SCHEMA, settings })), /Invalid value for configuration setting/);
       }
-      for (const decisionBaseUrl of ['', 'http://127.0.0.1:8009', 'http://localhost:8009', 'http://[::1]:8009', 'https://example.com/v1']) {
+      for (const decisionBaseUrl of ['', 'http://127.0.0.1:8009', 'http://localhost:8009', 'http://[::1]:8009', 'https://example.com/v1', 'http://192.168.1.51:8091', 'http://gpu.local:8009/v1']) {
         const imported = parser(JSON.stringify({ schema: transfer.CONFIG_SCHEMA, settings: { decisionProvider: 'local', decisionBaseUrl } })).settings;
         assert.doesNotThrow(() => config.resolveDecisionConfig(imported));
       }
@@ -45,6 +45,68 @@ for (const build of ['chrome', 'firefox']) {
     assert.throws(() => config.resolveDecisionConfig({ decisionProvider: 'local', decisionBaseUrl: 'http://user:pass@example.com' }));
     const compass = config.resolveDecisionConfig({ decisionProvider: 'local', systemOneDoneEnabled: false }, { baseUrl: 'https://api.webbrain.one/v1' });
     assert.equal(compass.provider, 'compass'); assert.equal(compass.enabled, true); assert.equal(compass.doneEnabled, true);
+  });
+  test(`${build}: a decision server elsewhere on the private network may use plain HTTP but is not this device`, () => {
+    for (const decisionBaseUrl of ['http://192.168.1.51:8091/', 'http://10.1.2.3:8009/v1', 'http://172.16.4.2:8009', 'http://172.31.0.9:8009', 'http://100.100.1.2:8009',
+      'http://169.254.1.2:8009', 'http://gpu.local:8009', 'http://gpu.home.arpa:8009', 'http://gpu.internal:8009', 'http://[fd00::5]:8009', 'http://[::ffff:192.168.1.51]:8091']) {
+      const selected = config.resolveDecisionConfig({ decisionMode: 'on', decisionProvider: 'local', decisionBaseUrl });
+      assert.equal(selected.enabled, true, decisionBaseUrl);
+      // Off this device: no offline answers, and the texts other routes get.
+      assert.equal(selected.local, false, decisionBaseUrl); assert.equal(selected.config.category, 'cloud', decisionBaseUrl);
+      assert.equal(selected.config.inputCostPerMillionUsd, 0, decisionBaseUrl);
+    }
+    assert.equal(config.resolveDecisionConfig({ decisionProvider: 'local', decisionBaseUrl: 'http://192.168.1.51:8091/' }).url, 'http://192.168.1.51:8091/v1/systemone');
+    for (const decisionBaseUrl of ['http://8.8.8.8:8009', 'http://172.32.0.1:8009', 'http://100.128.0.1:8009', 'http://192.0.2.10:8009', 'http://decisions.example.com',
+      'http://gpu.local.example.com', 'http://gpubox:8009', 'http://0.0.0.0:8009', 'http://[2001:db8::1]:8009', 'http://[::ffff:8.8.8.8]:8009']) {
+      assert.throws(() => config.resolveDecisionConfig({ decisionProvider: 'local', decisionBaseUrl }), /require HTTPS outside localhost and private networks/, decisionBaseUrl);
+    }
+    assert.equal(config.resolveDecisionConfig({ decisionProvider: 'local', decisionBaseUrl: 'https://decisions.example.com/v1' }).url, 'https://decisions.example.com/v1/systemone');
+  });
+  if (build === 'chrome') test('chrome: requests to a LAN decision server take the offscreen proxy and keep their redirect and cookie policy', async () => {
+    const previousChrome = globalThis.chrome, previousFetch = globalThis.fetch, previousWarn = console.warn;
+    const answer = response(); answer.model = 'kev-latest';
+    const direct = [], proxied = [];
+    console.warn = () => {};
+    // The service worker cannot reach the LAN host (Private Network Access); loopback answers directly.
+    globalThis.fetch = async (url, options = {}) => {
+      direct.push({ url: String(url), method: options.method || 'GET' });
+      if (String(url).startsWith('http://192.168.1.51:8091/')) throw new TypeError('Failed to fetch');
+      return new Response(JSON.stringify(answer), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: { connect() {
+        const listeners = [];
+        return {
+          onMessage: { addListener: fn => listeners.push(fn) }, onDisconnect: { addListener() {} }, disconnect() {},
+          postMessage(message) {
+            proxied.push(message);
+            const body = message.url.endsWith('/v1/models') ? { data: [{ id: 'kev-latest' }] } : answer;
+            queueMicrotask(() => [{ type: 'headers', ok: true, status: 200, contentType: 'application/json' }, { type: 'chunk', text: JSON.stringify(body) }, { type: 'done' }]
+              .forEach(m => listeners.forEach(fn => fn(m))));
+          },
+        };
+      } },
+    };
+    try {
+      const lan = config.resolveDecisionConfig({ decisionMode: 'on', decisionProvider: 'local', decisionBaseUrl: 'http://192.168.1.51:8091/' });
+      assert.deepEqual((await config.listDecisionModels(lan)).map(model => model.id), ['kev-latest']);
+      assert.deepEqual(direct, [{ url: 'http://192.168.1.51:8091/v1/models', method: 'GET' }]);
+      assert.equal(proxied.length, 1);
+      assert.deepEqual({ ...proxied[0], headers: undefined }, { url: 'http://192.168.1.51:8091/v1/models', method: 'GET', redirect: 'error', credentials: 'omit', headers: undefined, body: undefined });
+      const client = judge.createSystemOneJudge({ maxRetries: 0 });
+      const result = await client.evaluate({ config: lan, state: {}, questions: verifier.completionQuestions() });
+      assert.equal(result.model, 'kev-latest');
+      // A POST takes one transport: the proxy, never a direct attempt first.
+      assert.equal(direct.length, 1); assert.equal(proxied.length, 2);
+      assert.equal(proxied[1].url, 'http://192.168.1.51:8091/v1/systemone'); assert.equal(proxied[1].method, 'POST');
+      assert.equal(proxied[1].redirect, 'error'); assert.equal(proxied[1].credentials, 'omit');
+      await client.evaluate({ config: config.resolveDecisionConfig({ decisionMode: 'on', decisionProvider: 'local' }), state: {}, questions: verifier.completionQuestions() });
+      assert.deepEqual(direct.at(-1), { url: 'http://127.0.0.1:8009/v1/systemone', method: 'POST' }); assert.equal(proxied.length, 2);
+    } finally {
+      globalThis.chrome = previousChrome; globalThis.fetch = previousFetch; console.warn = previousWarn;
+      if (previousChrome === undefined) delete globalThis.chrome;
+    }
   });
   test(`${build}: Compass credentials never fall back to saved decision-provider keys`, async () => {
     const saved = { systemOneEnabled: false, decisionApiKey: 'saved-openrouter-key',
