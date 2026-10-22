@@ -9,8 +9,8 @@
 //   planner told not to think (/no_think) thinks, and on the turn that
 //   answers the planner's previous question the planner is told it cannot
 //   see the page and may ask again only for values that must come from the
-//   user. That plan may not add a submission, a recipient or a schedule, and
-//   then goes through the usual checks.
+//   user. That plan may not add a submission, a recipient or a schedule the
+//   task did not carry, and then goes through the usual checks.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -88,6 +88,10 @@ const user = (content, extra = {}) => ({ role: 'user', content, ...extra });
 const assistant = content => ({ role: 'assistant', content });
 const contentText = content => (Array.isArray(content) ? content.map(block => block?.text || '').join('') : String(content || ''));
 const REASK = /Second look before asking again/;
+const OPEN_SCHEDULE = { tool: 'schedule_task', hint: 'The user wants the page checked on a schedule; how often is still open.' };
+const EVERY_FIVE = { tool: 'schedule_task', hint: 'Every 5 minutes, as the user answered.' };
+const HOW_OFTEN = 'How often should I check this page for a new release?';
+const PAUSE = { tool: 'schedule_resume', hint: 'Wait until the deploy finishes, then continue.' };
 
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
@@ -234,6 +238,46 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._turnAnswersPlannerQuestion(messages, -1), false);
   });
 
+  test(`${build}: the answer context names the schedule of the question's task, and only for a direct answer`, () => {
+    const agent = newAgent();
+    const answer = user('every five minutes');
+    const asked = gate => {
+      const messages = [{ role: 'system', content: 'sys' }, user('Check this page for a new release on a schedule')];
+      messages.push(agent._plannerTerminalAssistantMessage({ requestKind: 'clarify', plannerClarification: true, message: HOW_OFTEN, ...gate },
+        TAB, messages[1].content, agent._progressTaskKeyForText(messages[1].content)));
+      return [...messages, answer];
+    };
+    const scheduled = asked({ schedulingTool: 'schedule_task' });
+    assert.equal(scheduled[2].webbrainPlannerClarification.schedulingTool, 'schedule_task', 'the question records the schedule');
+    assert.equal(asked({})[2].webbrainPlannerClarification.schedulingTool, null);
+    assert.equal(asked({ schedulingTool: 'schedule_everything' })[2].webbrainPlannerClarification.schedulingTool, null, 'only a known tool');
+    assert.deepEqual(agent._plannerQuestionAnswerContext(scheduled, 3), { answersPlannerQuestion: true, answeredQuestionSchedulingTool: 'schedule_task' });
+    assert.deepEqual(agent._plannerQuestionAnswerContext(asked({}), 3), { answersPlannerQuestion: true, answeredQuestionSchedulingTool: null });
+    for (const runOptions of [{ steeringRevision: 1 }, { scheduledRun: true }, { scheduledResume: true }]) {
+      assert.deepEqual(agent._plannerQuestionAnswerContext(scheduled, 3, runOptions),
+        { answersPlannerQuestion: false, answeredQuestionSchedulingTool: null }, JSON.stringify(runOptions));
+    }
+    const newRequest = [...scheduled.slice(0, 3), { ...answer, webbrainTurnKind: 'request' }];
+    assert.deepEqual(agent._plannerQuestionAnswerContext(newRequest, 3), { answersPlannerQuestion: false, answeredQuestionSchedulingTool: null },
+      'a new request answers no question');
+  });
+
+  test(`${build}: a question keeps the schedule of the task it asks about, and nothing runs from it`, async () => {
+    const { parsePlanFromContent } = await import(`../src/${build}/src/agent/planner.js`);
+    const parse = plan => parsePlanFromContent(JSON.stringify(plan), { requireIntent: true, locale: 'en' });
+    const question = parse(clarifyPlan({ requires_submission: false, summary: HOW_OFTEN, scheduling: OPEN_SCHEDULE }));
+    assert.deepEqual(question.scheduling, OPEN_SCHEDULE);
+    assert.deepEqual([question.request_kind, question.requires_state_change], ['clarify', false]);
+    assert.deepEqual(parse(plannerPlan({ requires_submission: false, scheduling: EVERY_FIVE })).scheduling, EVERY_FIVE);
+    for (const request_kind of ['respond', 'plan_only']) {
+      const plan = parse(plannerPlan({
+        request_kind, read_scope: 'none', requires_state_change: false, requires_submission: false, scheduling: EVERY_FIVE,
+      }));
+      assert.equal(plan?.request_kind, request_kind, `fixture: ${request_kind} parses`);
+      assert.equal(plan.scheduling, null, request_kind);
+    }
+  });
+
   // ── The second look ─────────────────────────────────────────────────
 
   test(`${build}: a planner question on the turn that answers the last one gets a second look, and its plan runs`, async () => {
@@ -319,7 +363,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(second.options.extraBody?.chat_template_kwargs?.enable_thinking, false);
   });
 
-  test(`${build}: a second look told not to re-ask may not add a submission, a recipient or a schedule`, async () => {
+  test(`${build}: a second look told not to re-ask may not add a submission, a recipient or a schedule the task did not carry`, async () => {
     const named = { target_kind: 'named', recipients: [{ identity: 'Ali Veli', role: 'to' }] };
     const cases = [
       ['a submission nobody asked for', clarifyPlan({ requires_submission: false }), plannerPlan(), {}, false],
@@ -334,14 +378,26 @@ for (const build of ['chrome', 'firefox']) {
         plannerPlan({ requires_submission: false, messaging: named }), {}, false],
       ['a draft for the recipient the first answer named', clarifyPlan({ messaging: named }),
         plannerPlan({ requires_submission: false, messaging: named }), {}, true],
-      ['a schedule', clarifyPlan(), plannerPlan({ scheduling: { tool: 'schedule_task', hint: 'Every 43200 minutes.' } }), {}, false],
+      ['a schedule the task did not carry', clarifyPlan(), plannerPlan({ scheduling: { tool: 'schedule_task', hint: 'Every 43200 minutes.' } }), {}, false],
+      ['a schedule the first answer carried', clarifyPlan({ scheduling: OPEN_SCHEDULE }), plannerPlan({ scheduling: EVERY_FIVE }), {}, true],
+      ['a schedule the answered question carried', clarifyPlan(), plannerPlan({ scheduling: EVERY_FIVE }),
+        { answeredQuestionSchedulingTool: 'schedule_task' }, true],
+      ['a recurring schedule where the first answer carried only a pause', clarifyPlan({ scheduling: PAUSE }),
+        plannerPlan({ scheduling: EVERY_FIVE }), {}, false],
+      ['a recurring schedule where the answered question carried only a pause', clarifyPlan(),
+        plannerPlan({ scheduling: EVERY_FIVE }), { answeredQuestionSchedulingTool: 'schedule_resume' }, false],
     ];
     for (const [label, first, second, extraContext, accepted] of cases) {
-      const { agent, calls } = scriptedAgent({ provider: PLAIN_MODEL, answers: [first, second] });
-      const result = await fullGate(agent, { followUpContext: { answersPlannerQuestion: true, ...extraContext } });
-      assert.equal(calls.length, 2, label);
-      if (accepted) assert.equal(result.requestKind, 'execute', `${label}: ${JSON.stringify(result)}`);
-      else assert.deepEqual([result.proceed, result.requestKind, result.message], [false, 'clarify', QUESTION], `${label}: ${JSON.stringify(result)}`);
+      for (const gate of ['planner', 'intent']) {
+        const answers = gate === 'planner' ? [first, second] : [intentPlan(first), intentPlan(second)];
+        const { agent, calls } = scriptedAgent({ provider: PLAIN_MODEL, answers });
+        const followUpContext = { answersPlannerQuestion: true, ...extraContext };
+        const result = gate === 'planner' ? await fullGate(agent, { followUpContext }) : await intentGate(agent, { followUpContext });
+        assert.equal(calls.length, 2, `${gate} ${label}`);
+        if (accepted) assert.equal(result.requestKind, 'execute', `${gate} ${label}: ${JSON.stringify(result)}`);
+        else assert.deepEqual([result.proceed, result.requestKind, result.message], [false, 'clarify', QUESTION], `${gate} ${label}: ${JSON.stringify(result)}`);
+        if (accepted && second.scheduling) assert.equal(result.requiredSchedulingTool, 'schedule_task', `${gate} ${label}`);
+      }
     }
     // A rethink without the guidance is an ordinary plan: a schedule the
     // task asked for may come out of it.
@@ -432,5 +488,55 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(String(alignmentChecks[0].current_request), /look at the screen - the same/);
     assert.ok(messages.includes(answer), 'the answer is recorded as the user turn');
     assert.ok(!JSON.stringify(messages).includes('Second look before asking again'), 'the guidance is not stored in the conversation');
+  });
+
+  test(`${build}: an answer that gives a scheduled task its timing is planned, not asked again`, async () => {
+    const timed = plannerPlan({
+      requires_submission: false, deliverables: ['A recurring check of this page for a new release'],
+      summary: 'Schedule a check of this page every 5 minutes.', scheduling: EVERY_FIVE,
+    });
+    for (const [label, firstQuestion, accepted] of [
+      ['a question about a scheduled task', clarifyPlan({ requires_submission: false, summary: HOW_OFTEN, scheduling: OPEN_SCHEDULE }), true],
+      ['a question about a task without a schedule', clarifyPlan({ requires_submission: false, summary: HOW_OFTEN }), false],
+    ]) {
+      const tabId = accepted ? 37 : 38;
+      // Asked on the first turn; on the answer the planner asks again without
+      // naming the schedule, and its second look plans the schedule.
+      const repeated = clarifyPlan({ requires_submission: false, summary: HOW_OFTEN });
+      const { agent, calls, alignmentChecks } = scriptedAgent({ provider: PLAIN_MODEL, answers: [firstQuestion, repeated, timed] });
+      const messages = [{ role: 'system', content: 'sys' }];
+      agent.conversations.set(tabId, messages);
+      agent._persistSubmittedTurn = async () => {};
+      agent._persist = () => {};
+      const asked = await agent._maybeRunPlannerGate(tabId, messages, user('Check this page for a new release on a schedule'), () => {}, 'act', null, null, TAB, {});
+      assert.deepEqual([asked.proceed, asked.requestKind, asked.message], [false, 'clarify', HOW_OFTEN], `${label}: ${JSON.stringify(asked)}`);
+      assert.equal(messages.at(-1).webbrainPlannerClarification?.schedulingTool, accepted ? 'schedule_task' : null,
+        `${label}: the question records its task's schedule`);
+      const gate = await agent._maybeRunPlannerGate(tabId, messages, user('every five minutes'), () => {}, 'act', null, null, TAB, {});
+      assert.equal(calls.length, 3, label);
+      assert.match(calls[2].messages[0].content, REASK, `${label}: the answer got a second look`);
+      if (accepted) {
+        assert.equal(gate.proceed, true, `${label}: ${JSON.stringify(gate)}`);
+        assert.equal(gate.requiredSchedulingTool, 'schedule_task', label);
+        assert.equal(alignmentChecks.length, 1, `${label}: the schedule is checked against the task and the answer`);
+        assert.match(String(alignmentChecks[0].current_request), /every five minutes/);
+      } else {
+        assert.deepEqual([gate.proceed, gate.requestKind, gate.message], [false, 'clarify', HOW_OFTEN], `${label}: ${JSON.stringify(gate)}`);
+      }
+    }
+  });
+
+  test(`${build}: a recipient question about a scheduled task records the schedule`, async () => {
+    const scheduledMessage = plannerPlan({ messaging: { target_kind: 'active_conversation', recipients: [] }, scheduling: EVERY_FIVE });
+    for (const gate of ['planner', 'intent']) {
+      for (const [label, plan, scheduled] of [['scheduled', scheduledMessage, true], ['unscheduled', plannerPlan({ messaging: scheduledMessage.messaging }), false]]) {
+        const { agent } = scriptedAgent({ provider: PLAIN_MODEL, answers: [gate === 'planner' ? plan : intentPlan(plan)] });
+        agent._pinActiveConversationMessagingTarget = async () => ({ ok: false, error: 'Open the conversation first.' });
+        const result = gate === 'planner' ? await fullGate(agent) : await intentGate(agent);
+        assert.deepEqual([result.reason, result.plannerClarification, result.schedulingTool],
+          ['active_recipient_unverified', true, scheduled ? 'schedule_task' : null],
+          `${gate} ${label}: ${JSON.stringify(result)}`);
+      }
+    }
   });
 }

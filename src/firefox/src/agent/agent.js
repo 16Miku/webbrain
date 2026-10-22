@@ -23786,9 +23786,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const historyDigest = this._buildPlannerHistoryDigest(priorMessages);
     const followUpContext = cloudIntent ? { authenticTaskText: this._plannerUserAuthoredText(enriched) }
       : { ...this._buildPlannerFollowUpContext(priorMessages), authenticTaskText: this._plannerAuthenticTaskText(messages, runOptions.steeringRevision != null ? null : enriched),
-        answersPlannerQuestion: runOptions.steeringRevision == null
-          && runOptions?.scheduledRun !== true && runOptions?.scheduledResume !== true
-          && this._turnAnswersPlannerQuestion(messages, messages.lastIndexOf(submittedUserMessage)) };
+        ...this._plannerQuestionAnswerContext(messages, messages.lastIndexOf(submittedUserMessage), runOptions) };
     let gate;
     if (runOptions.steeringRevision == null && this._shouldSkipPlannerForShortFollowUp(tabId, priorMessages, enriched, plannerMode)) {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -24206,6 +24204,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return this._plannerClarificationIndexBefore(messages, index) >= 0;
   }
 
+  // For the planner's second look (_plannerClarifyRetry): whether the user
+  // turn at `index` answers the planner's previous question, and the schedule
+  // tool of the task that question was about (_plannerSecondLookWidens). A
+  // correction or a scheduled run answers no question.
+  _plannerQuestionAnswerContext(messages, index, runOptions = {}) {
+    const answersPlannerQuestion = runOptions?.steeringRevision == null
+      && runOptions?.scheduledRun !== true && runOptions?.scheduledResume !== true
+      && this._turnAnswersPlannerQuestion(messages, index);
+    const question = answersPlannerQuestion ? messages[this._plannerClarificationIndexBefore(messages, index)] : null;
+    return {
+      answersPlannerQuestion,
+      answeredQuestionSchedulingTool: question?.webbrainPlannerClarification?.schedulingTool || null,
+    };
+  }
+
   // Whether a second look may think: only a model planning tells not to
   // think (/no_think). Reasoning turned off in the provider's settings or in
   // its extra request body stays off (mergeProviderRequestBody merges both
@@ -24223,19 +24236,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // A second look told not to re-ask may not take on more than the user's
-  // task already carried: a submission neither the first answer nor the
-  // question the user just answered held, a recipient the first answer did
-  // not name, or a schedule. Those stay questions for the user. A recipient
-  // counts for a draft too: normalizePlan moves the addressees of a message
-  // that is not sent into draft_recipients, and a draft written into the open
-  // conversation is still a recipient taken from the page.
+  // task already carried: a submission or a schedule that neither the first
+  // answer nor the question the user just answered held, or a recipient the
+  // first answer did not name. Those stay questions for the user. A schedule
+  // of the kind the task carried may be planned (a pause for schedule_resume
+  // never becomes a recurring schedule_task): the user's answer is often its
+  // timing ("every five minutes"), and in the planner gate the plan is still
+  // checked for alignment with the task and that answer. A recipient counts for a draft
+  // too: normalizePlan moves the addressees of a message that is not sent
+  // into draft_recipients, and a draft written into the open conversation is
+  // still a recipient taken from the page.
   _plannerSecondLookWidens(firstPlan, plan, followUpContext = {}) {
     const submissionCarried = firstPlan?.requires_submission === true
       || followUpContext?.plannerClarification?.requiresSubmission === true;
     if (plan?.requires_submission === true && !submissionCarried) return true;
     const named = JSON.stringify(firstPlan?.messaging || firstPlan?.draft_recipients || null);
     if ([plan?.messaging, plan?.draft_recipients].some(target => target && JSON.stringify(target) !== named)) return true;
-    return !!plan?.scheduling;
+    const carriedSchedules = [firstPlan?.scheduling?.tool, followUpContext?.answeredQuestionSchedulingTool];
+    return !!plan?.scheduling && !carriedSchedules.includes(plan.scheduling.tool);
   }
 
   // A planner question gets one more look before it reaches the user. The
@@ -24392,6 +24410,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (gate.requestKind === 'clarify' && gate.plannerClarification === true) {
       message.webbrainPlannerClarification = {
         requiresSubmission: gate.requiresSubmission === true,
+        // The schedule of the task this question is about, so the second look
+        // at the user's answer may plan it (_plannerSecondLookWidens).
+        schedulingTool: ['schedule_task', 'schedule_resume'].includes(gate.schedulingTool) ? gate.schedulingTool : null,
         pageUrl: String(tabInfo?.tabUrl || ''),
         taskText: this._progressTaskTextKey(activeTaskText).slice(0, 1600),
         taskKey: /^tk_[0-9a-f]{8}$/i.test(String(activeTaskKey || ''))
@@ -25225,6 +25246,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
+          schedulingTool: plan.request_kind === 'clarify' ? plan.scheduling?.tool || null : null,
         };
       }
       if (runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
@@ -25248,7 +25270,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
         if (!present) return {
           proceed: false, reason: 'active_recipient_unverified', requestKind: 'clarify', plannerClarification: true,
-          requiresStateChange: false, requiresSubmission: false, messaging: null,
+          requiresStateChange: false, requiresSubmission: false, schedulingTool: plan.scheduling?.tool || null, messaging: null,
           message: 'The recipient could not be verified from the current task. Name the exact recipient and retry. No page tools ran.',
         };
       }
@@ -25263,6 +25285,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: true,
+          schedulingTool: plan.scheduling?.tool || null,
         };
       }
       plan.messaging = messagingPin.target;
@@ -25283,6 +25306,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: false,
+          schedulingTool: plan.scheduling?.tool || null,
         };
       }
       plan.draft_recipients = draftPin.target;
@@ -25548,6 +25572,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             responseLanguagePolicy: candidate.response_language,
             requiresStateChange: false,
             requiresSubmission: candidate.request_kind === 'clarify' && candidate.requires_submission === true,
+            schedulingTool: candidate.request_kind === 'clarify' ? candidate.scheduling?.tool || null : null,
           };
         }
         return null;
@@ -25765,6 +25790,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: true,
+          schedulingTool: plan.scheduling?.tool || null,
         };
       }
       plan.messaging = messagingPin.target;
@@ -25785,6 +25811,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: false,
+          schedulingTool: plan.scheduling?.tool || null,
         };
       }
       plan.draft_recipients = draftPin.target;

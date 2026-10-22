@@ -1318,7 +1318,11 @@ export function normalizePlan(obj, opts = {}) {
         ? (memory.use_progress_ledger === true ? 'enabled' : 'disabled')
         : 'auto',
     },
-    scheduling: executablePlan ? normalizedScheduling : null,
+    // A question keeps the schedule of the task it asks about, as it keeps
+    // the submission. Nothing runs from it: the agent records that the task
+    // carries a schedule, and the planner's second look at the user's answer
+    // may then plan one (Agent._plannerSecondLookWidens).
+    scheduling: executablePlan || requestKind === 'clarify' ? normalizedScheduling : null,
     risks,
     localized,
     response_language: responseLanguage,
