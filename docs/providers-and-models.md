@@ -386,6 +386,7 @@ class BaseLLMProvider {
 | `sglang`             | `openai`       | local    | (loaded model)                                                     | Yes (default on)                |
 | `localai`            | `openai`       | local    | (loaded model)                                                     | Auto metadata / override        |
 | `gpt4all`            | `openai`       | local    | (loaded model)                                                     | Yes (default on)                |
+| `webbrain_companion` | `openai`       | local    | (required)                                                         | Off / manual toggle             |
 | `local_openai_proxy` | `openai`       | local    | (required)                                                         | Off / manual toggle             |
 | `unsloth`            | `openai`       | local    | (required)                                                         | Off / manual toggle             |
 | `webgpu` (Chromium)  | `webgpu`       | local    | Compass VLD Tiny v5; Compass Tiny v2.1; Ternary Bonsai 2 2B Vision; custom HF repo | Compass VLD and Bonsai Vision presets |
@@ -421,7 +422,7 @@ WebBrain also ships 80 disabled-by-default provider cards. Most are sourced
 from the OpenCode provider catalog snapshot at commit
 `62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
 their official API documentation. Together with the original cards, the
-Providers page lists **113 built-in providers on Chromium** and **112 on Firefox**; the
+Providers page lists **114 built-in providers on Chromium** and **113 on Firefox**; the
 difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs                                                                                                                                                                                                                                                                                                                        |
@@ -657,9 +658,9 @@ URL, localhost server, or OpenAI-compatible endpoint. Firefox does not expose
 the card because its build does not package the Chromium MV3 offscreen/WebGPU
 runtime.
 
-Twelve local endpoint providers are enabled by default. The model runtimes need no
-API key unless the server was started with auth; Unsloth Studio and the generic
-proxy card require their configured client keys:
+Local endpoint providers are enabled by default. Most need no API key unless
+the server was started with auth; Unsloth Studio and the generic proxy card
+require their configured client keys:
 
 - **llama.cpp**: `http://localhost:8080` — runs `llama-server -m model.gguf`
 - **Ollama**: `http://localhost:11434/v1` — `ollama serve`, or `ollama launch webbrain --model <model>`
@@ -671,6 +672,8 @@ proxy card require their configured client keys:
 - **SGLang**: `http://localhost:30000/v1` — SGLang's OpenAI-compatible server
 - **LocalAI**: `http://localhost:8080/v1` — LocalAI's OpenAI-compatible server
 - **GPT4All**: `http://localhost:4891/v1` — GPT4All's local API server
+- **WebBrain Companion**: `http://127.0.0.1:8327/v1` — the separate desktop
+  app; local browser extensions need no API key. Load and select a model.
 - **Local OpenAI-compatible Proxy**: `http://127.0.0.1:8317/v1` — a generic,
   authenticated local gateway; the model and proxy client API key are required.
   Its context window is set automatically after **Load Models**, a model pick or
@@ -724,6 +727,23 @@ base URL entered without the terminal `/v1` after a successful request.
 Unsloth model discovery, chat, interactive Ask streaming, and tool calls use
 the existing OpenAI-compatible endpoints. Vision starts off: enable the manual
 vision checkbox only when the model loaded in Studio accepts image input.
+
+#### WebBrain Companion
+
+Download the separate desktop app: [Windows installer](https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe),
+[macOS universal app](https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip),
+[Linux x64](https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-x64.tar.gz),
+or [Linux Arm64](https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-arm64.tar.gz).
+Its [source and full setup guide](../webbrain-systray/README.md)
+describe supported accounts, the optional Bonsai local model, and the
+platform-specific install steps. In **Providers → LLM → WebBrain Companion**,
+leave the default `http://127.0.0.1:8327/v1` URL unless the app shows another
+port. Click **Load Models**, select an available model, **Save**, and **Test
+Connection** before activating it. The browser extension on the same computer
+does not need an API key. If you enable access from another device, use the
+address and API key shown by the app. Model requests sent to an account
+subscription still go to that upstream provider; the optional Bonsai model
+runs locally. Enable vision only for models that accept images.
 
 #### Subscription proxy guide (EasyCLIProxyAPI / CLIProxyAPI)
 

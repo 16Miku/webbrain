@@ -73,6 +73,8 @@ import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
 const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
 const EASY_CLI_PROXY_GUIDE_URL = 'https://webbrain.one/docs/easy-cli-proxy/';
+const WEBBRAIN_COMPANION_SITE_URL = 'https://webbrain.one/companion/#download';
+const WEBBRAIN_COMPANION_DOWNLOAD_BASE = 'https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-';
 const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
   openai: 'ChatGPT/Codex',
   anthropic: 'Claude',
@@ -2771,6 +2773,15 @@ function providerSearchRank(id, config, query) {
 }
 
 function providerSubscriptionGuideHtml(definitionId) {
+  if (definitionId === 'webbrain_companion') {
+    return `<aside class="provider-subscription-guide provider-companion-guide" role="note">
+      <span>${escapeHtml(t('st.providers.companion_guide.body'))}</span>
+      <a href="${WEBBRAIN_COMPANION_DOWNLOAD_BASE}windows-setup.exe" target="_blank" rel="noopener noreferrer">Windows ↓</a>
+      <a href="${WEBBRAIN_COMPANION_DOWNLOAD_BASE}macos-universal.zip" target="_blank" rel="noopener noreferrer">macOS ↓</a>
+      <a href="${WEBBRAIN_COMPANION_DOWNLOAD_BASE}linux-x64.tar.gz" target="_blank" rel="noopener noreferrer">Linux x64 ↓</a>
+      <a href="${WEBBRAIN_COMPANION_DOWNLOAD_BASE}linux-arm64.tar.gz" target="_blank" rel="noopener noreferrer">Linux Arm64 ↓</a>
+    </aside>`;
+  }
   if (definitionId === 'local_openai_proxy') {
     return `<aside class="provider-subscription-guide provider-local-proxy-guide" role="note">
       <span class="provider-subscription-guide-icon" aria-hidden="true">🔌</span>
@@ -2783,7 +2794,7 @@ function providerSubscriptionGuideHtml(definitionId) {
   return `<aside class="provider-subscription-guide" role="note">
     <span class="provider-subscription-guide-icon" aria-hidden="true">🔌</span>
     <span>${escapeHtml(t('st.providers.subscription_guide.card_body', { product }))}</span>
-    <a href="${EASY_CLI_PROXY_GUIDE_URL}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('st.providers.subscription_guide.card_link'))} ↗</a>
+    <a href="${WEBBRAIN_COMPANION_SITE_URL}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('st.providers.companion_guide.download'))} ↗</a>
   </aside>`;
 }
 
@@ -2967,6 +2978,16 @@ function renderProviders() {
         OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'loaded model' },
         CONTEXT_WINDOW_FIELD,
+        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        PROMPT_TIER_FIELD,
+      ],
+    },
+    webbrain_companion: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:8327/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model listed in WebBrain Companion' },
+        LOCAL_PROXY_CONTEXT_WINDOW_FIELD,
         { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
       ],
@@ -3349,7 +3370,7 @@ function renderProviders() {
           </div>
         `;
       } else {
-        const localModelProviders = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+        const localModelProviders = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'webbrain_companion', 'local_openai_proxy', 'unsloth'];
         const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';

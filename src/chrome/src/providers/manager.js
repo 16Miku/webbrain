@@ -99,7 +99,7 @@ const WEBBRAIN_CLOUD_PROVIDER_IDS = new Set([
 ]);
 const WEBBRAIN_CLOUD_PROVIDER_LABEL = 'WebBrain Compass';
 const DUPLICATE_PROVIDER_SUFFIX = '__duplicate';
-const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth', 'freebuff2api'];
+const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'webbrain_companion', 'local_openai_proxy', 'unsloth', 'freebuff2api'];
 const WEBBRAIN_CLOUD_CONTEXT_WINDOW = 1000000;
 const WEBBRAIN_CLOUD_LEGACY_CONTEXT_WINDOW = 256000;
 const WEBBRAIN_DEVICE_GUID_KEY = 'webbrainDeviceGuid';
@@ -693,6 +693,20 @@ export class ProviderManager {
         apiKey: '',
         supportsAskStreaming: true,
         supportsVision: true,
+        enabled: true,
+      },
+      webbrain_companion: {
+        type: 'openai',
+        category: 'local',
+        label: 'WebBrain Companion',
+        providerName: 'webbrain-companion',
+        baseUrl: 'http://127.0.0.1:8327/v1',
+        model: '',
+        requiresModel: true,
+        contextWindow: LOCAL_OPENAI_PROXY_CONTEXT_WINDOW,
+        apiKey: '',
+        supportsAskStreaming: true,
+        supportsVision: false,
         enabled: true,
       },
       local_openai_proxy: {
@@ -1361,7 +1375,7 @@ export class ProviderManager {
   static categoryFor(id, config) {
     if (config && config.category) return config.category;
     if (config?.type === 'llamacpp' || config?.type === 'webgpu') return 'local';
-    if (['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth', 'webgpu'].includes(id)) return 'local';
+    if (['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'webbrain_companion', 'local_openai_proxy', 'unsloth', 'webgpu'].includes(id)) return 'local';
     if (ROUTER_PROVIDER_IDS.includes(id)) return 'router';
     return 'cloud';
   }
@@ -2850,7 +2864,7 @@ export class ProviderManager {
    * not stick when an unknown model is picked next. Any other value is a user override.
    */
   _replaceableContextWindows(id, config) {
-    if (this._providerDefinitionId(id, config) !== 'local_openai_proxy') return [];
+    if (!['local_openai_proxy', 'webbrain_companion'].includes(this._providerDefinitionId(id, config))) return [];
     const auto = Number(config?.autoContextWindow);
     const matchesCurrent = Number(config?.contextWindow) === auto;
     const isUntouchedDefault = config?.manualContextWindow !== true && !Number.isFinite(auto);
@@ -2863,13 +2877,14 @@ export class ProviderManager {
   // A context window the user saved on purpose for the proxy. It protects even a value that equals
   // the generic 16k local default, which detection otherwise treats as unset.
   _hasExplicitContextWindow(id, config) {
-    return this._providerDefinitionId(id, config) === 'local_openai_proxy' && config?.manualContextWindow === true;
+    return ['local_openai_proxy', 'webbrain_companion'].includes(this._providerDefinitionId(id, config))
+      && config?.manualContextWindow === true;
   }
 
   // Where the stored auto window came from: a window the proxy itself reported (its model card or a
   // live /props) outranks one inferred from the model name or the 64k fallback.
   _detectedContextWindowFields(id, config, detected) {
-    if (this._providerDefinitionId(id, config) !== 'local_openai_proxy') return {};
+    if (!['local_openai_proxy', 'webbrain_companion'].includes(this._providerDefinitionId(id, config))) return {};
     return {
       autoContextWindow: detected.contextWindow,
       manualContextWindow: false,
@@ -2882,7 +2897,7 @@ export class ProviderManager {
   // A later probe that cannot reach the proxy's metadata (a timeout, a restart) falls back to the
   // name or the 64k default. That must not replace a window the proxy reported for the same model.
   _keepsReportedContextWindow(id, config, detected) {
-    if (this._providerDefinitionId(id, config) !== 'local_openai_proxy') return false;
+    if (!['local_openai_proxy', 'webbrain_companion'].includes(this._providerDefinitionId(id, config))) return false;
     if (detected?.reported !== false) return false;
     const auto = Number(config?.autoContextWindow);
     return config?.autoContextWindowSource === 'reported'
@@ -3006,7 +3021,7 @@ export class ProviderManager {
         return { contextWindow, shrinkOverride: true };
       }
 
-      if (definitionId === 'local_openai_proxy') {
+      if (definitionId === 'local_openai_proxy' || definitionId === 'webbrain_companion') {
         // Nothing describes the window of a model the proxy does not name.
         if (!model) return null;
         const openAiBase = /\/v1$/i.test(rawBaseUrl) ? rawBaseUrl : `${root}/v1`;

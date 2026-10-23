@@ -12,6 +12,7 @@ import {
 
 export const PROVIDER_ICON_FILES = {
   webbrain_cloud: 'webbrain_cloud.png',
+  webbrain_companion: 'webbrain_cloud.png',
   llamacpp: 'llamacpp.svg',
   ollama: 'ollama.svg',
   ods: 'ods.png',
@@ -82,6 +83,7 @@ export function providerIconHtml(id, label, className = 'provider-icon', opts = 
 /** Short display name for a known provider id (sniff hints, menus). */
 export const PROVIDER_SHORT_LABELS = {
   webbrain_cloud: 'WebBrain Compass',
+  webbrain_companion: 'WebBrain Companion',
   llamacpp: 'llama.cpp',
   ollama: 'Ollama',
   ods: 'ODS',
@@ -148,6 +150,7 @@ export function sniffProviderIdFromBaseUrl(baseUrl) {
 
   if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host.endsWith('.local')) {
     if (port === '11434') return 'ollama';
+    if (port === '8327') return 'webbrain_companion';
     if (port === '1234') return 'lmstudio';
     if (port === '1337') return 'jan';
     if (port === '30000') return 'sglang';

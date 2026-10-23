@@ -23,7 +23,7 @@ FILES = {
     "linux_arm64": DL + "linux-arm64.tar.gz",
     "sums": DL + "SHA256SUMS.txt",
 }
-GUIDE = "https://webbrain.one/docs/easy-cli-proxy/"
+GUIDE = "https://webbrain.one/docs/providers/#companion"
 
 # Tray menu content, as the app renders it (internal/app/menu.go, i18n.go): the
 # status, the address, one line per plan with its tightest window, the panel.
@@ -152,7 +152,7 @@ T = {
             "Check the terms of your plan and region before you add it. If an account matters to you, a provider API key is the safer route.",
             "Keep network access off on public Wi-Fi, and never forward port 8327 to the internet. The API key is not internet-grade security.",
         ],
-        "guide": "Read WebBrain's guide to subscription proxies",
+        "guide": "Connect WebBrain to Companion",
         "foot": "WebBrain Companion is free software under the GPL-3.0-or-later license and embeds CLIProxyAPI. It is not affiliated with Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta or Cognition.",
         "foot_nav": "More",
     },
@@ -239,7 +239,7 @@ T = {
             "Eklemeden önce planının ve bölgenin koşullarına bak. Hesabın senin için önemliyse sağlayıcının API anahtarı daha güvenli yoldur.",
             "Herkese açık Wi-Fi'da ağ erişimini kapalı tut ve 8327 portunu asla internete yönlendirme. API anahtarı internete dayanacak bir güvenlik sağlamaz.",
         ],
-        "guide": "WebBrain'in abonelik proxy'leri rehberini oku (İngilizce)",
+        "guide": "WebBrain'i Companion'a bağlama rehberi (İngilizce)",
         "foot": "WebBrain Companion, GPL-3.0-or-later lisanslı özgür bir yazılımdır ve CLIProxyAPI'yi içinde barındırır. Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta ya da Cognition ile bağlantılı değildir.",
         "foot_nav": "Bağlantılar",
     },

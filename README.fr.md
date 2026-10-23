@@ -77,6 +77,16 @@ Trois modes contrôlent ce que l'agent a le droit de faire :
 
 ## Choisir un modèle
 
+**WebBrain Companion** est notre application de bureau distincte pour les
+modèles locaux et les abonnements compatibles. [Téléchargez-la pour Windows,
+macOS ou Linux](https://github.com/esokullu/webbrain/releases/tag/systray-v0.1.2),
+puis sélectionnez la carte **WebBrain Companion** dans Fournisseurs. L'adresse
+locale par défaut est `http://127.0.0.1:8327/v1` ; aucune clé API n'est requise
+pour l'extension sur cet ordinateur. Chargez les modèles et testez la connexion.
+Le [guide de configuration](docs/providers-and-models.md#webbrain-companion)
+donne plus de détails. La carte proxy générique reste disponible pour les
+autres passerelles OpenAI compatibles.
+
 **WebBrain Compass 1.0** est l'option par défaut : ni clé API, ni configuration
 locale.
 

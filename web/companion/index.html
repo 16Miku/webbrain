@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebBrain Companion: your AI subscriptions in WebBrain</title>
+<meta name="description" content="A small tray app for macOS, Windows and Linux that serves your Claude, ChatGPT, Google, Grok and Kimi subscriptions to WebBrain on 127.0.0.1, shows how much of each plan is left, and runs Bonsai 2 27B on your own machine.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#fbf6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a0f18" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://webbrain.one/companion/">
+<link rel="alternate" hreflang="en" href="https://webbrain.one/companion/">
+<link rel="alternate" hreflang="tr" href="https://webbrain.one/companion/tr/">
+<link rel="alternate" hreflang="x-default" href="https://webbrain.one/companion/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WebBrain">
+<meta property="og:title" content="WebBrain Companion">
+<meta property="og:description" content="A small tray app for macOS, Windows and Linux that serves your Claude, ChatGPT, Google, Grok and Kimi subscriptions to WebBrain on 127.0.0.1, shows how much of each plan is left, and runs Bonsai 2 27B on your own machine.">
+<meta property="og:url" content="https://webbrain.one/companion/">
+<meta property="og:image" content="https://webbrain.one/companion/assets/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="assets/img/favicon.png">
+<link rel="preload" href="assets/fonts/bricolage-grotesque-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/site.css">
+<script>document.documentElement.classList.replace("no-js", "js")</script>
+<script defer src="assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="wrap site-head">
+  <a class="brand" href="./"><img src="assets/img/logo-128.png" alt="" width="30" height="30">WebBrain Companion</a>
+  <nav class="site-nav" aria-label="Sections">
+    <a href="#panel">The panel</a>
+    <a href="#local">Local model</a>
+    <a href="#connect">Connect</a>
+    <a href="#download">Download</a>
+  </nav>
+  <a class="lang" href="tr/" hreflang="tr" lang="tr">Türkçe</a>
+</header>
+
+<main id="main">
+<section class="wrap hero">
+  <div>
+    <h1>The AI plans you already pay for, ready for WebBrain</h1>
+    <p class="lede">WebBrain Companion lives in your menu bar or system tray. Sign in to Claude, ChatGPT, Google, Grok or Kimi once, and WebBrain reaches all of them at one address on your computer. The tray shows how much of each plan is left and when it resets.</p>
+    <div class="cta">
+      <a class="button primary" id="get" href="#download" data-mac="Download for macOS" data-win="Download for Windows" data-linux="Download for Linux" data-mac-href="https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip" data-win-href="https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe" data-linux-href="#download">Download</a>
+      <span class="cta-note">Version 0.1.2 for macOS, Windows and Linux. Free and open source.</span>
+    </div>
+  </div>
+  <div class="desk-wrap">
+    <div class="desk" data-os="mac" role="img" aria-label="Illustration of the Companion&#x27;s tray menu: running, the address to copy, and how much is left of Claude Max, ChatGPT Pro, Google AI Pro and SuperGrok.">
+      <div class="bar" aria-hidden="true"><span class="s s3"></span><span class="s s2"></span><span class="icon"><span class="glyph"></span></span><span class="s s1"></span></div>
+      <div class="menu" aria-hidden="true">
+        <div class="row dim"><span>WebBrain Companion — Running</span></div>
+        <div class="row"><span>Copy&nbsp;&nbsp;http://127.0.0.1:8327/v1</span></div>
+        <div class="sep"></div>
+        <div class="row plan"><span>Claude Max</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span>64% · 2h 13m</span></div>
+        <div class="row plan"><span>ChatGPT Pro</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span>57% · 4d</span></div>
+        <div class="row plan"><span>Google AI Pro</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>71% · 5d</span></div>
+        <div class="row plan"><span>Grok SuperGrok</span><span class="meter"><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>12% · 3d</span></div>
+        <div class="sep"></div>
+        <div class="row"><span>Open panel…</span></div>
+        <div class="row"><span>Quit WebBrain Companion</span></div>
+      </div>
+    </div>
+    <div class="os-switch"><span id="os-label">Menu on</span><span class="seg" role="group" aria-labelledby="os-label"><button type="button" data-os="mac" aria-pressed="true">macOS</button><button type="button" data-os="win" aria-pressed="false">Windows</button><button type="button" data-os="linux" aria-pressed="false">Linux</button></span></div>
+  </div>
+</section>
+
+<section class="section" id="panel" aria-labelledby="panel-h">
+  <div class="wrap">
+    <h2 id="panel-h">Everything else happens in one small panel</h2>
+    <p class="intro">Click the icon to open it. One page holds the address for WebBrain, every plan with what&#x27;s left, and the two local models; click a row for its details, or the gear for settings. It follows your light or dark setting and speaks English and Turkish.</p>
+    <ul class="windows">
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="assets/img/panel-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="assets/img/panel-en-light.webp" width="460" height="760" alt="The panel: the address http://127.0.0.1:8327/v1 with a Copy button, usage meters for Claude Max, ChatGPT Pro, Google AI Pro and SuperGrok, and Bonsai 2 27B running next to the d1 decision model." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>One page</h3><p>The address WebBrain needs, each plan with the limit closest to running out, and the local models with their main button. No API key on this computer.</p></figcaption>
+      </figure></li>
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="assets/img/add-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="assets/img/add-en-light.webp" width="460" height="760" alt="The add subscription sheet listing Claude, ChatGPT, Google, Grok and Kimi, each with how you sign in." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Add a subscription</h3><p>Sign in on the provider&#x27;s own page. The login stays on your computer.</p></figcaption>
+      </figure></li>
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="assets/img/local-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="assets/img/local-en-light.webp" width="460" height="760" alt="The Bonsai 2 27B details over the panel: running on the Apple GPU with image input on, 65,536 tokens of context, and its options." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Local models</h3><p>Click Bonsai 2 27B to see where it runs and whether images fit, and to change its options. d1 opens the same way.</p></figcaption>
+      </figure></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="local" aria-labelledby="local-h">
+  <div class="wrap">
+    <h2 id="local-h">Bonsai 2 27B, sized to your machine</h2>
+    <div class="split">
+      <p class="intro">PrismML's Ternary Bonsai 2 27B packs 27 billion parameters into 5.95 GB. The companion installs it with its Q8_0 vision projector and PrismML's build of llama.cpp, or as the MLX pack on Apple Silicon, and lists it next to your subscriptions as <code>bonsai-2-27b</code>.</p>
+      <p class="intro">Before anything downloads, it works out where the model runs and whether image input fits. The vision projector goes on the GPU when about 1 GB of GPU memory is left after the model and its context, on the CPU when only system RAM has room, and stays off otherwise. You can override the choice in the panel.</p>
+    </div>
+    <table class="machines">
+      <caption>What the companion picks on typical machines</caption>
+      <thead><tr><th scope="col">Machine</th><th scope="col">Runs on</th><th scope="col">Image input</th><th scope="col">Context</th></tr></thead>
+      <tbody>
+        <tr><td>MacBook Air, 8 GB</td><td data-label="Runs on">Apple GPU with Metal. It needs more memory than the Mac has, so expect swapping.</td><td data-label="Image input"><span class="vis off">Off</span></td><td data-label="Context">8K tokens</td></tr>
+        <tr><td>MacBook Pro, 16 GB</td><td data-label="Runs on">Apple GPU with Metal</td><td data-label="Image input"><span class="vis gpu">On, GPU</span></td><td data-label="Context">16K tokens</td></tr>
+        <tr><td>Laptop with an RTX 4060 (8 GB) and 16 GB RAM</td><td data-label="Runs on">CUDA, 57 of 64 layers on the GPU</td><td data-label="Image input"><span class="vis cpu">On, CPU</span></td><td data-label="Context">8K tokens</td></tr>
+        <tr><td>Desktop with an RTX 4090 (24 GB) and 64 GB RAM</td><td data-label="Runs on">CUDA, all on the GPU</td><td data-label="Image input"><span class="vis gpu">On, GPU</span></td><td data-label="Context">64K tokens</td></tr>
+        <tr><td>Desktop with a Radeon RX 7600 (8 GB) and 32 GB RAM</td><td data-label="Runs on">Vulkan, 61 of 64 layers on the GPU</td><td data-label="Image input"><span class="vis cpu">On, CPU</span></td><td data-label="Context">8K tokens</td></tr>
+        <tr><td>PC without a graphics card, 16 GB RAM</td><td data-label="Runs on">CPU</td><td data-label="Image input"><span class="vis cpu">On, CPU</span></td><td data-label="Context">8K tokens</td></tr>
+        <tr><td>PC without a graphics card, 8 GB RAM</td><td data-label="Runs on">CPU, with little room to spare</td><td data-label="Image input"><span class="vis off">Off</span></td><td data-label="Context">8K tokens</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Worked out by the companion&#x27;s planner from total and free memory; the numbers on your machine at install time decide. On Apple Silicon the MLX pack carries its own vision tower, so images are always on.</p>
+  </div>
+</section>
+
+<section class="section" id="decision" aria-labelledby="d1-h">
+  <div class="wrap">
+    <h2 id="d1-h">WebBrain&#x27;s decision model, outside the browser</h2>
+    <div class="split">
+      <p class="intro">WebBrain&#x27;s d1 model answers yes/no, choice and score questions about a page and up to four screenshots, such as whether a task is finished. The companion runs it on ONNX Runtime and answers over HTTP, so a browser tab doesn&#x27;t have to load 1.9 GB. Its Go port returns the same tokens and probabilities as WebBrain&#x27;s JavaScript adapter. Native d1 is available on Windows, Linux and Apple Silicon Macs; it is unavailable on Intel Macs.</p>
+      <div>
+        <p class="code-label">Ask</p>
+        <pre><code>curl http://127.0.0.1:8327/companion/v1/decide \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;state&quot;: &quot;Order #1042 is confirmed.&quot;,
+       &quot;questions&quot;: {&quot;completion&quot;: {
+         &quot;type&quot;: &quot;choice&quot;,
+         &quot;instructions&quot;: &quot;Did the task finish?&quot;,
+         &quot;criteria&quot;: {&quot;completed&quot;: &quot;Confirmed&quot;,
+                      &quot;not_completed&quot;: &quot;Failed or unfinished&quot;,
+                      &quot;unknown&quot;: &quot;Not established&quot;}}}}&#x27;</code></pre>
+        <p class="code-label">Answer (273 ms on the CPU runtime)</p>
+        <pre><code>{&quot;answers&quot;: {&quot;completion&quot;: {
+   &quot;choice&quot;: &quot;completed&quot;,
+   &quot;confidence&quot;: 0.99997,
+   &quot;probabilities&quot;: {&quot;completed&quot;: 0.99997,
+                     &quot;not_completed&quot;: 0.000002,
+                     &quot;unknown&quot;: 0.000033}}},
+ &quot;diagnostics&quot;: {&quot;runtime&quot;: &quot;onnxruntime 1.31.0 (CPU)&quot;, …}}</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="connect" aria-labelledby="connect-h">
+  <div class="wrap">
+    <h2 id="connect-h">Connect WebBrain</h2>
+    <p class="intro">You do this once. Apps on this computer need no API key.</p>
+    <ol class="steps">
+      <li>Install the companion and open it. Add a subscription in its panel and finish the sign-in in your browser.</li>
+      <li>Copy the address, <code>http://127.0.0.1:8327/v1</code>, from the panel or the tray menu.</li>
+      <li>In WebBrain, open the <b>Providers</b> page (<b>More…</b> in the side panel's model menu), choose <b>Local OpenAI-compatible Proxy</b> and paste the address in place of the 8317 WebBrain fills in. WebBrain asks for an API key: type anything.</li>
+      <li>Click <b>Load models</b>, pick a model, and run <b>Test Connection</b>. Turn on vision only for a model that accepts images.</li>
+    </ol>
+    <p class="after-steps">Any OpenAI, Anthropic or Gemini client on this computer can use the same address. To use it from another device, turn on network access in the panel&#x27;s settings; that device then needs the API key the panel shows.</p>
+  </div>
+</section>
+
+<section class="section" id="download" aria-labelledby="download-h">
+  <div class="wrap">
+    <h2 id="download-h">Download</h2>
+    <p class="intro">Version 0.1.2. Each package holds a single program; your settings and logins live in your user folder.</p>
+    <div class="downloads">
+      <div class="dl" data-os="mac">
+        <div><h3>macOS</h3><p class="req">macOS 12 or later, Apple Silicon and Intel (d1 requires Apple Silicon)</p><span class="yours">Your system</span></div>
+        <ul class="files"><li><a href="https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip">Universal app <small>zip, 36 MB</small></a></li></ul>
+        <p class="how">Move WebBrain Companion to Applications. The build is not notarized by Apple: the first time, allow it in System Settings, Privacy &amp; Security (Open Anyway). On macOS 14 and earlier, Control-click it and choose Open.</p>
+      </div>
+      <div class="dl" data-os="win">
+        <div><h3>Windows</h3><p class="req">Windows 10 and 11, x64 and Arm64</p><span class="yours">Your system</span></div>
+        <ul class="files"><li><a href="https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe">Installer <small>setup.exe, 23 MB</small></a></li></ul>
+        <p class="how">Run the installer: it installs for your account, without an administrator prompt, and adds WebBrain Companion to the Start menu. Until the installer is code-signed, SmartScreen may say &quot;Windows protected your PC&quot;: choose More info, then Run anyway.</p>
+      </div>
+      <div class="dl" data-os="linux">
+        <div><h3>Linux</h3><p class="req">x64 and Arm64</p><span class="yours">Your system</span></div>
+        <ul class="files"><li><a href="https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-x64.tar.gz">x64 <small>tar.gz, 20 MB</small></a></li><li><a href="https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-arm64.tar.gz">Arm64 <small>tar.gz, 18 MB</small></a></li></ul>
+        <p class="how">Unpack and run webbrain-companion. The icon needs a StatusNotifierItem tray: KDE, XFCE, or GNOME with the AppIndicator extension.</p>
+      </div>
+    </div>
+    <p class="more-links"><a href="https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-SHA256SUMS.txt">SHA-256 checksums</a><a href="https://github.com/esokullu/webbrain/tree/main/webbrain-systray">Source code</a><a href="https://github.com/esokullu/webbrain/releases">All releases</a></p>
+  </div>
+</section>
+
+<section class="section safety" id="safety" aria-labelledby="safety-h">
+  <div class="wrap">
+    <h2 id="safety-h">Before you sign in</h2>
+    <div class="split even">
+      <div>
+        <h3>What stays on your computer</h3>
+        <ul class="facts">
+          <li>On this computer no API key is needed: the companion answers only requests from 127.0.0.1 and turns away web pages, so a site you visit can&#x27;t spend your plans. Browser extensions such as WebBrain and apps on this computer can use it.</li>
+          <li>Other devices can connect only if you turn on network access in the panel&#x27;s settings. It then listens on 0.0.0.0, and they need the API key the panel shows.</li>
+          <li>Logins are stored in your user folder and sent only to the provider they belong to.</li>
+          <li>There are no analytics. Apart from the providers you sign in to, it only fetches CLIProxyAPI&#x27;s public model list, and, when you install a model, its files from Hugging Face, GitHub and, for MLX, PyPI.</li>
+          <li>Prompts sent to a subscription still go to that provider. Only Bonsai 2 27B and d1 run on your machine.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>What your provider decides</h3>
+        <ul class="facts">
+          <li>A subscription that works through a proxy is not the same as one the provider allows. Anthropic&#x27;s consumer terms restrict automated access outside an API key, and Google&#x27;s Gemini CLI terms say its sign-in may not be used with third-party tools.</li>
+          <li>Check the terms of your plan and region before you add it. If an account matters to you, a provider API key is the safer route.</li>
+          <li>Keep network access off on public Wi-Fi, and never forward port 8327 to the internet. The API key is not internet-grade security.</li>
+        </ul>
+        <p><a href="https://webbrain.one/docs/providers/#companion">Connect WebBrain to Companion</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <p>WebBrain Companion is free software under the GPL-3.0-or-later license and embeds CLIProxyAPI. It is not affiliated with Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta or Cognition.</p>
+    <nav aria-label="More"><a href="https://webbrain.one/">WebBrain</a><a href="https://github.com/esokullu/webbrain/tree/main/webbrain-systray">Source code</a><a href="tr/" hreflang="tr" lang="tr">Türkçe</a></nav>
+  </div>
+</footer>
+</body>
+</html>

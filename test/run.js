@@ -76053,8 +76053,8 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   ]) {
     const defaults = new PM()._defaultConfigs();
     // Includes the sidepanel-only WebBrain Compass XL runtime profile, which is
-    // deliberately omitted from the 113/112 Settings provider cards.
-    const expectedDefaultCount = label === 'chrome' ? 114 : 113;
+    // deliberately omitted from the 114/113 Settings provider cards.
+    const expectedDefaultCount = label === 'chrome' ? 115 : 114;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -77182,6 +77182,54 @@ test('_defaultConfigs: new offline providers present and enabled by default', ()
       assert.equal(defaults[id].enabled, true, `${PM.name}: ${id} should default to enabled`);
       assert.match(defaults[id].baseUrl || '', /^http:\/\/(?:localhost|127\.0\.0\.1):/, `${PM.name}: ${id} should use a loopback host by default`);
     }
+  }
+});
+
+test('WebBrain Companion loads models and chats over its keyless local endpoint', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    globalThis.chrome = globalThis.browser = { storage: { local: { async set() {} } } };
+    for (const [browser, PM] of [['chrome', ProviderManagerCh], ['firefox', ProviderManagerFx]]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().webbrain_companion;
+      assert.equal(defaults.baseUrl, 'http://127.0.0.1:8327/v1', `${browser}: Companion URL`);
+      assert.equal(defaults.requiresApiKey, undefined, `${browser}: loopback access must be keyless`);
+      assert.equal(defaults.requiresModel, true, `${browser}: model selection must be explicit`);
+      manager.providers.set('webbrain_companion', manager._createProvider('webbrain_companion', defaults));
+      const requests = [];
+      globalThis.fetch = async (url, init = {}) => {
+        requests.push({ url: String(url), headers: init.headers || {}, body: init.body });
+        if (String(url).endsWith('/models')) {
+          return new Response(JSON.stringify({ data: [{ id: 'bonsai-2-27b' }] }), {
+            status: 200, headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: 'companion answer' } }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      const listed = await manager.listProviderModels('webbrain_companion');
+      assert.equal(listed.ok, true, `${browser}: model loading failed`);
+      assert.deepEqual(listed.models, ['bonsai-2-27b'], `${browser}: model IDs`);
+      const provider = manager._createProvider('webbrain_companion', {
+        ...defaults, model: 'bonsai-2-27b',
+      });
+      const reply = await provider.chat([{ role: 'user', content: 'hello' }]);
+      assert.equal(reply.content, 'companion answer');
+      manager.providers.set('webbrain_companion', provider);
+      assert.equal((await manager.testProvider('webbrain_companion')).ok, true,
+        `${browser}: Test Connection should work without an API key`);
+      assert.equal(requests[0].url, 'http://127.0.0.1:8327/v1/models');
+      const chatRequest = requests.find(request => request.url.endsWith('/chat/completions'));
+      assert.equal(chatRequest.url, 'http://127.0.0.1:8327/v1/chat/completions');
+      assert.equal(chatRequest.headers.Authorization, undefined);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
   }
 });
 
@@ -133684,7 +133732,7 @@ test('message info toggles behaviorally through a semantic button, terminal repl
   }
 });
 
-test('Settings limits the subscription proxy guide to relevant provider cards', async () => {
+test('Settings promotes Companion on relevant cards and preserves the legacy proxy guide', async () => {
   for (const [label, htmlRel, settingsRel, i18nRel] of [
     ['chrome', 'src/chrome/src/ui/settings.css', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/i18n.js'],
     ['firefox', 'src/firefox/src/ui/settings.css', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/i18n.js'],
@@ -133702,6 +133750,10 @@ test('Settings limits the subscription proxy guide to relevant provider cards', 
       `${label}: provider filters should remain at the top of the provider list`);
     assert.match(settings, /href="\$\{EASY_CLI_PROXY_GUIDE_URL\}" target="_blank" rel="noopener noreferrer"/,
       `${label}: provider-card guide links should open securely`);
+    assert.match(settings, /href="\$\{WEBBRAIN_COMPANION_SITE_URL\}" target="_blank" rel="noopener noreferrer"/,
+      `${label}: account cards should promote the Companion download page`);
+    assert.match(settings, /provider-companion-guide[\s\S]*?windows-setup\.exe[\s\S]*?macos-universal\.zip[\s\S]*?linux-x64\.tar\.gz[\s\S]*?linux-arm64\.tar\.gz/,
+      `${label}: Companion card should offer direct packages for all supported platforms`);
 
     for (const [id, product] of [
       ['openai', 'ChatGPT/Codex'],
@@ -133827,10 +133879,8 @@ test('public EasyCLIProxy guide keeps executable, account, network, and media bo
     'docs: the Chinese translation should preserve executable and network-risk warnings');
   assert.match(docsCss, /\.trust-ledger \{[\s\S]*?var\(--warn\)[\s\S]*?\.trust-ledger dl > div/,
     'docs: the trust boundary should be a deliberate visual component');
-  assert.match(docsBuild, /\/docs\/easy-cli-proxy\/[\s\S]*?Subscription proxy/,
-    'docs build: shared English navigation should expose the guide');
-  assert.match(docsBuild, /\/docs\/zh\/easy-cli-proxy\/[\s\S]*?订阅代理/,
-    'docs build: shared Chinese navigation should expose the translated guide');
+  assert.match(docsBuild, /companionHref = '\/companion\/'[\s\S]*?companionLabel = 'WebBrain Companion'/,
+    'docs build: shared navigation should promote Companion');
   assert.match(vercel, /mp4\|webm\|vtt/, 'web: Vercel should serve WebVTT as a static asset');
   assert.match(sitemap, /<loc>https:\/\/webbrain\.one\/docs\/easy-cli-proxy\/<\/loc>/,
     'web: the guide should appear in the generated sitemap');
@@ -133845,13 +133895,13 @@ test('public EasyCLIProxy guide keeps executable, account, network, and media bo
 
   for (const rel of ['index.html', 'settings/index.html', 'providers/index.html', 'safety/index.html', 'formats/index.html', 'mcp/index.html', 'lm-studio/index.html', 'ollama/index.html', 'easy-cli-proxy/index.html']) {
     const html = fs.readFileSync(path.join(ROOT, 'web/docs', rel), 'utf8');
-    assert.match(html, /<a href="\/docs\/easy-cli-proxy\/"[^>]*>Subscription proxy<\/a>/,
-      `docs/${rel}: shared navigation should expose the subscription proxy guide`);
+    assert.match(html, /<a href="\/companion\/"[^>]*>WebBrain Companion<\/a>/,
+      `docs/${rel}: shared navigation should promote Companion`);
   }
   for (const rel of ['index.html', 'settings/index.html', 'providers/index.html', 'safety/index.html', 'formats/index.html', 'mcp/index.html', 'lm-studio/index.html', 'ollama/index.html', 'apocalypse-mode/index.html', 'easy-cli-proxy/index.html']) {
     const html = fs.readFileSync(path.join(ROOT, 'web/docs/zh', rel), 'utf8');
-    assert.match(html, /<a href="\/docs\/zh\/easy-cli-proxy\/"[^>]*>订阅代理<\/a>/,
-      `docs/zh/${rel}: shared navigation should expose the translated subscription proxy guide`);
+    assert.match(html, /<a href="\/companion\/"[^>]*>WebBrain Companion<\/a>/,
+      `docs/zh/${rel}: shared navigation should promote Companion`);
   }
 
   const videoSize = fs.statSync(videoPath).size;

@@ -71,6 +71,13 @@ git clone https://github.com/webbrain-one/webbrain.git
 
 ## 选择模型
 
+**WebBrain Companion** 是独立的桌面应用，可使用本地模型和受支持的账户订阅。
+[下载 Windows、macOS 或 Linux 版本](https://github.com/esokullu/webbrain/releases/tag/systray-v0.1.2)，
+然后在“提供商”页面选择 **WebBrain Companion**。默认本地地址为
+`http://127.0.0.1:8327/v1`；同一台电脑上的扩展不需要 API 密钥。点击
+**Load Models** 选择模型，再测试连接。详情参阅[配置指南](docs/providers-and-models.md#webbrain-companion)。
+通用代理卡片仍可用于其他兼容 OpenAI 的网关。
+
 **WebBrain Compass 1.0** 是默认选项，无需 API 密钥或本地配置。
 
 **本地模型** 同样无需 API 密钥。将 WebBrain 指向任意 OpenAI 兼容服务即可：

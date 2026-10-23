@@ -321,7 +321,8 @@ export function inferContextWindow(config = {}) {
   const category = clean(config.category);
   const provider = clean(config.providerName || config.type || config.label);
   if (category === 'local') {
-    return provider === 'local-openai-proxy' ? LOCAL_OPENAI_PROXY_CONTEXT_WINDOW : DEFAULT_LOCAL_CONTEXT_WINDOW;
+    return ['local-openai-proxy', 'webbrain-companion'].includes(provider)
+      ? LOCAL_OPENAI_PROXY_CONTEXT_WINDOW : DEFAULT_LOCAL_CONTEXT_WINDOW;
   }
   if (!clean(config.model)) return DEFAULT_CLOUD_CONTEXT_WINDOW;
   return inferKnownModelContextWindow(config) ?? DEFAULT_CLOUD_CONTEXT_WINDOW;
