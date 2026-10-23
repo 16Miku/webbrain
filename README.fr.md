@@ -84,8 +84,7 @@ puis sélectionnez la carte **WebBrain Companion** dans Fournisseurs. L'adresse
 locale par défaut est `http://127.0.0.1:8327/v1` ; aucune clé API n'est requise
 pour l'extension sur cet ordinateur. Chargez les modèles et testez la connexion.
 Le [guide de configuration](docs/providers-and-models.md#webbrain-companion)
-donne plus de détails. La carte proxy générique reste disponible pour les
-autres passerelles OpenAI compatibles.
+donne plus de détails.
 
 **WebBrain Compass 1.0** est l'option par défaut : ni clé API, ni configuration
 locale.
@@ -101,9 +100,8 @@ python -m sglang.launch_server --model-path your-model --port 30000
 ```
 
 LM Studio (`:1234/v1`), Jan (`:1337/v1`), LocalAI (`:8080/v1`) et GPT4All
-(`:4891/v1`) fonctionnent de la même manière. Une carte générique **Proxy local
-compatible OpenAI** accepte aussi les passerelles de boucle locale authentifiées
-comme CLIProxyAPI ; consultez la [configuration sécurisée du proxy](docs/fr/providers-and-models.md#exemple-de-proxy-dabonnement-cliproxyapi).
+(`:4891/v1`) fonctionnent de la même manière. La carte générique **Proxy local
+compatible OpenAI** reste disponible pour les autres passerelles compatibles.
 Dimensionnez la fenêtre chargée pour le prompt et les schémas d'outils du niveau
 choisi, la page, l'historique et la sortie demandée. **16k est une valeur de
 configuration par défaut, pas un minimum garanti ; Compact ne tient pas
