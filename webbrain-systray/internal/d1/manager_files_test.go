@@ -72,6 +72,40 @@ func TestRemoveWaitsForCanceledInstall(t *testing.T) {
 	}
 }
 
+func TestShutdownWaitsForDecisionInstaller(t *testing.T) {
+	m := NewManager(nil, nil)
+	installDone, canceled := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-installDone:
+		default:
+			close(installDone)
+		}
+	})
+	m.installDone, m.cancel = installDone, func() { close(canceled) }
+	shutdownDone := make(chan struct{})
+	go func() { m.BeginShutdown(); close(shutdownDone) }()
+	select {
+	case <-canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not cancel installation")
+	}
+	if err := m.Load(); err == nil {
+		t.Fatal("decision model loaded during shutdown")
+	}
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown returned before installation finished")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(installDone)
+	select {
+	case <-shutdownDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not finish after installation stopped")
+	}
+}
+
 func TestValidFileRejectsSameSizeCorruption(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "model.data")
 	good := []byte("pinned model contents")

@@ -102,6 +102,64 @@ func TestRestartIncludesStartingModel(t *testing.T) {
 	}
 }
 
+func TestExplicitStopOverridesQueuedRestart(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, func([]core.LocalUpstream) error { return nil }, nil)
+	m.phase = PhaseStarting
+	if err := m.StopExplicit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Restart(); err != nil {
+		t.Fatalf("queued restart ran after explicit stop: %v", err)
+	}
+	if err := m.StartExplicit(); err == nil {
+		t.Fatal("manual start did not clear the stop request and attempt a launch")
+	}
+}
+
+func TestShutdownWaitsForLocalInstaller(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, func([]core.LocalUpstream) error { return nil }, nil)
+	installDone, canceled := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-installDone:
+		default:
+			close(installDone)
+		}
+	})
+	m.installDone, m.cancel = installDone, func() { close(canceled) }
+	shutdownDone := make(chan struct{})
+	go func() { m.BeginShutdown(); close(shutdownDone) }()
+	select {
+	case <-canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not cancel installation")
+	}
+	if err := m.Install("gguf"); err == nil {
+		t.Fatal("installation started during shutdown")
+	}
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown returned before installation finished")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(installDone)
+	select {
+	case <-shutdownDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not finish after installation stopped")
+	}
+}
+
 func TestInstallDefaultPreservesAutostartChoice(t *testing.T) {
 	t.Setenv("WBC_HOME", t.TempDir())
 	store, err := settings.Open()

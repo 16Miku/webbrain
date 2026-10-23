@@ -70,21 +70,23 @@ type Manager struct {
 	register  func([]core.LocalUpstream) error
 	onChange  func()
 
-	phase       string
-	step        string
-	progress    *download.Progress
-	err         string
-	port        int
-	startedAt   *time.Time
-	plan        Plan
-	cancel      context.CancelFunc
-	installDone chan struct{}
-	removing    bool
-	cmd         *exec.Cmd
-	starting    chan struct{} // closed after Start either publishes cmd or fails
-	exited      chan struct{}
-	stopping    bool
-	stopErr     error // why the server was stopped, when it was not the user
+	phase         string
+	step          string
+	progress      *download.Progress
+	err           string
+	port          int
+	startedAt     *time.Time
+	plan          Plan
+	cancel        context.CancelFunc
+	installDone   chan struct{}
+	removing      bool
+	closing       bool
+	stopRequested bool
+	cmd           *exec.Cmd
+	starting      chan struct{} // closed after Start either publishes cmd or fails
+	exited        chan struct{}
+	stopping      bool
+	stopErr       error // why the server was stopped, when it was not the user
 }
 
 func NewManager(store *settings.Store, register func([]core.LocalUpstream) error, onChange func()) *Manager {
@@ -517,6 +519,8 @@ type item struct {
 
 // Install downloads everything the selected format needs, then starts it.
 func (m *Manager) Install(format string) error {
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
 	info := sysinfo.Get()
 	if format == "" {
 		format = m.format(info)
@@ -525,6 +529,10 @@ func (m *Manager) Install(format string) error {
 		return errors.New("MLX needs a Mac with Apple Silicon")
 	}
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return errors.New("the companion is shutting down")
+	}
 	if m.removing {
 		m.mu.Unlock()
 		return errors.New("the local model is being removed")
@@ -541,6 +549,7 @@ func (m *Manager) Install(format string) error {
 	m.cancel = cancel
 	done := make(chan struct{})
 	m.installDone = done
+	m.stopRequested = false
 	m.phase, m.step, m.err, m.progress = PhaseDownloading, "Preparing the local model", "", nil
 	m.mu.Unlock()
 	m.changed()
@@ -572,7 +581,11 @@ func (m *Manager) Install(format string) error {
 			return
 		}
 		if err := m.Start(); err != nil {
-			m.setPhase(PhaseError, "", err)
+			if errors.Is(err, errStopRequested) {
+				m.setPhase(PhaseIdle, "", nil)
+			} else {
+				m.setPhase(PhaseError, "", err)
+			}
 		}
 	}()
 	return nil
@@ -597,6 +610,23 @@ func (m *Manager) Cancel() {
 	m.mu.Unlock()
 	if c != nil {
 		c()
+	}
+}
+
+// BeginShutdown prevents new work and waits for an installer to release its
+// child processes before the local server and proxy are stopped.
+func (m *Manager) BeginShutdown() {
+	m.restartMu.Lock()
+	m.mu.Lock()
+	m.closing, m.stopRequested = true, true
+	cancel, done := m.cancel, m.installDone
+	m.mu.Unlock()
+	m.restartMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
 	}
 }
 
@@ -827,6 +857,8 @@ func freePort(preferred int) int {
 	return preferred
 }
 
+var errStopRequested = errors.New("local model stop requested")
+
 // Start launches the local server for the selected format and registers it
 // with the proxy once it answers.
 func (m *Manager) Start() (startErr error) {
@@ -836,9 +868,17 @@ func (m *Manager) Start() (startErr error) {
 	plan := MakePlan(info, s.Local, format)
 
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return errors.New("the companion is shutting down")
+	}
 	if m.removing {
 		m.mu.Unlock()
 		return errors.New("the local model is being removed")
+	}
+	if m.stopRequested {
+		m.mu.Unlock()
+		return errStopRequested
 	}
 	if m.cmd != nil || m.starting != nil {
 		m.mu.Unlock()
@@ -984,6 +1024,16 @@ func (m *Manager) Start() (startErr error) {
 	return nil
 }
 
+// StartExplicit clears a previous user stop before launching again.
+func (m *Manager) StartExplicit() error {
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	m.mu.Lock()
+	m.stopRequested = false
+	m.mu.Unlock()
+	return m.Start()
+}
+
 func (m *Manager) registrationFailed(err error) {
 	logx.Printf("register local model: %v", err)
 	m.mu.Lock()
@@ -1060,6 +1110,16 @@ func (m *Manager) Stop() error {
 		return errors.New(detail)
 	}
 	return nil
+}
+
+// StopExplicit wins over a queued settings restart.
+func (m *Manager) StopExplicit() error {
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	m.mu.Lock()
+	m.stopRequested = true
+	m.mu.Unlock()
+	return m.Stop()
 }
 
 // Running reports whether the local server is up.
@@ -1143,12 +1203,20 @@ func (m *Manager) Remove(format string) error {
 func (m *Manager) Restart() error {
 	m.restartMu.Lock()
 	defer m.restartMu.Unlock()
+	m.mu.Lock()
+	stopped := m.stopRequested || m.closing
+	m.mu.Unlock()
+	if stopped {
+		return nil
+	}
 	active := m.Active()
 	if err := m.Stop(); err != nil {
 		return err
 	}
 	if active {
-		return m.Start()
+		if err := m.Start(); !errors.Is(err, errStopRequested) {
+			return err
+		}
 	}
 	return nil
 }

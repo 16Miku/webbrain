@@ -199,7 +199,11 @@ func (a *App) Start() error {
 // Shutdown stops child servers and the proxy.
 func (a *App) Shutdown() {
 	a.cancel()
-	a.Local.Stop()
+	a.Local.BeginShutdown()
+	a.D1.BeginShutdown()
+	if err := a.Local.StopExplicit(); err != nil {
+		logx.Printf("stop local model during shutdown: %v", err)
+	}
 	a.D1.Unload()
 	a.Proxy.Stop()
 }

@@ -152,10 +152,16 @@ func main() {
 		_ = osutil.OpenAppWindow(a.PanelURL(fragment), 460, 820)
 	}
 	a.OpenPanel = open
+	var shutdownOnce sync.Once
 	shutdown := func() {
-		a.Shutdown()
-		_ = os.Remove(runtimeFile())
+		shutdownOnce.Do(func() {
+			a.Shutdown()
+			_ = os.Remove(runtimeFile())
+		})
 	}
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
 
 	if *headless {
 		if startErr != nil {
@@ -164,8 +170,6 @@ func main() {
 		}
 		fmt.Fprintf(stdout, "WebBrain Companion %s\n  OpenAI base URL: %s/v1\n  API key: %s\n  Panel: %s\n",
 			version, a.Proxy.BaseURL(), store.Get().APIKey, a.PanelURL(""))
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 		quit := make(chan struct{})
 		var once sync.Once
 		a.Quit = func() { once.Do(func() { close(quit) }) }
@@ -180,6 +184,10 @@ func main() {
 	tray.SetOnTap(func() { open("") })
 	a.OnChange = tray.Refresh
 	a.Quit = tray.Quit
+	go func() {
+		<-sig
+		tray.Quit()
+	}()
 	tooltip := "WebBrain Companion"
 	if startErr != nil {
 		tooltip += " — " + strings.SplitN(startErr.Error(), "\n", 2)[0]

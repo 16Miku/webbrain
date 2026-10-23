@@ -357,14 +357,17 @@ func (a *App) routes(e *gin.Engine) {
 	})
 	api.POST("/local/cancel", func(c *gin.Context) { a.Local.Cancel(); c.JSON(http.StatusOK, gin.H{"ok": true}) })
 	api.POST("/local/start", func(c *gin.Context) {
-		if err := a.Local.Start(); err != nil {
+		if err := a.Local.StartExplicit(); err != nil {
 			fail(c, http.StatusConflict, err)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	api.POST("/local/stop", func(c *gin.Context) {
-		go a.Local.Stop()
+		if err := a.Local.StopExplicit(); err != nil {
+			fail(c, http.StatusConflict, err)
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	api.POST("/local/remove", func(c *gin.Context) {

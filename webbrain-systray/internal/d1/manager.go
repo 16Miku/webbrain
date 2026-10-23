@@ -133,6 +133,7 @@ type Manager struct {
 	cancel      context.CancelFunc
 	installDone chan struct{}
 	removing    bool
+	closing     bool
 	eng         *engine
 	evalMu      sync.Mutex
 	verified    download.Verifier
@@ -272,6 +273,10 @@ func (m *Manager) Install() error {
 		return errors.New("ONNX Runtime " + ortVersion + " has no build for this platform")
 	}
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return errors.New("the companion is shutting down")
+	}
 	if m.removing || m.phase == PhaseDownloading || m.phase == PhaseInstalling || m.phase == PhaseLoading {
 		m.mu.Unlock()
 		return errors.New("already installing")
@@ -316,6 +321,21 @@ func (m *Manager) Cancel() {
 	m.mu.Unlock()
 	if c != nil {
 		c()
+	}
+}
+
+// BeginShutdown cancels installation and waits for its worker to release
+// downloads and any newly loaded sessions before Unload runs.
+func (m *Manager) BeginShutdown() {
+	m.mu.Lock()
+	m.closing = true
+	cancel, done := m.cancel, m.installDone
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
 	}
 }
 
@@ -402,6 +422,12 @@ func (m *Manager) Load() error {
 
 // load requires evalMu so sessions cannot be replaced or released during use.
 func (m *Manager) load() error {
+	m.mu.Lock()
+	closing := m.closing
+	m.mu.Unlock()
+	if closing {
+		return errors.New("the companion is shutting down")
+	}
 	if !m.Installed() {
 		return ErrNotReady
 	}
