@@ -374,6 +374,23 @@ func TestRuntimeInstalledRejectsMissingAndCorruptExtractedFiles(t *testing.T) {
 	if !runtimeInstalled(plan) {
 		t.Fatal("valid extracted runtime was rejected")
 	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(serverPath, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if runtimeInstalled(plan) {
+			t.Fatal("non-executable llama-server was accepted")
+		}
+		if _, err := installedRuntimeManifest(plan); err == nil {
+			t.Fatal("non-executable llama-server was marked as installed")
+		}
+		if err := os.Chmod(serverPath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if !runtimeInstalled(plan) {
+			t.Fatal("repaired llama-server was rejected")
+		}
+	}
 	if err := os.Remove(libraryPath); err != nil {
 		t.Fatal(err)
 	}

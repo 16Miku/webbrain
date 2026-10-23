@@ -216,6 +216,9 @@ func installedRuntimeManifest(p Plan) ([]byte, error) {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("runtime entry is not a file: %s", path)
 		}
+		if runtime.GOOS != "windows" && filepath.Base(path) == "llama-server" && info.Mode().Perm()&0o111 == 0 {
+			return fmt.Errorf("llama-server is not executable: %s", path)
+		}
 		sha, err := fileSHA256(path)
 		if err != nil {
 			return err
@@ -259,10 +262,17 @@ func runtimeInstalled(p Plan) bool {
 		if !filepath.IsLocal(filepath.FromSlash(f.Path)) || f.Size < 0 || len(f.SHA256) != 64 {
 			return false
 		}
-		if !runtimeVerifier.Valid(filepath.Join(dir, filepath.FromSlash(f.Path)), f.Size, f.SHA256) {
+		path := filepath.Join(dir, filepath.FromSlash(f.Path))
+		if !runtimeVerifier.Valid(path, f.Size, f.SHA256) {
 			return false
 		}
 		if filepath.Base(f.Path) == binary {
+			if runtime.GOOS != "windows" {
+				info, err := os.Stat(path)
+				if err != nil || info.Mode().Perm()&0o111 == 0 {
+					return false
+				}
+			}
 			binaryVerified = true
 		}
 	}
