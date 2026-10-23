@@ -130,7 +130,7 @@ Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter ve daha fazlası.
 Ayarlar; test edilmiş LFM2.5 2.6B ön ayarını kullanan, uç nokta (endpoint) gerektirmeyen
 yerel WebGPU seçeneği ve deneysel özel Hugging Face ONNX deposu seçeneği dahil olmak üzere
-Chromium'da **112 yerleşik sağlayıcı kartı** (Firefox'ta 111) ile gelir;
+Chromium'da **114 yerleşik sağlayıcı kartı** (Firefox'ta 113) ile gelir;
 [tam kataloğa](docs/providers-and-models.md#extended-provider-catalog) bakınız.
 
 Yerel veya kendi sağladığınız (BYO) bir sağlayıcı için, sağlayıcı bazlı
