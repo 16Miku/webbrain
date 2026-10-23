@@ -153,6 +153,68 @@ func TestRemoveReportsRuntimeDirectoryReadError(t *testing.T) {
 	}
 }
 
+func TestRemoveWaitsForInstallAndRejectsRetry(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Update(func(s *settings.Settings) { s.Local.AutoStart = true }); err != nil {
+		t.Fatal(err)
+	}
+	model := filepath.Join(ggufDir(), "partial-model")
+	if err := os.MkdirAll(ggufDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(model, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done, cancelled := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	})
+	m := NewManager(store, func([]core.LocalUpstream) error { return nil }, nil)
+	m.phase, m.installDone, m.cancel = PhaseDownloading, done, func() { close(cancelled) }
+	removed := make(chan error, 1)
+	go func() { removed <- m.Remove("gguf") }()
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Remove did not cancel the installer")
+	}
+	if !m.Busy() {
+		t.Fatal("Remove did not reserve the manager")
+	}
+	if err := m.Install("gguf"); err == nil {
+		t.Fatal("Retry started during removal")
+	}
+	if err := m.Start(); err == nil {
+		t.Fatal("Start was accepted during removal")
+	}
+	if _, err := os.Stat(model); err != nil {
+		t.Fatalf("Remove deleted files before the installer stopped: %v", err)
+	}
+	close(done)
+	select {
+	case err := <-removed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Remove did not finish after the installer stopped")
+	}
+	if _, err := os.Stat(model); !os.IsNotExist(err) {
+		t.Fatalf("Remove left model files behind: %v", err)
+	}
+	if store.Get().Local.AutoStart {
+		t.Fatal("Remove left autostart enabled")
+	}
+}
+
 func TestRuntimeArchivesHavePinnedChecksums(t *testing.T) {
 	for asset, size := range llamaAssetSizes {
 		if size <= 0 || len(llamaAssetSHA[asset]) != 64 {

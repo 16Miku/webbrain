@@ -78,6 +78,7 @@ type Manager struct {
 	plan        Plan
 	cancel      context.CancelFunc
 	installDone chan struct{}
+	removing    bool
 	cmd         *exec.Cmd
 	starting    chan struct{} // closed after Start either publishes cmd or fails
 	exited      chan struct{}
@@ -500,7 +501,7 @@ func (m *Manager) setPhase(phase, step string, err error) {
 func (m *Manager) Busy() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.phase == PhaseDownloading || m.phase == PhaseInstalling || m.phase == PhaseStarting || m.phase == PhaseStopping
+	return m.removing || m.phase == PhaseDownloading || m.phase == PhaseInstalling || m.phase == PhaseStarting || m.phase == PhaseStopping
 }
 
 // --- install ---------------------------------------------------------------------
@@ -523,6 +524,10 @@ func (m *Manager) Install(format string) error {
 		return errors.New("MLX needs a Mac with Apple Silicon")
 	}
 	m.mu.Lock()
+	if m.removing {
+		m.mu.Unlock()
+		return errors.New("the local model is being removed")
+	}
 	if m.phase == PhaseDownloading || m.phase == PhaseInstalling || m.phase == PhaseStarting {
 		m.mu.Unlock()
 		return errors.New("an install is already running")
@@ -818,6 +823,10 @@ func (m *Manager) Start() (startErr error) {
 	plan := MakePlan(info, s.Local, format)
 
 	m.mu.Lock()
+	if m.removing {
+		m.mu.Unlock()
+		return errors.New("the local model is being removed")
+	}
 	if m.cmd != nil || m.starting != nil {
 		m.mu.Unlock()
 		return nil
@@ -1049,8 +1058,25 @@ func (m *Manager) Running() bool {
 
 // Remove deletes the files of one format (stopping the server first).
 func (m *Manager) Remove(format string) error {
-	if m.Busy() && !m.Running() {
-		return errors.New("wait for the current operation to finish")
+	m.mu.Lock()
+	if m.removing {
+		m.mu.Unlock()
+		return errors.New("the local model is already being removed")
+	}
+	m.removing = true
+	cancel, done := m.cancel, m.installDone
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		m.removing = false
+		m.mu.Unlock()
+		m.changed()
+	}()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
 	}
 	if _, err := m.store.Update(func(s *settings.Settings) { s.Local.AutoStart = false }); err != nil {
 		return err
