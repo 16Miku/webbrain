@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=WebBrain Companion
+Comment=Your AI subscriptions on localhost for WebBrain
+Exec=webbrain-companion
+Icon=webbrain-companion
+Categories=Network;Utility;
+Terminal=false
+StartupNotify=false
