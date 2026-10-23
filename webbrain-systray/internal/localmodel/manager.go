@@ -63,11 +63,12 @@ type Status struct {
 }
 
 type Manager struct {
-	mu       sync.Mutex
-	verified download.Verifier
-	store    *settings.Store
-	register func([]core.LocalUpstream) error
-	onChange func()
+	mu        sync.Mutex
+	restartMu sync.Mutex
+	verified  download.Verifier
+	store     *settings.Store
+	register  func([]core.LocalUpstream) error
+	onChange  func()
 
 	phase       string
 	step        string
@@ -566,7 +567,7 @@ func (m *Manager) Install(format string) error {
 			m.setPhase(PhaseIdle, "", nil)
 			return
 		}
-		if _, err := m.store.Update(func(s *settings.Settings) { s.Local.AutoStart = true }); err != nil {
+		if err := m.defaultAutoStart(); err != nil {
 			m.setPhase(PhaseError, "", fmt.Errorf("save local-model preference: %w", err))
 			return
 		}
@@ -575,6 +576,18 @@ func (m *Manager) Install(format string) error {
 		}
 	}()
 	return nil
+}
+
+func (m *Manager) defaultAutoStart() error {
+	if m.store.Get().Local.AutoStartConfigured {
+		return nil
+	}
+	_, err := m.store.Update(func(s *settings.Settings) {
+		if !s.Local.AutoStartConfigured {
+			s.Local.AutoStart = true
+		}
+	})
+	return err
 }
 
 // Cancel stops a running download; partial files are kept for resume.
@@ -1056,6 +1069,13 @@ func (m *Manager) Running() bool {
 	return m.phase == PhaseRunning
 }
 
+// Active includes a launch that has not finished loading the model yet.
+func (m *Manager) Active() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.phase == PhaseRunning || m.phase == PhaseStarting || m.starting != nil || m.cmd != nil
+}
+
 // Remove deletes the files of one format (stopping the server first).
 func (m *Manager) Remove(format string) error {
 	m.mu.Lock()
@@ -1121,11 +1141,13 @@ func (m *Manager) Remove(format string) error {
 
 // Restart applies new settings (vision mode, context) to a running server.
 func (m *Manager) Restart() error {
-	running := m.Running()
+	m.restartMu.Lock()
+	defer m.restartMu.Unlock()
+	active := m.Active()
 	if err := m.Stop(); err != nil {
 		return err
 	}
-	if running {
+	if active {
 		return m.Start()
 	}
 	return nil

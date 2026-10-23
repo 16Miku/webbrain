@@ -4,6 +4,7 @@ package settings
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,8 @@ type Local struct {
 	Format string `json:"format,omitempty"`
 	// AutoStart starts the local model server whenever the companion starts.
 	AutoStart bool `json:"auto_start"`
+	// AutoStartConfigured preserves an explicit choice made while installing.
+	AutoStartConfigured bool `json:"auto_start_configured,omitempty"`
 	// Vision is "auto" (decide from memory), "gpu", "cpu" or "off".
 	Vision string `json:"vision,omitempty"`
 	// Context is the context size in tokens; 0 means automatic.
@@ -168,3 +171,9 @@ func (st *Store) saveLocked(s Settings) error {
 
 // RandomSecret is exposed for components that need throwaway secrets.
 func RandomSecret() string { return randomHex(24) }
+
+// InstanceID identifies one data directory without exposing its panel token.
+func InstanceID(panelToken string) string {
+	sum := sha256.Sum256([]byte(panelToken))
+	return hex.EncodeToString(sum[:])
+}

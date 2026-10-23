@@ -190,6 +190,7 @@ func (a *App) routes(e *gin.Engine) {
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"app":             "webbrain-companion",
+			"instance_id":     settings.InstanceID(a.Store.Get().PanelToken),
 			"version":         a.Version,
 			"base_url":        s.BaseURL,
 			"openai_base_url": s.BaseURL + "/v1",
@@ -402,6 +403,7 @@ func (a *App) routes(e *gin.Engine) {
 			}
 			if req.AutoStart != nil {
 				s.Local.AutoStart = *req.AutoStart
+				s.Local.AutoStartConfigured = true
 			}
 			if req.Context != nil && *req.Context >= 0 && *req.Context <= 262144 {
 				restart = restart || s.Local.Context != *req.Context
@@ -412,7 +414,7 @@ func (a *App) routes(e *gin.Engine) {
 			fail(c, http.StatusInternalServerError, err)
 			return
 		}
-		if restart && a.Local.Running() {
+		if restart && a.Local.Active() {
 			go func() {
 				if err := a.Local.Restart(); err != nil {
 					logx.Printf("restart local model: %v", err)

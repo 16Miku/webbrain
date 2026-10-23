@@ -53,11 +53,12 @@ func existingInstance(s settings.Settings) (int, bool) {
 			continue
 		}
 		var info struct {
-			App string `json:"app"`
+			App        string `json:"app"`
+			InstanceID string `json:"instance_id"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&info)
 		_ = resp.Body.Close()
-		if info.App == "webbrain-companion" {
+		if resp.StatusCode == http.StatusOK && info.App == "webbrain-companion" && info.InstanceID == settings.InstanceID(s.PanelToken) {
 			return p, true
 		}
 	}
@@ -131,15 +132,6 @@ func main() {
 		fmt.Fprintln(stderr, "cannot read settings:", err)
 		os.Exit(1)
 	}
-	if port, ok := existingInstance(store.Get()); ok {
-		url := fmt.Sprintf("http://127.0.0.1:%d/companion/#k=%s", port, store.Get().PanelToken)
-		if !*background {
-			_ = osutil.OpenAppWindow(url, 460, 820)
-		}
-		logx.Printf("another instance is running on port %d", port)
-		return
-	}
-
 	a := app.New(version, store)
 	writeRuntime := func(port int) {
 		data, _ := json.Marshal(runtimeInfo{PID: os.Getpid(), Port: port})

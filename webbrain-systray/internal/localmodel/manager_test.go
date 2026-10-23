@@ -86,6 +86,49 @@ func TestStartClaimPreventsOverlappingLaunches(t *testing.T) {
 	}
 }
 
+func TestRestartIncludesStartingModel(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, func([]core.LocalUpstream) error { return nil }, nil)
+	m.phase = PhaseStarting
+	if !m.Active() {
+		t.Fatal("starting model was not considered active")
+	}
+	if err := m.Restart(); err == nil {
+		t.Fatal("Restart skipped starting a replacement model")
+	}
+}
+
+func TestInstallDefaultPreservesAutostartChoice(t *testing.T) {
+	t.Setenv("WBC_HOME", t.TempDir())
+	store, err := settings.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, func([]core.LocalUpstream) error { return nil }, nil)
+	if err := m.defaultAutoStart(); err != nil {
+		t.Fatal(err)
+	}
+	if !store.Get().Local.AutoStart {
+		t.Fatal("first install did not enable autostart by default")
+	}
+	if _, err := store.Update(func(s *settings.Settings) {
+		s.Local.AutoStart = false
+		s.Local.AutoStartConfigured = true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.defaultAutoStart(); err != nil {
+		t.Fatal(err)
+	}
+	if store.Get().Local.AutoStart {
+		t.Fatal("install completion overwrote the user's disabled autostart choice")
+	}
+}
+
 func TestInstallClaimsPhaseBeforeWorkerStarts(t *testing.T) {
 	t.Setenv("WBC_HOME", t.TempDir())
 	store, err := settings.Open()
