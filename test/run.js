@@ -77323,7 +77323,7 @@ test('Unsloth Studio defaults and settings stay mirrored and conservative', () =
     assert.match(icons, /unsloth: 'unsloth\.svg'/);
     assert.match(icons, /unsloth: 'Unsloth Studio'/);
     const sidepanel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
-    assert.match(sidepanel, /LOCAL_PROVIDER_ORDER = \[\s*'unsloth'/);
+    assert.match(sidepanel, /LOCAL_PROVIDER_ORDER = \[\s*'webbrain_companion',\s*'unsloth'/);
   }
   assert.deepEqual(configs[0], configs[1], 'Chrome and Firefox defaults should match');
 });
