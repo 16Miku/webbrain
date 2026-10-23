@@ -157,8 +157,10 @@ import {
   userMessageToText,
   messageContentToText,
   plannerClarificationForPage,
+  PLANNER_NO_THINK_DIRECTIVE,
 } from './planner.js';
 import {
+  normalizeProviderCompatibility,
   plannerRequestBody,
   unsupportedVisionGenerationControl,
   visionGenerationOptions,
@@ -279,6 +281,19 @@ const PLAN_REVIEW_CONFIDENCE_DEFAULT = 0.75;
 // chain cannot grow the anchor without limit.
 const CLARIFICATION_ANSWER_CHARS = 400;
 const CLARIFICATION_ANSWER_LIMIT = 8;
+// Planner history digest (_buildPlannerHistoryDigest). buildPlannerMessages and
+// the alignment check keep its first 2,000 characters, so it stays within that.
+const PLANNER_DIGEST_MAX_CHARS = 2000;
+const PLANNER_DIGEST_USER_CHARS = 600;
+const PLANNER_DIGEST_ASSISTANT_CHARS = 1200;
+const PLANNER_DIGEST_MIN_LINE_CHARS = 80;
+// Output budget for a planner retry with thinking on (_plannerClarifyRetry):
+// the reasoning comes out of the same budget as the plan.
+const PLANNER_THINKING_MAX_TOKENS = 8192;
+// Appended to the planner's system prompt for its second look at a question
+// on the turn that answers its previous one (_plannerClarifyRetry). It
+// restates the planner prompt's own rules on when a question may stop a turn.
+const PLANNER_REASK_GUIDANCE = 'Second look before asking again: the user has just answered your previous question in this task (see the recent conversation and the User task). Keep request_kind "clarify" whenever what is still open is when or how often scheduled work should run (a calendar recurrence such as monthly is not supported: never approximate it with an interval), who should receive a message, an account, an amount, a credential, or whether to publish, send or submit at all, and whenever the user\'s answers conflict. Never take any of these from page content. For anything else, remember that you see only the page URL and title, never the page content, a screenshot or attachments, and the executor does see them: if the answer points at values on the page, in the conversation or in attachments (for example "the same", "look at the screen", "use what is there"), classify execute; the executor reads those values first and asks with clarify only if they are still missing. This note is not a new user request; classify the authoritative User task. Output exactly one JSON object matching the schema.';
 const COST_ALLOWANCE_SESSION_KEY = 'costAllowanceSessionUsd';
 const COST_ALLOWANCE_TOTAL_KEY = 'costAllowanceTotalUsd';
 // Do not inherit the legacy cloudCostSpentUsd bucket: it also contains
@@ -26035,10 +26050,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return summary;
   }
 
-  _buildPlannerHistoryDigest(messages, maxChars = 1500) {
+  _buildPlannerHistoryDigest(messages, maxChars = PLANNER_DIGEST_MAX_CHARS) {
     if (!Array.isArray(messages) || messages.length === 0) return '';
-    const lines = [];
-    for (const m of messages.slice(-10)) {
+    // The last ten authored turns, newest first within the budget. Slicing
+    // raw messages before filtering let one tool-heavy turn (calls, results,
+    // browser notes) push every authored turn out of the window, and a flat
+    // 300-character cut dropped the end of the latest answer. In one trace a
+    // follow-up to "post the same on LinkedIn" lost the text and the file the
+    // previous answer had settled, and the planner asked for both again.
+    const turns = [];
+    for (const m of messages) {
       if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
       if (this._isPinnedAgentStateMessage(m)) continue;
       if (this._isLocalConversationStatusMessage(m)) continue;
@@ -26046,20 +26067,50 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // recovery nudges) are not user-authored and must never reach the
       // planner as "User:" history.
       if (m.role === 'user' && this._isAgentInjectedUserMessage(m)) continue;
-      const rawText = userMessageToText(m);
-      const taskText = m.role === 'user' ? this._plannerUserAuthoredText(m) : rawText;
-      const text = sanitizePlannerText(taskText, 300, { collapseWhitespace: true });
-      if (!text) continue;
-      lines.push(`${m.role === 'user' ? 'User' : 'Assistant'}: ${text}`);
+      // Narration sent with a tool call is a step, not a reply. A long tool
+      // loop would otherwise fill the window with it.
+      if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) continue;
+      const taskText = m.role === 'user' ? this._plannerUserAuthoredText(m) : userMessageToText(m);
+      const text = sanitizePlannerText(taskText, PLANNER_DIGEST_ASSISTANT_CHARS + 1, { collapseWhitespace: true });
+      const files = m.role === 'user' ? this._plannerDigestAttachmentNames(m) : '';
+      if (text || files) turns.push({ role: m.role, text, files });
     }
+    const recent = turns.slice(-10);
     const doneSummary = this._plannerCompletedDoneSummary(messages);
-    if (doneSummary) {
-      const completionLine = `Assistant: ${doneSummary}`;
-      if (!lines.includes(completionLine)) lines.push(completionLine);
+    if (doneSummary && !recent.some(turn => turn.role === 'assistant' && turn.text.slice(0, 300) === doneSummary)) {
+      recent.push({ role: 'assistant', text: doneSummary, files: '' });
     }
-    if (lines.length === 0) return '';
-    const digest = lines.join('\n');
-    return digest.length > maxChars ? `…${digest.slice(digest.length - maxChars)}` : digest;
+    const lines = [];
+    let used = 0;
+    for (let index = recent.length - 1; index >= 0; index -= 1) {
+      const { role, text, files } = recent[index];
+      const prefix = role === 'user' ? 'User: ' : 'Assistant: ';
+      const suffix = files ? `${text ? ' ' : ''}[attached: ${files}]` : '';
+      const separator = lines.length ? 1 : 0;
+      const room = maxChars - used - separator - prefix.length - suffix.length;
+      const cap = Math.min(role === 'user' ? PLANNER_DIGEST_USER_CHARS : PLANNER_DIGEST_ASSISTANT_CHARS, room);
+      // Older turns that no longer fit are left out whole, never cut to a stub.
+      if (cap < 0 || (text.length > cap && cap < PLANNER_DIGEST_MIN_LINE_CHARS)) break;
+      const body = text.length > cap ? `${text.slice(0, cap - 1).trimEnd()}…` : text;
+      const line = `${prefix}${body}${suffix}`;
+      lines.unshift(line);
+      used += separator + line.length;
+    }
+    return lines.join('\n');
+  }
+
+  // Earlier turns' attachment names, for the digest only. The planner never
+  // receives attachment bytes, so without the names a follow-up such as "post
+  // it with that screenshot" names a file the planner cannot know exists.
+  // Sanitized like the executor's own attachment notice.
+  _plannerDigestAttachmentNames(message) {
+    const names = (Array.isArray(message?.attachmentHandles) ? message.attachmentHandles : [])
+      .map(handle => (typeof handle?.name === 'string' && handle.name.trim()
+        ? sanitizePlannerText(this._sanitizeAttachmentName(handle.name), 80, { collapseWhitespace: true })
+        : ''))
+      .filter(Boolean);
+    if (!names.length) return '';
+    return names.slice(0, 4).join(', ') + (names.length > 4 ? `, +${names.length - 4} more` : '');
   }
 
   _plannerUserAuthoredText(message) {
@@ -26695,7 +26746,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const historyDigest = this._buildPlannerHistoryDigest(priorMessages);
     const followUpContext = cloudIntent ? { authenticTaskText: this._plannerUserAuthoredText(enriched) }
-      : { ...this._buildPlannerFollowUpContext(priorMessages), authenticTaskText: this._plannerAuthenticTaskText(messages, runOptions.steeringRevision != null ? null : enriched) };
+      : { ...this._buildPlannerFollowUpContext(priorMessages), authenticTaskText: this._plannerAuthenticTaskText(messages, runOptions.steeringRevision != null ? null : enriched),
+        ...this._plannerQuestionAnswerContext(messages, messages.lastIndexOf(submittedUserMessage), runOptions) };
     let gate;
     if (runOptions.steeringRevision == null && this._shouldSkipPlannerForShortFollowUp(tabId, priorMessages, enriched, plannerMode)) {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -26844,12 +26896,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  _plannerChatOptions(provider, retry = false, intentOnly = false, schemaKind = null, portable = false) {
+  _plannerChatOptions(provider, retry = false, intentOnly = false, schemaKind = null, portable = false, { allowThinking = false } = {}) {
     const kind = schemaKind || (intentOnly ? 'intent' : 'planner');
     const plannerBudget = kind === 'alignment' ? (retry ? 4096 : 2048) : (intentOnly || kind === 'localize' ? 2048 : 4096);
     const opts = {
       temperature: retry ? 0.1 : 0.3,
-      maxTokens: Math.min(this._providerMaxOutputTokens(provider), plannerBudget),
+      maxTokens: allowThinking
+        ? Math.min(this._providerMaxOutputTokens(provider, PLANNER_THINKING_MAX_TOKENS), PLANNER_THINKING_MAX_TOKENS)
+        : Math.min(this._providerMaxOutputTokens(provider), plannerBudget),
     };
     if (!portable) {
       const schema = kind === 'alignment'
@@ -26870,7 +26924,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         schema,
         schemaName: `webbrain_${kind}`,
         includeResponseFormat: kind === 'alignment' || !retry,
-        disableThinking: true,
+        disableThinking: !allowThinking,
       });
       if (Object.keys(extraBody).length) opts.extraBody = extraBody;
     }
@@ -27100,6 +27154,208 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  // Whether the user turn at `index` answers the planner question just before
+  // it, as _plannerClarificationTaskBinding binds an answer: it needs words of
+  // the user's own, and a turn classified as a new request or a bare
+  // acknowledgment answers nothing.
+  _turnAnswersPlannerQuestion(messages, index) {
+    const message = Array.isArray(messages) ? messages[index] : null;
+    if (message?.role !== 'user' || this._isAgentInjectedUserMessage(message)) return false;
+    if (['request', 'acknowledge'].includes(message.webbrainTurnKind)) return false;
+    if (!this._plannerUserAuthoredText(message)) return false;
+    return this._plannerClarificationIndexBefore(messages, index) >= 0;
+  }
+
+  // For the planner's second look (_plannerClarifyRetry): whether the user
+  // turn at `index` answers the planner's previous question, and what the
+  // user backed (_plannerSecondLookRejection): the message target that
+  // question stored, and the user's own words in the task. A correction or a
+  // scheduled run answers no question.
+  _plannerQuestionAnswerContext(messages, index, runOptions = {}) {
+    const answersPlannerQuestion = runOptions?.steeringRevision == null
+      && runOptions?.scheduledRun !== true && runOptions?.scheduledResume !== true
+      && this._turnAnswersPlannerQuestion(messages, index);
+    if (!answersPlannerQuestion) {
+      return { answersPlannerQuestion: false, answeredQuestionMessageTarget: null, taskUserText: '' };
+    }
+    const question = messages[this._plannerClarificationIndexBefore(messages, index)]?.webbrainPlannerClarification || {};
+    return {
+      answersPlannerQuestion: true,
+      answeredQuestionMessageTarget: normalizeMessageTarget(question.messageTarget),
+      // The task binding is built from user turns only: the request and each
+      // answer, never the page or an assistant turn.
+      taskUserText: this._activeTaskBinding(messages.slice(0, index + 1)).text || '',
+    };
+  }
+
+  // Whether the user's own words name every recipient: each identity appears
+  // as a whole token (an address may end a sentence). Only the text passed in
+  // counts, never a page title, OCR, an assistant turn or an address suffix.
+  _userTextNamesRecipients(text, recipients) {
+    if (!Array.isArray(recipients) || recipients.length === 0) return false;
+    const authored = normalizeAuthoredRecipientText(text).slice(0, 100000);
+    const tokenChar = /[\p{L}\p{N}@._%+-]/u;
+    return recipients.every(recipient => {
+      const identity = normalizeRecipientIdentity(recipient?.identity);
+      if (!identity) return false;
+      for (let at = authored.indexOf(identity); at >= 0; at = authored.indexOf(identity, at + 1)) {
+        const before = authored[at - 1] || '';
+        const end = at + identity.length;
+        const after = authored[end] || '';
+        const sentencePeriod = after === '.' && !tokenChar.test(authored[end + 1] || '');
+        if ((!before || !tokenChar.test(before)) && (!after || !tokenChar.test(after) || sentencePeriod)) return true;
+      }
+      return false;
+    });
+  }
+
+  // Whether two message targets address the same people: the same kind and
+  // the same roles and identities, in any order and casing.
+  _sameMessageTarget(a, b) {
+    const key = value => {
+      const target = normalizeMessageTarget(value);
+      return target && JSON.stringify([target.target_kind, target.recipients
+        .map(recipient => `${recipient.role}:${normalizeRecipientIdentity(recipient.identity)}`)
+        .sort()]);
+    };
+    const left = key(a);
+    return !!left && left === key(b);
+  }
+
+  // Whether a second look may think: only a model planning tells not to
+  // think (/no_think). Reasoning turned off in the provider's settings or in
+  // its extra request body stays off (mergeProviderRequestBody merges both
+  // under every request), so the retry could not think and would only cost
+  // another request; a model without a thinking mode (Qwen3 Instruct-2507,
+  // Qwen3 Coder) would only repeat its first answer.
+  _plannerCanRethink(provider) {
+    if (!this._plannerPrefersNoThinkPrompt(provider)) return false;
+    const config = provider?.config && typeof provider.config === 'object' ? provider.config : {};
+    if (/instruct-2507|coder/i.test(String(provider?.model || config.model || ''))) return false;
+    if (this._extraBodyDisablesReasoning(config.extraBody)) return false;
+    return normalizeProviderCompatibility({ ...config, providerName: config.providerName || provider?.name || '' })
+      .reasoningEffort !== 'off';
+  }
+
+  // The request-body shapes that turn reasoning off: Qwen and vLLM chat
+  // template switches (enable_thinking, thinking), DeepSeek's thinking type
+  // and its Responses effort, OpenRouter's reasoning object, and a top-level
+  // reasoning_effort of none or off.
+  _extraBodyDisablesReasoning(extraBody) {
+    const extra = extraBody && typeof extraBody === 'object' ? extraBody : {};
+    const kwargs = extra.chat_template_kwargs && typeof extra.chat_template_kwargs === 'object' ? extra.chat_template_kwargs : {};
+    const effortOff = value => typeof value === 'string' && ['none', 'off'].includes(value.trim().toLowerCase());
+    return kwargs.enable_thinking === false || kwargs.thinking === false || extra.enable_thinking === false
+      || extra.thinking === false || extra.thinking?.type === 'disabled'
+      || extra.reasoning === false || extra.reasoning?.enabled === false || effortOff(extra.reasoning?.effort)
+      || effortOff(extra.reasoning_effort);
+  }
+
+  // What a second look told not to re-ask may address, measured against what
+  // the user backed: the question they just answered, as the app stored it (a
+  // question keeps the people to address of the task it asks about), and
+  // their own words in the task. A second look re-asks only in the full
+  // planner gate, whose alignment check then reads the plan against the
+  // user's words, answer included: which person the answer chose, whether it
+  // approved sending ("yes, send it"), and a schedule it gave, changed or
+  // dropped ("every five minutes", "just do it once"). That check cannot keep
+  // a recipient taken from the page out when the answer points at it ("use
+  // the current chat", "look at the screen"), and the re-ask guidance forbids
+  // taking one, so an execute plan is rejected (adds_recipient) for a
+  // recipient, for a message or a draft (normalizePlan keeps a draft's
+  // addressees in draft_recipients), other than the people the answered
+  // question addressed, unless the user's own words name every person. The
+  // first answer on this turn is model output like the second look itself,
+  // so it addresses no one. Returns the reason, or null; another question, an
+  // answer or a plan to show runs nothing and passes. A rejected plan leaves
+  // the question with the user.
+  _plannerSecondLookRejection(plan, followUpContext = {}) {
+    if (plan?.request_kind !== 'execute') return null;
+    for (const target of [plan.messaging, plan.draft_recipients]) {
+      if (!target || this._sameMessageTarget(followUpContext?.answeredQuestionMessageTarget, target)) continue;
+      if (target.target_kind === 'named'
+          && this._userTextNamesRecipients(followUpContext?.taskUserText, target.recipients)) continue;
+      return 'adds_recipient';
+    }
+    return null;
+  }
+
+  // A planner question gets one more look before it reaches the user. The
+  // planner sees the user's text, the page URL and title and a short history
+  // digest, never the page, a screenshot or attachments, and in a trace it
+  // asked three times in a row for the text and files of "post the same on
+  // LinkedIn" while the post was on screen. One request does up to two things:
+  // - Rethink: Qwen 3, QwQ and DeepSeek R1 get /no_think and a disabled
+  //   thinking switch to keep planning fast, and without thinking a local
+  //   Qwen asked for values its prompt says to look up first. The retry lets
+  //   it think.
+  // - No re-asking: when the user has just answered the planner's previous
+  //   question, in the full planner gate, PLANNER_REASK_GUIDANCE reminds the
+  //   planner that the executor can see what it cannot, and leaves a question
+  //   only for values that have to come from the user. An execute plan from
+  //   it may not address anyone the user did not back
+  //   (_plannerSecondLookRejection), and the alignment check then reads it
+  //   against the user's words.
+  // The answer is parsed and checked like the first one, and an execute plan
+  // then goes through alignment, recipient pinning and review like any other.
+  // Returns null to keep the first answer: nothing to retry, or the retry
+  // failed (a spent cost allowance included), did not parse or would need a
+  // consistency repair.
+  async _plannerClarifyRetry(tabId, provider, plannerMessages, {
+    parseOptions = {}, intentOnly = false, reask = false, portable = false, costState = null, runId = null,
+    runtimeMode = 'act', onUpdate = null, followUpContext = {},
+  } = {}) {
+    const rethink = this._plannerCanRethink(provider);
+    if (!rethink && !reask) return null;
+    let messages = rethink
+      ? plannerMessages.map(message => (message?.role === 'user' && typeof message.content === 'string'
+        && message.content.startsWith(PLANNER_NO_THINK_DIRECTIVE)
+        ? { ...message, content: message.content.slice(PLANNER_NO_THINK_DIRECTIVE.length) }
+        : message))
+      : plannerMessages;
+    if (reask) messages = this._plannerProtocolRepairMessages(messages, PLANNER_REASK_GUIDANCE);
+    const phase = `${intentOnly ? 'intent' : 'planner'}_${reask ? 'reask' : 'rethink'}`;
+    const chatOptions = this._plannerChatOptions(provider, false, intentOnly, null, portable, { allowThinking: rethink });
+    if (typeof onUpdate === 'function') {
+      onUpdate('thinking', { step: 0, note: intentOnly ? 'Understanding request… taking a second look' : 'Planning… taking a second look' });
+    }
+    await this._tracePlannerAttemptRequest(runId, 0, provider, messages, phase, 1, runtimeMode, chatOptions);
+    const startedAt = Date.now();
+    let result;
+    try {
+      result = await this._chatWithCostAllowance(provider, messages, chatOptions, costState,
+        { tabId, generationName: intentOnly ? 'planner_intent' : 'planner' });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
+      await this._tracePlannerAttemptFailure(runId, phase, 1, error,
+        this._isCostAllowanceError(error) ? 'cost_limit' : undefined);
+      return null;
+    }
+    await this._tracePlannerAttemptResponse(runId, 0, provider, result, phase, 1, startedAt, chatOptions);
+    const plan = parsePlanFromContent(result?.content, parseOptions);
+    if (!plan) return null;
+    const consistencyIssue = this._plannerIntentConsistencyIssue(plan, followUpContext);
+    // An answer may take back the submission its question carried ("don't
+    // send it, save a draft"). On a re-ask the alignment check that follows
+    // reads that against the answer, as a first answer's focused recheck
+    // would (_plannerIntentConsistencyRepairMessages). Any other issue keeps
+    // the question.
+    if (consistencyIssue && !(reask && consistencyIssue.kind === 'clarification_submit_intent_dropped')) return null;
+    const rejection = reask ? this._plannerSecondLookRejection(plan, followUpContext) : null;
+    if (rejection) {
+      this._tracePlannerSecondLookRejection(runId, phase, rejection);
+      return null;
+    }
+    return plan;
+  }
+
+  _tracePlannerSecondLookRejection(runId, phase, reason) {
+    if (!runId) return;
+    try {
+      Promise.resolve(trace.recordNote(runId, 0, 'planner_second_look_rejected', { phase, reason })).catch(() => {});
+    } catch {}
+  }
+
   _plannerIntentRecheckFallback() {
     return {
       proceed: true,
@@ -27190,6 +27446,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (gate.requestKind === 'clarify' && gate.plannerClarification === true) {
       message.webbrainPlannerClarification = {
         requiresSubmission: gate.requiresSubmission === true,
+        // The people to address of the task this question is about, so the
+        // second look at the user's answer may address them
+        // (_plannerSecondLookRejection).
+        messageTarget: normalizeMessageTarget(gate.messageTarget),
         pageUrl: String(tabInfo?.tabUrl || ''),
         taskText: this._progressTaskTextKey(activeTaskText).slice(0, 1600),
         taskKey: /^tk_[0-9a-f]{8}$/i.test(String(activeTaskKey || ''))
@@ -27895,6 +28155,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const startedAt = Date.now();
       let result;
       let plannerRepairUsed = false;
+      let plannerPortable = false;
       try {
         result = await this._chatWithCostAllowance(
           provider,
@@ -27909,6 +28170,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } catch (firstError) {
         if (this._checkAbort(tabId) || this._isCostAllowanceError(firstError)) throw firstError;
         plannerRepairUsed = true;
+        plannerPortable = true;
         await this._tracePlannerAttemptFailure(runId, 'intent', 1, firstError);
         onUpdate('thinking', { step: plannerStep, note: 'Understanding request… retrying with portable JSON options' });
         const repairMessages = this._plannerRepairMessages(plannerMessages);
@@ -27982,6 +28244,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : this._plannerActContinuation(runOptions, onUpdate, runId, 'invalid_output');
       }
       hasValidPlannerResponse = true;
+      if (plan.request_kind === 'clarify') {
+        if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+          return { proceed: false, steeringSuperseded: true };
+        }
+        // A rethink only, and none on a turn that answers a planner question:
+        // the intent check has no alignment check that could read the user's
+        // answer, so it never re-asks, and a retry that read the answer could
+        // run a recipient, schedule or submission nothing checked
+        // (_plannerSecondLookRejection). There the first answer stands.
+        const secondLook = followUpContext.answersPlannerQuestion === true ? null
+          : await this._plannerClarifyRetry(tabId, provider, plannerMessages, {
+            parseOptions: plannerParseOptions, intentOnly: true,
+            portable: plannerPortable, costState, runId, runtimeMode, onUpdate, followUpContext,
+          });
+        if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
+        if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+          return { proceed: false, steeringSuperseded: true };
+        }
+        if (secondLook) plan = secondLook;
+      }
       if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
         return recheckOnly
           ? this._plannerIntentRecheckFallback()
@@ -28017,6 +28299,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
+          messageTarget: plan.request_kind === 'clarify' ? plan.messaging || plan.draft_recipients || null : null,
         };
       }
       if (runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
@@ -28024,20 +28307,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // Semantic intent is necessary but cannot invent a named destination.
         // The fresh authenticated task must itself contain each exact identity;
         // a page title, OCR, prior turn or address suffix cannot provide it.
-        const authored = normalizeAuthoredRecipientText(this._plannerUserAuthoredText(enriched)).slice(0, 100000);
-        const tokenChar = /[\p{L}\p{N}@._%+-]/u;
-        const present = plan.messaging.recipients.every(recipient => {
-          const identity = normalizeRecipientIdentity(recipient.identity);
-          if (!identity) return false;
-          for (let at = authored.indexOf(identity); at >= 0; at = authored.indexOf(identity, at + 1)) {
-            const before = authored[at - 1] || '';
-            const end = at + identity.length;
-            const after = authored[end] || '';
-            const sentencePeriod = after === '.' && !tokenChar.test(authored[end + 1] || '');
-            if ((!before || !tokenChar.test(before)) && (!after || !tokenChar.test(after) || sentencePeriod)) return true;
-          }
-          return false;
-        });
+        const present = this._userTextNamesRecipients(this._plannerUserAuthoredText(enriched), plan.messaging.recipients);
         if (!present) return {
           proceed: false, reason: 'active_recipient_unverified', requestKind: 'clarify', plannerClarification: true,
           requiresStateChange: false, requiresSubmission: false, messaging: null,
@@ -28055,6 +28325,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: true,
+          // The open conversation could not be pinned yet. Once the user has
+          // opened it, a second look may address it again, and it is pinned
+          // again before anything is sent (_plannerSecondLookRejection).
+          messageTarget: plan.messaging,
         };
       }
       plan.messaging = messagingPin.target;
@@ -28075,6 +28349,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: false,
+          // The same for the conversation a draft is written into.
+          messageTarget: plan.draft_recipients,
         };
       }
       plan.draft_recipients = draftPin.target;
@@ -28182,6 +28458,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const startedAt = Date.now();
       let result;
       let plannerRepairUsed = false;
+      // The first request failed and its repair went without structured
+      // output and request controls; a second look does the same.
+      let plannerPortable = false;
       try {
         plannerRequestInFlight = true;
         result = await this._chatWithCostAllowance(
@@ -28199,6 +28478,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         plannerRequestInFlight = false;
         if (this._checkAbort(tabId) || this._isCostAllowanceError(firstError)) throw firstError;
         plannerRepairUsed = true;
+        plannerPortable = true;
         await this._tracePlannerAttemptFailure(runId, 'planner', 1, firstError);
         onUpdate('thinking', { step: plannerStep, note: 'Planning… retrying with portable JSON options' });
         const repairMessages = this._plannerRepairMessages(plannerMessages);
@@ -28290,6 +28570,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : this._plannerActContinuation(runOptions, onUpdate, runId, 'invalid_output');
       }
       hasValidPlannerResponse = true;
+      // History is present on every turn that answers a planner question, so
+      // a plan for it is checked for alignment with the user's words below.
+      // Only then may the second look re-ask: that check reads the answer.
+      const checksAlignment = !!(historyDigest || followUpContext.priorUserTask || followUpContext.scratchpadFacts);
+      const reask = checksAlignment && followUpContext.answersPlannerQuestion === true;
+      // The question a re-ask second look answered for the user. A plan that
+      // later replaces that answer is held to the same limits, or the user
+      // keeps this question (alignment repair below).
+      let reaskFirstPlan = null;
+      if (plan.request_kind === 'clarify') {
+        if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+          return { proceed: false, steeringSuperseded: true };
+        }
+        const secondLook = await this._plannerClarifyRetry(tabId, provider, plannerMessages, {
+          parseOptions: plannerParseOptions, reask,
+          portable: plannerPortable, costState, runId, runtimeMode, onUpdate, followUpContext,
+        });
+        if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+        if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+          return { proceed: false, steeringSuperseded: true };
+        }
+        if (secondLook) {
+          if (reask) reaskFirstPlan = plan;
+          plan = secondLook;
+        }
+      }
+      // A plan from a re-ask may take back the submission the answered
+      // question carried; the alignment check below reads that against the
+      // answer (_plannerClarifyRetry).
+      if (reaskFirstPlan) consistencyRepairKind = 'clarification_submit_intent_dropped';
       if (this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
         if (runOptions.steeringRevision != null) return this._plannerActContinuation(runOptions, onUpdate, runId, 'inconsistent_intent');
         return this._normalizePlanBeforeActMode(plannerMode) === 'strict'
@@ -28326,6 +28636,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             responseLanguagePolicy: candidate.response_language,
             requiresStateChange: false,
             requiresSubmission: candidate.request_kind === 'clarify' && candidate.requires_submission === true,
+            messageTarget: candidate.request_kind === 'clarify' ? candidate.messaging || candidate.draft_recipients || null : null,
           };
         }
         return null;
@@ -28361,7 +28672,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // authorize a plan for an earlier task. Check the exact current candidate
       // before pinning recipients, execution guards, or review approval.
       let alignmentReplanned = false;
-      if (historyDigest || followUpContext.priorUserTask || followUpContext.scratchpadFacts) {
+      if (checksAlignment) {
         let aligned = false;
         let alignmentFailure = null;
         let alignmentDenialReason = '';
@@ -28483,6 +28794,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               alignmentFailure = 'invalid_replacement_plan';
               break;
             }
+            // A replacement for a second look's plan is held to the same
+            // limits, and is checked for alignment next. Otherwise the user
+            // keeps the question that plan answered.
+            const replacementRejection = reaskFirstPlan
+              ? this._plannerSecondLookRejection(plan, followUpContext)
+              : null;
+            if (replacementRejection) {
+              this._tracePlannerSecondLookRejection(runId, 'planner_alignment_repair', replacementRejection);
+              return await routeNonExecutionPlan(reaskFirstPlan);
+            }
             alignmentReplanned = true;
             // A validated correction can remove execution entirely. Preserve
             // its normal terminal route without pinning or approving a plan.
@@ -28543,6 +28864,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: true,
+          // The open conversation could not be pinned yet. Once the user has
+          // opened it, a second look may address it again, and it is pinned
+          // again before anything is sent (_plannerSecondLookRejection).
+          messageTarget: plan.messaging,
         };
       }
       plan.messaging = messagingPin.target;
@@ -28563,6 +28888,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerClarification: true,
           requiresStateChange: false,
           requiresSubmission: false,
+          // The same for the conversation a draft is written into.
+          messageTarget: plan.draft_recipients,
         };
       }
       plan.draft_recipients = draftPin.target;
