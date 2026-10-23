@@ -23,7 +23,7 @@ FILES = {
     "linux_arm64": DL + "linux-arm64.tar.gz",
     "sums": DL + "SHA256SUMS.txt",
 }
-GUIDE = "https://webbrain.one/docs/easy-cli-proxy/"
+GUIDE = "https://webbrain.one/docs/providers/#companion"
 
 # Tray menu content, as the app renders it (internal/app/menu.go, i18n.go): the
 # status, the address, one line per plan with its tightest window, the panel.
@@ -119,9 +119,9 @@ T = {
         "connect_h": "Connect WebBrain",
         "connect_p": "You do this once. Apps on this computer need no API key.",
         "step1": "Install the companion and open it. Add a subscription in its panel and finish the sign-in in your browser.",
-        "step2": "Copy the address, <code>http://127.0.0.1:8327/v1</code>, from the panel or the tray menu.",
-        "step3": "In WebBrain, open the <b>Providers</b> page (<b>More…</b> in the side panel's model menu), choose <b>Local OpenAI-compatible Proxy</b> and paste the address in place of the 8317 WebBrain fills in. WebBrain asks for an API key: type anything.",
-        "step4": "Click <b>Load models</b>, pick a model, and run <b>Test Connection</b>. Turn on vision only for a model that accepts images.",
+        "step2": "The default address is <code>http://127.0.0.1:8327/v1</code>. If the port changed, copy the address shown in the panel or tray menu.",
+        "step3": "In WebBrain, open the <b>Providers</b> page (<b>More…</b> in the side panel's model menu) and choose <b>WebBrain Companion</b>. Keep its default address unless the app shows another port. No API key is needed on this computer.",
+        "step4": "Click <b>Load Models</b>, pick a model, <b>Save</b>, and run <b>Test Connection</b> before activating the card. Turn on vision only for a model that accepts images.",
         "after_steps": "Any OpenAI, Anthropic or Gemini client on this computer can use the same address. To use it from another device, turn on network access in the panel's settings; that device then needs the API key the panel shows.",
         "download_h": "Download",
         "download_p": f"Version {VERSION}. Each package holds a single program; your settings and logins live in your user folder.",
@@ -152,7 +152,7 @@ T = {
             "Check the terms of your plan and region before you add it. If an account matters to you, a provider API key is the safer route.",
             "Keep network access off on public Wi-Fi, and never forward port 8327 to the internet. The API key is not internet-grade security.",
         ],
-        "guide": "Read WebBrain's guide to subscription proxies",
+        "guide": "Connect WebBrain to Companion",
         "foot": "WebBrain Companion is free software under the GPL-3.0-or-later license and embeds CLIProxyAPI. It is not affiliated with Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta or Cognition.",
         "foot_nav": "More",
     },
@@ -206,9 +206,9 @@ T = {
         "connect_h": "WebBrain'i bağla",
         "connect_p": "Bunu bir kez yaparsın. Bu bilgisayardaki uygulamaların API anahtarına ihtiyacı yok.",
         "step1": "Companion'ı kur ve aç. Panelinden bir abonelik ekle ve girişi tarayıcında tamamla.",
-        "step2": "Adresi (<code>http://127.0.0.1:8327/v1</code>) panelden ya da tepsi menüsünden kopyala.",
-        "step3": "WebBrain'de <b>Sağlayıcılar</b> sayfasını aç (yan paneldeki model menüsünde <b>Daha fazla…</b>), <b>Local OpenAI-compatible Proxy</b>'yi seç ve adresi WebBrain'in doldurduğu 8317 yerine yapıştır. WebBrain API anahtarı ister: herhangi bir şey yaz.",
-        "step4": "<b>Modelleri yükle</b>'ye bas, bir model seç ve <b>Bağlantıyı sına</b>. Görseli yalnızca resim kabul eden bir model için aç.",
+        "step2": "Varsayılan adres <code>http://127.0.0.1:8327/v1</code>. Port değiştiyse panelde veya tepsi menüsünde gösterilen adresi kopyala.",
+        "step3": "WebBrain'de <b>Sağlayıcılar</b> sayfasını aç (yan paneldeki model menüsünde <b>Daha fazla…</b>) ve <b>WebBrain Companion</b>'ı seç. Uygulama farklı bir port göstermiyorsa varsayılan adresi koru. Bu bilgisayarda API anahtarı gerekmez.",
+        "step4": "<b>Modelleri yükle</b>'ye bas, bir model seç, <b>Kaydet</b> ve kartı etkinleştirmeden önce <b>Bağlantıyı sına</b>. Görseli yalnızca resim kabul eden bir model için aç.",
         "after_steps": "Bu bilgisayardaki OpenAI, Anthropic ya da Gemini uyumlu her istemci aynı adresi anahtarsız kullanabilir. Başka bir cihazdan kullanmak için panelin ayarlarından ağ erişimini aç; o cihaz panelin gösterdiği API anahtarını kullanmalı.",
         "download_h": "İndir",
         "download_p": f"Sürüm {VERSION}. Her paket tek bir program içerir; ayarların ve girişlerin kullanıcı klasöründe durur.",
@@ -239,7 +239,7 @@ T = {
             "Eklemeden önce planının ve bölgenin koşullarına bak. Hesabın senin için önemliyse sağlayıcının API anahtarı daha güvenli yoldur.",
             "Herkese açık Wi-Fi'da ağ erişimini kapalı tut ve 8327 portunu asla internete yönlendirme. API anahtarı internete dayanacak bir güvenlik sağlamaz.",
         ],
-        "guide": "WebBrain'in abonelik proxy'leri rehberini oku (İngilizce)",
+        "guide": "WebBrain'i Companion'a bağlama rehberi (İngilizce)",
         "foot": "WebBrain Companion, GPL-3.0-or-later lisanslı özgür bir yazılımdır ve CLIProxyAPI'yi içinde barındırır. Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta ya da Cognition ile bağlantılı değildir.",
         "foot_nav": "Bağlantılar",
     },

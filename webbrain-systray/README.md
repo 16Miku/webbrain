@@ -49,11 +49,10 @@ without opening the panel (used at login), `--version` prints the version.
 ## Connect WebBrain
 
 In WebBrain's **Providers** page (*More…* in the side panel's model menu), pick
-**Local OpenAI-compatible Proxy** and paste the address
-(`http://127.0.0.1:8327/v1`) from the panel or the tray menu, replacing the
-`8317` WebBrain fills in (that is CLIProxyAPI's default port). WebBrain asks for
-an API key: type anything, the companion does not check it for apps on this
-computer. Then **Load models** and run **Test Connection**. Turn vision on only
+**WebBrain Companion**. Its default address is `http://127.0.0.1:8327/v1`;
+use the address shown in the panel or tray menu if the port changed. No API key
+is needed for the extension on this computer. Click **Load Models**, select a
+model, **Save**, and run **Test Connection**. Turn vision on only
 for a model that accepts images (the local `bonsai-2-27b` does when its
 projector is on). Any OpenAI, Anthropic or Gemini client works the same way:
 

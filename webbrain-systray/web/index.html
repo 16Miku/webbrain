@@ -153,9 +153,9 @@
     <p class="intro">You do this once. Apps on this computer need no API key.</p>
     <ol class="steps">
       <li>Install the companion and open it. Add a subscription in its panel and finish the sign-in in your browser.</li>
-      <li>Copy the address, <code>http://127.0.0.1:8327/v1</code>, from the panel or the tray menu.</li>
-      <li>In WebBrain, open the <b>Providers</b> page (<b>More…</b> in the side panel's model menu), choose <b>Local OpenAI-compatible Proxy</b> and paste the address in place of the 8317 WebBrain fills in. WebBrain asks for an API key: type anything.</li>
-      <li>Click <b>Load models</b>, pick a model, and run <b>Test Connection</b>. Turn on vision only for a model that accepts images.</li>
+      <li>The default address is <code>http://127.0.0.1:8327/v1</code>. If the port changed, copy the address shown in the panel or tray menu.</li>
+      <li>In WebBrain, open the <b>Providers</b> page (<b>More…</b> in the side panel's model menu) and choose <b>WebBrain Companion</b>. Keep its default address unless the app shows another port. No API key is needed on this computer.</li>
+      <li>Click <b>Load Models</b>, pick a model, <b>Save</b>, and run <b>Test Connection</b> before activating the card. Turn on vision only for a model that accepts images.</li>
     </ol>
     <p class="after-steps">Any OpenAI, Anthropic or Gemini client on this computer can use the same address. To use it from another device, turn on network access in the panel&#x27;s settings; that device then needs the API key the panel shows.</p>
   </div>
@@ -207,7 +207,7 @@
           <li>Check the terms of your plan and region before you add it. If an account matters to you, a provider API key is the safer route.</li>
           <li>Keep network access off on public Wi-Fi, and never forward port 8327 to the internet. The API key is not internet-grade security.</li>
         </ul>
-        <p><a href="https://webbrain.one/docs/easy-cli-proxy/">Read WebBrain&#x27;s guide to subscription proxies</a></p>
+        <p><a href="https://webbrain.one/docs/providers/#companion">Connect WebBrain to Companion</a></p>
       </div>
     </div>
   </div>

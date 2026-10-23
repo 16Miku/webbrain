@@ -71,6 +71,12 @@ git clone https://github.com/webbrain-one/webbrain.git
 
 ## 选择模型
 
+**WebBrain Companion** 是独立的桌面应用，可使用本地模型和受支持的账户订阅。
+[下载 Windows、macOS 或 Linux 版本](https://github.com/esokullu/webbrain/releases/tag/systray-v0.1.2)，
+然后在“提供商”页面选择 **WebBrain Companion**。默认本地地址为
+`http://127.0.0.1:8327/v1`；同一台电脑上的扩展不需要 API 密钥。点击
+**Load Models** 选择模型，再测试连接。详情参阅[配置指南](docs/providers-and-models.md#webbrain-companion)。
+
 **WebBrain Compass 1.0** 是默认选项，无需 API 密钥或本地配置。
 
 **本地模型** 同样无需 API 密钥。将 WebBrain 指向任意 OpenAI 兼容服务即可：
@@ -83,8 +89,7 @@ python -m sglang.launch_server --model-path your-model --port 30000
 ```
 
 LM Studio（`:1234/v1`）、Jan（`:1337/v1`）、LocalAI（`:8080/v1`）和 GPT4All
-（`:4891/v1`）用法相同。通用的**本地 OpenAI 兼容代理**卡片也支持 CLIProxyAPI
-等带认证的回环网关；请参阅[安全代理配置](docs/zh-CN/providers-and-models.md#订阅代理示例cliproxyapi)。
+（`:4891/v1`）用法相同。通用的**本地 OpenAI 兼容代理**卡片仍可用于其他兼容网关。
 请根据所选层级的系统提示、工具 schema、页面与对话历史以及所需输出，设置实际加载的上下文窗口。
 **16k 是配置回退值，并非保证足够的最低容量；Compact 也不保证能放入 8k。**
 Mid 和 Full 在历史积累之前就可能超过 16k；压缩历史无法缩小固定提示或工具 schema。

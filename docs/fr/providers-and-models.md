@@ -1,5 +1,12 @@
 # Fournisseurs et Modèles
 
+**WebBrain Companion** est une application de bureau distincte. [Téléchargez
+la version Windows, macOS ou Linux](https://github.com/esokullu/webbrain/releases/tag/systray-v0.1.2),
+puis choisissez la carte **WebBrain Companion**. Son adresse par défaut est
+`http://127.0.0.1:8327/v1` ; l'extension sur le même ordinateur n'a pas besoin
+de clé API. Chargez un modèle, enregistrez la carte et testez la connexion.
+Le [guide de l'application](../../webbrain-systray/README.md) détaille l'installation.
+
 ---
 
 ## Interface Fournisseur (`providers/base.js`)
@@ -46,6 +53,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | local | (modèle chargé) | Métadonnées auto / surcharge |
 | `gpt4all` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `local_openai_proxy` | `openai` | local | (requis) | Désactivée / bascule manuelle |
+| `webbrain_companion` | `openai` | local | (requis) | Désactivée / bascule manuelle |
 | `webgpu` (Chromium) | `webgpu` | local | Compass Tiny v2.1 ; Ternary Bonsai 2 2B Vision ; dépôt HF ONNX personnalisé expérimental | Préréglage Bonsai Vision uniquement |
 | `azure_openai` | `azure_openai` | cloud | (déploiement) | Bascule manuelle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (ID de modèle) | Non |

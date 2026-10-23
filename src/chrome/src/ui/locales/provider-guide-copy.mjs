@@ -1,11 +1,20 @@
 export const providerGuideEnglish = Object.freeze({
+  'st.providers.companion_guide.body': 'Get WebBrain Companion, start it, then load a model. No API key is needed on this computer.',
+  'st.providers.companion_guide.download': 'Download WebBrain Companion',
   'st.providers.subscription_guide.card_body': 'Have a {product} account or subscription instead of an API key?',
   'st.providers.subscription_guide.card_link': 'See third-party proxy setup & risks',
   'st.providers.subscription_guide.local_body': 'Using EasyCLIProxyAPI or CLIProxyAPI?',
   'st.providers.subscription_guide.local_link': 'Read the setup, security & account-risk guide',
 });
 
-export const providerGuideTranslations = Object.freeze({
+const companionGuideTranslations = {
+  es: ['Instala WebBrain Companion, inícialo y carga un modelo. No hace falta una clave API en este equipo.', 'Descargar WebBrain Companion'],
+  fr: ['Installez WebBrain Companion, lancez-le, puis chargez un modèle. Aucune clé API n’est nécessaire sur cet ordinateur.', 'Télécharger WebBrain Companion'],
+  tr: ['WebBrain Companion’ı kurup başlatın ve bir model yükleyin. Bu bilgisayarda API anahtarı gerekmez.', 'WebBrain Companion’ı indir'],
+  zh: ['安装并启动 WebBrain Companion，然后加载模型。本机无需 API 密钥。', '下载 WebBrain Companion'],
+};
+
+export const providerGuideTranslations = Object.freeze(Object.fromEntries(Object.entries({
   es: {
     'st.providers.subscription_guide.card_body': '¿Tienes una cuenta o suscripción de {product} en lugar de una clave de API?',
     'st.providers.subscription_guide.card_link': 'Ver la configuración y los riesgos del proxy de terceros',
@@ -138,4 +147,8 @@ export const providerGuideTranslations = Object.freeze({
     'st.providers.subscription_guide.local_body': 'Verwendest du EasyCLIProxyAPI oder CLIProxyAPI?',
     'st.providers.subscription_guide.local_link': 'Anleitung zu Einrichtung, Sicherheit und Kontorisiken lesen',
   },
-});
+}).map(([code, copy]) => [code, {
+  'st.providers.companion_guide.body': companionGuideTranslations[code]?.[0] || providerGuideEnglish['st.providers.companion_guide.body'],
+  'st.providers.companion_guide.download': companionGuideTranslations[code]?.[1] || providerGuideEnglish['st.providers.companion_guide.download'],
+  ...copy,
+}])));

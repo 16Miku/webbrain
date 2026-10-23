@@ -80,6 +80,14 @@ Yan paneli açmak için WebBrain simgesine tıklayın ve ardından şuna benzer 
 
 ## Bir model seçin
 
+**WebBrain Companion**, yerel modeller ve desteklenen abonelikler için ayrı
+masaüstü uygulamamızdır. [Windows, macOS veya Linux için indirin](https://github.com/esokullu/webbrain/releases/tag/systray-v0.1.2),
+ardından Sağlayıcılar sayfasındaki **WebBrain Companion** kartını seçin.
+Varsayılan yerel adres `http://127.0.0.1:8327/v1`; aynı bilgisayardaki
+eklenti için API anahtarı gerekmez. **Load Models** ile model seçip bağlantıyı
+test edin. Ayrıntılar için [kurulum kılavuzuna](docs/providers-and-models.md#webbrain-companion)
+bakın.
+
 **WebBrain Compass 1.0** varsayılan modeldir; herhangi bir API anahtarı veya yerel kurulum gerektirmez.
 
 **Yerel modeller** de API anahtarı gerektirmez. WebBrain'i OpenAI uyumlu herhangi bir
@@ -93,9 +101,9 @@ python -m sglang.launch_server --model-path your-model --port 30000
 ```
 
 LM Studio (`:1234/v1`), Osaurus (`:1337/v1`), Jan (`:1337/v1`), LocalAI (`:8080/v1`) ve GPT4All
-(`:4891/v1`) aynı şekilde çalışır. Genel bir **Yerel OpenAI uyumlu Proxy** kartı,
-CLIProxyAPI gibi kimlik doğrulamalı geri döngü (loopback) ağ geçitlerini de destekler;
-[güvenli abonelik proxy kurulumu](docs/providers-and-models.md#subscription-proxy-example-cliproxyapi) bölümüne bakın. **Unsloth Studio (Yerel)**, kullanıcı tarafından yapılandırılan Studio portu ve `sk-unsloth-` API anahtarı ile OpenAI uyumlu yolu kullanır; bkz.
+(`:4891/v1`) aynı şekilde çalışır. Genel **Yerel OpenAI uyumlu Proxy** kartı
+diğer uyumlu ağ geçitleri için kullanılabilir. **Unsloth Studio (Yerel)**,
+kullanıcı tarafından yapılandırılan Studio portu ve `sk-unsloth-` API anahtarı ile OpenAI uyumlu yolu kullanır; bkz.
 [Unsloth Studio kurulumu](docs/providers-and-models.md#unsloth-studio).
 **Osaurus (Yerel)**; model keşfi, akış (streaming) ve araç çağrıları (tool calls) özellikleri aracılığıyla Mac üzerindeki Osaurus sunucusuna bağlanır; bkz.
 [Osaurus kurulumu](docs/providers-and-models.md#osaurus).
@@ -122,7 +130,7 @@ Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter ve daha fazlası.
 Ayarlar; test edilmiş LFM2.5 2.6B ön ayarını kullanan, uç nokta (endpoint) gerektirmeyen
 yerel WebGPU seçeneği ve deneysel özel Hugging Face ONNX deposu seçeneği dahil olmak üzere
-Chromium'da **112 yerleşik sağlayıcı kartı** (Firefox'ta 111) ile gelir;
+Chromium'da **114 yerleşik sağlayıcı kartı** (Firefox'ta 113) ile gelir;
 [tam kataloğa](docs/providers-and-models.md#extended-provider-catalog) bakınız.
 
 Yerel veya kendi sağladığınız (BYO) bir sağlayıcı için, sağlayıcı bazlı

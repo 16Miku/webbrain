@@ -31,7 +31,7 @@
  * There is NO dependency on npm packages — pure Node ESM.
  */
 
-import { copyFile, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { copyFile, cp, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -566,6 +566,12 @@ async function main() {
   validateFaqRegistry();
   await syncLanguageFlagAssets();
   await syncProviderIconAssets();
+  // Keep the published Companion download page in sync with the standalone app.
+  await cp(path.join(ROOT, '..', 'webbrain-systray', 'web'), path.join(ROOT, 'companion'), {
+    recursive: true,
+    force: true,
+    filter: (source) => !['build.py', 'README.md', 'tools'].includes(path.basename(source)),
+  });
 
   // Load English first so others can fall back for missing keys.
   const en = JSON.parse(await readFile(path.join(LOCALES_DIR, 'en.json'), 'utf8'));
@@ -639,6 +645,8 @@ async function main() {
     { loc: `${SITE_ORIGIN}/docs/settings/` },
     { loc: `${SITE_ORIGIN}/docs/captcha/` },
     { loc: `${SITE_ORIGIN}/docs/providers/` },
+    { loc: `${SITE_ORIGIN}/companion/` },
+    { loc: `${SITE_ORIGIN}/companion/tr/` },
     { loc: `${SITE_ORIGIN}/docs/easy-cli-proxy/`, alternates: 'easy-cli-proxy' },
     { loc: `${SITE_ORIGIN}/docs/safety/` },
     { loc: `${SITE_ORIGIN}/docs/apocalypse-mode/` },

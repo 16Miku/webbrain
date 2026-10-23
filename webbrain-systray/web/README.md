@@ -25,12 +25,11 @@ The site never shows a real desktop.
   Turkish, light and dark. Pages pick the dark set with `prefers-color-scheme`.
 - **Social card** (`assets/img/og.png`): rendered from the hero by `tools/og.py`.
 
-## Before publishing
+## Publishing
 
 - `SITE` in `build.py` is the public address used for canonical and social
   links (`https://webbrain.one/companion` by default).
-- Download links point at the GitHub release `systray-v0.1.2` of
-  `esokullu/webbrain`; the CI workflow drafts that release when the tag is
-  pushed. While the repository is private those links only work for people
-  with access. Update `VERSION` and the file sizes in `build.py` for new
-  releases.
+- Download links point directly at the public GitHub release `systray-v0.1.2`
+  of `esokullu/webbrain`. The CI workflow drafts a release when its tag is
+  pushed; publish that draft before linking a new version. Update `VERSION`
+  and the file sizes in `build.py` for new releases.

@@ -1,10 +1,16 @@
 {
+  "redirects": [
+    { "source": "/companion", "destination": "/companion/", "permanent": true },
+    { "source": "/companion/tr", "destination": "/companion/tr/", "permanent": true }
+  ],
   "rewrites": [
     { "source": "/workflow-editor", "destination": "/workflow-editor/index.html" },
     { "source": "/workflow-editor/", "destination": "/workflow-editor/index.html" },
     { "source": "/privacy", "destination": "/privacy.html" },
     { "source": "/subscribe", "destination": "/subscribe/index.html" },
     { "source": "/subscribe/", "destination": "/subscribe/index.html" },
+    { "source": "/companion/", "destination": "/companion/index.html" },
+    { "source": "/companion/tr/", "destination": "/companion/tr/index.html" },
     { "source": "/blog", "destination": "/blog/index.html" },
     { "source": "/blog/", "destination": "/blog/index.html" },
     { "source": "/blog/:slug", "destination": "/blog/:slug/index.html" },
