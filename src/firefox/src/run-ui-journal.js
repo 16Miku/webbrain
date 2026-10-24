@@ -101,6 +101,16 @@ function compactRunUiToolResult(result, name) {
       if (typeof source[key] === 'string') compacted[key] = source[key];
     }
     if (source.inlineMedia === true) compacted.inlineMedia = true;
+    for (const key of ['durationSeconds', 'clipCount']) {
+      if (Number.isFinite(source[key])) compacted[key] = source[key];
+    }
+    // Clips of a video that could not be joined into one file, shown in order.
+    if (source.joined === false && Array.isArray(source.clips)) {
+      compacted.joined = false;
+      compacted.clips = source.clips.slice(0, 24).flatMap(clip => (typeof clip?.mediaId === 'string'
+        ? [{ mediaId: clip.mediaId, mimeType: String(clip.mimeType || ''), ...(Number.isFinite(clip.durationSeconds) ? { durationSeconds: clip.durationSeconds } : {}) }]
+        : []));
+    }
   }
   if (Object.keys(compacted).length === 0) {
     try {

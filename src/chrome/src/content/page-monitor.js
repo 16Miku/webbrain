@@ -56,6 +56,10 @@
   // Only the authenticated background state response can establish this grant.
   // Model/page metadata and ordinary action parameters cannot create one.
   let relaxedMonitorGrant = null;
+  // The file inputs the latest get_interactive_elements result named, each
+  // with the selector it gave. A hidden input has no ref: this inventory is
+  // how the model observed it (page-feedback-target-binding).
+  let fileInventory = null;
   const revokedRelaxedGrants = new Set();
   const relaxedObservedBindings = new Set();
   function revokeRelaxedGrant() {
@@ -1995,6 +1999,24 @@
     if (point) return nativeReceiverBelongsTo(target, receiver);
     return !!receiver && (receiver === target || target.contains(receiver));
   }
+  function recordFileInventory(token, pairs) {
+    if (!active || typeof token !== 'string' || !token || token.length > 100 || !Array.isArray(pairs)) return false;
+    const entries = new WeakMap();
+    for (const [element, selector] of pairs.slice(0, 64)) {
+      if (element instanceof HTMLInputElement && element.type === 'file'
+          && typeof selector === 'string' && selector && selector.length <= 4096) entries.set(element, selector);
+    }
+    fileInventory = { token, runToken, entries };
+    return true;
+  }
+  // Whether an upload's target is the very node that inventory named with
+  // this selector. A node the page renders later under the same selector, as
+  // a reopened composer does, was never observed.
+  function inventoriedFileInput(target, params) {
+    return params.tool === 'upload_file' && typeof params.fileInventoryToken === 'string' && !!params.fileInventoryToken
+      && fileInventory?.token === params.fileInventoryToken && fileInventory.runToken === runToken
+      && typeof params.selector === 'string' && fileInventory.entries.get(target) === params.selector;
+  }
   function modelBindingResult(params = {}) {
     const snapshot = modelSnapshots.get(params.snapshotToken || params.expectedModelSnapshot);
     if (!active || params.runToken !== runToken || snapshot?.runToken !== runToken) return { reason: 'model_snapshot_invalid' };
@@ -2022,7 +2044,8 @@
     const original = snapshot.targets.get(target);
     const before = snapshot.batchInputs?.get(params.batchId)?.get(original) || original;
     const previous = snapshot.uncertified.get(target);
-    if (!relaxed && !before && !previous) return { reason: 'target_uncovered', certificationFailure: snapshot.captureFailures.get(target) || 'identity_unobserved' };
+    if (!relaxed && !before && !previous) return { reason: 'target_uncovered', certificationFailure: snapshot.captureFailures.get(target) || 'identity_unobserved',
+      ...(inventoriedFileInput(target, params) ? { inventoried: true } : {}) };
     if (params.ref_id && snapshot.hasRefs && snapshot.refs.get(params.ref_id) !== target) {
       if (relaxed) revokeRelaxedGrant();
       return { reason: 'target_changed' };
@@ -3917,6 +3940,7 @@
       respond({ ready: !!result.binding, ...(result.uncertified ? { uncertified: true } : {}),
         ...(result.relaxed ? { relaxed: true, bindingKind: 'relaxed_target' } : {}),
         ...(result.certificationFailure ? { certificationFailure: result.certificationFailure } : {}),
+        ...(result.inventoried ? { inventoried: true } : {}),
         ...(result.reason ? { reason: result.reason } : {}), runToken, documentToken, snapshotToken: params.snapshotToken });
     }
     else if (msg.action === 'page_monitor_traversal') {
@@ -4051,7 +4075,7 @@
   navigationApi?.addEventListener('navigate', onNavigate, true);
   navigationApi?.addEventListener('navigateerror', onNavigateError, true);
   navigationApi?.addEventListener('currententrychange', onCurrentEntryChange, true);
-  window.__wbPageMonitor = { beginContentAction, beforeLocalDispatch, withLocalPreparation, withLocalDispatch, captureLocalInputObservation, dispatch: params => dispatch(params), activatePreparedDispatch, withPreparedDispatch, registerDecoration, isReadonlyPreparationDecoration, currentIdentityPreparationCapture,
+  window.__wbPageMonitor = { beginContentAction, beforeLocalDispatch, withLocalPreparation, withLocalDispatch, captureLocalInputObservation, dispatch: params => dispatch(params), activatePreparedDispatch, withPreparedDispatch, registerDecoration, isReadonlyPreparationDecoration, currentIdentityPreparationCapture, recordFileInventory,
     get active() { return active; },
     get disposed() { return disposed; },
     dispose() {

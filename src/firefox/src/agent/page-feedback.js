@@ -250,6 +250,17 @@ function actionBindingUnavailableResult(run, name) {
       : { error: 'The exact target could not be bound to the observed action context. Fresh available target/page context will be observed before the next decision; inspect it or read the exact target inventory before trying the action again.' }) };
 }
 
+// Whether a selector is one that WebBrain's own file-input inventory
+// (get_interactive_elements) returned on the run's current top document and
+// URL. The page monitor separately confirms that the selector still names the
+// very node that inventory listed (validation's `inventoried`).
+function uploadSelectorObserved(run, selector) {
+  const scope = run?.uploadObservationScope;
+  return typeof selector === 'string' && selector.length > 0 && !!scope
+    && scope.documentToken === run.frames?.get(0)?.token && scope.url === run.url
+    && Array.isArray(scope.selectors) && scope.selectors.includes(selector);
+}
+
 function preparationVetoDiagnostics(veto) {
   const facts = {};
   if (!veto || typeof veto !== 'object') return facts;
@@ -1355,7 +1366,8 @@ export const pageFeedbackMethods = {
     }
     const run = this._pageFeedbackRuns?.get(tabId);
     const binding = state?.actionBinding;
-    if (run) { run.actionBindingUnavailable = null; run.actionBindingUnavailableReason = null; run.actionContextUnverified = false; }
+    if (run) { run.actionBindingUnavailable = null; run.actionBindingUnavailableReason = null; run.actionContextUnverified = false;
+      run.actionBindingInventoried = false; }
     if (!run || !binding || run.modelState !== state || !this._pageFeedbackStateCurrent(tabId, run, state)
         || (run.events.size && !isAutomaticPageFeedback([...run.events.values()]))) return false;
     try {
@@ -1363,6 +1375,7 @@ export const pageFeedbackMethods = {
       const relaxedMonitorGrantToken = retry && retry.grantToken === binding.relaxedMonitorGrantToken ? retry.grantToken : null;
       const response = await apiFor().tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_validate_model',
         params: { ...safeAction(name, args), runToken: run.token, snapshotToken: binding.snapshotToken,
+          ...(name === 'upload_file' && run.uploadObservationScope?.token ? { fileInventoryToken: run.uploadObservationScope.token } : {}),
           ...(this._pageFeedbackModelHeldMs(state) > 0 ? { modelHeldMs: this._pageFeedbackModelHeldMs(state) } : {}),
           ...(batchId ? { batchId } : {}),
           ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}) } }, { frameId: 0 });
@@ -1404,6 +1417,7 @@ export const pageFeedbackMethods = {
         run.actionCaptureTarget = safeAction(name, args);
         run.actionBindingUnavailable = `${name}:${JSON.stringify(args)}`;
         run.actionBindingUnavailableReason = response.reason;
+        run.actionBindingInventoried = name === 'upload_file' && response.inventoried === true;
         // The monitor may reject ambiguity before the upload resolver runs.
         // Preserve that resolver's required inventory step on this path too.
         if (name === 'upload_file' && response.reason === 'target_ambiguous') {
@@ -1433,27 +1447,39 @@ export const pageFeedbackMethods = {
         || pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage).kind !== 'bound_target') return null;
     if (await this._validatePageFeedbackAction(tabId, name, args, run.modelState, null, { answerOnly: true }) !== false) return null;
     if (run.actionBindingUnavailable !== `${name}:${JSON.stringify(args)}`) return null;
-    return this._pageFeedbackBindingAdvises(tabId, run, args, advisories) ? null : actionBindingUnavailableResult(run, name);
+    return this._pageFeedbackBindingAdvises(tabId, run, args, advisories, name) ? null : actionBindingUnavailableResult(run, name);
   },
 
   // page-feedback-target-binding (quality): the observed action certificate
-  // does not cover this call's ref (target_uncovered: the element the model
-  // read exists and is unique, but the certified observation did not include
-  // it). With nothing else pending (no page activity, so no human input or
-  // unknown attribution, and no correction), Strict checks off sends the call
-  // with the ordinary unbound semantics and a note; the dispatch fences at the
-  // transport still run. A selector may name an element the model never
-  // observed (an upload slot it guessed, say), and a selector naming several
-  // elements or none has no single element to send to: those keep their
-  // answer, as does anything pending.
-  _pageFeedbackBindingAdvises(tabId, run, args = {}, advisories = null) {
+  // does not cover this call's target (target_uncovered: the element exists
+  // and is unique, but the certified observation did not include it). With
+  // nothing else pending (no page activity, so no human input or unknown
+  // attribution, and no correction), Strict checks off sends the call with the
+  // ordinary unbound semantics and a note; the dispatch fences at the
+  // transport still run. A ref is what the model read. A hidden file input has
+  // no ref, so upload_file names it by selector, and the model observed it
+  // through WebBrain's own file-input inventory: the advisory holds when the
+  // selector is one that inventory gave on this document and URL and the page
+  // monitor reports the target is the very node it listed with it, not one
+  // the page rendered later under the same selector (inventoried). Instagram's
+  // direct-message composer keeps such an input, formless and display:none,
+  // deep in a large thread, where no certificate can reach it. Any other
+  // selector may name an element the model never observed (an upload slot it
+  // guessed, say), and a selector naming several elements or none has no
+  // single element to send to: those keep their answer, as does anything
+  // pending.
+  _pageFeedbackBindingAdvises(tabId, run, args = {}, advisories = null, name = '') {
     if (!run || run.events.size || run.actionBindingUnavailableReason !== 'target_uncovered'
-        || typeof args?.ref_id !== 'string' || !/^ref_[A-Za-z0-9_-]+$/.test(args.ref_id)
-        || (typeof args?.selector === 'string' && args.selector.trim())
         || this._hasPendingSteering?.(tabId) || typeof this._guardAdvisesFor !== 'function') return false;
-    return this._guardAdvisesFor(advisories, 'page-feedback-target-binding',
-      'This target was outside the page observation WebBrain certified for this action, so its binding to what you observed was not checked. It was sent anyway; read the page to confirm what it changed.',
-      { tabId, decided: false });
+    const hasSelector = typeof args?.selector === 'string' && !!args.selector.trim();
+    const observedRef = typeof args?.ref_id === 'string' && /^ref_[A-Za-z0-9_-]+$/.test(args.ref_id) && !hasSelector;
+    const observedUpload = name === 'upload_file' && args?.ref_id == null && hasSelector
+      && run.actionBindingInventoried === true && uploadSelectorObserved(run, args.selector);
+    if (!observedRef && !observedUpload) return false;
+    return this._guardAdvisesFor(advisories, 'page-feedback-target-binding', observedUpload
+      ? 'WebBrain could not certify the page context of this file input, so the attachment was sent to the exact input your file-input inventory named without that check. Read the page to confirm the file landed where you intended.'
+      : 'This target was outside the page observation WebBrain certified for this action, so its binding to what you observed was not checked. It was sent anyway; read the page to confirm what it changed.',
+    { tabId, decided: false });
   },
 
   _pageFeedbackBlocksCall(tabId, name, args = {}) {
@@ -1839,7 +1865,7 @@ export function installPageFeedback(Agent) {
       // A pure binding failure with nothing else pending may advise instead
       // (it then dispatches with the ordinary, unbound semantics below).
       if (validated === false && !(unbindable
-          && this._pageFeedbackBindingAdvises(tabId, run, args, executionContext?.guardAdvisories))) return unbindable
+          && this._pageFeedbackBindingAdvises(tabId, run, args, executionContext?.guardAdvisories, name))) return unbindable
         ? actionBindingUnavailableResult(run, name)
         : run.actionContextUnverified === true
           ? { ...pageFeedbackPendingResult(), actionContextUnverified: true, errorCode: 'action_context_unverified',
@@ -1852,7 +1878,11 @@ export function installPageFeedback(Agent) {
       && !!run && this._pageFeedbackStateCurrent(tabId, run, run.modelState, run.url, { rootOnly: policy.kind === 'scroll' }));
     if (run && mutation && !modelBound && this._pageFeedbackBlocksCall(tabId, name, args)) return pageFeedbackPendingResult();
     const dispatchState = executionContext?._contentActionDispatchState || { started: false };
+    // The model's file-input inventory gets a token the page monitor keeps
+    // with the very nodes it lists (uploadObservationScope below).
+    const fileInventoryToken = run && !executionContext?.pageFeedbackRead && name === 'get_interactive_elements' ? token() : '';
     executionContext = { ...executionContext, _contentActionDispatchState: dispatchState,
+      ...(fileInventoryToken ? { fileInventoryToken } : {}),
       ...(policy.kind === 'media' ? { _expectedMediaBinding: policy.binding } : {}) };
     if (name === 'download_social_media') {
       args = { ...args }; delete args.expectedMediaBinding;
@@ -1910,7 +1940,7 @@ export function installPageFeedback(Agent) {
       if (run && !executionContext.pageFeedbackRead && name === 'get_interactive_elements' && Array.isArray(result)
           && this._pageFeedbackRuns?.get(tabId) === run && observationDocument
           && run.frames.get(0)?.token === observationDocument && run.url === observationUrl) {
-        run.uploadObservationScope = { documentToken: observationDocument, url: observationUrl,
+        run.uploadObservationScope = { documentToken: observationDocument, url: observationUrl, token: fileInventoryToken,
           selectors: [...new Set(result.filter(item => item?.tag === 'input' && item.type === 'file'
             && typeof item.selector === 'string' && item.selector.length > 0 && item.selector.length <= 4096)
             .map(item => item.selector))].slice(0, 8) };

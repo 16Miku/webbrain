@@ -126,7 +126,14 @@ evidence goes to the main model.
 
 Local [Kev](https://github.com/jaredpalmer/kev) defaults to
 `http://127.0.0.1:8009`, model `kev-latest`, using `/v1/systemone`. A key is optional
-and loopback requests work offline. Custom remote endpoints require HTTPS.
+and loopback requests work offline. A server elsewhere on your own network may
+also use plain HTTP: private IPv4 (`10/8`, `172.16/12`, `192.168/16`), shared
+`100.64/10` (Tailscale), link-local, unique-local IPv6, and `.local`,
+`.home.arpa` and `.internal` names (`isPrivateNetworkHost` in
+`decision-config.js`). Such a server is not treated as this device: it gets the
+credential-redacted texts other routes get and needs the browser to be online.
+Chrome sends its requests through the offscreen proxy the LAN chat providers
+use. Any other remote endpoint requires HTTPS.
 Image support follows available model capabilities or the custom override. Test
 Connection checks typed answers and, when enabled, two independent image-only
 facts. A successful HTTP response alone does not establish image support.
@@ -259,17 +266,27 @@ An older Cloud deployment falls through to the active LLM and existing checks.
 Configure **Providers → Generative** for the
 `generate_image` agent tool. Select one provider and save its settings:
 
-| Provider | Required settings | Generation |
-| --- | --- | --- |
-| fal.ai | API key, model ID (for example `fal-ai/flux/schnell`) | fal.ai queue API; existing saved fal.ai settings remain compatible |
-| OpenRouter | API key, image model ID | [Dedicated Image API](https://openrouter.ai/docs/guides/overview/multimodal/image-generation); inline images appear in chat with a save link |
-| Comfy Router | Comfy API key, `provider/model` ID (for example `bfl/flux-2-pro`) | [Queued requests](https://docs.comfy.org/development/comfy-router/queued-delivery); hosted or inline media |
-| ComfyUI (localhost) | Local server URL (default `http://127.0.0.1:8188`), workflow JSON in API format | Local `/prompt`, `/history/{prompt_id}`, and `/view` endpoints; no API key |
+| Provider | Settings | Default image / video model | Generation |
+| --- | --- | --- | --- |
+| fal.ai | API key; image and video model IDs (optional) | `fal-ai/flux/schnell` / `xai/grok-imagine-video/v1.5/lite/text-to-video` | fal.ai queue API; existing saved fal.ai settings remain compatible |
+| OpenRouter | API key; image and video model IDs (optional) | `google/gemini-2.5-flash-image` / `x-ai/grok-imagine-video-1.5-lite` | [Dedicated Image API](https://openrouter.ai/docs/guides/overview/multimodal/image-generation) and video API; inline media appears in chat with a save link |
+| Comfy Router | Comfy API key; image and video `provider/model` IDs (optional), each with optional input JSON | `bfl/flux-2-pro` / `xai/grok-imagine-video-1.5-lite` | [Queued requests](https://docs.comfy.org/development/comfy-router/queued-delivery); hosted or inline media |
+| ComfyUI (localhost) | Local server URL (default `http://127.0.0.1:8188`); image workflow JSON in API format, optional video workflow | — | Local `/prompt`, `/history/{prompt_id}`, and `/view` endpoints; no API key |
+
+Each provider has an image model and a video model. `generate_image` uses the
+video model when the agent asks for a video (`media: "video"`, or any video
+option such as `duration` or `scenes`) and the image model otherwise. A model
+field left empty uses the default shown in it. For ComfyUI, a video request
+without a video workflow uses the image workflow. Settings saved when there was
+one model keep it as the image model; with OpenRouter, a saved model that the
+video catalog lists makes the videos instead, and calls that do not say what
+they want get a video from it, as before.
 
 For Comfy Router models with native inputs other than `prompt`, paste their input
-JSON in **Model input JSON** and place `{{prompt}}` in the text field(s). Other
-values, such as duration or resolution, are preserved. Without a placeholder,
-WebBrain supplies the tool prompt as `prompt`. Refer to the model's
+JSON in **Image model input JSON** or **Video model input JSON** and place
+`{{prompt}}` in the text field(s). Other values, such as duration or resolution,
+are preserved. Without a placeholder, WebBrain supplies the tool prompt as
+`prompt`. Refer to the model's
 [input schema](https://docs.comfy.org/development/comfy-router/schemas).
 
 For local ComfyUI, start the server, export a working workflow **in API format**,
@@ -279,8 +296,9 @@ other media output node. Only loopback URLs (`localhost`, `127.0.0.1`, or `[::1]
 are accepted. A connection test checks the server, not workflow execution.
 
 **Test Connection** makes only free, read-only authentication/model/server probes;
-it does not generate media. OpenRouter also checks that the selected model appears
-in the image generation catalog. **Save / Clear** apply to the selected media
+it does not generate media. OpenRouter also checks both models in its image and
+video catalogs, Comfy Router reads both models' metadata, and the result names
+the image and video models requests will use. **Save / Clear** apply to the selected media
 configuration. Unsaved drafts survive provider switches while settings remain open;
 only the saved selection is used by the agent.
 
@@ -294,6 +312,34 @@ can charge for a partner generation already in flight. Inline media is limited t
 20 MB; choose hosted output for larger files. Inline outputs are stored locally
 as media assets, so their previews and save links survive panel reopening without
 putting base64 bytes in the run journal or model context.
+
+With an OpenRouter video model, a video can be longer than one clip. The model
+estimates how long the requested video should run (`estimated_duration`). A
+single clip can set `duration`, `aspect_ratio` and `resolution`, which are
+checked against the model's catalog entry (`supported_durations`,
+`supported_aspect_ratios`, `supported_resolutions`) before anything is
+submitted. A longer video is passed as `scenes`: WebBrain makes one clip per
+scene at a length the model offers (a scene longer than its longest clip is
+refused, so the agent splits it into scenes with their own prompts), generates
+up to three clips at a time with one retry each (none when the provider refuses
+the request, such as for lack of credit), and joins them into one MP4
+without re-encoding (`src/*/src/agent/video-join.js`, which parses
+the clips with the vendored mp4box.js). A clip's sound often ends a little
+before its picture or starts after it; with AAC-LC sound (the usual MP4 audio,
+which Grok Imagine returns) the joiner fills those gaps with silent frames, so
+the sound plays without gaps and each of its frames plays within half a frame of
+its time. Videos are capped at 120 seconds and 24 clips. When the estimate is
+longer than 120 seconds, WebBrain asks on its own card whether to generate the
+shorter version before any clip is submitted; the card never times out, and an
+unattended run generates nothing. Clips that cannot be joined this way
+(different encodings, edit lists or timing the joined file cannot reproduce, or
+more than 160 MB together) are kept as separate clips and shown in order, and
+the tool result says why (`joinError`), which traces show. The model never sees
+the video, so the tool result gives it the video's real length
+(`durationSeconds`) and `clipCount` to report. Before writing scenes, the agent can load the default Video scenes
+skill (`skills/video-scenes.md`), which asks for a shared cast and set sheet in
+`prompt`, one filmable action per scene, and demonstrations instead of diagrams
+or on-screen text; it is loaded only for such videos.
 
 The Act system prompt and planner direct the model to call `generate_image` when
 the user asks to generate media. Provider results are treated as untrusted content.
@@ -379,6 +425,7 @@ class BaseLLMProvider {
 | `sglang`             | `openai`       | local    | (loaded model)                                                     | Yes (default on)                |
 | `localai`            | `openai`       | local    | (loaded model)                                                     | Auto metadata / override        |
 | `gpt4all`            | `openai`       | local    | (loaded model)                                                     | Yes (default on)                |
+| `webbrain_companion` | `openai`       | local    | (required)                                                         | Off / manual toggle             |
 | `local_openai_proxy` | `openai`       | local    | (required)                                                         | Off / manual toggle             |
 | `unsloth`            | `openai`       | local    | (required)                                                         | Off / manual toggle             |
 | `webgpu` (Chromium)  | `webgpu`       | local    | Compass VLD Tiny v5; Compass Tiny v2.1; Ternary Bonsai 2 2B Vision; custom HF repo | Compass VLD and Bonsai Vision presets |
@@ -414,7 +461,7 @@ WebBrain also ships 80 disabled-by-default provider cards. Most are sourced
 from the OpenCode provider catalog snapshot at commit
 `62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
 their official API documentation. Together with the original cards, the
-Providers page lists **113 built-in providers on Chromium** and **112 on Firefox**; the
+Providers page lists **114 built-in providers on Chromium** and **113 on Firefox**; the
 difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs                                                                                                                                                                                                                                                                                                                        |
@@ -650,9 +697,9 @@ URL, localhost server, or OpenAI-compatible endpoint. Firefox does not expose
 the card because its build does not package the Chromium MV3 offscreen/WebGPU
 runtime.
 
-Twelve local endpoint providers are enabled by default. The model runtimes need no
-API key unless the server was started with auth; Unsloth Studio and the generic
-proxy card require their configured client keys:
+Local endpoint providers are enabled by default. Most need no API key unless
+the server was started with auth; Unsloth Studio and the generic proxy card
+require their configured client keys:
 
 - **llama.cpp**: `http://localhost:8080` — runs `llama-server -m model.gguf`
 - **Ollama**: `http://localhost:11434/v1` — `ollama serve`, or `ollama launch webbrain --model <model>`
@@ -664,6 +711,8 @@ proxy card require their configured client keys:
 - **SGLang**: `http://localhost:30000/v1` — SGLang's OpenAI-compatible server
 - **LocalAI**: `http://localhost:8080/v1` — LocalAI's OpenAI-compatible server
 - **GPT4All**: `http://localhost:4891/v1` — GPT4All's local API server
+- **WebBrain Companion**: `http://127.0.0.1:8327/v1` — the separate desktop
+  app; local browser extensions need no API key. Load and select a model.
 - **Local OpenAI-compatible Proxy**: `http://127.0.0.1:8317/v1` — a generic,
   authenticated local gateway; the model and proxy client API key are required.
   Its context window is set automatically after **Load Models**, a model pick or
@@ -717,6 +766,23 @@ base URL entered without the terminal `/v1` after a successful request.
 Unsloth model discovery, chat, interactive Ask streaming, and tool calls use
 the existing OpenAI-compatible endpoints. Vision starts off: enable the manual
 vision checkbox only when the model loaded in Studio accepts image input.
+
+#### WebBrain Companion
+
+Download the separate desktop app: [Windows installer](https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe),
+[macOS universal app](https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip),
+[Linux x64](https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-x64.tar.gz),
+or [Linux Arm64](https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-arm64.tar.gz).
+Its [source and full setup guide](../webbrain-systray/README.md)
+describe supported accounts, the optional Bonsai local model, and the
+platform-specific install steps. In **Providers → LLM → WebBrain Companion**,
+leave the default `http://127.0.0.1:8327/v1` URL unless the app shows another
+port. Click **Load Models**, select an available model, **Save**, and **Test
+Connection** before activating it. The browser extension on the same computer
+does not need an API key. If you enable access from another device, use the
+address and API key shown by the app. Model requests sent to an account
+subscription still go to that upstream provider; the optional Bonsai model
+runs locally. Enable vision only for models that accept images.
 
 #### Subscription proxy guide (EasyCLIProxyAPI / CLIProxyAPI)
 

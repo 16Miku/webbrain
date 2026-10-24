@@ -98,6 +98,18 @@ try {
         const card = id => page.locator(`.provider-card[data-provider-id="${id}"]`);
         const rootCard = card('llamacpp');
         await rootCard.locator('input[data-key="label"]').waitFor();
+        const companionCard = card('webbrain_companion');
+        await companionCard.locator('.provider-header').click();
+        assert.equal(
+          await companionCard.locator('input[data-key="baseUrl"]').inputValue(),
+          'http://127.0.0.1:8327/v1',
+        );
+        assert.equal(await companionCard.locator('.btn-load-models').count(), 1);
+        const companionDownloads = await companionCard.locator('.provider-companion-guide a').evaluateAll(
+          links => links.map(link => link.href),
+        );
+        assert.equal(companionDownloads.length, 4);
+        assert.ok(companionDownloads.every(href => href.includes('/releases/download/systray-v0.1.2/')));
         await rootCard.locator('input[data-key="label"]').fill('   ');
         await rootCard.locator('.btn-save').click();
         await rootCard.locator('.test-result.fail.show').waitFor();

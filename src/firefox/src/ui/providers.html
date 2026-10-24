@@ -145,8 +145,20 @@
         <input type="password" id="image-gen-api-key" placeholder="FAL_KEY" autocomplete="off">
       </div>
       <div class="field" id="image-gen-model-field">
-        <label for="image-gen-model" data-i18n="st.provider.field.model"></label>
+        <label for="image-gen-model" data-i18n="st.imagegen.image_model"></label>
         <input type="text" id="image-gen-model" placeholder="fal-ai/flux/schnell">
+      </div>
+      <div class="field" id="image-gen-parameters-field" hidden>
+        <label for="image-gen-parameters" data-i18n="st.imagegen.parameters"></label>
+        <textarea id="image-gen-parameters" rows="4" spellcheck="false" placeholder='{"prompt":"{{prompt}}"}'></textarea>
+      </div>
+      <div class="field" id="image-gen-video-model-field">
+        <label for="image-gen-video-model" data-i18n="st.imagegen.video_model"></label>
+        <input type="text" id="image-gen-video-model" placeholder="xai/grok-imagine-video/v1.5/lite/text-to-video">
+      </div>
+      <div class="field" id="image-gen-video-parameters-field" hidden>
+        <label for="image-gen-video-parameters" data-i18n="st.imagegen.video_parameters"></label>
+        <textarea id="image-gen-video-parameters" rows="4" spellcheck="false" placeholder='{"prompt":"{{prompt}}","duration":8}'></textarea>
       </div>
       <div class="field" id="image-gen-url-field" hidden>
         <label for="image-gen-base-url" data-i18n="st.provider.field.api_base_url"></label>
@@ -156,9 +168,9 @@
         <label for="image-gen-workflow" data-i18n="st.imagegen.workflow"></label>
         <textarea id="image-gen-workflow" rows="8" spellcheck="false" placeholder='{"6":{"class_type":"CLIPTextEncode","inputs":{"text":"{{prompt}}"}}}'></textarea>
       </div>
-      <div class="field" id="image-gen-parameters-field" hidden>
-        <label for="image-gen-parameters" data-i18n="st.imagegen.parameters"></label>
-        <textarea id="image-gen-parameters" rows="4" spellcheck="false" placeholder='{"prompt":"{{prompt}}"}'></textarea>
+      <div class="field" id="image-gen-video-workflow-field" hidden>
+        <label for="image-gen-video-workflow" data-i18n="st.imagegen.video_workflow"></label>
+        <textarea id="image-gen-video-workflow" rows="6" spellcheck="false" placeholder='{"6":{"class_type":"CLIPTextEncode","inputs":{"text":"{{prompt}}"}}}'></textarea>
       </div>
       <div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:12px;">
         <span id="image-gen-provider-hint"></span>

@@ -2,6 +2,7 @@ const STRING_ENUMS = Object.freeze({
   browser_target: new Set(['chrome', 'firefox']),
   mode: new Set(['ask', 'act', 'dev']),
   prompt_tier: new Set(['compact', 'mid', 'full']),
+  generative_media_availability: new Set(['available', 'not_configured', 'tier_restricted', 'profile_restricted', 'ask_mode']),
   plan_before_act_mode: new Set(['off', 'try', 'strict']),
   auto_screenshot: new Set(['off', 'navigation', 'state_change', 'every_step']),
   image_detail: new Set(['auto', 'low', 'high']),
@@ -10,6 +11,7 @@ const STRING_ENUMS = Object.freeze({
 });
 
 const BOOLEAN_FIELDS = Object.freeze([
+  'generative_media_configured',
   'screenshot_redaction',
   'strict_secret_mode',
   'use_site_adapters',

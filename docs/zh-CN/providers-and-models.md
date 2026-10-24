@@ -1,5 +1,10 @@
 # 提供商与模型
 
+**WebBrain Companion** 是独立桌面应用。[下载 Windows、macOS 或 Linux 版本](https://github.com/esokullu/webbrain/releases/tag/systray-v0.1.2)，
+然后选择 **WebBrain Companion** 提供商卡片。默认地址是
+`http://127.0.0.1:8327/v1`；同一台电脑上的扩展无需 API 密钥。加载模型、
+保存卡片并测试连接。[应用指南](../../webbrain-systray/README.md)提供安装说明。
+
 ---
 
 ## 提供商接口（`providers/base.js`）
@@ -46,6 +51,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `gpt4all` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `local_openai_proxy` | `openai` | 本地 | （必填） | 默认关闭 / 手动开关 |
+| `webbrain_companion` | `openai` | 本地 | （必填） | 默认关闭 / 手动开关 |
 | `webgpu`（Chromium） | `webgpu` | 本地 | Compass Tiny v2.1；Ternary Bonsai 2 2B Vision；实验性自定义 HF ONNX 仓库 | 仅 Bonsai Vision 预设 |
 | `azure_openai` | `azure_openai` | 云端 | （部署） | 手动开关 |
 | `aws_bedrock` | `aws_bedrock` | 云端 | （模型 ID） | 否 |

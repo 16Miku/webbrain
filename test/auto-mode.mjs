@@ -310,6 +310,67 @@ for (const build of BUILDS) {
     assert.equal(conversation.filter(message => message.role === 'user').length, 1, 'the request is recorded once');
   });
 
+  test(`${build}: configured media requests and the video follow-up hand off from Ask to Act`, async () => {
+    const original = 'turn this into an instructional video';
+    const config = { provider: 'openrouter', apiKey: 'synthetic-media-key', model: 'test/video-model' };
+    for (const request of [original, 'use your generative features to do it']) {
+      const f = fixture(Agent, {
+        decide: (question, options) => {
+          assert.equal(question.page.generative_media_available, true);
+          assert.doesNotMatch(JSON.stringify(question), /synthetic-media-key|test\/video-model/);
+          if (request !== original) assert.equal(question.page.current_task, original);
+          return options.mainModel === false
+            ? { choice: null, evidence: '', source: 'unavailable' }
+            : { choice: 'act', evidence: request, source: 'main_model' };
+        },
+      });
+      f.agent.setImageGenConfig(config);
+      if (request !== original) {
+        f.agent.getConversation(f.tab, 'ask').push(
+          { role: 'user', content: original },
+          { role: 'assistant', content: 'Here is a storyboard.' },
+        );
+      }
+      fixtureReplies(f, [(messages, options) => {
+        assert.match(messages[0].content, /Built-in generative media is configured/);
+        assert.match(messages[0].content, /generate_image/);
+        assert.match(messages[0].content, /a script, storyboard or rendering code does not complete it/);
+        assert.ok(options.tools.some(tool => tool.function.name === 'request_action_mode'));
+        assert.ok(!options.tools.some(tool => tool.function.name === 'generate_image'), 'Ask stays read-only');
+        return handoff('act', request);
+      }]);
+      assert.equal(await f.run(request), '');
+      const escalation = f.agent.takeModeEscalation(f.tab);
+      assert.deepEqual(escalation, { mode: 'act', evidence: request });
+      assert.deepEqual(f.executed, [], 'the handoff does not generate media or modify the page');
+
+      const restart = fixture(Agent);
+      restart.agent.setImageGenConfig(config);
+      restart.agent.conversations.set(restart.tab, f.agent.conversations.get(f.tab));
+      fixtureReplies(restart, [stopAfterCall(restart)]);
+      assert.match(await restart.run(request, 'act', [], { modeEscalation: escalation }), /Stopped/);
+      assert.ok(restart.calls[0].tools.includes('generate_image'), 'the restarted Act request receives the tool');
+    }
+  });
+
+  test(`${build}: the decision route recognizes configured media while script-only requests stay in Ask`, async () => {
+    for (const [request, choice] of [
+      ['turn this into an instructional video', 'act'],
+      ['Write only a script and storyboard for an instructional video.', 'answer'],
+    ]) {
+      const f = fixture(Agent, { decide: question => {
+        assert.equal(question.page.generative_media_available, true);
+        return { choice, evidence: request, source: 'decision_model' };
+      } });
+      f.agent.setImageGenConfig({ apiKey: 'synthetic-key', model: 'test/video-model' });
+      fixtureReplies(f, [choice === 'act' ? stopAfterCall(f) : done('Here is the requested script.')]);
+      await f.run(request);
+      assert.equal(runModes(f.updates).at(-1).mode, choice === 'act' ? 'act' : 'ask');
+      assert.equal(f.calls[0].tools.includes('generate_image'), choice === 'act');
+      assert.equal(f.agent.takeModeEscalation(f.tab), null);
+    }
+  });
+
   // A live page (a social timeline's relative times and counters) changes
   // while the model decides. The hand-off reads only the user's words, and
   // the action run reads the page again, so those updates must not discard

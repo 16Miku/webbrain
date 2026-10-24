@@ -453,6 +453,10 @@ h2:first-of-type { margin-top: 0; }
   padding: 1px;
 }
 .provider-name { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; max-width: 100%; }
+.provider-companion-summary { margin: 8px 0 12px; color: var(--text2); font-size: 12px; line-height: 1.5; }
+.provider-companion-summary p { margin: 0; }
+.provider-companion-summary p + p { margin-top: 6px; }
+.provider-card.collapsed .provider-companion-summary { margin-bottom: 0; }
 .provider-type { color: var(--text2); font-size: 11px; }
 .provider-status-badges { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .provider-status-badge {

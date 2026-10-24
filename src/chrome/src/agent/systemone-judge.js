@@ -6,6 +6,7 @@
 
 import { evaluateD1 } from '../providers/d1.js';
 import { evaluateWebgpuDecision } from '../providers/webgpu-decision.js';
+import { decisionFetch } from './decision-config.js';
 
 export const SYSTEM_ONE_API_URL = 'https://api.typesafe.ai/v1/systemone';
 export const SYSTEM_ONE_MODEL = 'jev-1.13.0';
@@ -298,7 +299,8 @@ export function shouldDowngradeSuccess(answers, { threshold = SYSTEM_ONE_DEFAULT
 }
 
 export function createSystemOneJudge({
-  fetchImpl = globalThis.fetch,
+  // A decision server on the LAN needs Chrome's offscreen proxy (decision-config.js).
+  fetchImpl = decisionFetch,
   sleep = defaultSleep,
   // Unset: each provider's own limit. A caller's budget is capped by it.
   timeoutMs = null,

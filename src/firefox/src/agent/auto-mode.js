@@ -28,6 +28,7 @@
 
 import { acceptSemanticAnswer } from './semantic-decisions.js';
 import { replaceTrustedRuntimeMode } from './runtime-context.js';
+import { GENERATIVE_MEDIA_SETUP_NOTE, GENERATIVE_MEDIA_TIER_NOTE, imageGenAvailability } from './media-config.js';
 
 export const AUTO_MODE = 'auto';
 export const RUN_MODES = Object.freeze(['ask', 'act', 'dev']);
@@ -118,9 +119,10 @@ export function requestActionModeTool() {
     type: 'function',
     function: {
       name: REQUEST_ACTION_MODE_TOOL_NAME,
-      description: 'Hand this request to a mode with browser action tools. Call it first, alone, when fulfilling the '
+      description: 'Hand this request to a mode with action tools. Call it first, alone, when fulfilling the '
         + 'user\'s latest request needs what this read-only turn cannot do: clicking, typing or filling in, opening or '
-        + 'navigating to pages, submitting, sending, posting, downloading, uploading, deleting or scheduling (mode '
+        + 'navigating to pages, submitting, sending, posting, downloading, uploading, deleting, scheduling, or '
+        + 'creating images, video or audio with configured generative-media tools (mode '
         + '"act"), or inspecting or debugging the page source, CSS, console or network, or editing the page '
         + 'experimentally (mode "dev"). WebBrain then restarts the same request with those tools; this call itself '
         + 'does nothing on the page. Do not call it for questions, summaries, explanations or drafts that reading '
@@ -131,7 +133,7 @@ export function requestActionModeTool() {
           mode: {
             type: 'string',
             enum: ['act', 'dev'],
-            description: '"act" for browser actions, "dev" for page source, style and debugging work.',
+            description: '"act" for browser actions or configured media generation, "dev" for page source, style and debugging work.',
           },
           evidence: {
             type: 'string',
@@ -148,8 +150,17 @@ export function requestActionModeTool() {
 // the cache-stable base prompt.
 export const AUTO_MODE_ASK_NOTE = `AUTOMATIC MODE:
 - WebBrain chose this read-only turn from the request; the user did not pick a mode. This section replaces every instruction above that tells the user to switch to Act or Dev mode: never ask the user to switch modes.
-- When the latest request needs browser actions or Dev page work that this turn cannot do, call \`request_action_mode\` alone, before answering, quoting the user's words that ask for it. WebBrain restarts the request with the right tools.
+- When the latest request needs browser actions, configured media generation or Dev page work that this turn cannot do, call \`request_action_mode\` alone, before answering, quoting the user's words that ask for it. WebBrain restarts the request with the right tools.
 - When reading, explaining, summarizing, analyzing or drafting text answers the request, answer it here.`;
+
+export function autoModeGenerativeMediaNote({ configured = false, tier = 'full' } = {}) {
+  const availability = imageGenAvailability({ configured, tier, mode: 'act' });
+  if (availability === 'not_configured') return GENERATIVE_MEDIA_SETUP_NOTE;
+  if (availability === 'tier_restricted') return GENERATIVE_MEDIA_TIER_NOTE;
+  return 'Built-in generative media is configured. The generate_image tool creates images, video or audio through the configured provider in Full-tier Act mode; supported media depends on the selected provider and model. '
+    + 'When the user asks to create media, including turning a page into an instructional video or asking to use your generative features, call request_action_mode alone with mode "act" and an exact quote of their request. '
+    + 'A request for the media itself needs that handoff; a script, storyboard or rendering code does not complete it. Questions about media generation and requests only for a script, storyboard or code can be answered here.';
+}
 
 function parseArgs(args) {
   if (args && typeof args === 'object') return args;

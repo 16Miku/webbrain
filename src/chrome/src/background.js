@@ -82,6 +82,7 @@ import { testImageGenProvider } from './agent/fal-media.js';
 import { IMAGE_GEN_MODEL_KEY } from './agent/media-config.js';
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
 import { createCaptchaBridgeRegistration } from './agent/captcha-bridge-registration.js';
+import { createCookieBannerHost } from './agent/cookie-banner-host.js';
 import { getAdditionalCaptchaBalance } from './agent/captcha-additional-providers.js';
 import { getTwoCaptchaBalance } from './agent/two-captcha.js';
 import { createSystemOneJudge } from './agent/systemone-judge.js';
@@ -1255,6 +1256,17 @@ async function loadCaptchaSolver() {
   await captchaBridgeRegistration.sync(agent.captchaSolverEnabled);
 }
 loadCaptchaSolver().catch(error => console.warn('[WebBrain] CAPTCHA settings could not be loaded', error));
+
+// Cookie banners (docs/cookie-banners.md): autoconsent runs only in tabs the
+// setting covers, and only through this host, which also reads and watches
+// that setting. Its listeners are registered here, at worker start, so a
+// navigation can wake the worker.
+const cookieBannerHost = createCookieBannerHost(chrome, {
+  isRunActive: tabId => agent.isRunning(tabId) && !agent.abortFlags.get(tabId),
+  runMode: tabId => agent._effectiveRunMode(tabId),
+});
+cookieBannerHost.start();
+agent.setCookieBannerHost(cookieBannerHost);
 
 function normalizePlanBeforeActMode(stored = {}) {
   if (stored.planBeforeActMode === 'try' || stored.planBeforeActMode === 'strict' || stored.planBeforeActMode === 'off') {

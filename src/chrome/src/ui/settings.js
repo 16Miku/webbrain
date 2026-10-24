@@ -12,7 +12,7 @@ import { initD1Settings } from './d1-settings.js';
  * only when its markup is on the current page.
  */
 
-import { t } from './i18n.js';
+import { t, translationsForKey } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { MEDIA_PROVIDERS, mediaProvider, validateMediaConfig } from '../agent/media-config.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
@@ -94,6 +94,8 @@ import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
 const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
 const EASY_CLI_PROXY_GUIDE_URL = 'https://webbrain.one/docs/easy-cli-proxy/';
+const WEBBRAIN_COMPANION_SITE_URL = 'https://webbrain.one/companion/#download';
+const WEBBRAIN_COMPANION_DOWNLOAD_BASE = 'https://github.com/esokullu/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-';
 const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
   openai: 'ChatGPT/Codex',
   anthropic: 'Claude',
@@ -104,7 +106,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '42.3.1';
+const EXT_VERSION = '42.4.0';
 
 const providersContainer = document.getElementById('providers');
 const generalSearchInput = document.getElementById('input-general-search');
@@ -200,6 +202,9 @@ const imageGenWorkflowInput = document.getElementById('image-gen-workflow');
 const imageGenParametersInput = document.getElementById('image-gen-parameters');
 const imageGenApiKeyInput = document.getElementById('image-gen-api-key');
 const imageGenModelInput = document.getElementById('image-gen-model');
+const imageGenVideoModelInput = document.getElementById('image-gen-video-model');
+const imageGenVideoParametersInput = document.getElementById('image-gen-video-parameters');
+const imageGenVideoWorkflowInput = document.getElementById('image-gen-video-workflow');
 const btnSaveImageGen = document.getElementById('btn-save-image-gen');
 const btnTestImageGen = document.getElementById('btn-test-image-gen');
 const btnClearImageGen = document.getElementById('btn-clear-image-gen');
@@ -2299,11 +2304,27 @@ function flashImageGenResult(className, text) {
   if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 2000);
 }
 
+// An empty model field means the provider's default, shown as its placeholder.
 function readImageGenForm() {
   const provider = imageGenProviderInput?.value || 'fal';
-  if (provider === 'comfyui') return { provider, baseUrl: imageGenBaseUrlInput.value.trim() || MEDIA_PROVIDERS.comfyui.baseUrl, workflow: imageGenWorkflowInput.value.trim() };
-  const config = { provider, apiKey: imageGenApiKeyInput.value.trim(), model: imageGenModelInput.value.trim() };
-  if (provider === 'comfyrouter') config.parameters = imageGenParametersInput.value.trim() || '{}';
+  if (provider === 'comfyui') {
+    return {
+      provider,
+      baseUrl: imageGenBaseUrlInput.value.trim() || MEDIA_PROVIDERS.comfyui.baseUrl,
+      workflow: imageGenWorkflowInput.value.trim(),
+      videoWorkflow: imageGenVideoWorkflowInput?.value.trim() || '',
+    };
+  }
+  const config = {
+    provider,
+    apiKey: imageGenApiKeyInput.value.trim(),
+    model: imageGenModelInput.value.trim(),
+    videoModel: imageGenVideoModelInput?.value.trim() || '',
+  };
+  if (provider === 'comfyrouter') {
+    config.parameters = imageGenParametersInput.value.trim() || '{}';
+    config.videoParameters = imageGenVideoParametersInput?.value.trim() || '{}';
+  }
   return config;
 }
 
@@ -2311,11 +2332,16 @@ function updateImageGenProvider() {
   const provider = imageGenProviderInput?.value || 'fal';
   const meta = MEDIA_PROVIDERS[provider] || MEDIA_PROVIDERS.fal;
   const local = provider === 'comfyui';
-  for (const [id, hidden] of [['image-gen-key-field', local], ['image-gen-model-field', local], ['image-gen-url-field', !local], ['image-gen-workflow-field', !local], ['image-gen-parameters-field', provider !== 'comfyrouter']]) {
+  for (const [id, hidden] of [
+    ['image-gen-key-field', local], ['image-gen-model-field', local], ['image-gen-video-model-field', local],
+    ['image-gen-url-field', !local], ['image-gen-workflow-field', !local], ['image-gen-video-workflow-field', !local],
+    ['image-gen-parameters-field', provider !== 'comfyrouter'], ['image-gen-video-parameters-field', provider !== 'comfyrouter'],
+  ]) {
     const field = document.getElementById(id); if (field) field.hidden = hidden;
   }
   if (imageGenApiKeyInput) imageGenApiKeyInput.placeholder = meta.keyPlaceholder || '';
   if (imageGenModelInput) imageGenModelInput.placeholder = meta.model || '';
+  if (imageGenVideoModelInput) imageGenVideoModelInput.placeholder = meta.videoModel || '';
   const hint = document.getElementById('image-gen-provider-hint');
   if (hint) hint.textContent = t(`st.imagegen.hint.${provider}`) + ' ';
   const docs = document.getElementById('image-gen-docs'); if (docs) docs.href = meta.docs;
@@ -2327,9 +2353,13 @@ function renderImageGenConfig(config) {
   if (imageGenProviderInput) imageGenProviderInput.value = provider;
   if (imageGenApiKeyInput) imageGenApiKeyInput.value = config.apiKey || '';
   if (imageGenModelInput) imageGenModelInput.value = config.model || '';
+  if (imageGenVideoModelInput) imageGenVideoModelInput.value = config.videoModel || '';
   if (imageGenBaseUrlInput) imageGenBaseUrlInput.value = config.baseUrl || MEDIA_PROVIDERS.comfyui.baseUrl;
-  if (imageGenWorkflowInput) imageGenWorkflowInput.value = typeof config.workflow === 'object' ? JSON.stringify(config.workflow, null, 2) : config.workflow || '';
-  if (imageGenParametersInput) imageGenParametersInput.value = typeof config.parameters === 'object' ? JSON.stringify(config.parameters, null, 2) : config.parameters || '';
+  const jsonText = value => (typeof value === 'object' && value ? JSON.stringify(value, null, 2) : value || '');
+  if (imageGenWorkflowInput) imageGenWorkflowInput.value = jsonText(config.workflow);
+  if (imageGenVideoWorkflowInput) imageGenVideoWorkflowInput.value = jsonText(config.videoWorkflow);
+  if (imageGenParametersInput) imageGenParametersInput.value = jsonText(config.parameters);
+  if (imageGenVideoParametersInput) imageGenVideoParametersInput.value = jsonText(config.videoParameters);
   updateImageGenProvider();
 }
 
@@ -2361,7 +2391,8 @@ btnTestImageGen?.addEventListener('click', async () => {
     const config = await saveImageGenForm();
     showImageGenResult('', t('st.imagegen.testing'), 'var(--text2)');
     const res = await sendToBackground('test_image_gen_provider');
-    if (res?.ok) showImageGenResult('ok', t('st.imagegen.connected', { model: res.model || config.model }));
+    if (res?.ok && res.imageModel) showImageGenResult('ok', t('st.imagegen.connected_models', { image: res.imageModel, video: res.videoModel }));
+    else if (res?.ok) showImageGenResult('ok', t('st.imagegen.connected', { model: res.model || config.model }));
     else showImageGenResult('fail', t('st.imagegen.failed', { error: res?.error || 'Unknown error' }));
   } catch (error) { showImageGenResult('fail', t('st.imagegen.failed', { error: error.message })); }
   finally { btnTestImageGen.disabled = false; }
@@ -3147,6 +3178,15 @@ function effectivePromptTier(config) {
   return config.category === 'local' ? 'mid' : 'full';
 }
 
+function providerDisplayLabel(id, config = {}) {
+  if (id === 'webbrain_cloud') return 'WebBrain Compass';
+  if (id === 'webbrain_companion' && (!config.label || config.label === 'WebBrain Companion'
+    || translationsForKey('st.providers.companion_guide.title').includes(config.label))) {
+    return t('st.providers.companion_guide.title');
+  }
+  return config.label || id;
+}
+
 function providerSearchTextForEntry(id, config, fieldDefs) {
   const fieldText = fieldDefs.flatMap((field) => [
     field.key,
@@ -3160,7 +3200,11 @@ function providerSearchTextForEntry(id, config, fieldDefs) {
   ]).filter(Boolean).join(' ');
   return normalizeGeneralSearchText([
     id,
-    id === 'webbrain_cloud' ? 'Compass Light' : config.label,
+    providerDisplayLabel(id, config),
+    config.label,
+    providerDefinitionId(id, config) === 'webbrain_companion'
+      ? `${t('st.providers.companion_guide.summary')} ${t('st.providers.companion_guide.supported')}`
+      : '',
     config.type,
     config.category,
     config.model,
@@ -3173,7 +3217,7 @@ function providerSearchTextForEntry(id, config, fieldDefs) {
 }
 
 function providerSearchRank(id, config, query) {
-  const names = [id, id === 'webbrain_cloud' ? 'Compass Light' : config.label, config.providerName]
+  const names = [id, providerDisplayLabel(id, config), config.label, config.providerName]
     .filter(Boolean)
     .map(normalizeGeneralSearchText);
   if (names.some((name) => name === query)) return 0;
@@ -3183,6 +3227,15 @@ function providerSearchRank(id, config, query) {
 }
 
 function providerSubscriptionGuideHtml(definitionId) {
+  if (definitionId === 'webbrain_companion') {
+    return `<aside class="provider-subscription-guide provider-companion-guide" role="note">
+      <span>${escapeHtml(t('st.providers.companion_guide.body'))}</span>
+      <a href="${WEBBRAIN_COMPANION_DOWNLOAD_BASE}windows-setup.exe" target="_blank" rel="noopener noreferrer">Windows ↓</a>
+      <a href="${WEBBRAIN_COMPANION_DOWNLOAD_BASE}macos-universal.zip" target="_blank" rel="noopener noreferrer">macOS ↓</a>
+      <a href="${WEBBRAIN_COMPANION_DOWNLOAD_BASE}linux-x64.tar.gz" target="_blank" rel="noopener noreferrer">Linux x64 ↓</a>
+      <a href="${WEBBRAIN_COMPANION_DOWNLOAD_BASE}linux-arm64.tar.gz" target="_blank" rel="noopener noreferrer">Linux Arm64 ↓</a>
+    </aside>`;
+  }
   if (definitionId === 'local_openai_proxy') {
     return `<aside class="provider-subscription-guide provider-local-proxy-guide" role="note">
       <span class="provider-subscription-guide-icon" aria-hidden="true">🔌</span>
@@ -3195,7 +3248,7 @@ function providerSubscriptionGuideHtml(definitionId) {
   return `<aside class="provider-subscription-guide" role="note">
     <span class="provider-subscription-guide-icon" aria-hidden="true">🔌</span>
     <span>${escapeHtml(t('st.providers.subscription_guide.card_body', { product }))}</span>
-    <a href="${EASY_CLI_PROXY_GUIDE_URL}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('st.providers.subscription_guide.card_link'))} ↗</a>
+    <a href="${WEBBRAIN_COMPANION_SITE_URL}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('st.providers.companion_guide.download'))} ↗</a>
   </aside>`;
 }
 
@@ -3606,6 +3659,16 @@ function renderProviders() {
         PROMPT_TIER_FIELD,
       ],
     },
+    webbrain_companion: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:8327/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model listed in WebBrain Companion' },
+        LOCAL_PROXY_CONTEXT_WINDOW_FIELD,
+        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        PROMPT_TIER_FIELD,
+      ],
+    },
     local_openai_proxy: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:8317/v1' },
@@ -3925,7 +3988,9 @@ function renderProviders() {
 
   providersContainer.appendChild(renderProviderFilterBar());
 
-  let entries = Object.entries(providersData);
+  const pinnedProviderOrder = { webbrain_cloud: 0, webbrain_companion: 1 };
+  let entries = Object.entries(providersData)
+    .sort(([a], [b]) => (pinnedProviderOrder[a] ?? 2) - (pinnedProviderOrder[b] ?? 2));
   const providerQuery = normalizeGeneralSearchText(providerSearchQuery);
   if (providerQuery) {
     entries = entries
@@ -4010,7 +4075,7 @@ function renderProviders() {
           </div>
         `;
       } else {
-        const localModelProviders = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+        const localModelProviders = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'webbrain_companion', 'local_openai_proxy', 'unsloth'];
         const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';
@@ -4113,7 +4178,7 @@ function renderProviders() {
       ${id !== 'webbrain_cloud' ? `<div class="field">
         <label for="provider-title-${id}">${escapeHtml(t('st.providers.title'))}</label>
         <input id="provider-title-${id}" type="text" data-provider="${id}" data-key="label"
-               value="${escapeHtml(config.label || id)}" maxlength="120" required>
+               value="${escapeHtml(providerDisplayLabel(id, config))}" maxlength="120" required>
       </div>` : ''}
       ${fieldsHTML}
       ${providerNote}
@@ -4420,7 +4485,7 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   // LM Studio defaults to whatever's loaded) just renders nothing rather
   // than a placeholder, to avoid pretending we know what they're running.
   const modelStr = (config.model && String(config.model).trim()) || '';
-  const label = id === 'webbrain_cloud' ? 'Compass Light' : (config.label || id);
+  const label = providerDisplayLabel(id, config);
   header.innerHTML = `
     <div class="provider-header-left">
       <span class="provider-chevron" aria-hidden="true">${expanded ? '▾' : '▸'}</span>
@@ -4452,6 +4517,13 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   body.innerHTML = bodyHtml;
 
   card.appendChild(header);
+  if (!expanded && providerDefinitionId(id, config) === 'webbrain_companion') {
+    const summary = document.createElement('div');
+    summary.className = 'provider-companion-summary';
+    summary.innerHTML = `<p>${escapeHtml(t('st.providers.companion_guide.summary'))}</p>
+      <p>${escapeHtml(t('st.providers.companion_guide.supported'))}</p>`;
+    card.appendChild(summary);
+  }
   if (expanded) card.appendChild(body);
   return card;
 }
@@ -4779,7 +4851,7 @@ function refreshProviderCardStatus(id) {
     else duplicateButton.title = t('st.providers.duplicate_inactive');
   }
   const name = card.querySelector('.provider-name');
-  if (name) name.textContent = id === 'webbrain_cloud' ? 'Compass Light' : (providersData[id]?.label || id);
+  if (name) name.textContent = providerDisplayLabel(id, providersData[id]);
   const badges = card.querySelector('.provider-status-badges');
   if (!badges) return;
   badges.innerHTML = `
@@ -4958,3 +5030,16 @@ function sendToBackground(action, data = {}) {
 }
 
 init();
+
+// Cookie banners (Advanced): tabs WebBrain works in (default), every website,
+// or off. The background reads the same key (src/agent/cookie-banner-host.js).
+const cookieBannersSelect = document.getElementById('select-cookie-banners');
+if (cookieBannersSelect) {
+  const normalizeCookieBanners = value => (['off', 'agent', 'everywhere'].includes(value) ? value : 'agent');
+  chrome.storage.local.get('cookieBanners')
+    .then(stored => { cookieBannersSelect.value = normalizeCookieBanners(stored?.cookieBanners); })
+    .catch(() => {});
+  cookieBannersSelect.addEventListener('change', () => {
+    chrome.storage.local.set({ cookieBanners: normalizeCookieBanners(cookieBannersSelect.value) }).catch(() => {});
+  });
+}

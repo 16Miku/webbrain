@@ -94,9 +94,15 @@ python -m sglang.launch_server --model-path your-model --port 30000
 ```
 
 LM Studio (`:1234/v1`), Osaurus (`:1337/v1`), Jan (`:1337/v1`), LocalAI (`:8080/v1`), and GPT4All
-(`:4891/v1`) work the same way. A generic **Local OpenAI-compatible Proxy** card
-also supports authenticated loopback gateways such as CLIProxyAPI; see the
-[secure subscription proxy setup](docs/providers-and-models.md#subscription-proxy-example-cliproxyapi).
+(`:4891/v1`) work the same way. **WebBrain Companion** is our separate desktop
+app for local models and supported account subscriptions. [Download it for
+Windows, macOS, or Linux](https://github.com/esokullu/webbrain/releases/tag/systray-v0.1.2),
+then choose the **WebBrain Companion** provider card, click **Load Models**,
+select a model, and test the connection. The local endpoint defaults to
+`http://127.0.0.1:8327/v1` and needs no API key on this computer. See the
+[Companion setup](docs/providers-and-models.md#webbrain-companion).
+A generic **Local OpenAI-compatible Proxy** card remains available for other
+OpenAI-compatible gateways.
 **Unsloth Studio (Local)** uses the same OpenAI-compatible path with the Studio
 port and `sk-unsloth-` API key configured by the user; see the
 [Unsloth Studio setup](docs/providers-and-models.md#unsloth-studio).
@@ -120,7 +126,7 @@ preview `ollama launch webbrain --model <model>` handoff. Details:
 **Cloud APIs** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
 Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter, and more.
-The Providers page ships **112 built-in provider cards on Chromium** (111 on Firefox),
+The Providers page ships **114 built-in provider cards on Chromium** (113 on Firefox),
 including an endpoint-free local WebGPU option with the tested LFM2.5 2.6B
 preset and an experimental custom Hugging Face ONNX repository option —
 see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).

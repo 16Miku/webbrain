@@ -135,6 +135,44 @@ export function materializeLegacyDecisionFeatures(stored = {}) {
   return values;
 }
 
+// Hosts on this device. Only these make a configured decision server `local`:
+// it answers offline and gets the unredacted texts (completion-runtime.js).
+const LOOPBACK_HOSTS = Object.freeze(['localhost', '127.0.0.1', '[::1]']);
+
+function ipv4Octets(host) {
+  const octets = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) ? host.split('.').map(Number) : null;
+  if (octets?.every(n => n <= 255)) return octets;
+  // The URL parser writes an IPv4-mapped IPv6 host in hex: ::ffff:c0a8:101.
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  return mapped ? mapped.slice(1).flatMap(part => { const n = parseInt(part, 16); return [n >> 8, n & 255]; }) : null;
+}
+
+// Whether a URL hostname stays on this device or the user's own network: the
+// loopback, private (RFC 1918), shared (RFC 6598, which Tailscale uses) and
+// link-local IPv4 ranges, unique-local and link-local IPv6, and the
+// special-use local names. A decision server on another machine on the LAN
+// (llama.cpp, vLLM) rarely has a certificate, so these may use plain HTTP.
+// Such a server is still not `local`: it gets the texts any other route gets.
+export function isPrivateNetworkHost(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.$/, '');
+  if (host === 'localhost' || /\.(?:localhost|local|home\.arpa|internal)$/.test(host)) return true;
+  const ipv4 = ipv4Octets(host);
+  if (ipv4) {
+    const [a, b] = ipv4;
+    return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+      || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (host === '::1') return true;
+  const first = host.includes(':') ? parseInt(host.split(':')[0], 16) : NaN;
+  return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80;
+}
+
+// Firefox's background page reaches a decision server on the local network
+// directly; Chrome's service worker needs its offscreen proxy for one.
+export function decisionFetch(url, options) {
+  return globalThis.fetch(url, options);
+}
+
 // The provider configuration itself. `on` means the user turned decisions on:
 // only then can an explicit local choice (D1, the chat model) or a configured
 // key answer; Compass answers whenever it is passed in.
@@ -173,8 +211,8 @@ function selectedDecisionConfig(stored, compass, on) {
         : String(stored.decisionBaseUrl || 'http://127.0.0.1:8009').trim();
   const url = new URL(baseUrl);
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid decision endpoint.');
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if (url.protocol === 'http:' && !loopback) throw new Error('Decision endpoints require HTTPS outside localhost.');
+  const loopback = LOOPBACK_HOSTS.includes(url.hostname);
+  if (url.protocol === 'http:' && !isPrivateNetworkHost(url.hostname)) throw new Error('Decision endpoints require HTTPS outside localhost and private networks.');
   const apiKey = String((provider === 'compass' ? compass?.apiKey : provider === 'typesafe' ? stored.typesafeApiKey : provider === 'local' ? stored.decisionLocalApiKey : stored.decisionApiKey) || '').trim();
   const visionMode = compass ? 'auto' : (stored.decisionVisionMode || 'auto');
   const rate = (value, fallback) => Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -192,7 +230,7 @@ function selectedDecisionConfig(stored, compass, on) {
   };
 }
 
-export async function listDecisionModels(config, fetchImpl = globalThis.fetch, signal) {
+export async function listDecisionModels(config, fetchImpl = decisionFetch, signal) {
   if (config.provider === 'webgpu_chat') return [{ id: WEBGPU_CHAT_DECISION_MODEL, name: 'Compass VLD Tiny v5 (in-browser)', supportsVision: true, inputRate: 0, outputRate: 0 }];
   if (config.provider === 'webgpu_d1') return [{ id: D1_MODEL_ID, name: 'D1 FP16 (experimental, on-device)', supportsVision: true, inputRate: 0, outputRate: 0 }];
   return withCompletionTimeout(requestSignal => discoverDecisionModels(config, fetchImpl, requestSignal), signal, 5000);
@@ -200,7 +238,8 @@ export async function listDecisionModels(config, fetchImpl = globalThis.fetch, s
 
 async function discoverDecisionModels(config, fetchImpl, signal) {
   const url = config.provider === 'openrouter' ? 'https://openrouter.ai/api/v1/models?output_modalities=decisions' : config.baseUrl + (config.baseUrl.endsWith('/v1') ? '/models' : '/v1/models');
-  const response = await fetchImpl(url, { credentials: 'omit', redirect: 'error', signal, headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {} });
+  // An explicit GET: Chrome's offscreen proxy sends a request without a method as POST.
+  const response = await fetchImpl(url, { method: 'GET', credentials: 'omit', redirect: 'error', signal, headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {} });
   if (!response.ok) throw new Error(`Model discovery failed with HTTP ${response.status}.`);
   const body = await response.json();
   const models = Array.isArray(body) ? body : body.data || body.models || [];

@@ -4699,6 +4699,21 @@ test('matches Hugging Face upload pages with staged-upload guidance and rejects 
   }
 });
 
+// Trace b71fd1dc: the model clicked "Add Photo or Video", which only opens an
+// OS file dialog, and finally sent a link to the picture instead of the file.
+test('Instagram adapter attaches direct-message media through the composer file input', () => {
+  const url = 'https://www.instagram.com/direct/t/17848282661759097/';
+  const chromeAdapter = getActiveAdapter(url);
+  const firefoxAdapter = getActiveAdapterFx(url);
+
+  assert.equal(chromeAdapter?.name, 'instagram');
+  assert.equal(firefoxAdapter?.name, 'instagram');
+  assert.equal(firefoxAdapter?.notes, chromeAdapter?.notes);
+  assert.match(chromeAdapter?.notes || '', /\/direct\/t\/<thread>.*hidden input\[type="file"\] beside "Add Photo or Video"/s);
+  assert.match(chromeAdapter?.notes || '', /selector get_interactive_elements returns for it to upload_file and never click that button/);
+  assert.match(chromeAdapter?.notes || '', /A link to the image is not the image/);
+});
+
 test('matches Mozilla Add-ons Developer Hub and guides version submission', () => {
   const sourceUrl = 'https://addons.mozilla.org/en-US/developers/addon/example-addon/versions/submit/6358210/source';
   const chromeAdapter = getActiveAdapter(sourceUrl);
@@ -32817,6 +32832,7 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'humanizer': ['email_reply', 'draft_message', 'compose_prose', 'rewrite_text', 'humanize_writing', 'reply_to_thread'],
     'phonr-calls': ['outbound_phone_call', 'phone_inquiry', 'phone_call_status', 'phone_call_result', 'phone_call_recording', 'stop_phone_call'],
     'wordpress-rest-api': ['wordpress_content', 'wordpress_publish', 'wordpress_draft', 'wordpress_taxonomy'],
+    'video-scenes': ['generate_video', 'explainer_video', 'video_story', 'how_to_video'],
     ...Object.fromEntries(['ghost', 'drupal', 'joomla', 'webflow', 'shopify', 'wix', 'strapi', 'contentful', 'sanity']
       .map(cms => [`cms-${cms}`, ['cms_content_management', `${cms}_content`]])),
   };
@@ -32875,6 +32891,35 @@ test('WordPress skill loads on demand in Act/Dev Mid/Full and cannot restore its
         assert.equal(agent._loadSkillForRun(tabId, { skill_id: source.id }).success, false);
         assert.doesNotMatch(agent._buildSystemPrompt(mode, tabId), /Discover the site, session/);
       }
+    }
+  }
+  assert.equal(contents[0], contents[1]);
+});
+
+test('Video scenes skill is a default that loads only when a video needs it', () => {
+  const contents = [];
+  for (const [label, prefix, AgentClass, sources, defaults] of [
+    ['chrome', 'src/chrome', AgentCh, PACKAGED_SKILL_SOURCES_CH, DEFAULT_SKILL_SOURCES_CH],
+    ['firefox', 'src/firefox', AgentFx, PACKAGED_SKILL_SOURCES_FX, DEFAULT_SKILL_SOURCES_FX],
+  ]) {
+    const source = sources.find(s => s.id === 'video-scenes');
+    assert.ok(defaults.some(s => s.id === source?.id), `${label}: missing default`);
+    const content = fs.readFileSync(path.join(ROOT, prefix, source.path), 'utf8');
+    contents.push(content);
+    for (const mode of ['ask', 'act']) {
+      const agent = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
+      const tabId = 5216;
+      agent.setCustomSkills([{ ...source, content, sourceType: 'built-in', sourceUrl: source.path }]);
+      agent.conversationModes.set(tabId, mode);
+      agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt(mode, tabId) }]);
+      // Only the catalog line is offered up front; the body arrives when loaded.
+      assert.doesNotMatch(agent.conversations.get(tabId)[0].content, /cast and set sheet/, `${label}: ${mode} preloaded the body`);
+      const loader = agent._skillLoaderDefinition(mode, 'full');
+      assert.equal(!!loader, mode === 'act', `${label}: ${mode} catalog`);
+      if (loader) assert.match(loader.function.description, /video-scenes — Video scenes: .*generate_image with scenes/);
+      assert.equal(agent._loadSkillForRun(tabId, { skill_id: source.id }).success, mode === 'act', `${label}: ${mode} load`);
+      assert.equal(agent.conversations.get(tabId)[0].content.includes('cast and set sheet'), mode === 'act', `${label}: ${mode} body after load`);
+      assert.deepEqual(agent._skillToolDefinitions(tabId, mode, 'full'), [], 'instruction-only skill added tools');
     }
   }
   assert.equal(contents[0], contents[1]);
@@ -57718,8 +57763,8 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.equal(
       (clarifySource.match(/scrollToBottom\(\{ force: true \}\);/g) || []).length,
-      7,
-      `${label}: workflow healing, submit, recipient, deletion, unverified-step, permission, and clarify prompts should override reading-first scroll suppression`,
+      8,
+      `${label}: workflow healing, submit, recipient, deletion, video-length, unverified-step, permission, and clarify prompts should override reading-first scroll suppression`,
     );
     assert.match(
       panel,
@@ -76038,8 +76083,8 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   ]) {
     const defaults = new PM()._defaultConfigs();
     // Includes the sidepanel-only WebBrain Compass XL runtime profile, which is
-    // deliberately omitted from the 113/112 Settings provider cards.
-    const expectedDefaultCount = label === 'chrome' ? 114 : 113;
+    // deliberately omitted from the 114/113 Settings provider cards.
+    const expectedDefaultCount = label === 'chrome' ? 115 : 114;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -77170,6 +77215,54 @@ test('_defaultConfigs: new offline providers present and enabled by default', ()
   }
 });
 
+test('WebBrain Companion loads models and chats over its keyless local endpoint', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const originalBrowser = globalThis.browser;
+  try {
+    globalThis.chrome = globalThis.browser = { storage: { local: { async set() {} } } };
+    for (const [browser, PM] of [['chrome', ProviderManagerCh], ['firefox', ProviderManagerFx]]) {
+      const manager = new PM();
+      const defaults = manager._defaultConfigs().webbrain_companion;
+      assert.equal(defaults.baseUrl, 'http://127.0.0.1:8327/v1', `${browser}: Companion URL`);
+      assert.equal(defaults.requiresApiKey, undefined, `${browser}: loopback access must be keyless`);
+      assert.equal(defaults.requiresModel, true, `${browser}: model selection must be explicit`);
+      manager.providers.set('webbrain_companion', manager._createProvider('webbrain_companion', defaults));
+      const requests = [];
+      globalThis.fetch = async (url, init = {}) => {
+        requests.push({ url: String(url), headers: init.headers || {}, body: init.body });
+        if (String(url).endsWith('/models')) {
+          return new Response(JSON.stringify({ data: [{ id: 'bonsai-2-27b' }] }), {
+            status: 200, headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: 'companion answer' } }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      const listed = await manager.listProviderModels('webbrain_companion');
+      assert.equal(listed.ok, true, `${browser}: model loading failed`);
+      assert.deepEqual(listed.models, ['bonsai-2-27b'], `${browser}: model IDs`);
+      const provider = manager._createProvider('webbrain_companion', {
+        ...defaults, model: 'bonsai-2-27b',
+      });
+      const reply = await provider.chat([{ role: 'user', content: 'hello' }]);
+      assert.equal(reply.content, 'companion answer');
+      manager.providers.set('webbrain_companion', provider);
+      assert.equal((await manager.testProvider('webbrain_companion')).ok, true,
+        `${browser}: Test Connection should work without an API key`);
+      assert.equal(requests[0].url, 'http://127.0.0.1:8327/v1/models');
+      const chatRequest = requests.find(request => request.url.endsWith('/chat/completions'));
+      assert.equal(chatRequest.url, 'http://127.0.0.1:8327/v1/chat/completions');
+      assert.equal(chatRequest.headers.Authorization, undefined);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.chrome = originalChrome;
+    globalThis.browser = originalBrowser;
+  }
+});
+
 test('_defaultConfigs: generic local OpenAI-compatible proxy is safe and configurable', () => {
   for (const [label, PM, settingsRel] of [
     ['chrome', ProviderManagerCh, 'src/chrome/src/ui/settings.js'],
@@ -77260,7 +77353,7 @@ test('Unsloth Studio defaults and settings stay mirrored and conservative', () =
     assert.match(icons, /unsloth: 'unsloth\.svg'/);
     assert.match(icons, /unsloth: 'Unsloth Studio'/);
     const sidepanel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
-    assert.match(sidepanel, /LOCAL_PROVIDER_ORDER = \[\s*'unsloth'/);
+    assert.match(sidepanel, /LOCAL_PROVIDER_ORDER = \[\s*'webbrain_companion',\s*'unsloth'/);
   }
   assert.deepEqual(configs[0], configs[1], 'Chrome and Firefox defaults should match');
 });
@@ -117841,6 +117934,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'cms-strapi',
     'cms-contentful',
     'cms-sanity',
+    'video-scenes',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -117864,6 +117958,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'cms-strapi',
     'cms-contentful',
     'cms-sanity',
+    'video-scenes',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -117879,6 +117974,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'cms-strapi',
     'cms-contentful',
     'cms-sanity',
+    'video-scenes',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -117894,6 +117990,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'cms-strapi',
     'cms-contentful',
     'cms-sanity',
+    'video-scenes',
   ]);
   assert.equal(DEFAULT_SKILL_SOURCES_CH.some((skill) => skill.id === 'turkish-deasciifier'), false, 'chrome: Turkish deasciifier must remain opt-in');
   assert.equal(DEFAULT_SKILL_SOURCES_FX.some((skill) => skill.id === 'turkish-deasciifier'), false, 'firefox: Turkish deasciifier must remain opt-in');
@@ -133669,7 +133766,7 @@ test('message info toggles behaviorally through a semantic button, terminal repl
   }
 });
 
-test('Settings limits the subscription proxy guide to relevant provider cards', async () => {
+test('Settings promotes Companion on relevant cards and preserves the legacy proxy guide', async () => {
   for (const [label, htmlRel, settingsRel, i18nRel] of [
     ['chrome', 'src/chrome/src/ui/settings.css', 'src/chrome/src/ui/settings.js', 'src/chrome/src/ui/i18n.js'],
     ['firefox', 'src/firefox/src/ui/settings.css', 'src/firefox/src/ui/settings.js', 'src/firefox/src/ui/i18n.js'],
@@ -133687,6 +133784,10 @@ test('Settings limits the subscription proxy guide to relevant provider cards', 
       `${label}: provider filters should remain at the top of the provider list`);
     assert.match(settings, /href="\$\{EASY_CLI_PROXY_GUIDE_URL\}" target="_blank" rel="noopener noreferrer"/,
       `${label}: provider-card guide links should open securely`);
+    assert.match(settings, /href="\$\{WEBBRAIN_COMPANION_SITE_URL\}" target="_blank" rel="noopener noreferrer"/,
+      `${label}: account cards should promote the Companion download page`);
+    assert.match(settings, /provider-companion-guide[\s\S]*?windows-setup\.exe[\s\S]*?macos-universal\.zip[\s\S]*?linux-x64\.tar\.gz[\s\S]*?linux-arm64\.tar\.gz/,
+      `${label}: Companion card should offer direct packages for all supported platforms`);
 
     for (const [id, product] of [
       ['openai', 'ChatGPT/Codex'],
@@ -133812,10 +133913,8 @@ test('public EasyCLIProxy guide keeps executable, account, network, and media bo
     'docs: the Chinese translation should preserve executable and network-risk warnings');
   assert.match(docsCss, /\.trust-ledger \{[\s\S]*?var\(--warn\)[\s\S]*?\.trust-ledger dl > div/,
     'docs: the trust boundary should be a deliberate visual component');
-  assert.match(docsBuild, /\/docs\/easy-cli-proxy\/[\s\S]*?Subscription proxy/,
-    'docs build: shared English navigation should expose the guide');
-  assert.match(docsBuild, /\/docs\/zh\/easy-cli-proxy\/[\s\S]*?订阅代理/,
-    'docs build: shared Chinese navigation should expose the translated guide');
+  assert.match(docsBuild, /companionHref = '\/companion\/'[\s\S]*?companionLabel = 'WebBrain Companion'/,
+    'docs build: shared navigation should promote Companion');
   assert.match(vercel, /mp4\|webm\|vtt/, 'web: Vercel should serve WebVTT as a static asset');
   assert.match(sitemap, /<loc>https:\/\/webbrain\.one\/docs\/easy-cli-proxy\/<\/loc>/,
     'web: the guide should appear in the generated sitemap');
@@ -133830,13 +133929,13 @@ test('public EasyCLIProxy guide keeps executable, account, network, and media bo
 
   for (const rel of ['index.html', 'settings/index.html', 'providers/index.html', 'safety/index.html', 'formats/index.html', 'mcp/index.html', 'lm-studio/index.html', 'ollama/index.html', 'easy-cli-proxy/index.html']) {
     const html = fs.readFileSync(path.join(ROOT, 'web/docs', rel), 'utf8');
-    assert.match(html, /<a href="\/docs\/easy-cli-proxy\/"[^>]*>Subscription proxy<\/a>/,
-      `docs/${rel}: shared navigation should expose the subscription proxy guide`);
+    assert.match(html, /<a href="\/companion\/"[^>]*>WebBrain Companion<\/a>/,
+      `docs/${rel}: shared navigation should promote Companion`);
   }
   for (const rel of ['index.html', 'settings/index.html', 'providers/index.html', 'safety/index.html', 'formats/index.html', 'mcp/index.html', 'lm-studio/index.html', 'ollama/index.html', 'apocalypse-mode/index.html', 'easy-cli-proxy/index.html']) {
     const html = fs.readFileSync(path.join(ROOT, 'web/docs/zh', rel), 'utf8');
-    assert.match(html, /<a href="\/docs\/zh\/easy-cli-proxy\/"[^>]*>订阅代理<\/a>/,
-      `docs/zh/${rel}: shared navigation should expose the translated subscription proxy guide`);
+    assert.match(html, /<a href="\/companion\/"[^>]*>WebBrain Companion<\/a>/,
+      `docs/zh/${rel}: shared navigation should promote Companion`);
   }
 
   const videoSize = fs.statSync(videoPath).size;
@@ -133891,7 +133990,9 @@ test('fal-media helpers normalize model ids and extract media URLs across payloa
     assert.equal(mod.normalizeFalModelId('../etc'), '', 'path traversal must be rejected');
     assert.equal(mod.normalizeFalModelId('bad id'), '', 'spaces must be rejected');
     assert.equal(mod.isImageGenConfigured({ apiKey: 'k', model: 'm' }), true);
-    assert.equal(mod.isImageGenConfigured({ apiKey: 'k', model: '' }), false);
+    // An empty model uses the provider's default; the key is what is required.
+    assert.equal(mod.isImageGenConfigured({ apiKey: 'k', model: '' }), true);
+    assert.equal(mod.isImageGenConfigured({ apiKey: '', model: 'm' }), false);
     assert.equal(mod.extractFalMediaUrl({ images: [{ url: 'https://v3.fal.media/a.png' }] }), 'https://v3.fal.media/a.png');
     assert.equal(mod.extractFalMediaUrl({ image: { url: 'https://v3.fal.media/b.png' } }), 'https://v3.fal.media/b.png');
     assert.equal(mod.extractFalMediaUrl({ videos: [{ url: 'https://v3.fal.media/c.mp4' }] }), 'https://v3.fal.media/c.mp4');
@@ -134135,7 +134236,7 @@ test('generate_image tool exists in both builds, full tier only, and settings UI
 
     const agentJs = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
     assert.ok(agentJs.includes("name === 'generate_image'"), `${build}: agent.js should dispatch generate_image`);
-    assert.match(agentJs, /generateImage\(args, \{ signal: executionContext\?\._contentActionAbortSignal, \.\.\.\(executionContext\?\.imageGenConfig \? \{ config: executionContext\.imageGenConfig \} : \{\}\) \}\)/,
+    assert.match(agentJs, /generateImage\(args, \{\s*signal: executionContext\?\._contentActionAbortSignal,\s*\.\.\.\(executionContext\?\.imageGenConfig \? \{ config: executionContext\.imageGenConfig \} : \{\}\),/,
       `${build}: agent.js should pass the linked run signal into fal generation`);
 
     assert.equal(untrustedTools.has('generate_image'), true, `${build}: fal.ai output must be untrusted`);

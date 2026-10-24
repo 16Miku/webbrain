@@ -59,25 +59,25 @@ function withGuideNavigation(html, file) {
     generated = withApocalypseMode;
   }
 
-  const subscriptionProxyHref = isChinese ? '/docs/zh/easy-cli-proxy/' : '/docs/easy-cli-proxy/';
-  const subscriptionProxyLabel = isChinese ? '订阅代理' : 'Subscription proxy';
-  const escapedSubscriptionProxyHref = subscriptionProxyHref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const escapedSubscriptionProxyLabel = subscriptionProxyLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const hasSubscriptionProxyNavigation = new RegExp(
-    `<a href="${escapedSubscriptionProxyHref}"[^>]*>${escapedSubscriptionProxyLabel}<\\/a>`,
+  const companionHref = '/companion/';
+  const companionLabel = 'WebBrain Companion';
+  const escapedCompanionHref = companionHref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedCompanionLabel = companionLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const hasCompanionNavigation = new RegExp(
+    `<a href="${escapedCompanionHref}"[^>]*>${escapedCompanionLabel}<\\/a>`,
   ).test(generated);
-  if (!hasSubscriptionProxyNavigation) {
+  if (!hasCompanionNavigation) {
     const providersLink = isChinese
       ? /(<a href="\/docs\/zh\/providers\/"[^>]*>提供商与模型<\/a>)/
       : /(<a href="\/docs\/providers\/"[^>]*>Providers &(?:amp;)? models<\/a>)/;
-    const withSubscriptionProxy = generated.replace(
+    const withCompanion = generated.replace(
       providersLink,
-      `$1<a href="${subscriptionProxyHref}">${subscriptionProxyLabel}</a>`,
+      `$1<a href="${companionHref}">${companionLabel}</a>`,
     );
-    if (withSubscriptionProxy === generated) {
+    if (withCompanion === generated) {
       throw new Error(`${path.relative(REPO_ROOT, file)} is missing the providers guide navigation anchor`);
     }
-    generated = withSubscriptionProxy;
+    generated = withCompanion;
   }
 
   return generated;

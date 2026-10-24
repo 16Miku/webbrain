@@ -378,6 +378,10 @@ async function _fetchViaOffscreenProxy(url, fetchOptions, timeoutMs, callerSigna
         url,
         method: fetchOptions.method || 'POST',
         headers: fetchOptions.headers || {},
+        // Decision requests refuse redirects and send no cookies
+        // (decision-config.js); the proxied request keeps both.
+        ...(fetchOptions.redirect ? { redirect: fetchOptions.redirect } : {}),
+        ...(fetchOptions.credentials ? { credentials: fetchOptions.credentials } : {}),
         ...preparedBody.message,
       });
     } catch (e) {

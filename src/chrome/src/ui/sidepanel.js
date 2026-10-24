@@ -280,7 +280,7 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
   const localModels = document.getElementById('ob-local-models');
   const localModelList = document.getElementById('ob-local-model-list');
   const totalSteps = steps.length;
-  const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'ods', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
+  const LOCAL_PROVIDER_ORDER = ['webbrain_companion', 'unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'ods', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
   let current = 0;
   let scanGeneration = 0;
   let dismissed = false;
@@ -6316,7 +6316,11 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
     );
     if (!shouldApplyState()) return false;
     const renderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
-    if (renderedSeq > Number(runUi.ackedSeq || 0)) {
+    // An acknowledgement lets the background drop these events. A hidden
+    // panel never saves its chat, and becoming visible restores the saved
+    // copy, so only the journal can replay what it rendered in the meantime
+    // (a video that finished generating while the user was in another tab).
+    if (document.visibilityState !== 'hidden' && renderedSeq > Number(runUi.ackedSeq || 0)) {
       await sendToBackground('agent_run_ack', {
         tabId: numericTabId,
         requestId: runUi.requestId,
@@ -6714,7 +6718,8 @@ function rebindClarifyCards() {
     // Restart countdown after HTML restore when timeout metadata survived on
     // the card. Skip permission/form-submit cards (they never auto-timeout).
     if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
-      || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1') return;
+      || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1'
+      || card.dataset.videoLengthConfirmation === '1') return;
     const deadlineTs = Number(card.dataset.deadlineTs);
     if (!Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
     const firstOption = card.dataset.firstOption
@@ -11670,7 +11675,7 @@ function renderClarifyCard(data) {
   card.dataset.memorySource = scheduledJobId
     ? 'scheduled_clarification'
     : data.workflowHealing || data.pendingReconciliation === true || data.recipientConfirmation
-      || data.mutationConfirmation || data.unverifiedStepConfirmation
+      || data.mutationConfirmation || data.unverifiedStepConfirmation || data.videoLengthConfirmation
       ? ''
       : data.submitConfirmation
         ? 'form_confirmation'
@@ -11880,6 +11885,44 @@ function renderClarifyCard(data) {
     const optionsEl = document.createElement('div');
     optionsEl.className = 'clarify-options';
     for (const [value, label] of [['once', t('sp.delete.delete')], ['deny', t('sp.delete.dont_delete')]]) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'clarify-option';
+      b.textContent = String(label).slice(0, 200);
+      b.dataset.value = value;
+      b.addEventListener('click', () => {
+        card.dataset.answerLabel = b.textContent;
+        submitClarify(card, tabId, clarifyId, value, 'option');
+      });
+      optionsEl.appendChild(b);
+    }
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
+
+  // Video length: the requested video needs longer than WebBrain makes, so
+  // the user decides whether the shorter version is worth its clips. Fixed
+  // choices return stable values ('once'/'deny'); the card never times out.
+  if (data.videoLengthConfirmation) {
+    card.dataset.videoLengthConfirmation = '1';
+    const video = data.videoLengthConfirmation || {};
+    const clock = value => {
+      const seconds = Math.max(0, Math.round(Number(value) || 0));
+      return seconds < 60 ? t('sp.video_length.seconds', { seconds }) : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+    };
+    qEl.textContent = t('sp.video_length.question', { estimate: clock(video.estimatedSeconds), max: clock(video.maxSeconds) });
+    const offerEl = document.createElement('div');
+    offerEl.className = 'clarify-reason';
+    offerEl.textContent = t('sp.video_length.offer', {
+      total: clock(video.totalSeconds),
+      clips: Math.max(1, Math.round(Number(video.clipCount) || 1)),
+    });
+    card.appendChild(offerEl);
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    for (const [value, label] of [['once', t('sp.video_length.generate', { total: clock(video.totalSeconds) })], ['deny', t('sp.video_length.dont')]]) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'clarify-option';
@@ -12241,7 +12284,8 @@ function lockClarifyCardFromAuto(data) {
     // of a quality check: it locks on the timeout's answer like a question.
     const unverifiedStep = card.dataset.unverifiedStepConfirmation === '1';
     if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
-      || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1') return;
+      || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1'
+      || card.dataset.videoLengthConfirmation === '1') return;
     clearClarifyCountdown(card);
     card.classList.add('clarify-answered');
     for (const el of card.querySelectorAll('button, input')) {
