@@ -112,6 +112,7 @@ import { solveCaptchaWithProviders, detectCaptcha, injectToken, ensureCaptchaCal
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders, captchaProviderSupportsType } from './captcha-provider-config.js';
 import { captchaChallengeKey, captchaChallengeMatcherOptions, challengeDialogTitles, challengeTitleText, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility, observeAwsWafChallengeInPage } from './captcha-frame-runtime.js';
+import { settleCookieBannersForTurn } from './cookie-banner-turn.js';
 import {
   cloudflareChallengeNavigationTransition,
   cloudflareChallengePlatformTransition,
@@ -5795,6 +5796,12 @@ export class Agent extends LoopDetector {
 
   setConversationScopeChangeListener(listener) {
     this._conversationScopeChangeListener = typeof listener === 'function' ? listener : null;
+  }
+
+  // Automatic cookie-banner declining (cookie-banner-host.js); null turns the
+  // agent's side of it off.
+  setCookieBannerHost(host) {
+    this._cookieBannerHost = host || null;
   }
 
   setRunStartGuard(guard) {
@@ -16522,6 +16529,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         autoScreenshotToolName = fnName;
       }
     }
+
+    // Let an automatic cookie-banner decline finish before the screenshot
+    // below, and tell the model about it (cookie-banner-turn.js).
+    await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
 
     this._injectNavNotices(messages, navNotices, onUpdate, tabId);
 
@@ -47762,6 +47773,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (steps > 0 && !selectionOnly && !standaloneChatRun) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
+      // Let an automatic cookie-banner decline finish before this turn's model
+      // call, and tell the model about it (cookie-banner-turn.js).
+      if (!selectionOnly && !standaloneChatRun) {
+        await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
+      }
 
       skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
       tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
@@ -49089,6 +49105,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       if (steps > 0 && !selectionOnly && !standaloneChatRun) {
         await this._maybeReinjectAdapter(tabId, messages);
+      }
+      // Let an automatic cookie-banner decline finish before this turn's model
+      // call, and tell the model about it (cookie-banner-turn.js).
+      if (!selectionOnly && !standaloneChatRun) {
+        await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
       }
 
       skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));

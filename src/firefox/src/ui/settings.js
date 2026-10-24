@@ -85,7 +85,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '42.3.2';
+const EXT_VERSION = '42.3.3';
 
 const providersContainer = document.getElementById('providers');
 const generalSearchInput = document.getElementById('input-general-search');
@@ -4280,5 +4280,18 @@ if (bidiEnabled && bidiPort) {
       const result = await browser.runtime.sendMessage({ type: 'WB_BIDI_CONNECT' });
       bidiStatus.textContent = result?.success ? t('st.bidi.connected') : result?.error || t('st.bidi.failed');
     } catch (error) { bidiStatus.textContent = error.message; }
+  });
+}
+
+// Cookie banners (Advanced): tabs WebBrain works in (default), every website,
+// or off. The background reads the same key (src/agent/cookie-banner-host.js).
+const cookieBannersSelect = document.getElementById('select-cookie-banners');
+if (cookieBannersSelect) {
+  const normalizeCookieBanners = value => (['off', 'agent', 'everywhere'].includes(value) ? value : 'agent');
+  browser.storage.local.get('cookieBanners')
+    .then(stored => { cookieBannersSelect.value = normalizeCookieBanners(stored?.cookieBanners); })
+    .catch(() => {});
+  cookieBannersSelect.addEventListener('change', () => {
+    browser.storage.local.set({ cookieBanners: normalizeCookieBanners(cookieBannersSelect.value) }).catch(() => {});
   });
 }

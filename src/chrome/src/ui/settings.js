@@ -106,7 +106,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '42.3.2';
+const EXT_VERSION = '42.3.3';
 
 const providersContainer = document.getElementById('providers');
 const generalSearchInput = document.getElementById('input-general-search');
@@ -5001,3 +5001,16 @@ function sendToBackground(action, data = {}) {
 }
 
 init();
+
+// Cookie banners (Advanced): tabs WebBrain works in (default), every website,
+// or off. The background reads the same key (src/agent/cookie-banner-host.js).
+const cookieBannersSelect = document.getElementById('select-cookie-banners');
+if (cookieBannersSelect) {
+  const normalizeCookieBanners = value => (['off', 'agent', 'everywhere'].includes(value) ? value : 'agent');
+  chrome.storage.local.get('cookieBanners')
+    .then(stored => { cookieBannersSelect.value = normalizeCookieBanners(stored?.cookieBanners); })
+    .catch(() => {});
+  cookieBannersSelect.addEventListener('change', () => {
+    chrome.storage.local.set({ cookieBanners: normalizeCookieBanners(cookieBannersSelect.value) }).catch(() => {});
+  });
+}
