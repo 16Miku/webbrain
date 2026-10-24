@@ -119,6 +119,7 @@ import { solveCaptchaWithProviders, detectCaptcha, injectToken, ensureCaptchaCal
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders, captchaProviderSupportsType } from './captcha-provider-config.js';
 import { captchaChallengeKey, captchaChallengeMatcherOptions, challengeDialogTitles, challengeTitleText, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility, observeAwsWafChallengeInPage } from './captcha-frame-runtime.js';
+import { settleCookieBannersForTurn } from './cookie-banner-turn.js';
 import {
   cloudflareChallengeNavigationTransition,
   cloudflareChallengePlatformTransition,
@@ -6255,6 +6256,12 @@ export class Agent extends LoopDetector {
     this._conversationScopeChangeListener = typeof listener === 'function' ? listener : null;
   }
 
+  // Automatic cookie-banner declining (cookie-banner-host.js); null turns the
+  // agent's side of it off.
+  setCookieBannerHost(host) {
+    this._cookieBannerHost = host || null;
+  }
+
   setRunStartGuard(guard) {
     this._runStartGuard = typeof guard === 'function' ? guard : null;
   }
@@ -6338,6 +6345,7 @@ export class Agent extends LoopDetector {
     this._runAbortStates.delete(tabId);
     this.abortFlags.delete(tabId);
     this._runningTabs.delete(tabId);
+    this._cookieBannerHost?.refreshCoverage?.(tabId);
   }
 
   _runAbortSignal(tabId) {
@@ -18459,6 +18467,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
+    // Let an automatic cookie-banner decline finish before the screenshot
+    // below, and tell the model about it (cookie-banner-turn.js).
+    await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
+
     // Inject any navigation notices BEFORE the auto-screenshot, so the
     // model sees the warning and the new viewport in the same turn.
     this._injectNavNotices(messages, navNotices, onUpdate, tabId);
@@ -21884,6 +21896,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._revokeSocialPublicationAuditRetry(id);
       this._ownedNativeChatReadRepairs.delete(id);
       this.abortFlags.set(id, true);
+      this._cookieBannerHost?.refreshCoverage?.(id);
       cdpClient.stopDialogHandling(id);
       const controller = this._runAbortStates.get(id)?.controller;
       if (controller && !controller.signal.aborted) {
@@ -56355,6 +56368,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (steps > 0 && !selectionOnly && !standaloneChatRun) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
+      // Let an automatic cookie-banner decline finish before this turn's model
+      // call, and tell the model about it (cookie-banner-turn.js).
+      if (!selectionOnly && !standaloneChatRun) {
+        await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
+      }
 
       skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
       tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
@@ -57867,6 +57885,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       if (steps > 0 && !selectionOnly && !standaloneChatRun) {
         await this._maybeReinjectAdapter(tabId, messages);
+      }
+      // Let an automatic cookie-banner decline finish before this turn's model
+      // call, and tell the model about it (cookie-banner-turn.js).
+      if (!selectionOnly && !standaloneChatRun) {
+        await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
       }
 
       skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));

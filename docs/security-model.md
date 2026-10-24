@@ -406,6 +406,10 @@ navigate directly or gain new authority.
 
 ---
 
+## Cookie Banners
+
+Automatic cookie-banner declining (`docs/cookie-banners.md`) injects DuckDuckGo's autoconsent into the extension's isolated world, per navigation, only in tabs the `cookieBanners` setting covers: tabs an Act or Dev run is driving by default, every tab when the user opts in. No cookie-handler content script is registered in the manifest; the wrapper and upstream ESM module are web-accessible resources for dynamic import. The wrapper rechecks coverage before each click and cancels pending handlers whenever Off, Stop, or run completion revokes their coverage. Page JavaScript is reached only through autoconsent's fixed eval snippets, run by name in the frame that asked; CAPTCHA and bot-challenge frames are never injected and their eval requests are refused. Subframes are injected only when a rule names their URL. Its clicks are not model actions and do not pass through guards: they only decline or hide consent dialogs that a bundled rule or one of WebBrain's own rules (`src/<browser>/src/agent/cookie-banner-rules.js`, DOM steps only) recognizes, or, for dialogs no rule knows, that autoconsent's reject-only heuristic recognizes from cookie wording (top frame only; it clicks a reject button and nothing else).
+
 ## Firefox Differences
 
 Firefox has no CDP (`debugger` permission), so:
