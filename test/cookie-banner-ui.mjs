@@ -192,10 +192,29 @@ document.addEventListener('click', (event) => {
   event.target.closest('[data-banner]')?.remove();
 });`;
 
+const lateBannerPage = `<!doctype html><html><head><title>Fixture shop</title></head><body>
+<h1>Fixture shop</h1><script src="/late-banner.js"></script></body></html>`;
+const lateBannerScript = `window.showCookieBanner = () => {
+  const banner = document.createElement('div');
+  banner.className = 'c-cookie-popup';
+  banner.style.cssText = 'position:fixed;bottom:0;padding:16px;background:white';
+  banner.innerHTML = 'We use cookies. <button data-role="refuse-cookies">Refuse</button>';
+  banner.querySelector('button').onclick = () => {
+    document.documentElement.dataset.consent = 'refused';
+    banner.remove();
+  };
+  document.body.append(banner);
+};`;
+
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const host = String(req.headers.host || '').split(':')[0];
   const script = url.pathname.match(/^\/efilli-(stock|turkish|inline|hepsiburada)\.js$/);
+  if (url.pathname === '/late-banner.js') {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.end(lateBannerScript);
+    return;
+  }
   if (url.pathname === '/shop.js' || url.pathname === '/blog.js' || url.pathname === '/choice.js' || script) {
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
     res.end(script ? efilliScript(script[1]) : url.pathname === '/choice.js' ? choiceScript
@@ -203,7 +222,9 @@ const server = createServer((req, res) => {
     return;
   }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  if (url.pathname === '/index.html') {
+  if (url.pathname.startsWith('/late-banner')) {
+    res.end(lateBannerPage);
+  } else if (url.pathname === '/index.html') {
     res.end(`<!doctype html><html><body><p>${host} frame</p></body></html>`);
   } else if (host === HEPSIBURADA_HOST) {
     res.end(efilliPage('hepsiburada'));
@@ -304,6 +325,20 @@ async function scenarios(name, driver) {
     `document.querySelectorAll('style#autoconsent-prehide, style#autoconsent-css-rules').length`);
   assert.equal(captchaStyles, 0, `${name}: autoconsent added nothing to the CAPTCHA frame`);
   pass("'everywhere' declines the banner from the isolated world; the CAPTCHA frame is untouched");
+
+  // Revoking coverage must also stop a handler already searching this page.
+  const lateOffUrl = `${origin}/late-banner-off`;
+  await driver.open(lateOffUrl);
+  const lateOffTab = await tabIdFor(lateOffUrl);
+  await until(async () => (await status(lateOffTab)).frames.some(frame => frame.lifecycle === 'started'),
+    `${name}: detection to start before Off`);
+  await setMode('off');
+  await driver.page('window.showCookieBanner()');
+  await sleep(2500);
+  assert.equal(await consent(), '', `${name}: a previously injected handler must stop after Off`);
+  assert.equal(await driver.page(`document.querySelectorAll('.c-cookie-popup').length`), 1);
+  pass('Off stops a previously injected handler before a late banner appears');
+  await setMode('everywhere');
 
   // A rule whose opt-out needs one of autoconsent's page-world snippets.
   const blogUrl = `${origin}/blog`;
@@ -432,19 +467,22 @@ async function scenarios(name, driver) {
   assert.equal(await consent(), '', `${name}: before the run starts, the banner is left alone`);
   const runTab = await tabIdFor(runUrl);
   modelRequests.length = 0;
-  // Started without waiting: a BiDi command must answer within 10 s.
-  await driver.ext(`(() => {
+  const runAct = async (tabId, suffix) => {
+    // Started without waiting: a BiDi command must answer within 10 s.
+    await driver.ext(`(() => {
     window.__cookieBannerRun = null;
-    ${API}.runtime.sendMessage(${JSON.stringify({ target: 'background', action: 'chat', tabId: runTab,
-    text: 'What is the heading of this page? Do not buy anything.', mode: 'act', requestId: `cookie-banner-run-${name}` })})
+    ${API}.runtime.sendMessage(${JSON.stringify({ target: 'background', action: 'chat', tabId,
+    text: 'What is the heading of this page? Do not buy anything.', mode: 'act', requestId: `cookie-banner-run-${name}-${suffix}` })})
       .then((response) => {
         window.__cookieBannerRunResult = JSON.stringify(response ?? null).slice(0, 400);
         window.__cookieBannerRun = 'done';
       }, error => { window.__cookieBannerRun = 'error: ' + error; });
     return true;
   })()`);
-  const outcome = await until(() => driver.ext('window.__cookieBannerRun'), `${name}: the Act run to finish`, 60000);
-  assert.equal(outcome, 'done', `${name}: ${outcome}`);
+    const outcome = await until(() => driver.ext('window.__cookieBannerRun'), `${name}: the Act run to finish`, 60000);
+    assert.equal(outcome, 'done', `${name}: ${outcome}`);
+  };
+  await runAct(runTab, 'banner');
   assert.equal(await consent(), 'refused', `${name}: the Act run declined the banner`);
   const firstToolTurn = modelRequests.find(input => input.tools?.length);
   assert.ok(firstToolTurn, `${name}: the run reached a model turn with tools (model requests: ${modelRequests.length}; `
@@ -452,6 +490,19 @@ async function scenarios(name, driver) {
   assert.ok(firstToolTurn.messages.some(entry => textOf(entry.content).includes('[Cookie banners: WebBrain automatically declined')),
     `${name}: the first model turn is told the banner was declined`);
   pass("'agent' mode declines the banner in an Act run and tells the model before its first turn");
+
+  const lateRunUrl = `${origin}/late-banner-run`;
+  await driver.open(lateRunUrl);
+  const lateRunTab = await tabIdFor(lateRunUrl);
+  await runAct(lateRunTab, 'late');
+  await until(async () => !(await status(lateRunTab)).covered, `${name}: the run to release its tab`);
+  await driver.page('window.showCookieBanner()');
+  await sleep(2500);
+  assert.equal(await consent(), '', `${name}: a finished run must not decline a late banner`);
+  pass('a finished Act run stops its pending handler before a late banner appears');
+  await runAct(lateRunTab, 'restart');
+  assert.equal(await consent(), 'refused', `${name}: a new run can decline the previously untouched banner`);
+  pass('a new Act run can handle banners again on the same document');
 }
 
 // --- Chromium (Playwright) --------------------------------------------------

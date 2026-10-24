@@ -3,7 +3,7 @@
 WebBrain declines cookie-consent banners itself, so an Act run does not spend a
 model step on them and does not accept tracking to get past one. It uses
 DuckDuckGo's [autoconsent](https://github.com/duckduckgo/autoconsent) rules,
-vendored unmodified in `src/<browser>/vendor/autoconsent/` (MPL-2.0), plus a few
+vendored with a documented regular-expression security patch in `src/<browser>/vendor/autoconsent/` (MPL-2.0), plus a few
 WebBrain rules for banners those miss (see [WebBrain's own rules](#webbrains-own-rules)).
 Banners no rule knows get autoconsent's reject-only heuristic
 (see [Heuristic](#heuristic-reject-only)).
@@ -21,11 +21,18 @@ Settings → Advanced → **Cookie banners** (storage key `cookieBanners`):
 ## How it works
 
 - `src/<browser>/src/agent/cookie-banner-host.js` runs in the background. It
-  injects `src/content/autoconsent-bridge.js` and
-  `vendor/autoconsent/autoconsent.playwright.js` into covered tabs on each
+  injects `src/content/autoconsent-bridge.js` into covered tabs on each
   `webNavigation.onCommitted`, and into a page that was already open when a run
-  starts. Both files run in the extension's isolated world. Nothing is
-  registered in the manifest.
+  starts. It imports WebBrain's `autoconsent-runtime.js` wrapper and the
+  upstream ESM module with that security patch in the extension's isolated world. Those two
+  modules are web-accessible resources for dynamic import; no cookie-handler
+  content script is registered in the manifest.
+- Before every click (including each click of a multi-element rule), the
+  wrapper asks the background whether this frame is still covered. Off
+  cancels existing handlers; in the default agent mode, Stop and the end of
+  an Act/Dev run do too. Cancellation removes pre-hiding and blocks pending
+  clicks. A new covered run starts a fresh
+  instance on the same document; an older instance stays cancelled.
 - The bridge forwards autoconsent's messages as `webbrain-autoconsent` /
   `webbrain-autoconsent-bg`, so autoconsent's generic types (`init`, `eval`,
   `report`) never reach WebBrain's other listeners.
@@ -149,17 +156,21 @@ not try; users choose Off instead.
 ## Updating
 
 Bump `VERSION` and `INTEGRITY` in `scripts/update-autoconsent.mjs` and run it.
-It copies the published files byte for byte into both trees and records their
-SHA-256 in `vendor-manifest.json`; `node scripts/update-autoconsent.mjs --check`
+It verifies the published package integrity, removes redundant cookie-noun
+alternatives from the acknowledgement regex (preventing exponential
+backtracking), and records both upstream and patched SHA-256 hashes in
+`vendor-manifest.json`; `node scripts/update-autoconsent.mjs --check`
 and `test/cookie-banner-host.mjs` verify them. Read upstream's CHANGELOG for
 message or rule-format changes before updating.
 
 ## License
 
 autoconsent is MPL-2.0, a file-level copyleft. Its files keep their license
-(`vendor/autoconsent/LICENSE`, `LICENSES/MPL-2.0.txt`) and stay unmodified.
+(`vendor/autoconsent/LICENSE`, `LICENSES/MPL-2.0.txt`). The JavaScript bundles
+carry one documented WebBrain regex patch, remain MPL-2.0, and are published
+in full with this repository; the rules and license text are unmodified.
 WebBrain's own files, including the bridge, the host and WebBrain's rules, are
 under WebBrain's license, GPL-3.0-or-later; MPL-2.0 allows combining its files
-with GPL code (section 3.3, "Secondary Licenses"). If the vendored files are
-ever edited, the edited files stay MPL-2.0 and their source must be published
+with GPL code (section 3.3, "Secondary Licenses"). Further edits to the vendored
+files must also stay MPL-2.0 and be published
 with the extension.

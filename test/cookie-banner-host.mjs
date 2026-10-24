@@ -4,6 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { runInNewContext } from 'node:vm';
 
 import { checkVendoredAutoconsent } from '../scripts/update-autoconsent.mjs';
 
@@ -59,9 +61,11 @@ function fakeApi() {
       for (const fn of listeners.committed) fn({ tabId, frameId, url });
     },
     content(tabId, frameId, url, msg) {
+      let response;
       for (const fn of listeners.message) {
-        fn({ type: 'webbrain-autoconsent', msg }, { tab: { id: tabId }, frameId, url }, () => {});
+        fn({ type: 'webbrain-autoconsent', msg }, { tab: { id: tabId }, frameId, url }, value => { response = value; });
       }
+      return response;
     },
     status(tabId, senderUrl) {
       let response;
@@ -78,6 +82,7 @@ for (const build of BUILDS) {
   const { cookieBannerNoteText, settleCookieBannersForTurn } = await import(`../src/${build}/src/agent/cookie-banner-turn.js`);
   const { evalSnippets } = await import(`../src/${build}/vendor/autoconsent/autoconsent.esm.js`);
   const { WEBBRAIN_COOKIE_BANNER_RULES, cookieBannerRulesFor } = await import(`../src/${build}/src/agent/cookie-banner-rules.js`);
+  const { guardCookieBannerInstance } = await import(`../src/${build}/src/content/autoconsent-runtime.js`);
   const rules = JSON.parse(await read(`src/${build}/vendor/autoconsent/compact-rules.json`));
   const { createCookieBannerHost, normalizeCookieBannerMode, isChallengeFrameUrl } = hostModule;
 
@@ -96,6 +101,79 @@ for (const build of BUILDS) {
 
   const injections = calls => calls.execute.filter(call => Array.isArray(call.files));
 
+  test(`${build}: revoking coverage stops injected frames and denies further actions`, async () => {
+    const runs = new Map([[201, 'act']]);
+    const { fake, host } = setup({ runs });
+    const url = 'https://shop.example/';
+    fake.commit(201, 0, url);
+    await until(() => injections(fake.calls).length === 1, 'injection');
+    assert.equal(fake.content(201, 0, url, { type: 'checkCoverage' }), true);
+    runs.delete(201);
+    host.refreshCoverage(201);
+    assert.ok(fake.calls.sent.some(call => call.tabId === 201 && call.message.msg.type === 'stop'));
+    assert.equal(fake.content(201, 0, url, { type: 'checkCoverage' }), false);
+    assert.deepEqual(host.status(201).frames, []);
+    runs.set(201, 'act');
+    fake.commit(201, 0, url);
+    await until(() => injections(fake.calls).length === 2, 'fresh injection');
+    host.setMode('off');
+    assert.equal(fake.content(201, 0, url, { type: 'checkCoverage' }), false);
+    assert.deepEqual(host.status(201).frames, []);
+  });
+
+  test(`${build}: cancellation survives a pending action grant and stops every click in a rule`, async () => {
+    let clicks = 0;
+    const elements = [{ click() { clicks += 1; } }, { click() { clicks += 1; } }];
+    const instance = () => ({
+      config: { enabled: true, autoAction: 'optOut' },
+      doOptOut() {}, doOptIn() {}, handlePopup() {}, findCmp() {}, waitForPopup() {},
+      undoPrehide() {}, restoreFocus() {},
+      domActions: {
+        elementSelector: () => elements,
+        clickElement: async element => { element.click(); return true; },
+        hide() {}, stylesheet() {}, removeClass() {}, setStyle() {}, addStyle() {}, prehide() {},
+      },
+    });
+    let grant;
+    const pending = instance();
+    const guard = guardCookieBannerInstance(pending, () => new Promise(resolve => { grant = resolve; }));
+    const action = pending.domActions.click('button', true);
+    guard.stop();
+    grant(true);
+    await assert.rejects(action, /Cookie-banner coverage revoked/);
+    assert.equal(clicks, 0, 'a grant already in transit cannot revive a stopped instance');
+    assert.deepEqual(await pending.findCmp(), []);
+    assert.equal(pending.domActions.hide('banner'), false);
+
+    let covered = true;
+    const active = instance();
+    elements[0].click = () => { clicks += 1; covered = false; };
+    guardCookieBannerInstance(active, async () => covered);
+    await assert.rejects(active.domActions.click('button', true), /Cookie-banner coverage revoked/);
+    assert.equal(clicks, 1, 'click-all rules recheck coverage for each element');
+
+    const disconnected = instance();
+    guardCookieBannerInstance(disconnected, async () => { throw new Error('worker gone'); });
+    await assert.rejects(disconnected.domActions.click('button'), /Cookie-banner coverage revoked/);
+    assert.equal(clicks, 1, 'loss of background coverage fails closed');
+
+    let resume;
+    const direct = instance();
+    direct.domActions.wait = () => new Promise(resolve => { resume = resolve; });
+    direct.doOptOut = async () => {
+      await direct.domActions.wait(500);
+      elements[1].click(); // Like Sourcepoint's direct toggles after wait().
+      return true;
+    };
+    const directGuard = guardCookieBannerInstance(direct, async () => true);
+    const delayed = direct.doOptOut();
+    await until(() => resume, 'the rule to enter its wait');
+    directGuard.stop();
+    resume(true);
+    assert.equal(await delayed, false);
+    assert.equal(clicks, 1, 'cancellation unwinds a rule before its direct DOM mutations');
+  });
+
   test(`${build}: 'agent' mode injects only into tabs an Act or Dev run is driving`, async () => {
     const { fake } = setup({ runs: new Map([[1, 'act'], [2, 'ask'], [4, 'dev']]) });
     fake.commit(1, 0, 'https://shop.example/');
@@ -106,7 +184,7 @@ for (const build of BUILDS) {
     await sleep(20);
     const injected = injections(fake.calls);
     assert.deepEqual(injected.map(call => call.target.tabId).sort(), [1, 4]);
-    assert.deepEqual(injected[0].files, ['src/content/autoconsent-bridge.js', 'vendor/autoconsent/autoconsent.playwright.js']);
+    assert.deepEqual(injected[0].files, ['src/content/autoconsent-bridge.js']);
     assert.deepEqual(injected[0].target.frameIds, [0]);
     assert.equal(injected[0].injectImmediately, true);
     assert.equal(injected[0].world, undefined, 'the content half must stay in the isolated world');
@@ -134,7 +212,7 @@ for (const build of BUILDS) {
     fake.commit(9, 0, 'https://example.org/');
     await until(() => injections(fake.calls).length === 1, 'injection');
     assert.deepEqual(injections(fake.calls)[0].files,
-      ['/src/content/autoconsent-bridge.js', '/vendor/autoconsent/autoconsent.playwright.js']);
+      ['/src/content/autoconsent-bridge.js']);
   });
 
   test(`${build}: 'everywhere' covers every tab, 'off' none, and the stored mode applies before the first injection`, async () => {
@@ -529,10 +607,28 @@ for (const build of BUILDS) {
   });
 }
 
-test('the vendored autoconsent copies are unmodified and the glue matches across browsers', async () => {
+test('the vendored autoconsent patch is reproducible and the glue matches across browsers', async () => {
   assert.deepEqual(checkVendoredAutoconsent(), []);
   for (const file of ['src/agent/cookie-banner-host.js', 'src/agent/cookie-banner-rules.js', 'src/agent/cookie-banner-turn.js',
-    'src/content/autoconsent-bridge.js']) {
+    'src/content/autoconsent-bridge.js', 'src/content/autoconsent-runtime.js']) {
     assert.equal(await read(`src/chrome/${file}`), await read(`src/firefox/${file}`), file);
+  }
+});
+
+test('autoconsent acknowledgement regex rejects repeated cookie phrases without exponential backtracking', async () => {
+  for (const browser of BUILDS) {
+    for (const file of ['autoconsent.esm.js', 'autoconsent.playwright.js']) {
+      const source = await read(`src/${browser}/vendor/autoconsent/${file}`);
+      const expression = source.split('\n').find(line => line.includes('(close|dismiss|schlie')).trim().replace(/,$/, '');
+      const pattern = runInNewContext(expression);
+      for (const label of ['close', 'close de cookies', 'close des cookies', 'Fermer le bandeau', 'close this dialog.', 'cerrar el banner']) {
+        assert.equal(pattern.test(label), true, `${browser}/${file}: ${label}`);
+      }
+      for (const label of ['accept and close', 'agree and close', 'close marketing settings!']) assert.equal(pattern.test(label), false);
+      // An unpatched bundle hangs on this input. Keep it in a bounded child
+      // process so a regression cannot freeze the test runner itself.
+      execFileSync(process.execPath, ['--eval', `const pattern = ${expression};
+        if (pattern.test('close ' + 'de cookies '.repeat(2000) + '!')) process.exit(1);`], { timeout: 1500 });
+    }
   }
 });

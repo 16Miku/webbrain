@@ -1262,7 +1262,7 @@ loadCaptchaSolver().catch(error => console.warn('[WebBrain] CAPTCHA settings cou
 // that setting. Its listeners are registered here, at worker start, so a
 // navigation can wake the worker.
 const cookieBannerHost = createCookieBannerHost(chrome, {
-  isRunActive: tabId => agent.isRunning(tabId),
+  isRunActive: tabId => agent.isRunning(tabId) && !agent.abortFlags.get(tabId),
   runMode: tabId => agent._effectiveRunMode(tabId),
 });
 cookieBannerHost.start();

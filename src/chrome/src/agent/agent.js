@@ -6345,6 +6345,7 @@ export class Agent extends LoopDetector {
     this._runAbortStates.delete(tabId);
     this.abortFlags.delete(tabId);
     this._runningTabs.delete(tabId);
+    this._cookieBannerHost?.refreshCoverage?.(tabId);
   }
 
   _runAbortSignal(tabId) {
@@ -21895,6 +21896,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._revokeSocialPublicationAuditRetry(id);
       this._ownedNativeChatReadRepairs.delete(id);
       this.abortFlags.set(id, true);
+      this._cookieBannerHost?.refreshCoverage?.(id);
       cdpClient.stopDialogHandling(id);
       const controller = this._runAbortStates.get(id)?.controller;
       if (controller && !controller.signal.aborted) {

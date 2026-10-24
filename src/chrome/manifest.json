@@ -170,7 +170,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["vendor/pdfjs/pdf.mjs", "vendor/pdfjs/pdf.worker.mjs", "skills/*"],
+      "resources": ["src/content/autoconsent-runtime.js", "vendor/autoconsent/autoconsent.esm.js", "vendor/pdfjs/pdf.mjs", "vendor/pdfjs/pdf.worker.mjs", "skills/*"],
       "matches": ["<all_urls>"]
     }
   ]

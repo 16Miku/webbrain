@@ -1,11 +1,11 @@
 // Declines cookie-consent banners with DuckDuckGo's autoconsent (vendored,
-// unmodified, MPL-2.0; see vendor/autoconsent/README.md). This is the
+// regex-hardened, MPL-2.0; see vendor/autoconsent/README.md). This is the
 // background half: it decides where the content half runs, answers its
 // init/eval requests, and tells the agent what happened. docs/cookie-banners.md
 // has the user-facing behavior.
 //
 // Why it is shaped this way:
-// - Nothing is registered in the manifest. The CAPTCHA callback bridge once ran
+// - No static content script is registered. The CAPTCHA callback bridge once ran
 //   on every site in every frame and broke hCaptcha/Turnstile pages, so these
 //   scripts are injected per navigation, only into tabs the setting covers:
 //   tabs an Act/Dev run is driving ('agent', the default) or every tab
@@ -32,7 +32,6 @@ export const COOKIE_BANNER_STATUS_MESSAGE = 'webbrain-cookie-banner-status';
 
 const CONTENT_FILES = Object.freeze([
   'src/content/autoconsent-bridge.js',
-  'vendor/autoconsent/autoconsent.playwright.js',
 ]);
 const RULES_FILE = 'vendor/autoconsent/compact-rules.json';
 const ACTION_MODES = new Set(['act', 'dev']);
@@ -538,6 +537,15 @@ export function createCookieBannerHost(api, options = {}) {
 
   function onMessage(message, sender, sendResponse) {
     if (message?.type === COOKIE_BANNER_CONTENT_MESSAGE) {
+      if (message.msg?.type === 'checkCoverage') {
+        const tabId = sender?.tab?.id;
+        const frame = tabState(tabId)?.frames.get(sender?.frameId);
+        const covered = Boolean(frame && !frame.failed && coversTab(tabId)
+          && !isChallengeFrameUrl(sender?.url));
+        sendResponse(covered);
+        if (!covered) refreshCoverage(tabId);
+        return;
+      }
       onContentMessage(message, sender);
       return;
     }
@@ -561,12 +569,18 @@ export function createCookieBannerHost(api, options = {}) {
     };
   }
 
+  function refreshCoverage(tabId) {
+    if (coversTab(tabId)) return;
+    const state = tabState(tabId);
+    for (const frameId of state?.frames.keys() || []) send(tabId, frameId, { type: 'stop' });
+    tabs.delete(tabId);
+    notify(tabId);
+  }
+
   function setMode(value) {
     modeChanged = true;
     mode = normalizeCookieBannerMode(value);
-    if (mode === 'off') {
-      for (const tabId of tabs.keys()) notify(tabId);
-    }
+    for (const tabId of tabs.keys()) refreshCoverage(tabId);
     return mode;
   }
 
@@ -587,6 +601,7 @@ export function createCookieBannerHost(api, options = {}) {
       api.storage?.onChanged?.addListener?.(onStorageChanged);
     },
     setMode,
+    refreshCoverage,
     get mode() {
       return mode;
     },

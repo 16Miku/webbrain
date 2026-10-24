@@ -1,46 +1,49 @@
-// Injected by src/agent/cookie-banner-host.js into WebBrain's isolated world,
-// right before vendor/autoconsent/autoconsent.playwright.js. That upstream
-// script talks only through window.autoconsentSendMessage and
-// window.autoconsentReceiveMessage; in an isolated world those globals are
-// invisible to the page. Messages are namespaced so autoconsent's generic
-// types ('init', 'eval', 'report') never reach WebBrain's other listeners.
+// Per-frame isolated-world loader. A fresh instance is needed after coverage
+// is restored: an old instance's pending rule steps must stay cancelled.
 (() => {
   const existing = window.__webbrainAutoconsentBridge;
-  if (existing) {
-    // Injected again after the service worker restarted and lost its record
-    // of this frame: tell it where this frame's run already is.
-    existing.resync();
-    return;
-  }
+  if (existing) { existing.resync(); return; }
   const api = globalThis.browser || globalThis.chrome;
   const CONTENT_MESSAGE = 'webbrain-autoconsent';
   const BACKGROUND_MESSAGE = 'webbrain-autoconsent-bg';
-  let lastReport = null;
+  let current;
+  const send = msg => api.runtime.sendMessage({ type: CONTENT_MESSAGE, msg });
 
-  const send = (msg) => {
-    try {
-      const sent = api.runtime.sendMessage({ type: CONTENT_MESSAGE, msg });
-      sent?.catch?.(() => {});
-    } catch {
-      // The extension was reloaded; this frame's copy is orphaned.
-    }
-  };
-
-  window.autoconsentSendMessage = async (msg) => {
-    if (msg?.type === 'report') lastReport = msg;
-    send(msg);
-  };
-
-  api.runtime.onMessage.addListener((message) => {
+  function stop() {
+    if (!current) return;
+    current.cancelled = true;
+    current.runtime?.stop();
+    current.lastReport = null;
+  }
+  function start() {
+    const owner = { cancelled: false, runtime: null, lastReport: null };
+    current = owner;
+    import(api.runtime.getURL('src/content/autoconsent-runtime.js')).then(({ createCookieBannerRuntime }) => {
+      if (owner.cancelled || current !== owner) return;
+      owner.runtime = createCookieBannerRuntime(msg => {
+        if (owner.cancelled || current !== owner) return;
+        if (msg.type === 'report') owner.lastReport = msg;
+        try { send(msg)?.catch?.(() => {}); } catch { stop(); }
+      }, () => send({ type: 'checkCoverage' }));
+    }).catch(() => { if (current === owner) stop(); });
+  }
+  api.runtime.onMessage.addListener(message => {
     if (message?.type !== BACKGROUND_MESSAGE || !message.msg) return;
-    const receive = window.autoconsentReceiveMessage;
-    if (typeof receive !== 'function') return;
-    Promise.resolve(receive(message.msg)).catch(() => {});
+    if (message.msg.type === 'stop') { stop(); return; }
+    Promise.resolve(current?.runtime?.receive(message.msg)).catch(() => stop());
   });
-
+  api.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.cookieBanners?.newValue === 'off') stop();
+  });
+  // Kept in the isolated world for diagnostics; page JavaScript sees neither.
+  window.autoconsentReceiveMessage = message => current?.runtime?.receive(message);
   window.__webbrainAutoconsentBridge = {
     resync() {
-      if (lastReport) send(lastReport);
+      if (current?.cancelled || current?.runtime?.stopped) start();
+      else if (current?.lastReport) {
+        try { send(current.lastReport)?.catch?.(() => {}); } catch { stop(); }
+      }
     },
   };
+  start();
 })();
