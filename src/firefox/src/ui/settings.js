@@ -85,7 +85,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '42.4.0';
+const EXT_VERSION = '42.4.3';
 
 const providersContainer = document.getElementById('providers');
 const generalSearchInput = document.getElementById('input-general-search');
@@ -3816,7 +3816,7 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   body.innerHTML = bodyHtml;
 
   card.appendChild(header);
-  if (!expanded && providerDefinitionId(id, config) === 'webbrain_companion') {
+  if (expanded && providerDefinitionId(id, config) === 'webbrain_companion') {
     const summary = document.createElement('div');
     summary.className = 'provider-companion-summary';
     summary.innerHTML = `<p>${escapeHtml(t('st.providers.companion_guide.summary'))}</p>
