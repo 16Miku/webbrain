@@ -83,6 +83,9 @@ function readTrack(trak, movieTimescale, bytes) {
   const timescale = mdia?.mdhd?.timescale;
   const samples = Array.isArray(trak?.samples) ? trak.samples : [];
   if (!stbl?.stsd || !(timescale > 0) || !samples.length) throw incompatible('a track has no samples');
+  if (samples.some(sample => sample.offset + sample.size > bytes.length)) {
+    throw new VideoJoinError('The clip is incomplete: its samples run past the end of the file.', 'not_mp4');
+  }
   if ((stbl.stsd.entries?.length || 0) !== 1 || samples.some(sample => sample.description_index !== 0)) {
     throw incompatible('a track switches codec settings');
   }
@@ -377,12 +380,17 @@ export function joinMp4Clips(inputs, { maxBytes = Infinity } = {}) {
   const problem = clips.find(clip => clip.problem)?.problem;
   if (problem) throw incompatible(`a clip ${problem}`);
   const reference = clips[0];
+  // The joined file shows every clip at the first clip's size and angle.
+  const placement = (matrix, tkhd) => JSON.stringify([Array.from(matrix || []), tkhd?.width, tkhd?.height, Array.from(tkhd?.matrix || [])]);
   for (const clip of clips.slice(1)) {
     if (clip.tracks.length !== reference.tracks.length) throw incompatible('the clips have different tracks');
     clip.tracks.forEach((track, index) => {
       const expected = reference.tracks[index];
       if (track.handler !== expected.handler || track.timescale !== expected.timescale || !sameBytes(track.stsdKey, expected.stsdKey)) {
         throw incompatible('the clips use different codec settings');
+      }
+      if (placement(clip.matrix, track.tkhd) !== placement(reference.matrix, expected.tkhd)) {
+        throw incompatible('the clips are shown at different sizes or angles');
       }
     });
   }

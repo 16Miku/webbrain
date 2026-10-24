@@ -56,6 +56,8 @@ function parse(bytes) {
 
 const sampleBytes = (bytes, trak) => trak.samples.map(sample => bytes.subarray(sample.offset, sample.offset + sample.size));
 
+const videoOf = file => file.moov.traks[0];
+
 // A fixture with some of its bytes rewritten: `edit(view, file)` gets a view of
 // the copy and the parsed original.
 function patched(name, edit) {
@@ -236,6 +238,17 @@ for (const build of ['chrome', 'firefox']) {
     for (const pair of [['h264-aac-1', 'h264-aac-48px'], ['h264-aac-1', 'vp9-opus-1']]) {
       assert.throws(() => join.joinMp4Clips(pair.map(name => fixtures[name])), error => error.code === 'clips_incompatible', pair.join('+'));
     }
+    // The joined file shows every clip at the first clip's size and angle.
+    for (const placed of [
+      patched('h264-aac-2', (view, file) => view.setUint32(videoOf(file).tkhd.start + 84, 128 << 16)),
+      patched('h264-aac-2', (view, file) => [0, 0x10000, 0, -0x10000, 0].forEach((value, i) => view.setInt32(videoOf(file).tkhd.start + 48 + i * 4, value))),
+    ]) {
+      assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], placed]), error => error.message.includes('different sizes or angles'));
+    }
+    // A clip cut short in the download is not read past its end.
+    const cut = fixtures['h264-aac-2'].slice(0, -100);
+    assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], cut]), error => error.code === 'not_mp4' && /incomplete/.test(error.message));
+    assert.equal(join.mp4DurationSeconds(cut), null);
     assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], new Uint8Array([0, 0, 0, 8, 102, 114, 101, 101])]), error => error.code === 'not_mp4');
     assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], fixtures['h264-aac-2']], { maxBytes: 1000 }), error => error.code === 'too_large');
     assert.equal(join.mp4DurationSeconds(new Uint8Array([1, 2, 3])), null);
@@ -244,7 +257,6 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: clips whose timing cannot be laid end to end are kept apart`, () => {
     const refused = (clips, reason) => assert.throws(() => join.joinMp4Clips(clips),
       error => error.code === 'clips_incompatible' && error.message.includes(reason), reason);
-    const videoOf = file => file.moov.traks[0];
     const edited = ({ milliseconds = 1000, mediaTime = 2048 }) => patched('h264-aac-1', (view, file) => {
       const elst = videoOf(file).edts.elst;
       assert.equal(elst.version, 0);
