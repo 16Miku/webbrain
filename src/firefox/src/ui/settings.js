@@ -3787,7 +3787,7 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   body.innerHTML = bodyHtml;
 
   card.appendChild(header);
-  if (providerDefinitionId(id, config) === 'webbrain_companion') {
+  if (!expanded && providerDefinitionId(id, config) === 'webbrain_companion') {
     const summary = document.createElement('div');
     summary.className = 'provider-companion-summary';
     summary.innerHTML = `<p>${escapeHtml(t('st.providers.companion_guide.summary'))}</p>
