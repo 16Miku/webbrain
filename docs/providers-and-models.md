@@ -314,9 +314,9 @@ into one MP4 without re-encoding (`src/*/src/agent/video-join.js`, which parses
 the clips with the vendored mp4box.js). Videos are capped at 120 seconds and 24
 clips. When the estimate is longer than 120 seconds, WebBrain asks on its own
 card whether to generate the shorter version before any clip is submitted; the
-card never times out, and an unattended run generates nothing. Clips whose
-encodings differ, or that would join into more than 160 MB, are kept as separate
-clips and shown in order. The model never sees the video, so the tool result
+card never times out, and an unattended run generates nothing. Clips that
+cannot be joined this way (different encodings, edit lists that hide frames, or
+more than 160 MB together) are kept as separate clips and shown in order. The model never sees the video, so the tool result
 gives it the video's real length (`durationSeconds`) and `clipCount` to report.
 
 The Act system prompt and planner direct the model to call `generate_image` when

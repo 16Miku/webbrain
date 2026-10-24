@@ -145,6 +145,11 @@ function parseClip(input) {
   const lead = timing.hasEdit ? 0 : timing.firstComposition / timing.timescale;
   for (const track of tracks) track.mediaTime = track.editStart + Math.round(lead * track.timescale);
   const presented = Math.max(0, Math.min(timing.editDuration, timing.compositionEnd - timing.mediaTime));
+  // An edit list that hides whole frames before or after the picture keeps
+  // them in the file; joined, they would play over the neighbouring clip.
+  const pictureEnd = timing.mediaTime + presented;
+  const hidesFrames = timing.samples.some(sample => sample.duration > 0
+    && (sample.cts + sample.duration <= timing.mediaTime || sample.cts >= pictureEnd));
   return {
     bytes,
     movieTimescale,
@@ -152,6 +157,7 @@ function parseClip(input) {
     ftyp: rawBox(bytes, (file.boxes || []).find(box => box.type === 'ftyp')),
     tracks,
     duration: presented / timing.timescale,
+    hidesFrames,
   };
 }
 
@@ -354,6 +360,7 @@ function writeMovie(clips, tracks, totalSeconds) {
 export function joinMp4Clips(inputs, { maxBytes = Infinity } = {}) {
   if (!Array.isArray(inputs) || !inputs.length) throw new VideoJoinError('No clips to join.', 'not_mp4');
   const clips = inputs.map(parseClip);
+  if (clips.some(clip => clip.hidesFrames)) throw incompatible('a clip hides some of its frames with an edit list');
   const reference = clips[0];
   for (const clip of clips.slice(1)) {
     if (clip.tracks.length !== reference.tracks.length) throw incompatible('the clips have different tracks');

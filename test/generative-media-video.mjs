@@ -206,6 +206,22 @@ for (const build of ['chrome', 'firefox']) {
     for (const pair of [['h264-aac-1', 'h264-aac-48px'], ['h264-aac-1', 'vp9-opus-1']]) {
       assert.throws(() => join.joinMp4Clips(pair.map(name => fixtures[name])), error => error.code === 'clips_incompatible', pair.join('+'));
     }
+    // An edit list that hides whole frames (here the video's last half second,
+    // or its first frame) leaves them in the file, where a join would play them.
+    const videoEdit = parse(fixtures['h264-aac-1']).moov.traks[0].edts.elst;
+    assert.equal(videoEdit.version, 0);
+    const edited = ({ milliseconds = 1000, mediaTime = 2048 }) => {
+      const copy = fixtures['h264-aac-1'].slice();
+      new DataView(copy.buffer).setUint32(videoEdit.start + 16, milliseconds);
+      new DataView(copy.buffer).setInt32(videoEdit.start + 20, mediaTime);
+      return copy;
+    };
+    assert.equal(join.mp4DurationSeconds(edited({ milliseconds: 500 })), 0.5);
+    for (const clip of [edited({ milliseconds: 500 }), edited({ mediaTime: 3072 })]) {
+      assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], clip]), error => error.code === 'clips_incompatible');
+    }
+    // Shortening the last frame alone is fine.
+    assert.ok(Math.abs(join.joinMp4Clips([edited({ milliseconds: 960 }), fixtures['h264-aac-2']]).durationSeconds - 1.96) < 0.001);
     assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], new Uint8Array([0, 0, 0, 8, 102, 114, 101, 101])]), error => error.code === 'not_mp4');
     assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], fixtures['h264-aac-2']], { maxBytes: 1000 }), error => error.code === 'too_large');
     assert.equal(join.mp4DurationSeconds(new Uint8Array([1, 2, 3])), null);
