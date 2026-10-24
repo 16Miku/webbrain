@@ -121,6 +121,11 @@ export const PACKAGED_SKILL_SOURCES = Object.freeze([
     name: 'Sanity content (API-first)',
     path: 'skills/cms-sanity.md',
   }),
+  Object.freeze({
+    id: 'video-scenes',
+    name: 'Video scenes',
+    path: 'skills/video-scenes.md',
+  }),
 ]);
 export const DEFAULT_SKILL_SOURCES = Object.freeze(
   PACKAGED_SKILL_SOURCES.filter((source) => [
@@ -137,6 +142,7 @@ export const DEFAULT_SKILL_SOURCES = Object.freeze(
     'cms-strapi',
     'cms-contentful',
     'cms-sanity',
+    'video-scenes',
   ].includes(source.id))
 );
 

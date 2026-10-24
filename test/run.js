@@ -32832,6 +32832,7 @@ test('every bundled skill declares its canonical semantic intents', () => {
     'humanizer': ['email_reply', 'draft_message', 'compose_prose', 'rewrite_text', 'humanize_writing', 'reply_to_thread'],
     'phonr-calls': ['outbound_phone_call', 'phone_inquiry', 'phone_call_status', 'phone_call_result', 'phone_call_recording', 'stop_phone_call'],
     'wordpress-rest-api': ['wordpress_content', 'wordpress_publish', 'wordpress_draft', 'wordpress_taxonomy'],
+    'video-scenes': ['generate_video', 'explainer_video', 'video_story', 'how_to_video'],
     ...Object.fromEntries(['ghost', 'drupal', 'joomla', 'webflow', 'shopify', 'wix', 'strapi', 'contentful', 'sanity']
       .map(cms => [`cms-${cms}`, ['cms_content_management', `${cms}_content`]])),
   };
@@ -32890,6 +32891,35 @@ test('WordPress skill loads on demand in Act/Dev Mid/Full and cannot restore its
         assert.equal(agent._loadSkillForRun(tabId, { skill_id: source.id }).success, false);
         assert.doesNotMatch(agent._buildSystemPrompt(mode, tabId), /Discover the site, session/);
       }
+    }
+  }
+  assert.equal(contents[0], contents[1]);
+});
+
+test('Video scenes skill is a default that loads only when a video needs it', () => {
+  const contents = [];
+  for (const [label, prefix, AgentClass, sources, defaults] of [
+    ['chrome', 'src/chrome', AgentCh, PACKAGED_SKILL_SOURCES_CH, DEFAULT_SKILL_SOURCES_CH],
+    ['firefox', 'src/firefox', AgentFx, PACKAGED_SKILL_SOURCES_FX, DEFAULT_SKILL_SOURCES_FX],
+  ]) {
+    const source = sources.find(s => s.id === 'video-scenes');
+    assert.ok(defaults.some(s => s.id === source?.id), `${label}: missing default`);
+    const content = fs.readFileSync(path.join(ROOT, prefix, source.path), 'utf8');
+    contents.push(content);
+    for (const mode of ['ask', 'act']) {
+      const agent = new AgentClass({ getActive: () => ({ promptTier: 'full' }) });
+      const tabId = 5216;
+      agent.setCustomSkills([{ ...source, content, sourceType: 'built-in', sourceUrl: source.path }]);
+      agent.conversationModes.set(tabId, mode);
+      agent.conversations.set(tabId, [{ role: 'system', content: agent._buildSystemPrompt(mode, tabId) }]);
+      // Only the catalog line is offered up front; the body arrives when loaded.
+      assert.doesNotMatch(agent.conversations.get(tabId)[0].content, /cast and set sheet/, `${label}: ${mode} preloaded the body`);
+      const loader = agent._skillLoaderDefinition(mode, 'full');
+      assert.equal(!!loader, mode === 'act', `${label}: ${mode} catalog`);
+      if (loader) assert.match(loader.function.description, /video-scenes — Video scenes: .*generate_image with scenes/);
+      assert.equal(agent._loadSkillForRun(tabId, { skill_id: source.id }).success, mode === 'act', `${label}: ${mode} load`);
+      assert.equal(agent.conversations.get(tabId)[0].content.includes('cast and set sheet'), mode === 'act', `${label}: ${mode} body after load`);
+      assert.deepEqual(agent._skillToolDefinitions(tabId, mode, 'full'), [], 'instruction-only skill added tools');
     }
   }
   assert.equal(contents[0], contents[1]);
@@ -117904,6 +117934,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'cms-strapi',
     'cms-contentful',
     'cms-sanity',
+    'video-scenes',
   ]);
   assert.deepEqual(PACKAGED_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -117927,6 +117958,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'cms-strapi',
     'cms-contentful',
     'cms-sanity',
+    'video-scenes',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_CH.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -117942,6 +117974,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'cms-strapi',
     'cms-contentful',
     'cms-sanity',
+    'video-scenes',
   ]);
   assert.deepEqual(DEFAULT_SKILL_SOURCES_FX.map((skill) => skill.id), [
     'freeskillz-xyz',
@@ -117957,6 +117990,7 @@ test('settings exposes custom skills tab and packaged skills resource directory'
     'cms-strapi',
     'cms-contentful',
     'cms-sanity',
+    'video-scenes',
   ]);
   assert.equal(DEFAULT_SKILL_SOURCES_CH.some((skill) => skill.id === 'turkish-deasciifier'), false, 'chrome: Turkish deasciifier must remain opt-in');
   assert.equal(DEFAULT_SKILL_SOURCES_FX.some((skill) => skill.id === 'turkish-deasciifier'), false, 'firefox: Turkish deasciifier must remain opt-in');

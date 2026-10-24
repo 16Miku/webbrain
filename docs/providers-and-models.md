@@ -323,7 +323,10 @@ unattended run generates nothing. Clips that cannot be joined this way
 more than 160 MB together) are kept as separate clips and shown in order, and
 the tool result says why (`joinError`), which traces show. The model never sees
 the video, so the tool result gives it the video's real length
-(`durationSeconds`) and `clipCount` to report.
+(`durationSeconds`) and `clipCount` to report. Before writing scenes, the agent can load the default Video scenes
+skill (`skills/video-scenes.md`), which asks for a shared cast and set sheet in
+`prompt`, one filmable action per scene, and demonstrations instead of diagrams
+or on-screen text; it is loaded only for such videos.
 
 The Act system prompt and planner direct the model to call `generate_image` when
 the user asks to generate media. Provider results are treated as untrusted content.
