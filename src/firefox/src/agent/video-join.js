@@ -92,7 +92,7 @@ function readTrack(trak, movieTimescale, bytes) {
   // One edit that skips the codec's start-up delay is normal. Empty edits or
   // several edits describe a timeline these tables cannot carry over.
   const edits = trak.edts?.elst?.entries || [];
-  if (edits.length > 1 || edits.some(edit => edit.media_time < 0 || edit.media_rate_integer !== 1)) {
+  if (edits.length > 1 || edits.some(edit => edit.media_time < 0 || edit.media_rate_integer !== 1 || edit.media_rate_fraction)) {
     throw incompatible('a track has a complex edit list');
   }
   return {
@@ -145,14 +145,18 @@ function parseClip(input) {
   const lead = timing.hasEdit ? 0 : timing.firstComposition / timing.timescale;
   for (const track of tracks) track.mediaTime = track.editStart + Math.round(lead * track.timescale);
   const presented = Math.max(0, Math.min(timing.editDuration, timing.compositionEnd - timing.mediaTime));
-  // An edit list that hides whole frames before or after the picture keeps
-  // them in the file; joined, they would play over the neighbouring clip.
+  // What would keep this clip from being laid end to end with others:
+  // - its first frame must decode without the previous clip's frames;
+  // - an edit list that hides whole frames before or after the picture keeps
+  //   them in the file, where a join would play them over the next clip;
+  // - a track whose first sample comes after the clip's start (by more than a
+  //   millisecond) would need a leading gap, which one edit cannot show.
   const pictureEnd = timing.mediaTime + presented;
-  const hidesFrames = timing.samples.some(sample => sample.duration > 0
-    && (sample.cts + sample.duration <= timing.mediaTime || sample.cts >= pictureEnd));
-  // A track whose first sample comes after the clip's start (more than a
-  // millisecond) would have to begin with a gap, which one edit cannot show.
-  const startsLate = tracks.some(track => track.samples[0].dts - track.mediaTime > track.timescale / 1000);
+  const problem = timing.samples[0].is_sync === false ? 'does not start with a keyframe'
+    : timing.samples.some(sample => sample.duration > 0
+      && (sample.cts + sample.duration <= timing.mediaTime || sample.cts >= pictureEnd)) ? 'hides some of its frames with an edit list'
+      : tracks.some(track => track.samples[0].dts - track.mediaTime > track.timescale / 1000) ? 'has a track that starts after the clip does'
+        : null;
   return {
     bytes,
     movieTimescale,
@@ -160,8 +164,7 @@ function parseClip(input) {
     ftyp: rawBox(bytes, (file.boxes || []).find(box => box.type === 'ftyp')),
     tracks,
     duration: presented / timing.timescale,
-    hidesFrames,
-    startsLate,
+    problem,
   };
 }
 
@@ -199,7 +202,11 @@ function joinTrack(clips, index, starts) {
         previous.size -= samples.pop().size;
       }
       const last = samples[samples.length - 1];
-      last.duration = Math.max(1, target - last.dts);
+      // Decode times only move forward. A clip that must start decoding before
+      // the previous clip's last frame (a longer composition delay) cannot
+      // follow it without moving its picture.
+      if (target <= last.dts) throw incompatible('a clip would start decoding before the previous one ends');
+      last.duration = target - last.dts;
     }
     let dts = samples.length ? samples[samples.length - 1].dts + samples[samples.length - 1].duration : 0;
     chunks.push({ clipIndex, first: samples.length, count: kept.length, size: 0, offset: 0 });
@@ -367,8 +374,8 @@ function writeMovie(clips, tracks, totalSeconds) {
 export function joinMp4Clips(inputs, { maxBytes = Infinity } = {}) {
   if (!Array.isArray(inputs) || !inputs.length) throw new VideoJoinError('No clips to join.', 'not_mp4');
   const clips = inputs.map(parseClip);
-  if (clips.some(clip => clip.hidesFrames)) throw incompatible('a clip hides some of its frames with an edit list');
-  if (clips.some(clip => clip.startsLate)) throw incompatible('a clip has a track that starts after the clip does');
+  const problem = clips.find(clip => clip.problem)?.problem;
+  if (problem) throw incompatible(`a clip ${problem}`);
   const reference = clips[0];
   for (const clip of clips.slice(1)) {
     if (clip.tracks.length !== reference.tracks.length) throw incompatible('the clips have different tracks');

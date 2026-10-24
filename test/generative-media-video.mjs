@@ -56,6 +56,14 @@ function parse(bytes) {
 
 const sampleBytes = (bytes, trak) => trak.samples.map(sample => bytes.subarray(sample.offset, sample.offset + sample.size));
 
+// A fixture with some of its bytes rewritten: `edit(view, file)` gets a view of
+// the copy and the parsed original.
+function patched(name, edit) {
+  const copy = fixtures[name].slice();
+  edit(new DataView(copy.buffer), parse(fixtures[name]));
+  return copy;
+}
+
 // A fragmented clip whose fragments start later: each track's decode times
 // moved by `seconds` ({ vide, soun }).
 function laterFragments(bytes, seconds) {
@@ -228,25 +236,47 @@ for (const build of ['chrome', 'firefox']) {
     for (const pair of [['h264-aac-1', 'h264-aac-48px'], ['h264-aac-1', 'vp9-opus-1']]) {
       assert.throws(() => join.joinMp4Clips(pair.map(name => fixtures[name])), error => error.code === 'clips_incompatible', pair.join('+'));
     }
-    // An edit list that hides whole frames (here the video's last half second,
-    // or its first frame) leaves them in the file, where a join would play them.
-    const videoEdit = parse(fixtures['h264-aac-1']).moov.traks[0].edts.elst;
-    assert.equal(videoEdit.version, 0);
-    const edited = ({ milliseconds = 1000, mediaTime = 2048 }) => {
-      const copy = fixtures['h264-aac-1'].slice();
-      new DataView(copy.buffer).setUint32(videoEdit.start + 16, milliseconds);
-      new DataView(copy.buffer).setInt32(videoEdit.start + 20, mediaTime);
-      return copy;
-    };
-    assert.equal(join.mp4DurationSeconds(edited({ milliseconds: 500 })), 0.5);
-    for (const clip of [edited({ milliseconds: 500 }), edited({ mediaTime: 3072 })]) {
-      assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], clip]), error => error.code === 'clips_incompatible');
-    }
-    // Shortening the last frame alone is fine.
-    assert.ok(Math.abs(join.joinMp4Clips([edited({ milliseconds: 960 }), fixtures['h264-aac-2']]).durationSeconds - 1.96) < 0.001);
     assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], new Uint8Array([0, 0, 0, 8, 102, 114, 101, 101])]), error => error.code === 'not_mp4');
     assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], fixtures['h264-aac-2']], { maxBytes: 1000 }), error => error.code === 'too_large');
     assert.equal(join.mp4DurationSeconds(new Uint8Array([1, 2, 3])), null);
+  });
+
+  test(`${build}: clips whose timing cannot be laid end to end are kept apart`, () => {
+    const refused = (clips, reason) => assert.throws(() => join.joinMp4Clips(clips),
+      error => error.code === 'clips_incompatible' && error.message.includes(reason), reason);
+    const videoOf = file => file.moov.traks[0];
+    const edited = ({ milliseconds = 1000, mediaTime = 2048 }) => patched('h264-aac-1', (view, file) => {
+      const elst = videoOf(file).edts.elst;
+      assert.equal(elst.version, 0);
+      view.setUint32(elst.start + 16, milliseconds);
+      view.setInt32(elst.start + 20, mediaTime);
+    });
+    // An edit list that hides whole frames (the last half second, or the first
+    // frame) leaves them in the file, where a join would play them.
+    assert.equal(join.mp4DurationSeconds(edited({ milliseconds: 500 })), 0.5);
+    refused([fixtures['h264-aac-1'], edited({ milliseconds: 500 })], 'hides some of its frames');
+    refused([fixtures['h264-aac-1'], edited({ mediaTime: 3072 })], 'hides some of its frames');
+    // Shortening the last frame alone is fine.
+    assert.ok(Math.abs(join.joinMp4Clips([edited({ milliseconds: 960 }), fixtures['h264-aac-2']]).durationSeconds - 1.96) < 0.001);
+    // A one-second-longer composition delay keeps the picture where it was but
+    // starts decoding a second earlier: such a clip can open a video, not follow one.
+    const delayed = patched('h264-aac-2', (view, file) => {
+      const ctts = videoOf(file).mdia.minf.stbl.ctts;
+      ctts.sample_offsets.forEach((offset, i) => view.setUint32(ctts.start + 16 + i * 8 + 4, offset + 12288));
+      view.setInt32(videoOf(file).edts.elst.start + 20, videoOf(file).edts.elst.entries[0].media_time + 12288);
+    });
+    assert.equal(join.mp4DurationSeconds(delayed), 1);
+    refused([fixtures['h264-aac-1'], delayed], 'start decoding before the previous one ends');
+    const output = parse(join.joinMp4Clips([delayed, fixtures['h264-aac-1']]).bytes);
+    const video = videoOf(output);
+    const times = video.samples.map(sample => sample.cts - video.edts.elst.entries[0].media_time).sort((a, b) => a - b);
+    assert.deepEqual(times.map(value => value / 1024), Array.from({ length: 24 }, (_, i) => i));
+    assert.deepEqual(shown(output, video), { from: 0, to: 2, movie: 2 });
+    // An edit that plays at another speed, and a clip that does not open on a keyframe.
+    refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => view.setInt16(videoOf(file).edts.elst.start + 26, 0x4000))],
+      'complex edit list');
+    refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => view.setUint32(videoOf(file).mdia.minf.stbl.stss.start + 16, 2))],
+      'does not start with a keyframe');
   });
 
   test(`${build}: scenes fit the model's clip lengths and stay within two minutes`, () => {
