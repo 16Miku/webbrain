@@ -630,8 +630,8 @@ Chrome CSS patch records include the top-level `documentId` and a patch-specific
 Settings -> Skills stores enabled skills in `customSkills` (`chrome.storage.local`
 or `browser.storage.local`). On startup, `background.js` loads packaged default
 skills from `skills/*`, adds any missing default (currently FreeSkillz.xyz, the
-email verification-code helper, and Humanizer), and refreshes an
-existing
+email verification-code helper, Humanizer, the WordPress and CMS skills, and
+Video scenes), and refreshes an existing
 built-in skill record when the packaged copy changes. If the user removes a
 default skill, its removal tombstone prevents it from being silently re-added;
 new default IDs can still be migrated into existing installations.

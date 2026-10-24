@@ -307,10 +307,11 @@ estimates how long the requested video should run (`estimated_duration`). A
 single clip can set `duration`, `aspect_ratio` and `resolution`, which are
 checked against the model's catalog entry (`supported_durations`,
 `supported_aspect_ratios`, `supported_resolutions`) before anything is
-submitted. A longer video is passed as `scenes`: WebBrain fits each scene to the
-clip lengths the model offers, splitting a scene that is longer than its longest
-clip, generates up to three clips at a time with one retry each, and joins them
-into one MP4 without re-encoding (`src/*/src/agent/video-join.js`, which parses
+submitted. A longer video is passed as `scenes`: WebBrain makes one clip per
+scene at a length the model offers (a scene longer than its longest clip is
+refused, so the agent splits it into scenes with their own prompts), generates
+up to three clips at a time with one retry each, and joins them into one MP4
+without re-encoding (`src/*/src/agent/video-join.js`, which parses
 the clips with the vendored mp4box.js). A clip's sound often ends a little
 before its picture or starts after it; with AAC-LC sound (the usual MP4 audio,
 which Grok Imagine returns) the joiner fills those gaps with silent frames, so
@@ -323,7 +324,10 @@ unattended run generates nothing. Clips that cannot be joined this way
 more than 160 MB together) are kept as separate clips and shown in order, and
 the tool result says why (`joinError`), which traces show. The model never sees
 the video, so the tool result gives it the video's real length
-(`durationSeconds`) and `clipCount` to report.
+(`durationSeconds`) and `clipCount` to report. Before writing scenes, the agent can load the default Video scenes
+skill (`skills/video-scenes.md`), which asks for a shared cast and set sheet in
+`prompt`, one filmable action per scene, and demonstrations instead of diagrams
+or on-screen text; it is loaded only for such videos.
 
 The Act system prompt and planner direct the model to call `generate_image` when
 the user asks to generate media. Provider results are treated as untrusted content.

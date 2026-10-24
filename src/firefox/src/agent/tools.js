@@ -1354,7 +1354,7 @@ export const AGENT_TOOLS = [
           resolution: { type: 'string', description: 'Video only, for example "720p".' },
           scenes: {
             type: 'array',
-            description: 'Video only: the scenes of a video longer than one clip, in order, at most 120 seconds in total.',
+            description: 'Video only: the scenes of a video longer than one clip, in order, at most 120 seconds in total. Load the video-scenes skill first when it is listed.',
             items: {
               type: 'object',
               properties: {

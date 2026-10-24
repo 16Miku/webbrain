@@ -422,13 +422,13 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   test(`${build}: scenes fit the model's clip lengths and stay within two minutes`, () => {
-    const { clips, total } = media.planVideoClips([{ prompt: 'Opening', duration: 12 }, { prompt: 'Long walk', duration: 20 }], [5, 10, 15]);
-    assert.deepEqual(clips, [
-      { prompt: 'Opening', duration: 15 },
-      { prompt: 'Long walk (part 1 of 2)', duration: 10 },
-      { prompt: 'Long walk (part 2 of 2)', duration: 10 },
-    ]);
-    assert.equal(total, 35);
+    const { clips, total } = media.planVideoClips([{ prompt: 'Opening', duration: 12 }, { prompt: 'Long walk', duration: 4 }], [5, 10, 15]);
+    assert.deepEqual(clips, [{ prompt: 'Opening', duration: 15 }, { prompt: 'Long walk', duration: 5 }]);
+    assert.equal(total, 20);
+    // A scene longer than the longest clip is the agent's to split: halves of
+    // one prompt would be the same clip twice.
+    assert.throws(() => media.planVideoClips([{ prompt: 'Opening', duration: 12 }, { prompt: 'Long walk', duration: 20 }], [5, 10, 15]),
+      /^Error: Scene 2 is 20 s, and this model makes clips of up to 15 s\. Split it into scenes of up to 15 s, each with its own prompt/);
     assert.equal(media.planVideoClips(scenes(8, 15), grok.supported_durations).total, 120);
     assert.throws(() => media.planVideoClips(scenes(9, 15), grok.supported_durations), /up to 120 s/);
     assert.throws(() => media.planVideoClips(scenes(25, 4), grok.supported_durations), /at most 24/);
@@ -479,7 +479,8 @@ for (const build of ['chrome', 'firefox']) {
     assert.ok(api.calls.maxInFlight <= 3, `at most three clips at a time (saw ${api.calls.maxInFlight})`);
     api.calls.submits.forEach((body, index) => {
       assert.equal(body.duration, 15);
-      assert.equal(body.prompt, `Flat motion graphics, navy background\n\nScene ${index + 1} of 4: Scene idea ${index + 1}`);
+      // The shared look, then the scene, with no scene number for the model to draw.
+      assert.equal(body.prompt, `Flat motion graphics, navy background\n\nScene idea ${index + 1}`);
     });
     assert.equal(result.clipCount, 4);
     assert.equal(result.durationSeconds, 4, 'the real length of the joined clips');
@@ -521,7 +522,7 @@ for (const build of ['chrome', 'firefox']) {
     const recovered = await generate({ prompt: 'Story', scenes: scenes(3, 10), estimated_duration: 30 }, { fetchImpl: retried.fetchImpl });
     assert.equal(recovered.success, true, recovered.error);
     assert.equal(retried.calls.submits.length, 4, 'three clips and one retry');
-    const failing = videoApi({ entry: grok, fail: (_index, body) => body.prompt.includes('Scene 2 of 3') });
+    const failing = videoApi({ entry: grok, fail: (_index, body) => body.prompt.endsWith('Scene idea 2') });
     const stored = assets.size;
     const failed = await generate({ prompt: 'Story', scenes: scenes(3, 10), estimated_duration: 30 }, { fetchImpl: failing.fetchImpl });
     assert.equal(failed.success, false);
