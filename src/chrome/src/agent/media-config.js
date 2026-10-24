@@ -66,6 +66,13 @@ export function isImageGenConfigured(config) {
   try { validateMediaConfig(config); return true; } catch { return false; }
 }
 
+export function imageGenAvailability({ configured = false, tier = 'full', mode = 'ask', readOnlyProfile = false } = {}) {
+  if (!configured) return 'not_configured';
+  if (tier !== 'full') return 'tier_restricted';
+  if (readOnlyProfile) return 'profile_restricted';
+  return mode === 'act' || mode === 'dev' ? 'available' : 'ask_mode';
+}
+
 export function mediaPermissionUrl(config) {
   switch (mediaProvider(config)) {
     case 'fal': return 'https://queue.fal.run';
