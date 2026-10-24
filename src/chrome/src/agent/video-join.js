@@ -22,6 +22,9 @@ export class VideoJoinError extends Error {
 const incompatible = reason => new VideoJoinError(`The clips cannot be joined into one file: ${reason}.`, 'clips_incompatible');
 const MEDIA_HEADER_TYPES = new Set(['vmhd', 'smhd', 'nmhd', 'sthd', 'hmhd']);
 const MAX_UINT32 = 2 ** 32 - 1;
+// Silence fills gaps in the sound, as long as the clips run: clips that claim
+// to run for hours are not joined.
+const MAX_SECONDS = 3600;
 
 function toArrayBuffer(input) {
   if (input instanceof ArrayBuffer) return input;
@@ -77,6 +80,34 @@ function sampleDescriptionKey(bytes, stsd) {
   return key;
 }
 
+// A silent frame for AAC-LC (mono or stereo, 1024 samples), to fill gaps in a
+// clip's sound so it plays continuously: players such as Chrome time audio by
+// the samples they play, so a gap in timestamps would shift the sound against
+// the picture. The frame is one channel element with an empty spectrum
+// (max_sfb 0). Other codecs have none (null), and their tracks are joined as
+// video tracks are.
+const SILENT_AAC_FRAMES = { 1: Uint8Array.of(0x00, 0x00, 0x00, 0x07), 2: Uint8Array.of(0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0e) };
+const AAC_SAMPLE_RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+
+function silentFrame(entry, timescale) {
+  if (entry?.type !== 'mp4a') return null;
+  const config = entry.esds?.esd?.descs?.find(desc => desc.tag === 4)?.descs?.find(desc => desc.tag === 5)?.data;
+  if (!config || config.length < 2) return null;
+  const objectType = config[0] >> 3;
+  const rate = AAC_SAMPLE_RATES[((config[0] & 7) << 1) | (config[1] >> 7)];
+  const channels = (config[1] >> 3) & 15;
+  // AAC-LC with 1024-sample frames and no core coder; only an explicit
+  // "no SBR" extension may follow.
+  if (objectType !== 2 || !rate || !SILENT_AAC_FRAMES[channels] || (config[1] & 0x06)) return null;
+  if (config.length > 2) {
+    const syncExtension = (config[2] << 3) | (config[3] >> 5);
+    const extensionType = config[3] & 0x1f;
+    if (config.length < 5 || syncExtension !== 0x2b7 || extensionType !== 5 || (config[4] & 0x80)) return null;
+  }
+  const duration = 1024 * timescale / rate;
+  return Number.isInteger(duration) ? { bytes: SILENT_AAC_FRAMES[channels], duration } : null;
+}
+
 function readTrack(trak, movieTimescale, bytes) {
   const mdia = trak?.mdia, minf = mdia?.minf, stbl = minf?.stbl;
   const handler = mdia?.hdlr?.handler;
@@ -108,20 +139,29 @@ function readTrack(trak, movieTimescale, bytes) {
   // Reordered frames (B-frames) are shown after they are decoded, so the
   // track's picture ends at its last composition time, not its last decode time.
   const compositionEnd = samples.reduce((end, sample) => Math.max(end, sample.cts + sample.duration), 0);
-  // One edit that skips the codec's start-up delay is normal. Empty edits or
-  // several edits describe a timeline these tables cannot carry over.
+  // One edit that skips the codec's start-up delay is normal, and so is an
+  // empty edit before it (a track that starts late). Other edit lists describe
+  // a timeline these tables cannot carry over.
   const edits = trak.edts?.elst?.entries || [];
-  if (edits.length > 1 || edits.some(edit => edit.media_time < 0 || edit.media_rate_integer !== 1 || edit.media_rate_fraction)) {
+  const empty = edits.length === 2 && edits[0].media_time === -1 ? edits[0] : null;
+  const media = edits[empty ? 1 : 0];
+  if (edits.length > (empty ? 2 : 1)
+      || (media && (media.media_time < 0 || media.media_rate_integer !== 1 || media.media_rate_fraction))) {
     throw incompatible('a track has a complex edit list');
   }
+  const ticks = movieTicks => Math.round(movieTicks * timescale / movieTimescale);
+  const delay = empty ? ticks(empty.segment_duration) : 0;
+  const editDuration = media && media.segment_duration > 0 ? ticks(media.segment_duration) : Infinity;
   return {
     handler,
     timescale,
     samples,
-    hasEdit: edits.length > 0,
-    editStart: edits.length ? edits[0].media_time : 0,
-    editDuration: edits.length && edits[0].segment_duration > 0
-      ? Math.round(edits[0].segment_duration * timescale / movieTimescale) : Infinity,
+    hasEdit: !!media,
+    // The media time the movie shows at its start, before any lead.
+    editStart: (media ? media.media_time : 0) - delay,
+    editDuration,
+    editEnd: media ? media.media_time + editDuration : Infinity,
+    silence: handler === 'soun' ? silentFrame(stbl.stsd.entries[0], timescale) : null,
     firstComposition: samples.reduce((min, sample) => Math.min(min, sample.cts), Infinity),
     compositionEnd,
     tkhd: trak.tkhd,
@@ -170,18 +210,23 @@ function parseClip(input) {
   // - its first frame must decode without the previous clip's frames;
   // - an edit list that hides whole frames before or after the picture keeps
   //   them in the file, where a join would play them over the next clip;
-  // - a track whose first sample comes after the clip's start (by more than a
-  //   millisecond) would need a leading gap, which one edit cannot show;
-  // - a track whose own edit ends before the picture (by more than one of its
-  //   frames) would play on to the next clip in the joined file.
+  // - a track whose first sample comes after the clip's start needs a leading
+  //   gap: silent frames fill it where the codec allows, as long as the sound
+  //   starts before the clip ends; otherwise one edit cannot show more than a
+  //   millisecond of it;
+  // - a track whose own edit hides more than one of its frames at the end
+  //   would play that sound on into the next clip in the joined file.
   const pictureEnd = timing.mediaTime + presented;
-  const endsEarly = track => track !== timing && Number.isFinite(track.editDuration)
-    && track.editDuration < Math.round(presented / timing.timescale * track.timescale)
-      - track.samples.reduce((longest, sample) => Math.max(longest, sample.duration), 0);
+  const startsLate = track => {
+    const late = track.samples[0].dts - track.mediaTime;
+    return track.silence ? late >= presented / timing.timescale * track.timescale : late > track.timescale / 1000;
+  };
+  const endsEarly = track => track.compositionEnd - track.editEnd
+    > track.samples.reduce((longest, sample) => Math.max(longest, sample.duration), 0);
   const problem = timing.samples[0].is_sync === false ? 'does not start with a keyframe'
     : timing.samples.some(sample => sample.duration > 0
       && (sample.cts + sample.duration <= timing.mediaTime || sample.cts >= pictureEnd)) ? 'hides some of its frames with an edit list'
-      : tracks.some(track => track.samples[0].dts - track.mediaTime > track.timescale / 1000) ? 'has a track that starts after the clip does'
+      : tracks.some(startsLate) ? 'has a track that starts after the clip does'
         : tracks.some(endsEarly) ? 'ends a track early with an edit list'
           : null;
   return {
@@ -200,57 +245,113 @@ export function mp4DurationSeconds(input) {
   try { return parseClip(input).duration; } catch { return null; }
 }
 
-// Lays out one output track: each clip's samples in order, with the previous
-// clip's last sample lengthened or shortened so that this clip starts where
-// the timeline says. At each join the audio follows the picture: a later
-// clip's codec start-up frames are dropped, and so are the previous clip's
-// frames that would mostly play after this clip's audio begins (padding, or
-// audio longer than the picture). Video frames are never dropped.
+// Lays out one output track: each clip's samples in order, so that each clip
+// starts where the timeline says. At each join the audio follows the picture:
+// a later clip's codec start-up frames (those that would mostly play before
+// the clip starts) are dropped, and so are the previous clip's frames that
+// would mostly play after this clip's sound begins (padding, or sound longer
+// than the picture). Video frames are never dropped.
+//
+// Where the codec has a silent frame (AAC-LC), the sound is laid out as the
+// frames a player plays: each frame at its full length, one after another,
+// with silent frames wherever a clip's timeline runs ahead (sound shorter than
+// the picture, sound that starts late, gaps in a clip's own timing). Every
+// frame then plays within half a frame of its time, and the sound stays with
+// the picture in players that time audio by the samples they play. A clip's
+// start-up frames stay right before its first frame where there is room for
+// them, so that frame decodes as it was encoded. Otherwise the previous clip's
+// last sample is lengthened or shortened to meet the next clip, as it is for
+// video.
 function joinTrack(clips, index, starts) {
   const first = clips[0].tracks[index];
-  // The output's decode times start at 0, wherever the first clip's start
-  // (fragmented files can start at any decode time): its start in the output.
-  const mediaStart = Math.max(0, first.mediaTime - first.samples[0].dts);
+  const silence = clips.every(clip => clip.tracks[index].silence) ? first.silence : null;
+  const frame = silence?.duration;
   const samples = [];
   const chunks = [];
+  // The media time the output's edit starts at: where the first clip's start
+  // falls in the output (fragmented files can start at any decode time).
+  let mediaStart = 0;
+  let dts = 0;
   clips.forEach((clip, clipIndex) => {
     const track = clip.tracks[index];
     const audio = track.handler === 'soun';
-    const kept = audio && clipIndex > 0
-      ? track.samples.filter(sample => sample.cts + sample.duration / 2 >= track.mediaTime)
-      : track.samples;
-    if (!kept.length) throw incompatible('a clip has an empty track');
-    if (samples.length) {
-      const target = Math.round(starts[clipIndex] * track.timescale) + (kept[0].dts - track.mediaTime) + mediaStart;
+    const laidOut = audio && !!silence;
+    const startup = audio ? track.samples.findIndex(sample => sample.cts + sample.duration / 2 >= track.mediaTime) : 0;
+    if (startup < 0) throw incompatible('a clip has an empty track');
+    const kept = track.samples.slice(clipIndex > 0 || laidOut ? startup : 0);
+    // Where the clip's first kept sample goes, and how many frames (silence,
+    // then the clip's own start-up frames) come right before it.
+    let base = 0;
+    let gap = 0;
+    if (clipIndex === 0) {
+      if (laidOut) {
+        // Whole frames before a sound that starts late, enough to reach its start.
+        gap = Math.max(startup, Math.ceil((kept[0].cts - track.mediaTime) / frame));
+        base = gap * frame;
+        mediaStart = base - (kept[0].cts - track.mediaTime);
+      } else {
+        mediaStart = Math.max(0, track.mediaTime - track.samples[0].dts);
+      }
+    } else {
+      base = Math.round(starts[clipIndex] * track.timescale) + (kept[0].dts - track.mediaTime) + mediaStart;
       const previous = chunks[chunks.length - 1];
       while (audio && previous.count > 1
-          && samples[samples.length - 1].dts + samples[samples.length - 1].duration / 2 >= target) {
+          && samples[samples.length - 1].dts + samples[samples.length - 1].duration / 2 >= base) {
         previous.count -= 1;
         previous.size -= samples.pop().size;
       }
       const last = samples[samples.length - 1];
-      // Decode times only move forward. A clip that must start decoding before
-      // the previous clip's last frame (a longer composition delay) cannot
-      // follow it without moving its picture.
-      if (target <= last.dts) throw incompatible('a clip would start decoding before the previous one ends');
-      last.duration = target - last.dts;
+      if (laidOut) {
+        dts = last.dts + last.duration;
+        gap = Math.max(0, Math.round((base - dts) / frame));
+      } else {
+        // Decode times only move forward. A clip that must start decoding
+        // before the previous clip's last frame (a longer composition delay)
+        // cannot follow it without moving its picture.
+        if (base <= last.dts) throw incompatible('a clip would start decoding before the previous one ends');
+        last.duration = base - last.dts;
+        dts = base;
+      }
     }
-    let dts = samples.length ? samples[samples.length - 1].dts + samples[samples.length - 1].duration : 0;
-    chunks.push({ clipIndex, first: samples.length, count: kept.length, size: 0, offset: 0 });
-    const chunk = chunks[chunks.length - 1];
-    for (const sample of kept) {
-      samples.push({
-        dts,
-        duration: sample.duration,
-        offset: sample.cts - sample.dts,
-        size: sample.size,
-        source: sample.offset,
-        sync: sample.is_sync !== false,
-        groups: track.groups.map(group => group.indices[sample.number] ?? 0),
-        clipIndex,
-      });
+    const chunk = { clipIndex, first: samples.length, count: 0, size: 0, offset: 0 };
+    chunks.push(chunk);
+    const push = sample => {
+      samples.push(sample);
+      chunk.count += 1;
       chunk.size += sample.size;
       dts += sample.duration;
+    };
+    const copy = (sample, duration) => push({
+      dts,
+      duration,
+      offset: sample.cts - sample.dts,
+      size: sample.size,
+      source: sample.offset,
+      sync: sample.is_sync !== false,
+      groups: track.groups.map(group => group.indices[sample.number] ?? 0),
+      clipIndex,
+    });
+    const quiet = () => push({ dts, duration: frame, offset: 0, size: silence.bytes.length, data: silence.bytes,
+      sync: true, groups: first.groups.map(() => 0), clipIndex });
+    for (let k = gap; k > 0; k--) {
+      if (k <= startup) copy(track.samples[startup - k], frame);
+      else quiet();
+    }
+    // Where the clip ends in the output: its frames that would start later
+    // would play over the next clip, or after the video ends, so they are dropped.
+    const end = Math.round((starts[clipIndex] + clip.duration) * track.timescale) + mediaStart;
+    for (const [i, sample] of kept.entries()) {
+      if (laidOut) {
+        const target = base + sample.dts - kept[0].dts;
+        if (i > 0 && target >= end) break;
+        // Silence up to where this frame belongs.
+        for (let k = Math.round((target - dts) / frame); k > 0; k--) quiet();
+      }
+      // An AAC-LC frame plays 1024 samples, even a clip's last one that its
+      // sample table shortens to where the clip's sound ends; only the joined
+      // video's very last frame keeps its own length.
+      const final = clipIndex === clips.length - 1 && i === kept.length - 1;
+      copy(sample, laidOut && !final ? frame : sample.duration);
     }
   });
   const mediaDuration = samples.reduce((sum, sample) => sum + sample.duration, 0);
@@ -436,6 +537,7 @@ export function joinMp4Clips(inputs, { maxBytes = Infinity } = {}) {
   const starts = [];
   let totalSeconds = 0;
   for (const clip of clips) { starts.push(totalSeconds); totalSeconds += clip.duration; }
+  if (totalSeconds > MAX_SECONDS) throw new VideoJoinError('The joined video would be longer than an hour.', 'too_large');
   const tracks = reference.tracks.map((_track, index) => joinTrack(clips, index, starts));
   const payload = tracks.reduce((sum, track) => sum + track.chunks.reduce((size, chunk) => size + chunk.size, 0), 0);
   const ftyp = reference.ftyp || (() => {
@@ -471,7 +573,7 @@ export function joinMp4Clips(inputs, { maxBytes = Infinity } = {}) {
     const source = clips[chunk.clipIndex].bytes;
     for (let i = chunk.first; i < chunk.first + chunk.count; i++) {
       const sample = track.samples[i];
-      out.set(source.subarray(sample.source, sample.source + sample.size), position);
+      out.set(sample.data || source.subarray(sample.source, sample.source + sample.size), position);
       position += sample.size;
     }
   }

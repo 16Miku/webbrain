@@ -43,6 +43,7 @@ const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(b
 const soon = { 'Retry-After': '0.001' };
 const fixtures = Object.fromEntries(await Promise.all([
   'h264-aac-1', 'h264-aac-2', 'h264-aac-48px', 'h264-aac-fragmented-1', 'h264-aac-fragmented-2', 'vp9-opus-1', 'vp9-opus-2',
+  'h264-aac-short-audio', 'h264-aac-late-audio', 'vp9-opus-late-audio',
 ].map(async name => [name, new Uint8Array(await fs.readFile(new URL(`./fixtures/video/${name}.mp4`, import.meta.url)))])));
 const { createFile, MP4BoxBuffer } = await import('../src/chrome/vendor/mp4box/mp4box.all.mjs');
 
@@ -58,6 +59,7 @@ const sampleBytes = (bytes, trak) => trak.samples.map(sample => bytes.subarray(s
 const boxBytes = (bytes, box) => bytes.subarray(box.start, box.start + box.size);
 
 const videoOf = file => file.moov.traks[0];
+const audioOf = file => file.moov.traks[1];
 
 // A fixture with some of its bytes rewritten: `edit(view, file)` gets a view of
 // the copy and the parsed original.
@@ -188,14 +190,17 @@ for (const build of ['chrome', 'firefox']) {
     const times = video.samples.map(sample => sample.cts - video.edts.elst.entries[0].media_time).sort((a, b) => a - b);
     assert.deepEqual(times.map(value => value / 1024), Array.from({ length: 24 }, (_, i) => i));
     assert.deepEqual(shown(output, video), { from: 0, to: 2, movie: 2 });
-    assert.equal(shown(output, audio).to, 2);
     // Audio: the first clip's frames are all kept; the second clip's start-up
-    // frame is dropped, the rest is copied as is, and its first real frame
-    // plays exactly one second in, with its picture.
+    // frame is dropped and the rest is copied as is. Every frame but the last
+    // plays in full (1024 samples, as AAC frames do), so the second clip's first
+    // real frame plays within half a frame (512 samples) of one second in, with
+    // its picture, and the sound ends within half a frame of the picture.
     const [firstAudio, secondAudio] = sources.map(source => sampleBytes(source, parse(source).moov.traks[1]));
     assert.deepEqual(sampleBytes(bytes, audio).slice(0, 17), firstAudio);
     assert.deepEqual(sampleBytes(bytes, audio).slice(17), secondAudio.slice(1));
-    assert.equal(audio.samples[17].cts - audio.edts.elst.entries[0].media_time, 16000);
+    assert.ok(audio.samples.every((sample, i) => sample.duration === 1024 || i === audio.samples.length - 1));
+    assert.ok(Math.abs(audio.samples[17].cts - audio.edts.elst.entries[0].media_time - 16000) <= 512);
+    assert.ok(Math.abs(shown(output, audio).to - 2) <= 0.032);
     // AAC's pre-roll for seeking (a 'roll' sample group) covers every frame.
     const sourceRoll = parse(sources[0]).moov.traks[1].mdia.minf.stbl.sgpds[0];
     assert.deepEqual(boxBytes(bytes, audio.mdia.minf.stbl.sgpds[0]), boxBytes(sources[0], sourceRoll));
@@ -205,16 +210,20 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: fragmented and VP9/Opus clips join too`, () => {
     // [clips, codecs, audio frames kept from the first clip, start-up frames dropped
     //  from the second, how far into its first kept frame the second clip's sound
-    //  starts, the audio's pre-roll groups as runs of [frames, group]]
-    for (const [names, codecs, kept, dropped, lead, roll] of [
+    //  starts, the audio's pre-roll groups as runs of [frames, group], and how far
+    //  (in samples) the sound may play from its time]
+    for (const [names, codecs, kept, dropped, lead, roll, slack] of [
       // No edit lists: the picture starts after a B-frame delay (2048/12288 s),
-      // so every track is shown from there and the movie starts at its first picture.
-      [['h264-aac-fragmented-1', 'h264-aac-fragmented-2'], ['avc1', 'mp4a'], 17, 1, 0, []],
+      // so every track is shown from there and the movie starts at its first
+      // picture. The first audio frame (the encoder's start-up) lasts until
+      // then; it plays right before the sound, as in a file with an edit list.
+      // AAC frames play in full, each within half a frame of its time.
+      [['h264-aac-fragmented-1', 'h264-aac-fragmented-2'], ['avc1', 'mp4a'], 17, 1, 0, [], 512],
       // Opus: the first clip's short final frame would play over the second
       // clip's first frame, whose first 312 samples are the decoder's start-up,
       // so the short frame is dropped rather than squeezed. Each clip keeps its
       // own pre-roll groups (none for its first four frames).
-      [['vp9-opus-1', 'vp9-opus-2'], ['vp09', 'Opus'], 50, 0, 312, [[4, 0], [46, 1], [4, 0], [47, 1]]],
+      [['vp9-opus-1', 'vp9-opus-2'], ['vp09', 'Opus'], 50, 0, 312, [[4, 0], [46, 1], [4, 0], [47, 1]], 0],
     ]) {
       const label = names.join('+');
       const { bytes, durationSeconds } = join.joinMp4Clips(names.map(name => fixtures[name]));
@@ -224,22 +233,103 @@ for (const build of ['chrome', 'firefox']) {
       assert.deepEqual(output.moov.traks.map(trak => trak.mdia.minf.stbl.stsd.entries[0].type), codecs, label);
       assert.equal(video.samples.length, 24, label);
       assert.deepEqual(shown(output, video), { from: 0, to: 2, movie: 2 }, `${label}: the picture runs from 0 to the declared length`);
-      assert.equal(shown(output, audio).to, 2, `${label}: and so does the sound`);
+      assert.ok(Math.abs(shown(output, audio).to - 2) <= slack / audio.mdia.mdhd.timescale, `${label}: and so does the sound`);
       const [firstAudio, secondAudio] = names.map(name => parse(fixtures[name]).moov.traks[1]);
       assert.deepEqual(sampleBytes(bytes, audio).slice(0, kept), sampleBytes(fixtures[names[0]], firstAudio).slice(0, kept), `${label}: the first clip's audio up to the join`);
       assert.deepEqual(sampleBytes(bytes, audio).slice(kept), sampleBytes(fixtures[names[1]], secondAudio).slice(dropped), `${label}: the second clip's audio`);
-      assert.equal(audio.samples[kept].cts + lead - audio.edts.elst.entries[0].media_time, audio.mdia.mdhd.timescale,
+      assert.ok(Math.abs(audio.samples[kept].cts + lead - audio.edts.elst.entries[0].media_time - audio.mdia.mdhd.timescale) <= slack,
         `${label}: the second clip's sound starts one second in`);
       const shortest = Math.min(...secondAudio.samples.map(sample => sample.duration));
       assert.ok(audio.samples.every(sample => sample.duration >= shortest), `${label}: no frame is squeezed`);
       assert.deepEqual((audio.mdia.minf.stbl.sbgps[0]?.entries || []).map(entry => [entry.sample_count, entry.group_description_index]), roll, `${label}: pre-roll groups`);
     }
     // Fragments can start at any decode time: five seconds later, the clips
-    // join into the same file. A track that starts after the picture cannot join.
+    // join into the same file.
     const fragmented = [fixtures['h264-aac-fragmented-1'], fixtures['h264-aac-fragmented-2']];
     assert.equal(parse(laterFragments(fragmented[0], { vide: 5, soun: 5 })).moov.traks[0].samples[0].dts, 5 * 12288);
     assert.deepEqual(join.joinMp4Clips(fragmented.map(clip => laterFragments(clip, { vide: 5, soun: 5 }))).bytes, join.joinMp4Clips(fragmented).bytes);
-    assert.throws(() => join.joinMp4Clips([laterFragments(fragmented[0], { soun: 5 }), fragmented[1]]), error => error.code === 'clips_incompatible');
+  });
+
+  test(`${build}: sound shorter than its picture, or starting after it, is filled with silence`, () => {
+    // 'S' for AAC-LC's silent mono frame (an empty spectrum), '#' for sound.
+    const marks = (bytes, trak) => sampleBytes(bytes, trak)
+      .map(data => (data.length === 4 && [0, 0, 0, 7].every((value, i) => data[i] === value) ? 'S' : '#')).join('');
+    const joined = clips => {
+      const { bytes, durationSeconds } = join.joinMp4Clips(clips.map(clip => (typeof clip === 'string' ? fixtures[clip] : clip)));
+      const output = parse(bytes);
+      return { bytes, durationSeconds, output, audio: audioOf(output) };
+    };
+    // Where a joined frame plays, in seconds; the sound may start up to half a frame (32 ms) off.
+    const playsAt = (audio, index) => (audio.samples[index].cts - audio.edts.elst.entries[0].media_time) / audio.mdia.mdhd.timescale;
+    // A clip whose sound ends 0.25 s before its picture (as generated clips' sound
+    // often ends a little early): four frames carry it to the next clip, three
+    // silent ones and the next clip's start-up frame, which primes the decoder
+    // so that clip's first frame sounds as it was encoded.
+    let { bytes, durationSeconds, output, audio } = joined(['h264-aac-short-audio', 'h264-aac-2']);
+    assert.equal(durationSeconds, 2);
+    assert.deepEqual(shown(output, videoOf(output)), { from: 0, to: 2, movie: 2 });
+    assert.equal(marks(bytes, audio), `${'#'.repeat(13)}SSS${'#'.repeat(17)}`);
+    const nextClip = fixtures['h264-aac-2'];
+    assert.deepEqual(sampleBytes(bytes, audio).slice(16), sampleBytes(nextClip, parse(nextClip).moov.traks[1]));
+    assert.ok(Math.abs(playsAt(audio, 17) - 1) <= 0.032, `the second clip's sound starts at ${playsAt(audio, 17)} s`);
+    // Every frame but the video's last counts in full, so the sound plays
+    // without gaps and stays with the picture.
+    assert.ok(audio.samples.every((sample, i) => (sample.duration === 1024 || i === audio.samples.length - 1)
+      && (!i || sample.dts === audio.samples[i - 1].dts + 1024)));
+    // A clip whose sound starts 0.25 s in (an empty edit, then the encoder's
+    // start-up frame from 0.186 s): silence before it, in the middle of the video...
+    ({ bytes, audio } = joined(['h264-aac-1', 'h264-aac-late-audio']));
+    assert.equal(marks(bytes, audio), `${'#'.repeat(17)}SSS${'#'.repeat(13)}`);
+    assert.ok(Math.abs(playsAt(audio, 21) - 1.25) <= 0.032, `the late sound starts at ${playsAt(audio, 21)} s`);
+    // ...or at its start, where the silence is whole frames, enough to reach the
+    // sound, and the video's edit starts inside the first of them: the sound
+    // plays exactly on time. Starting at 0.15 s still takes three frames.
+    ({ bytes, audio } = joined(['h264-aac-late-audio', 'h264-aac-1']));
+    assert.equal(marks(bytes, audio), `SSS${'#'.repeat(29)}`);
+    assert.equal(playsAt(audio, 4), 0.25);
+    const sooner = patched('h264-aac-late-audio', (view, file) => {
+      const { start } = audioOf(file).edts.elst;
+      view.setUint32(start + 16, 150);
+      view.setUint32(start + 28, 850);
+    });
+    ({ bytes, audio } = joined([sooner, 'h264-aac-1']));
+    assert.equal(marks(bytes, audio), `SSS${'#'.repeat(29)}`);
+    assert.equal(playsAt(audio, 3), 0.15);
+    // A gap in a clip's own timing (one frame lasting three frames' time) is
+    // filled with silence too, so the sound after it stays on time. The two
+    // frames it pushes past the picture's end are dropped.
+    const gappy = patched('h264-aac-fragmented-2', (view, file) => {
+      const run = file.moofs[0].trafs.find(traf => traf.tfhd.track_id === audioOf(file).tkhd.track_id).truns[0];
+      assert.equal(run.flags, 0x301, 'each sample\'s duration and size follow the data offset');
+      view.setUint32(run.start + 20 + 8 * 8, 3 * 1024);
+    });
+    ({ bytes, audio } = joined(['h264-aac-fragmented-1', gappy]));
+    assert.equal(marks(bytes, audio), `${'#'.repeat(25)}SS${'#'.repeat(6)}`);
+    assert.ok(Math.abs(playsAt(audio, 27) - (1 + 10 * 1024 / 16000)) <= 0.032, `the sound after the gap starts at ${playsAt(audio, 27)} s`);
+    // Sound may start late as long as it starts before the picture ends.
+    const startingAt = milliseconds => patched('h264-aac-late-audio', (view, file) => view.setUint32(audioOf(file).edts.elst.start + 16, milliseconds));
+    assert.ok(joined(['h264-aac-1', startingAt(999)]).bytes);
+    assert.throws(() => joined(['h264-aac-1', startingAt(1000)]), error => error.message.includes('starts after the clip does'));
+    // Only AAC-LC has a silent frame here: Opus, or the same clips marked as
+    // HE-AAC, keep a clip whose sound starts late apart.
+    assert.throws(() => joined(['vp9-opus-1', 'vp9-opus-late-audio']), error => error.message.includes('starts after the clip does'));
+    const heAac = name => patched(name, (view, file) => {
+      const { esds } = audioOf(file).mdia.minf.stbl.stsd.entries[0];
+      const config = esds.esd.descs.find(desc => desc.tag === 4).descs.find(desc => desc.tag === 5).data;
+      const box = boxBytes(fixtures[name], esds);
+      const at = box.findIndex((_, i) => box[i - 1] === config.length && config.every((value, k) => box[i + k] === value));
+      assert.ok(at > 0, 'the decoder configuration is in the esds box');
+      view.setUint8(esds.start + at, (5 << 3) | (config[0] & 7));
+    });
+    assert.ok(joined([heAac('h264-aac-1'), heAac('h264-aac-2')]).bytes, 'HE-AAC clips that need no silence still join');
+    assert.throws(() => joined([heAac('h264-aac-1'), heAac('h264-aac-late-audio')]), error => error.message.includes('starts after the clip does'));
+    // So do AAC-LC clips whose timescale cannot count a frame in whole ticks.
+    const oddTimescale = name => patched(name, (view, file) => {
+      const { mdhd } = audioOf(file).mdia;
+      assert.equal(mdhd.version, 0);
+      view.setUint32(mdhd.start + 20, 15999);
+    });
+    assert.throws(() => joined([oddTimescale('h264-aac-1'), oddTimescale('h264-aac-late-audio')]), error => error.message.includes('starts after the clip does'));
   });
 
   test(`${build}: clips with different codec settings or tracks are not joined`, () => {
@@ -259,6 +349,18 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(join.mp4DurationSeconds(cut), null);
     assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], new Uint8Array([0, 0, 0, 8, 102, 114, 101, 101])]), error => error.code === 'not_mp4');
     assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], fixtures['h264-aac-2']], { maxBytes: 1000 }), error => error.code === 'too_large');
+    // Nor are clips that claim to run for more than an hour (silence would fill
+    // their sound for as long).
+    const endless = patched('h264-aac-2', (view, file) => {
+      const video = videoOf(file);
+      const { stts } = video.mdia.minf.stbl;
+      assert.deepEqual([stts.sample_deltas.length, video.mdia.mdhd.version], [1, 0]);
+      view.setUint32(stts.start + 20, 1024 * 3700);
+      view.setUint32(video.mdia.mdhd.start + 24, 12 * 1024 * 3700);
+      view.setUint32(video.edts.elst.start + 16, 3700 * 1000);
+    });
+    assert.ok(join.mp4DurationSeconds(endless) > 3699);
+    assert.throws(() => join.joinMp4Clips([fixtures['h264-aac-1'], endless]), error => error.code === 'too_large' && /an hour/.test(error.message));
     assert.equal(join.mp4DurationSeconds(new Uint8Array([1, 2, 3])), null);
   });
 
@@ -276,8 +378,16 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(join.mp4DurationSeconds(edited({ milliseconds: 500 })), 0.5);
     refused([fixtures['h264-aac-1'], edited({ milliseconds: 500 })], 'hides some of its frames');
     refused([fixtures['h264-aac-1'], edited({ mediaTime: 3072 })], 'hides some of its frames');
-    // Shortening the last frame alone is fine.
-    assert.ok(Math.abs(join.joinMp4Clips([edited({ milliseconds: 960 }), fixtures['h264-aac-2']]).durationSeconds - 1.96) < 0.001);
+    // Shortening the last frame alone is fine. The sound past the shortened
+    // picture is dropped (a frame that would start after it, or play mostly
+    // after it), and the next clip's sound starts with its picture.
+    for (const milliseconds of [960, 980]) {
+      const shortened = join.joinMp4Clips([edited({ milliseconds }), fixtures['h264-aac-2']]);
+      assert.ok(Math.abs(shortened.durationSeconds - (1 + milliseconds / 1000)) < 0.001);
+      const sound = audioOf(parse(shortened.bytes));
+      assert.equal(sound.samples.length, 32, 'each clip keeps 16 frames');
+      assert.ok(Math.abs(sound.samples[16].cts - sound.edts.elst.entries[0].media_time - milliseconds * 16) <= 512);
+    }
     // A one-second-longer composition delay keeps the picture where it was but
     // starts decoding a second earlier: such a clip can open a video, not follow one.
     const delayed = patched('h264-aac-2', (view, file) => {
@@ -298,15 +408,14 @@ for (const build of ['chrome', 'firefox']) {
     refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => view.setUint32(videoOf(file).mdia.minf.stbl.stss.start + 16, 2))],
       'does not start with a keyframe');
     // Encrypted samples, samples kept in another file, and a different pre-roll.
-    const audioOf = file => file.moov.traks[1];
     refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => 'enca'.split('').forEach((char, i) =>
       view.setUint8(audioOf(file).mdia.minf.stbl.stsd.entries[0].start + 4 + i, char.charCodeAt(0))))], 'encrypted');
     refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => view.setUint8(videoOf(file).mdia.minf.dinf.dref.entries[0].start + 11, 0))],
       'in another file');
     refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => view.setInt16(audioOf(file).mdia.minf.stbl.sgpds[0].start + 24, -2))],
       'different codec settings');
-    // Sound whose own edit ends half a second before the picture would play
-    // on in a joined file; ending within a frame of it is fine.
+    // Sound whose own edit hides its last half second would play on in a
+    // joined file; hiding less than a frame of it is fine.
     const soundEdit = milliseconds => patched('h264-aac-2', (view, file) => view.setUint32(audioOf(file).edts.elst.start + 16, milliseconds));
     refused([fixtures['h264-aac-1'], soundEdit(500)], 'ends a track early');
     assert.equal(join.joinMp4Clips([fixtures['h264-aac-1'], soundEdit(960)]).durationSeconds, 2);
@@ -446,6 +555,7 @@ for (const build of ['chrome', 'firefox']) {
     const result = await generate({ prompt: 'Story', scenes: scenes(2, 10), estimated_duration: 20 }, { fetchImpl: api.fetchImpl });
     assert.equal(result.success, true, result.error);
     assert.equal(result.joined, false);
+    assert.match(result.joinError, /different codec settings/, 'the trace shows why');
     assert.equal(result.clipCount, 2);
     assert.equal(result.durationSeconds, 2);
     assert.equal(result.mediaId, undefined);
