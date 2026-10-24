@@ -12,7 +12,7 @@ import { initD1Settings } from './d1-settings.js';
  * only when its markup is on the current page.
  */
 
-import { t } from './i18n.js';
+import { t, translationsForKey } from './i18n.js';
 import { escapeHtml } from './utils.js';
 import { MEDIA_PROVIDERS, mediaProvider, validateMediaConfig } from '../agent/media-config.js';
 import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
@@ -2737,6 +2737,15 @@ function effectivePromptTier(config) {
   return config.category === 'local' ? 'mid' : 'full';
 }
 
+function providerDisplayLabel(id, config = {}) {
+  if (id === 'webbrain_cloud') return 'WebBrain Compass';
+  if (id === 'webbrain_companion' && (!config.label || config.label === 'WebBrain Companion'
+    || translationsForKey('st.providers.companion_guide.title').includes(config.label))) {
+    return t('st.providers.companion_guide.title');
+  }
+  return config.label || id;
+}
+
 function providerSearchTextForEntry(id, config, fieldDefs) {
   const fieldText = fieldDefs.flatMap((field) => [
     field.key,
@@ -2750,7 +2759,11 @@ function providerSearchTextForEntry(id, config, fieldDefs) {
   ]).filter(Boolean).join(' ');
   return normalizeGeneralSearchText([
     id,
-    id === 'webbrain_cloud' ? 'Compass Light' : config.label,
+    providerDisplayLabel(id, config),
+    config.label,
+    providerDefinitionId(id, config) === 'webbrain_companion'
+      ? `${t('st.providers.companion_guide.summary')} ${t('st.providers.companion_guide.supported')}`
+      : '',
     config.type,
     config.category,
     config.model,
@@ -2763,7 +2776,7 @@ function providerSearchTextForEntry(id, config, fieldDefs) {
 }
 
 function providerSearchRank(id, config, query) {
-  const names = [id, id === 'webbrain_cloud' ? 'Compass Light' : config.label, config.providerName]
+  const names = [id, providerDisplayLabel(id, config), config.label, config.providerName]
     .filter(Boolean)
     .map(normalizeGeneralSearchText);
   if (names.some((name) => name === query)) return 0;
@@ -3289,7 +3302,9 @@ function renderProviders() {
 
   providersContainer.appendChild(renderProviderFilterBar());
 
-  let entries = Object.entries(providersData);
+  const pinnedProviderOrder = { webbrain_cloud: 0, webbrain_companion: 1 };
+  let entries = Object.entries(providersData)
+    .sort(([a], [b]) => (pinnedProviderOrder[a] ?? 2) - (pinnedProviderOrder[b] ?? 2));
   const providerQuery = normalizeGeneralSearchText(providerSearchQuery);
   if (providerQuery) {
     entries = entries
@@ -3473,7 +3488,7 @@ function renderProviders() {
       ${id !== 'webbrain_cloud' ? `<div class="field">
         <label for="provider-title-${id}">${escapeHtml(t('st.providers.title'))}</label>
         <input id="provider-title-${id}" type="text" data-provider="${id}" data-key="label"
-               value="${escapeHtml(config.label || id)}" maxlength="120" required>
+               value="${escapeHtml(providerDisplayLabel(id, config))}" maxlength="120" required>
       </div>` : ''}
       ${fieldsHTML}
       ${providerNote}
@@ -3742,7 +3757,7 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   // LM Studio defaults to whatever's loaded) just renders nothing rather
   // than a placeholder.
   const modelStr = (config.model && String(config.model).trim()) || '';
-  const label = id === 'webbrain_cloud' ? 'Compass Light' : (config.label || id);
+  const label = providerDisplayLabel(id, config);
   header.innerHTML = `
     <div class="provider-header-left">
       <span class="provider-chevron" aria-hidden="true">${expanded ? '▾' : '▸'}</span>
@@ -3772,6 +3787,13 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
   body.innerHTML = bodyHtml;
 
   card.appendChild(header);
+  if (providerDefinitionId(id, config) === 'webbrain_companion') {
+    const summary = document.createElement('div');
+    summary.className = 'provider-companion-summary';
+    summary.innerHTML = `<p>${escapeHtml(t('st.providers.companion_guide.summary'))}</p>
+      <p>${escapeHtml(t('st.providers.companion_guide.supported'))}</p>`;
+    card.appendChild(summary);
+  }
   if (expanded) card.appendChild(body);
   return card;
 }
@@ -4066,7 +4088,7 @@ function refreshProviderCardStatus(id) {
     else duplicateButton.title = t('st.providers.duplicate_inactive');
   }
   const name = card.querySelector('.provider-name');
-  if (name) name.textContent = id === 'webbrain_cloud' ? 'Compass Light' : (providersData[id]?.label || id);
+  if (name) name.textContent = providerDisplayLabel(id, providersData[id]);
   const badges = card.querySelector('.provider-status-badges');
   if (!badges) return;
   badges.innerHTML = `
