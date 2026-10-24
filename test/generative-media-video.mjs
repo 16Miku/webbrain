@@ -56,6 +56,22 @@ function parse(bytes) {
 
 const sampleBytes = (bytes, trak) => trak.samples.map(sample => bytes.subarray(sample.offset, sample.offset + sample.size));
 
+// A fragmented clip whose fragments start later: each track's decode times
+// moved by `seconds` ({ vide, soun }).
+function laterFragments(bytes, seconds) {
+  const file = parse(bytes);
+  const copy = bytes.slice();
+  const view = new DataView(copy.buffer);
+  const traks = new Map(file.moov.traks.map(trak => [trak.tkhd.track_id, trak]));
+  for (const traf of file.moofs.flatMap(moof => moof.trafs)) {
+    const trak = traks.get(traf.tfhd.track_id);
+    const add = Math.round((seconds[trak.mdia.hdlr.handler] || 0) * trak.mdia.mdhd.timescale);
+    if (traf.tfdt.version === 1) view.setBigUint64(traf.tfdt.start + 12, BigInt(traf.tfdt.baseMediaDecodeTime + add));
+    else view.setUint32(traf.tfdt.start + 12, traf.tfdt.baseMediaDecodeTime + add);
+  }
+  return copy;
+}
+
 // Where a track's samples are shown on the movie's timeline, in seconds: its
 // edit names the first media time shown.
 function shown(file, trak) {
@@ -200,6 +216,12 @@ for (const build of ['chrome', 'firefox']) {
       const shortest = Math.min(...secondAudio.samples.map(sample => sample.duration));
       assert.ok(audio.samples.every(sample => sample.duration >= shortest), `${label}: no frame is squeezed`);
     }
+    // Fragments can start at any decode time: five seconds later, the clips
+    // join into the same file. A track that starts after the picture cannot join.
+    const fragmented = [fixtures['h264-aac-fragmented-1'], fixtures['h264-aac-fragmented-2']];
+    assert.equal(parse(laterFragments(fragmented[0], { vide: 5, soun: 5 })).moov.traks[0].samples[0].dts, 5 * 12288);
+    assert.deepEqual(join.joinMp4Clips(fragmented.map(clip => laterFragments(clip, { vide: 5, soun: 5 }))).bytes, join.joinMp4Clips(fragmented).bytes);
+    assert.throws(() => join.joinMp4Clips([laterFragments(fragmented[0], { soun: 5 }), fragmented[1]]), error => error.code === 'clips_incompatible');
   });
 
   test(`${build}: clips with different codec settings or tracks are not joined`, () => {

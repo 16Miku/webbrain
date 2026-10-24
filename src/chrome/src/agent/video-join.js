@@ -150,6 +150,9 @@ function parseClip(input) {
   const pictureEnd = timing.mediaTime + presented;
   const hidesFrames = timing.samples.some(sample => sample.duration > 0
     && (sample.cts + sample.duration <= timing.mediaTime || sample.cts >= pictureEnd));
+  // A track whose first sample comes after the clip's start (more than a
+  // millisecond) would have to begin with a gap, which one edit cannot show.
+  const startsLate = tracks.some(track => track.samples[0].dts - track.mediaTime > track.timescale / 1000);
   return {
     bytes,
     movieTimescale,
@@ -158,6 +161,7 @@ function parseClip(input) {
     tracks,
     duration: presented / timing.timescale,
     hidesFrames,
+    startsLate,
   };
 }
 
@@ -174,6 +178,9 @@ export function mp4DurationSeconds(input) {
 // audio longer than the picture). Video frames are never dropped.
 function joinTrack(clips, index, starts) {
   const first = clips[0].tracks[index];
+  // The output's decode times start at 0, wherever the first clip's start
+  // (fragmented files can start at any decode time): its start in the output.
+  const mediaStart = Math.max(0, first.mediaTime - first.samples[0].dts);
   const samples = [];
   const chunks = [];
   clips.forEach((clip, clipIndex) => {
@@ -184,7 +191,7 @@ function joinTrack(clips, index, starts) {
       : track.samples;
     if (!kept.length) throw incompatible('a clip has an empty track');
     if (samples.length) {
-      const target = Math.round(starts[clipIndex] * track.timescale) + (kept[0].dts - track.mediaTime) + first.mediaTime;
+      const target = Math.round(starts[clipIndex] * track.timescale) + (kept[0].dts - track.mediaTime) + mediaStart;
       const previous = chunks[chunks.length - 1];
       while (audio && previous.count > 1
           && samples[samples.length - 1].dts + samples[samples.length - 1].duration / 2 >= target) {
@@ -212,7 +219,7 @@ function joinTrack(clips, index, starts) {
     }
   });
   const mediaDuration = samples.reduce((sum, sample) => sum + sample.duration, 0);
-  return { first, samples, chunks, mediaDuration };
+  return { first, samples, chunks, mediaDuration, mediaStart };
 }
 
 class Writer {
@@ -330,7 +337,7 @@ function writeMovie(clips, tracks, totalSeconds) {
         // Every track is shown from its start, so the movie runs from 0 to
         // exactly its declared duration.
         writer.box('edts', () => writer.full('elst', 0, 0, () => {
-          writer.u32(1); writer.u32(movieDuration); writer.i32(first.mediaTime); writer.i16(1); writer.i16(0);
+          writer.u32(1); writer.u32(movieDuration); writer.i32(track.mediaStart); writer.i16(1); writer.i16(0);
         }));
         writer.box('mdia', () => {
           writer.full('mdhd', 0, 0, () => {
@@ -361,6 +368,7 @@ export function joinMp4Clips(inputs, { maxBytes = Infinity } = {}) {
   if (!Array.isArray(inputs) || !inputs.length) throw new VideoJoinError('No clips to join.', 'not_mp4');
   const clips = inputs.map(parseClip);
   if (clips.some(clip => clip.hidesFrames)) throw incompatible('a clip hides some of its frames with an edit list');
+  if (clips.some(clip => clip.startsLate)) throw incompatible('a clip has a track that starts after the clip does');
   const reference = clips[0];
   for (const clip of clips.slice(1)) {
     if (clip.tracks.length !== reference.tracks.length) throw incompatible('the clips have different tracks');
