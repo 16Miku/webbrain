@@ -177,6 +177,9 @@ const imageGenWorkflowInput = document.getElementById('image-gen-workflow');
 const imageGenParametersInput = document.getElementById('image-gen-parameters');
 const imageGenApiKeyInput = document.getElementById('image-gen-api-key');
 const imageGenModelInput = document.getElementById('image-gen-model');
+const imageGenVideoModelInput = document.getElementById('image-gen-video-model');
+const imageGenVideoParametersInput = document.getElementById('image-gen-video-parameters');
+const imageGenVideoWorkflowInput = document.getElementById('image-gen-video-workflow');
 const btnSaveImageGen = document.getElementById('btn-save-image-gen');
 const btnTestImageGen = document.getElementById('btn-test-image-gen');
 const btnClearImageGen = document.getElementById('btn-clear-image-gen');
@@ -1911,11 +1914,27 @@ function flashImageGenResult(className, text) {
   if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 2000);
 }
 
+// An empty model field means the provider's default, shown as its placeholder.
 function readImageGenForm() {
   const provider = imageGenProviderInput?.value || 'fal';
-  if (provider === 'comfyui') return { provider, baseUrl: imageGenBaseUrlInput.value.trim() || MEDIA_PROVIDERS.comfyui.baseUrl, workflow: imageGenWorkflowInput.value.trim() };
-  const config = { provider, apiKey: imageGenApiKeyInput.value.trim(), model: imageGenModelInput.value.trim() };
-  if (provider === 'comfyrouter') config.parameters = imageGenParametersInput.value.trim() || '{}';
+  if (provider === 'comfyui') {
+    return {
+      provider,
+      baseUrl: imageGenBaseUrlInput.value.trim() || MEDIA_PROVIDERS.comfyui.baseUrl,
+      workflow: imageGenWorkflowInput.value.trim(),
+      videoWorkflow: imageGenVideoWorkflowInput?.value.trim() || '',
+    };
+  }
+  const config = {
+    provider,
+    apiKey: imageGenApiKeyInput.value.trim(),
+    model: imageGenModelInput.value.trim(),
+    videoModel: imageGenVideoModelInput?.value.trim() || '',
+  };
+  if (provider === 'comfyrouter') {
+    config.parameters = imageGenParametersInput.value.trim() || '{}';
+    config.videoParameters = imageGenVideoParametersInput?.value.trim() || '{}';
+  }
   return config;
 }
 
@@ -1923,11 +1942,16 @@ function updateImageGenProvider() {
   const provider = imageGenProviderInput?.value || 'fal';
   const meta = MEDIA_PROVIDERS[provider] || MEDIA_PROVIDERS.fal;
   const local = provider === 'comfyui';
-  for (const [id, hidden] of [['image-gen-key-field', local], ['image-gen-model-field', local], ['image-gen-url-field', !local], ['image-gen-workflow-field', !local], ['image-gen-parameters-field', provider !== 'comfyrouter']]) {
+  for (const [id, hidden] of [
+    ['image-gen-key-field', local], ['image-gen-model-field', local], ['image-gen-video-model-field', local],
+    ['image-gen-url-field', !local], ['image-gen-workflow-field', !local], ['image-gen-video-workflow-field', !local],
+    ['image-gen-parameters-field', provider !== 'comfyrouter'], ['image-gen-video-parameters-field', provider !== 'comfyrouter'],
+  ]) {
     const field = document.getElementById(id); if (field) field.hidden = hidden;
   }
   if (imageGenApiKeyInput) imageGenApiKeyInput.placeholder = meta.keyPlaceholder || '';
   if (imageGenModelInput) imageGenModelInput.placeholder = meta.model || '';
+  if (imageGenVideoModelInput) imageGenVideoModelInput.placeholder = meta.videoModel || '';
   const hint = document.getElementById('image-gen-provider-hint');
   if (hint) hint.textContent = t(`st.imagegen.hint.${provider}`) + ' ';
   const docs = document.getElementById('image-gen-docs'); if (docs) docs.href = meta.docs;
@@ -1939,9 +1963,13 @@ function renderImageGenConfig(config) {
   if (imageGenProviderInput) imageGenProviderInput.value = provider;
   if (imageGenApiKeyInput) imageGenApiKeyInput.value = config.apiKey || '';
   if (imageGenModelInput) imageGenModelInput.value = config.model || '';
+  if (imageGenVideoModelInput) imageGenVideoModelInput.value = config.videoModel || '';
   if (imageGenBaseUrlInput) imageGenBaseUrlInput.value = config.baseUrl || MEDIA_PROVIDERS.comfyui.baseUrl;
-  if (imageGenWorkflowInput) imageGenWorkflowInput.value = typeof config.workflow === 'object' ? JSON.stringify(config.workflow, null, 2) : config.workflow || '';
-  if (imageGenParametersInput) imageGenParametersInput.value = typeof config.parameters === 'object' ? JSON.stringify(config.parameters, null, 2) : config.parameters || '';
+  const jsonText = value => (typeof value === 'object' && value ? JSON.stringify(value, null, 2) : value || '');
+  if (imageGenWorkflowInput) imageGenWorkflowInput.value = jsonText(config.workflow);
+  if (imageGenVideoWorkflowInput) imageGenVideoWorkflowInput.value = jsonText(config.videoWorkflow);
+  if (imageGenParametersInput) imageGenParametersInput.value = jsonText(config.parameters);
+  if (imageGenVideoParametersInput) imageGenVideoParametersInput.value = jsonText(config.videoParameters);
   updateImageGenProvider();
 }
 
@@ -1973,7 +2001,8 @@ btnTestImageGen?.addEventListener('click', async () => {
     const config = await saveImageGenForm();
     showImageGenResult('', t('st.imagegen.testing'), 'var(--text2)');
     const res = await sendToBackground('test_image_gen_provider');
-    if (res?.ok) showImageGenResult('ok', t('st.imagegen.connected', { model: res.model || config.model }));
+    if (res?.ok && res.imageModel) showImageGenResult('ok', t('st.imagegen.connected_models', { image: res.imageModel, video: res.videoModel }));
+    else if (res?.ok) showImageGenResult('ok', t('st.imagegen.connected', { model: res.model || config.model }));
     else showImageGenResult('fail', t('st.imagegen.failed', { error: res?.error || 'Unknown error' }));
   } catch (error) { showImageGenResult('fail', t('st.imagegen.failed', { error: error.message })); }
   finally { btnTestImageGen.disabled = false; }
@@ -2019,7 +2048,7 @@ function renderProfileSyncState(state) {
   if (profileSyncStatus) profileSyncStatus.textContent = describeProfileSyncState(state || {});
 }
 async function refreshProfileSyncState() { const state = await sendToBackground('profile_sync_state').catch(e => ({ status: 'error', error: e.message })); renderProfileSyncState(state); return state; }
-async function reloadProfileSyncData() { const stored = await browser.storage.local.get(['profileEnabled', 'profileText', 'visionModel', 'transcriptionModel', 'imageGenModel']); if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled; if (profileTextArea) profileTextArea.value = stored.profileText || ''; const vision = stored.visionModel || {}; if (visionBaseUrlInput) { visionBaseUrlInput.value = vision.baseUrl || ''; visionApiKeyInput.value = vision.apiKey || ''; visionModelInput.value = vision.model || ''; } const transcription = stored.transcriptionModel || {}; if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || ''; if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || ''; if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || ''; const imageGen = stored.imageGenModel || {}; if (imageGenApiKeyInput) imageGenApiKeyInput.value = imageGen.apiKey || ''; if (imageGenModelInput) imageGenModelInput.value = imageGen.model || ''; updateMultimodalDetectedProvider('vision'); updateMultimodalDetectedProvider('transcription'); await loadUserMemorySettings(); if (!providersContainer) return; const res = await sendToBackground('get_providers'); providersData = res.providers; activeProviderId = res.active; renderProviders(); }
+async function reloadProfileSyncData() { const stored = await browser.storage.local.get(['profileEnabled', 'profileText', 'visionModel', 'transcriptionModel', 'imageGenModel']); if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled; if (profileTextArea) profileTextArea.value = stored.profileText || ''; const vision = stored.visionModel || {}; if (visionBaseUrlInput) { visionBaseUrlInput.value = vision.baseUrl || ''; visionApiKeyInput.value = vision.apiKey || ''; visionModelInput.value = vision.model || ''; } const transcription = stored.transcriptionModel || {}; if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || ''; if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || ''; if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || ''; renderImageGenConfig(stored.imageGenModel || {}); updateMultimodalDetectedProvider('vision'); updateMultimodalDetectedProvider('transcription'); await loadUserMemorySettings(); if (!providersContainer) return; const res = await sendToBackground('get_providers'); providersData = res.providers; activeProviderId = res.active; renderProviders(); }
 async function requestProfileSyncDataConsent() { const permissions = await browser.permissions.getAll(); if (!Object.hasOwn(permissions, 'data_collection')) return window.confirm(t('st.sync.consent.legacy')); return browser.permissions.request({ data_collection: ['personallyIdentifyingInfo', 'authenticationInfo', 'personalCommunications', 'websiteContent', 'technicalAndInteraction'] }); }
 // Profile sync runs from Settings, but what it pulls also fills the Providers
 // page. Settings pages open in other tabs reload what they show, so a Save

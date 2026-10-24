@@ -74,7 +74,8 @@ for (const build of ['chrome', 'firefox']) {
     const history = { role: 'user', content: 'Earlier task' };
     messages.push(history);
     const ask = agent.getConversation(12, 'ask');
-    for (const [config, available] of [[fal, true], [{ ...fal, model: '' }, false], [fal, true], [undefined, false]]) {
+    // An empty model uses the provider's default; a missing key leaves media unavailable.
+    for (const [config, available] of [[fal, true], [{ ...fal, apiKey: '' }, false], [{ ...fal, model: '' }, true], [undefined, false]]) {
       agent.setImageGenConfig(config);
       assert.equal(messages[0].content.includes('generate_image'), available);
       assert.equal(messages[0].content.includes(GENERATIVE_MEDIA_SETUP_NOTE), !available);

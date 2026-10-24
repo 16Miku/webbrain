@@ -266,17 +266,27 @@ An older Cloud deployment falls through to the active LLM and existing checks.
 Configure **Providers → Generative** for the
 `generate_image` agent tool. Select one provider and save its settings:
 
-| Provider | Required settings | Generation |
-| --- | --- | --- |
-| fal.ai | API key, model ID (for example `fal-ai/flux/schnell`) | fal.ai queue API; existing saved fal.ai settings remain compatible |
-| OpenRouter | API key, image model ID | [Dedicated Image API](https://openrouter.ai/docs/guides/overview/multimodal/image-generation); inline images appear in chat with a save link |
-| Comfy Router | Comfy API key, `provider/model` ID (for example `bfl/flux-2-pro`) | [Queued requests](https://docs.comfy.org/development/comfy-router/queued-delivery); hosted or inline media |
-| ComfyUI (localhost) | Local server URL (default `http://127.0.0.1:8188`), workflow JSON in API format | Local `/prompt`, `/history/{prompt_id}`, and `/view` endpoints; no API key |
+| Provider | Settings | Default image / video model | Generation |
+| --- | --- | --- | --- |
+| fal.ai | API key; image and video model IDs (optional) | `fal-ai/flux/schnell` / `xai/grok-imagine-video/v1.5/lite/text-to-video` | fal.ai queue API; existing saved fal.ai settings remain compatible |
+| OpenRouter | API key; image and video model IDs (optional) | `google/gemini-2.5-flash-image` / `x-ai/grok-imagine-video-1.5-lite` | [Dedicated Image API](https://openrouter.ai/docs/guides/overview/multimodal/image-generation) and video API; inline media appears in chat with a save link |
+| Comfy Router | Comfy API key; image and video `provider/model` IDs (optional), each with optional input JSON | `bfl/flux-2-pro` / `xai/grok-imagine-video-1.5-lite` | [Queued requests](https://docs.comfy.org/development/comfy-router/queued-delivery); hosted or inline media |
+| ComfyUI (localhost) | Local server URL (default `http://127.0.0.1:8188`); image workflow JSON in API format, optional video workflow | — | Local `/prompt`, `/history/{prompt_id}`, and `/view` endpoints; no API key |
+
+Each provider has an image model and a video model. `generate_image` uses the
+video model when the agent asks for a video (`media: "video"`, or any video
+option such as `duration` or `scenes`) and the image model otherwise. A model
+field left empty uses the default shown in it. For ComfyUI, a video request
+without a video workflow uses the image workflow. Settings saved when there was
+one model keep it as the image model; with OpenRouter, a saved model that the
+video catalog lists makes the videos instead, and calls that do not say what
+they want get a video from it, as before.
 
 For Comfy Router models with native inputs other than `prompt`, paste their input
-JSON in **Model input JSON** and place `{{prompt}}` in the text field(s). Other
-values, such as duration or resolution, are preserved. Without a placeholder,
-WebBrain supplies the tool prompt as `prompt`. Refer to the model's
+JSON in **Image model input JSON** or **Video model input JSON** and place
+`{{prompt}}` in the text field(s). Other values, such as duration or resolution,
+are preserved. Without a placeholder, WebBrain supplies the tool prompt as
+`prompt`. Refer to the model's
 [input schema](https://docs.comfy.org/development/comfy-router/schemas).
 
 For local ComfyUI, start the server, export a working workflow **in API format**,
@@ -286,8 +296,9 @@ other media output node. Only loopback URLs (`localhost`, `127.0.0.1`, or `[::1]
 are accepted. A connection test checks the server, not workflow execution.
 
 **Test Connection** makes only free, read-only authentication/model/server probes;
-it does not generate media. OpenRouter also checks that the selected model appears
-in the image generation catalog. **Save / Clear** apply to the selected media
+it does not generate media. OpenRouter also checks both models in its image and
+video catalogs, Comfy Router reads both models' metadata, and the result names
+the image and video models requests will use. **Save / Clear** apply to the selected media
 configuration. Unsaved drafts survive provider switches while settings remain open;
 only the saved selection is used by the agent.
 
@@ -310,7 +321,8 @@ checked against the model's catalog entry (`supported_durations`,
 submitted. A longer video is passed as `scenes`: WebBrain makes one clip per
 scene at a length the model offers (a scene longer than its longest clip is
 refused, so the agent splits it into scenes with their own prompts), generates
-up to three clips at a time with one retry each, and joins them into one MP4
+up to three clips at a time with one retry each (none when the provider refuses
+the request, such as for lack of credit), and joins them into one MP4
 without re-encoding (`src/*/src/agent/video-join.js`, which parses
 the clips with the vendored mp4box.js). A clip's sound often ends a little
 before its picture or starts after it; with AAC-LC sound (the usual MP4 audio,

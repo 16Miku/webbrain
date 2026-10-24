@@ -1,7 +1,8 @@
 // fal.ai generative media (assistive model).
 //
-// Configured in Providers -> Generative (fal.ai provider).
-// and stored in extension storage as `imageGenModel = { apiKey, model }`.
+// Configured in Providers -> Generative (fal.ai provider) and stored in
+// extension storage as `imageGenModel = { apiKey, model, videoModel }`; the
+// caller passes the model a request uses as `config.model`.
 // fal.ai uses a queue API: submit a prompt, poll status_url, then fetch
 // response_url. Auth uses `Authorization: Key <FAL_KEY>`.
 
@@ -156,7 +157,8 @@ export async function runFalGeneration({
     if (!submitRes.ok) {
       let body = '';
       try { body = (await submitRes.text()).slice(0, 300); } catch { /* ignore */ }
-      throw new Error(`fal.ai submit failed (HTTP ${submitRes.status}): ${body || submitRes.statusText}`);
+      const credit = submitRes.status === 402 ? 'the account is out of credit; add credit and try again: ' : '';
+      throw Object.assign(new Error(`fal.ai submit failed (HTTP ${submitRes.status}): ${credit}${body || submitRes.statusText}`), { status: submitRes.status });
     }
 
     let queued;

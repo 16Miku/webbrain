@@ -35,8 +35,8 @@ const DONE_REQUIRED = ['summary'];
 const DONE_REQUIRED_WITH_OUTCOME = ['summary', 'outcome'];
 
 export const SYSTEM_PROMPT_GENERATIVE_MEDIA = `GENERATIVE MEDIA:
-- generate_image: Create media (usually an image, sometimes video/audio) directly from a text prompt through the user's configured generative-media provider. When the user asks to GENERATE media ("generate an image of a red apple", "make a logo", "create a video clip"), call this tool — do NOT navigate to third-party image sites (Midjourney, DALL·E, Bing Images, etc.). Not available in Ask mode.
-- Videos: estimate how long the requested video should run. One that needs more than one clip (an explainer, a story) is one call with scenes, at most 120 s in total, and estimated_duration set to the full length it needs; WebBrain joins the clips into one video and asks the user first when that estimate is longer than 120 s. You never see the result: report its length and clip count from the tool result, not its contents.`;
+- generate_image: Create an image, or with media "video" a video, directly from a text prompt through the user's configured image and video models. When the user asks to GENERATE media ("generate an image of a red apple", "make a logo", "create a video clip"), call this tool — do NOT navigate to third-party image sites (Midjourney, DALL·E, Bing Images, etc.). Not available in Ask mode.
+- Videos: set media to "video" and estimate how long the requested video should run. One that needs more than one clip (an explainer, a story) is one call with scenes, at most 120 s in total, and estimated_duration set to the full length it needs; WebBrain joins the clips into one video and asks the user first when that estimate is longer than 120 s. You never see the result: report its length and clip count from the tool result, not its contents.`;
 
 export const SYSTEM_PROMPT_BATCHING = `BATCHING:
 - Use browser_batch for predictable steps on the current page with targets you already observed, such as filling known fields or opening a menu and choosing a known item. A navigation followed by a page read can also share one batch.
@@ -1343,11 +1343,12 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'generate_image',
-      description: 'Generate media (usually an image) from a text prompt using the user\'s configured generative media provider (Providers → Generative). Supports fal.ai, OpenRouter, Comfy Router and local ComfyUI workflows; generation may take several minutes. Returns a media URL or inline media displayed in the chat. With an OpenRouter video model, estimate how long the requested video should run (estimated_duration): one clip can set duration, aspect_ratio and resolution; a longer video passes scenes, which WebBrain fits to the model\'s clip lengths and joins into one video of up to 120 s, asking the user first when the estimate is longer. Not available in Ask mode.',
+      description: 'Generate an image, or a video with media "video", from a text prompt using the image or video model the user configured (Providers → Generative). Supports fal.ai, OpenRouter, Comfy Router and local ComfyUI workflows; generation may take several minutes. Returns a media URL or inline media displayed in the chat. With an OpenRouter video model, estimate how long the requested video should run (estimated_duration): one clip can set duration, aspect_ratio and resolution; a longer video passes scenes, which WebBrain fits to the model\'s clip lengths and joins into one video of up to 120 s, asking the user first when the estimate is longer. Not available in Ask mode.',
       parameters: {
         type: 'object',
         properties: {
           prompt: { type: 'string', description: 'Text prompt describing the media to generate. With scenes: the look, subject and style every clip shares.' },
+          media: { type: 'string', enum: ['image', 'video'], description: '"image" (default) uses the image model; "video" uses the video model. The video options below imply "video".' },
           estimated_duration: { type: 'integer', minimum: 1, description: 'Video only: seconds the requested video needs, estimated before fitting it to the 120 s maximum. Required with scenes.' },
           duration: { type: 'integer', minimum: 1, description: 'Video only: seconds for a single clip.' },
           aspect_ratio: { type: 'string', description: 'Video only, for example "16:9" or "9:16".' },

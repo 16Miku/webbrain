@@ -98,7 +98,8 @@ function shown(file, trak) {
 }
 
 // OpenRouter's video API: a catalog entry, jobs that complete on the first
-// poll, and clip bytes chosen per job.
+// poll, and clip bytes chosen per job. `fail` refuses a submission: true for
+// an overloaded provider (503), or the HTTP status to answer with.
 function videoApi({ entry, clip = () => fixtures['h264-aac-1'], fail = () => false }) {
   const calls = { submits: [], inFlight: 0, maxInFlight: 0 };
   const jobs = new Map();
@@ -109,7 +110,9 @@ function videoApi({ entry, clip = () => fixtures['h264-aac-1'], fail = () => fal
     if (init.method === 'POST') {
       const body = JSON.parse(init.body);
       const index = calls.submits.push(body) - 1;
-      if (fail(index, body)) return json({ error: { message: 'Provider overloaded' } }, 503);
+      const failure = fail(index, body);
+      if (failure === 402) return json({ error: { message: 'HTTP 402: insufficient balance (1008)', code: 402 } }, 402);
+      if (failure) return json({ error: { message: 'Provider overloaded' } }, 503);
       const id = `job-${index}`;
       jobs.set(id, { body, index });
       calls.inFlight += 1;
@@ -444,6 +447,11 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(result.mimeType, 'video/mp4');
     assert.equal(result.durationSeconds, 1, "the clip's real length");
     assert.deepEqual(await storedBytes(result.mediaId), fixtures['h264-aac-1']);
+    // The tool's media argument picks the video model.
+    const asked = videoApi({ entry: grok });
+    const picked = await generate({ prompt: 'A red apple', media: 'video' }, { fetchImpl: asked.fetchImpl, config: { ...config, model: 'image-model', videoModel: grok.id } });
+    assert.equal(picked.success, true, picked.error);
+    assert.deepEqual(asked.calls.submits, [{ model: grok.id, prompt: 'A red apple' }]);
     const estimated = videoApi({ entry: { ...grok, supported_durations: [4, 8, 12] } });
     await media.runMediaGeneration({ prompt: 'A red apple', video: { estimated_duration: 7 }, config, fetchImpl: estimated.fetchImpl });
     assert.equal(estimated.calls.submits[0].duration, 8, 'an estimate rounds up to a clip length the model makes');
@@ -459,8 +467,12 @@ for (const build of ['chrome', 'firefox']) {
       await assert.rejects(media.runMediaGeneration({ prompt: 'A red apple', video, config, fetchImpl: rejected.fetchImpl }), pattern, JSON.stringify(video));
       assert.equal(rejected.calls.submits.length, 0, 'nothing is submitted');
     }
-    await assert.rejects(media.runMediaGeneration({ prompt: 'x', video: { duration: 5 }, config,
-      fetchImpl: async url => (url.endsWith('/images/models') ? json({ data: [{ id: grok.id }] }) : assert.fail(url)) }), /need a video model/);
+    // A video model setting that names an image model is refused before anything is submitted.
+    await assert.rejects(media.runMediaGeneration({ prompt: 'x', video: { duration: 5 }, config: { ...config, videoModel: 'image-model' },
+      fetchImpl: async (url, init) => (init.method ? assert.fail(url) : url.endsWith('/images/models') ? json({ data: [{ id: 'image-model' }] }) : json({ data: [grok] })) }),
+      /image-model makes images/);
+    await assert.rejects(media.runMediaGeneration({ prompt: 'x', media: 'image', video: { duration: 5 }, config, fetchImpl: async url => assert.fail(url) }),
+      /are for videos/);
     await assert.rejects(media.runMediaGeneration({ prompt: 'x', video: { duration: 5 }, config: { apiKey: 'k', model: 'fal-ai/flux/schnell' },
       fetchImpl: async url => assert.fail(url) }), /OpenRouter video models/);
   });
@@ -528,6 +540,13 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(failed.success, false);
     assert.match(failed.error, /^Clip 2 of 3 failed: OpenRouter video submit failed \(HTTP 503\).*Provider overloaded/);
     assert.equal(assets.size, stored, 'no partial video is kept');
+    // An account out of credit is not retried, and the error says so.
+    const broke = videoApi({ entry: grok, fail: (_index, body) => body.prompt.endsWith('Scene idea 2') && 402 });
+    const unpaid = await generate({ prompt: 'Story', scenes: scenes(3, 10), estimated_duration: 30 }, { fetchImpl: broke.fetchImpl });
+    assert.equal(unpaid.success, false);
+    assert.match(unpaid.error, /^Clip 2 of 3 failed: OpenRouter video submit failed \(HTTP 402\): the account is out of credit; add credit and try again: .*insufficient balance/);
+    assert.equal(broke.calls.submits.filter(body => body.prompt.endsWith('Scene idea 2')).length, 1, 'tried once');
+    assert.equal(failing.calls.submits.filter(body => body.prompt.endsWith('Scene idea 2')).length, 2, 'an overloaded provider is tried twice');
   });
 
   test(`${build}: Stop ends every clip of a video`, async () => {
@@ -740,7 +759,7 @@ for (const build of ['chrome', 'firefox']) {
     } finally { globalThis.fetch = originalFetch; }
   });
 
-  test(`${build}: the generate_image schema takes scenes and nothing else`, async () => {
+  test(`${build}: the generate_image schema takes media and scenes, and nothing else`, async () => {
     const originalChrome = globalThis.chrome, originalBrowser = globalThis.browser;
     const local = { get: async () => ({ imageGenModel: config }), set: async () => {}, remove: async () => {} };
     globalThis.chrome = globalThis.browser = {
@@ -758,7 +777,7 @@ for (const build of ['chrome', 'firefox']) {
       agent.executeTool = async (_tab, _name, args) => { dispatched.push(args); return { success: false, error: 'Not generated in this test.' }; };
       const call = args => agent._executeToolBatch(12, [{ id: 'media-call', function: { name: 'generate_image', arguments: JSON.stringify(args) } }],
         messages, () => {}, provider, '', new Set(['generate_image']), 1);
-      const valid = { prompt: 'Flat motion graphics', scenes: [{ prompt: 'Title card', duration: 6 }, { prompt: 'The idea', duration: 15 }],
+      const valid = { prompt: 'Flat motion graphics', media: 'video', scenes: [{ prompt: 'Title card', duration: 6 }, { prompt: 'The idea', duration: 15 }],
         estimated_duration: 21, aspect_ratio: '16:9', resolution: '720p' };
       await call(valid);
       assert.deepEqual(dispatched, [valid]);
@@ -767,6 +786,7 @@ for (const build of ['chrome', 'firefox']) {
         [{ ...valid, scenes: [{ prompt: 'Title card' }] }, '$.scenes[0].duration'],
         [{ ...valid, estimated_duration: 0 }, '$.estimated_duration'],
         [{ ...valid, duration: '8s' }, '$.duration'],
+        [{ ...valid, media: 'audio' }, '$.media'],
       ]) {
         messages.length = 0;
         await call(invalid);

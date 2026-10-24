@@ -22,8 +22,8 @@ try {
       if (init.headers?.Authorization !== 'Bearer synthetic-or-key') throw new Error('Missing authentication.');
       mediaProbeCalls.push(url);
       const body = url.endsWith('/key') ? { data: {} }
-        : url.endsWith('/images/models') ? { data: [{ id: 'image-model' }] }
-        : url.endsWith('/videos/models') ? { data: [{ id: 'minimax/hailuo-3-max' }] } : null;
+        : url.endsWith('/images/models') ? { data: [{ id: 'image-model' }, { id: 'google/gemini-2.5-flash-image' }] }
+        : url.endsWith('/videos/models') ? { data: [{ id: 'minimax/hailuo-3-max' }, { id: 'x-ai/grok-imagine-video-1.5-lite' }] } : null;
       if (!body) throw new Error(`Unexpected probe URL: ${url}`);
       return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
     };
@@ -34,6 +34,8 @@ try {
   await page.waitForFunction(() => document.documentElement.dataset.settingsReady === 'true');
   await page.locator('#image-gen-provider').selectOption('openrouter');
   await page.locator('#image-gen-api-key').fill('synthetic-or-key');
+  // The empty video model field shows the default it stands for.
+  assert.equal(await page.locator('#image-gen-video-model').getAttribute('placeholder'), 'x-ai/grok-imagine-video-1.5-lite');
   for (const model of ['minimax/hailuo-3-max', 'image-model', 'text-only']) {
     await page.locator('#image-gen-model').fill(model);
     await page.locator('#btn-save-image-gen').click();
@@ -48,14 +50,21 @@ try {
     const ok = await page.locator('#test-image-gen').evaluate(el => el.classList.contains('ok'));
     assert.equal(ok, model !== 'text-only', status);
     assert.ok(!status.includes('import()'), status);
+    // A video model saved as the image model makes the videos; images use the default.
+    if (model === 'minimax/hailuo-3-max') assert.match(status, /Image: google\/gemini-2\.5-flash-image · Video: minimax\/hailuo-3-max/);
+    if (model === 'image-model') assert.match(status, /Image: image-model · Video: x-ai\/grok-imagine-video-1\.5-lite/);
     console.log(`${model}: ${status}`);
   }
+  // Both models saved: each is checked in its own catalog.
+  await page.locator('#image-gen-model').fill('image-model');
+  await page.locator('#image-gen-video-model').fill('minimax/hailuo-3-max');
+  await page.locator('#btn-test-image-gen').click();
+  await page.waitForFunction(() => /Video: minimax/.test(document.querySelector('#test-image-gen').textContent));
+  assert.deepEqual((await worker.evaluate(() => chrome.storage.local.get('imageGenModel'))).imageGenModel,
+    { provider: 'openrouter', apiKey: 'synthetic-or-key', model: 'image-model', videoModel: 'minimax/hailuo-3-max' });
   const calls = await worker.evaluate(() => mediaProbeCalls);
-  assert.deepEqual(calls, [
-    'https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/images/models', 'https://openrouter.ai/api/v1/videos/models',
-    'https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/images/models',
-    'https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/images/models', 'https://openrouter.ai/api/v1/videos/models',
-  ]);
+  const probe = ['https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/images/models', 'https://openrouter.ai/api/v1/videos/models'];
+  assert.deepEqual(calls, [...probe, ...probe, ...probe, ...probe]);
 } finally {
   await context?.close();
   await rm(profile, { recursive: true, force: true });
