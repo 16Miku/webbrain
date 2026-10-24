@@ -133990,7 +133990,9 @@ test('fal-media helpers normalize model ids and extract media URLs across payloa
     assert.equal(mod.normalizeFalModelId('../etc'), '', 'path traversal must be rejected');
     assert.equal(mod.normalizeFalModelId('bad id'), '', 'spaces must be rejected');
     assert.equal(mod.isImageGenConfigured({ apiKey: 'k', model: 'm' }), true);
-    assert.equal(mod.isImageGenConfigured({ apiKey: 'k', model: '' }), false);
+    // An empty model uses the provider's default; the key is what is required.
+    assert.equal(mod.isImageGenConfigured({ apiKey: 'k', model: '' }), true);
+    assert.equal(mod.isImageGenConfigured({ apiKey: '', model: 'm' }), false);
     assert.equal(mod.extractFalMediaUrl({ images: [{ url: 'https://v3.fal.media/a.png' }] }), 'https://v3.fal.media/a.png');
     assert.equal(mod.extractFalMediaUrl({ image: { url: 'https://v3.fal.media/b.png' } }), 'https://v3.fal.media/b.png');
     assert.equal(mod.extractFalMediaUrl({ videos: [{ url: 'https://v3.fal.media/c.mp4' }] }), 'https://v3.fal.media/c.mp4');

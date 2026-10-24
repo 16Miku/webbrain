@@ -1,6 +1,6 @@
 import { runFalGeneration, FAL_AUTH_PROBE_URL } from './fal-media.js';
 import { MAX_JOINED_VIDEO_BYTES, storeGeneratedMedia, storeGeneratedMediaBlob } from '../generated-media-store.js';
-import { IMAGE_GEN_MODEL_KEY, MEDIA_PROVIDERS, mediaProvider, normalizeMediaModel, comfyBaseUrl, parseMediaJson, validateMediaConfig, bindMediaPrompt } from './media-config.js';
+import { IMAGE_GEN_MODEL_KEY, MEDIA_PROVIDERS, mediaProvider, mediaSlot, normalizeMediaModel, comfyBaseUrl, parseMediaJson, validateMediaConfig, bindMediaPrompt } from './media-config.js';
 import { VideoJoinError, joinMp4Clips, mp4DurationSeconds } from './video-join.js';
 
 const GENERATION_TIMEOUT_MS = 600000;
@@ -68,11 +68,15 @@ function delay(ms, signal) {
   });
 }
 
+// An HTTP failure keeps its status, so a caller can tell whether trying again
+// could help. 402 means the account (OpenRouter's, or the model provider's
+// behind it) has run out of credit.
 async function jsonResponse(response, label) {
   if (!response.ok) {
     let message = '';
     try { message = (await response.text()).slice(0, 300); } catch { /* no body */ }
-    throw new Error(`${label} failed (HTTP ${response.status})${message ? ': ' + message : '.'}`);
+    const detail = [response.status === 402 ? 'the account is out of credit; add credit and try again' : '', message].filter(Boolean).join(': ');
+    throw Object.assign(new Error(`${label} failed (HTTP ${response.status})${detail ? ': ' + detail : '.'}`), { status: response.status });
   }
   const body = await response.json();
   if (body?.error || body?.error_type) throw new Error(`${label}: ${body.error?.message || body.error_type || body.error}`);
@@ -107,19 +111,58 @@ async function mediaResponse(response, label) {
   return url;
 }
 
-// The catalog entry lists what a video model accepts (supported_durations,
-// supported_resolutions, supported_aspect_ratios).
-async function openRouterMediaModel(model, headers, request) {
-  for (const kind of ['images', 'videos']) {
-    const catalog = await jsonResponse(await request(`https://openrouter.ai/api/v1/${kind}/models`, { headers }), `OpenRouter ${kind} models`);
-    const entry = Array.isArray(catalog.data) ? catalog.data.find(item => item?.id === model) : null;
-    if (entry) return { kind, entry };
-  }
-  throw new Error('The selected OpenRouter model is not in the image or video generation catalog.');
+// OpenRouter's image and video catalogs ('images', 'videos'), each read at
+// most once per request. A video model's entry lists what it accepts
+// (supported_durations, supported_resolutions, supported_aspect_ratios).
+function openRouterCatalogs(headers, request) {
+  const lists = {};
+  return async kind => {
+    if (!lists[kind]) {
+      const catalog = await jsonResponse(await request(`https://openrouter.ai/api/v1/${kind}/models`, { headers }), `OpenRouter ${kind} models`);
+      lists[kind] = Array.isArray(catalog.data) ? catalog.data : [];
+    }
+    return lists[kind];
+  };
 }
 
-async function openRouterMediaType(model, headers, request) {
-  return (await openRouterMediaModel(model, headers, request)).kind;
+const listed = (list, model) => list.find(item => item?.id === model) || null;
+
+/**
+ * The OpenRouter model a request uses, with its catalog entry. `media` is
+ * 'image', 'video', or null when the call does not say. An empty model setting
+ * uses OpenRouter's default. The saved image model can be a video model, saved
+ * when there was one model for everything: it then makes the videos, and a
+ * call that does not say gets a video from it, as it did then.
+ */
+async function openRouterTarget(config, media, catalog) {
+  const saved = normalizeMediaModel(config.model);
+  const savedVideo = normalizeMediaModel(config.videoModel);
+  // Whether the saved image model is a video model; null when neither catalog lists it.
+  let savedKind;
+  const savedIsVideo = async () => {
+    if (savedKind === undefined) {
+      savedKind = !saved || listed(await catalog('images'), saved) ? false
+        : listed(await catalog('videos'), saved) ? true : null;
+    }
+    return savedKind;
+  };
+  const kind = media || (!savedVideo && await savedIsVideo() ? 'video' : 'image');
+  if (kind === 'image') {
+    const savedIsVideoModel = await savedIsVideo();
+    if (savedIsVideoModel === null) throw new Error('The selected OpenRouter model is not in the image or video generation catalog.');
+    const model = saved && !savedIsVideoModel ? saved : MEDIA_PROVIDERS.openrouter.model;
+    const entry = listed(await catalog('images'), model);
+    if (!entry) throw new Error(`OpenRouter's image generation catalog does not list ${model}.`);
+    return { kind: 'images', model, entry };
+  }
+  const model = savedVideo || (await savedIsVideo() ? saved : MEDIA_PROVIDERS.openrouter.videoModel);
+  const entry = listed(await catalog('videos'), model);
+  if (!entry) {
+    throw new Error(listed(await catalog('images'), model)
+      ? `${model} makes images. Choose a video model in Providers → Generative.`
+      : `OpenRouter's video generation catalog does not list ${model}.`);
+  }
+  return { kind: 'videos', model, entry };
 }
 
 function formatSeconds(seconds) {
@@ -296,7 +339,7 @@ async function mapWithConcurrency(items, limit, signal, task) {
   } finally { signal?.removeEventListener('abort', onAbort); }
 }
 
-async function runOpenRouter({ text, model, config, video, fetchImpl, signal, timeoutMs, pollMs, onProgress, confirmVideoLength }) {
+async function runOpenRouter({ text, media, config, video, fetchImpl, signal, timeoutMs, pollMs, onProgress, confirmVideoLength }) {
   const headers = { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' };
   // One bounded operation: its own deadline, aborted by Stop as well.
   const bounded = async (parent, task) => {
@@ -311,10 +354,12 @@ async function runOpenRouter({ text, model, config, video, fetchImpl, signal, ti
   };
   const base = 'https://openrouter.ai/api/v1/videos';
   let plan = null;
+  let model = '';
   const single = await bounded(signal, async (request, jobSignal) => {
-    const { kind, entry } = await openRouterMediaModel(model, headers, request);
+    const target = await openRouterTarget(config, media, openRouterCatalogs(headers, request));
+    const { kind, entry } = target;
+    model = target.model;
     if (kind === 'images') {
-      if (video) throw new Error('Video length, aspect ratio, resolution and scenes need a video model; the selected OpenRouter model makes images.');
       const res = await request('https://openrouter.ai/api/v1/images', { method: 'POST', headers, body: JSON.stringify({ model, prompt: text }) });
       return { url: await mediaResponse(res, 'OpenRouter generation'), model };
     }
@@ -346,8 +391,11 @@ async function runOpenRouter({ text, model, config, video, fetchImpl, signal, ti
         onProgress?.(`Video clips: ${ready} of ${plan.clips.length} ready`);
         return bytes;
       } catch (error) {
-        // One retry per clip; a second failure, Stop or another clip's failure ends the video.
-        if (groupSignal.aborted || attempt >= 2) {
+        // One retry per clip; a second failure, Stop or another clip's failure
+        // ends the video. A request the provider refused (a 4xx other than a
+        // timeout or rate limit, such as no credit left) would fail again.
+        const refused = error?.status >= 400 && error.status < 500 && ![408, 429].includes(error.status);
+        if (groupSignal.aborted || attempt >= 2 || refused) {
           throw groupSignal.aborted ? (groupSignal.reason ?? error) : new Error(`Clip ${index + 1} of ${plan.clips.length} failed: ${error.message}`);
         }
       }
@@ -356,19 +404,31 @@ async function runOpenRouter({ text, model, config, video, fetchImpl, signal, ti
   return { clips, model, ...lengthDetails };
 }
 
-export async function runMediaGeneration({ prompt, config, video = null, fetchImpl = fetch, signal, timeoutMs = GENERATION_TIMEOUT_MS, pollIntervalMs, onProgress, confirmVideoLength }) {
+/**
+ * Generates one image or video. `media` is 'image' or 'video', choosing the
+ * provider's image or video model; video options imply 'video'. Without
+ * either, the image model is used (with OpenRouter, a saved image model that
+ * is a video model makes a video).
+ */
+export async function runMediaGeneration({ prompt, config, media = null, video = null, fetchImpl = fetch, signal, timeoutMs = GENERATION_TIMEOUT_MS, pollIntervalMs, onProgress, confirmVideoLength }) {
   const provider = validateMediaConfig(config);
   const text = String(prompt || '').trim();
   if (!text) throw new Error('prompt is required.');
+  if (media != null && media !== 'image' && media !== 'video') throw new Error('media must be "image" or "video".');
+  if (media === 'image' && video) {
+    throw new Error('Video length, aspect ratio, resolution and scenes are for videos. Set media to "video" or leave these out.');
+  }
   if (video && provider !== 'openrouter') {
-    throw new Error(`Video length, aspect ratio, resolution and scenes work with OpenRouter video models. Omit them to use the ${MEDIA_PROVIDERS[provider].label} default.`);
+    throw new Error(`Video length, aspect ratio, resolution and scenes work with OpenRouter video models. Omit them to use the ${MEDIA_PROVIDERS[provider].label} video model's defaults.`);
   }
-  if (provider === 'fal') return runFalGeneration({ prompt: text, config, fetchImpl, signal, timeoutMs });
+  const kind = media || (video ? 'video' : null);
   const pollMs = pollIntervalMs ?? (provider === 'openrouter' ? 30000 : 2000);
-  const model = provider === 'comfyui' ? 'ComfyUI workflow' : normalizeMediaModel(config.model);
   if (provider === 'openrouter') {
-    return runOpenRouter({ text, model, config, video, fetchImpl, signal, timeoutMs, pollMs, onProgress, confirmVideoLength });
+    return runOpenRouter({ text, media: kind, config, video, fetchImpl, signal, timeoutMs, pollMs, onProgress, confirmVideoLength });
   }
+  const slot = mediaSlot(config, kind || 'image');
+  const { model } = slot;
+  if (provider === 'fal') return runFalGeneration({ prompt: text, config: { ...config, model }, fetchImpl, signal, timeoutMs });
   const operation = operationSignal(signal, timeoutMs);
   const request = (url, init = {}) => {
     operation.signal.throwIfAborted();
@@ -380,7 +440,7 @@ export async function runMediaGeneration({ prompt, config, video = null, fetchIm
     if (provider === 'comfyrouter') {
       const base = `https://api.comfy.org/v2/models/${model}/requests`;
       const headers = { 'X-API-Key': config.apiKey, 'Content-Type': 'application/json' };
-      const parameters = parseMediaJson(config.parameters || '{}', 'Model input');
+      const parameters = parseMediaJson(slot.parameters || '{}', kind === 'video' ? 'Video model input' : 'Image model input');
       const usesTemplate = JSON.stringify(parameters).includes('{{prompt}}');
       const body = usesTemplate ? bindMediaPrompt(parameters, text) : { ...parameters, prompt: text };
       const queued = await jsonResponse(await request(base, {
@@ -408,7 +468,7 @@ export async function runMediaGeneration({ prompt, config, video = null, fetchIm
     }
     const base = comfyBaseUrl(config.baseUrl);
     const headers = { 'Content-Type': 'application/json' };
-    const workflow = bindMediaPrompt(parseMediaJson(config.workflow, 'ComfyUI workflow'), text);
+    const workflow = bindMediaPrompt(parseMediaJson(slot.workflow, 'ComfyUI workflow'), text);
     const queued = await jsonResponse(await request(`${base}/prompt`, {
       method: 'POST', headers, body: JSON.stringify({ prompt: workflow, client_id: crypto.randomUUID() }),
     }), 'ComfyUI submit');
@@ -491,7 +551,7 @@ export async function generateImage(args, options = {}) {
     if (!config) throw new Error('Configure Generative Media in Providers → Generative.');
     const provider = mediaProvider(config);
     const result = await runMediaGeneration({
-      prompt: args?.prompt, video: videoArguments(args), config, fetchImpl, signal: options.signal,
+      prompt: args?.prompt, media: args?.media ?? null, video: videoArguments(args), config, fetchImpl, signal: options.signal,
       onProgress: options.onProgress, confirmVideoLength: options.confirmVideoLength,
     });
     if (result.declined) {
@@ -511,31 +571,42 @@ export async function generateImage(args, options = {}) {
   } catch (error) { return { success: false, error: error.message }; }
 }
 
-// Free read-only probes. Model metadata confirms availability; no generation is submitted.
+// Free read-only probes. Model metadata confirms availability; no generation
+// is submitted. The result names the image and video models requests will use.
 export async function testImageGenProvider(fetchImpl = fetch) {
   const operation = operationSignal(null, 15000);
+  const request = (url, init = {}) => fetchImpl(url, { ...init, signal: operation.signal, redirect: 'error', credentials: 'omit' });
   try {
     const config = await readMediaConfig();
     const provider = validateMediaConfig(config);
-    const model = provider === 'comfyui' ? 'ComfyUI workflow' : normalizeMediaModel(config.model);
-    let url, headers;
-    if (provider === 'fal') { url = FAL_AUTH_PROBE_URL; headers = { Authorization: `Key ${config.apiKey}` }; }
-    if (provider === 'openrouter') { url = 'https://openrouter.ai/api/v1/key'; headers = { Authorization: `Bearer ${config.apiKey}` }; }
-    if (provider === 'comfyrouter') { url = `https://api.comfy.org/v2/models/${model}`; headers = { 'X-API-Key': config.apiKey }; }
-    if (provider === 'comfyui') { url = `${comfyBaseUrl(config.baseUrl)}/system_stats`; headers = {}; }
-    const res = await fetchImpl(url, { headers, signal: operation.signal, redirect: 'error', credentials: 'omit' });
-    if (!res.ok) throw new Error(`${MEDIA_PROVIDERS[provider].label} connection failed (HTTP ${res.status}).`);
-    if (provider === 'openrouter') {
-      await jsonResponse(res, 'OpenRouter key');
-      await openRouterMediaType(model, headers, (url, init) => fetchImpl(url, { ...init, signal: operation.signal, redirect: 'error', credentials: 'omit' }));
-    } else if (provider === 'comfyui') {
-      const stats = await jsonResponse(res, 'ComfyUI');
+    const label = MEDIA_PROVIDERS[provider].label;
+    const probe = async (url, headers) => {
+      const res = await request(url, { headers });
+      if (!res.ok) throw new Error(`${label} connection failed (HTTP ${res.status}).`);
+      return res;
+    };
+    if (provider === 'comfyui') {
+      const stats = await jsonResponse(await probe(`${comfyBaseUrl(config.baseUrl)}/system_stats`, {}), 'ComfyUI');
       if (!stats.system || !Array.isArray(stats.devices)) throw new Error('The endpoint did not return ComfyUI system information.');
-    } else if (provider === 'comfyrouter') {
-      const detail = await jsonResponse(res, 'Comfy Router model');
-      if (detail.id !== model) throw new Error('Comfy Router did not confirm the selected model.');
+      return { ok: true, model: 'ComfyUI workflow', provider };
     }
-    return { ok: true, model, provider };
+    let imageModel = mediaSlot(config, 'image').model;
+    let videoModel = mediaSlot(config, 'video').model;
+    if (provider === 'fal') {
+      await probe(FAL_AUTH_PROBE_URL, { Authorization: `Key ${config.apiKey}` });
+    } else if (provider === 'openrouter') {
+      const headers = { Authorization: `Bearer ${config.apiKey}` };
+      await jsonResponse(await probe('https://openrouter.ai/api/v1/key', headers), 'OpenRouter key');
+      const catalog = openRouterCatalogs(headers, request);
+      imageModel = (await openRouterTarget(config, 'image', catalog)).model;
+      videoModel = (await openRouterTarget(config, 'video', catalog)).model;
+    } else {
+      for (const model of [imageModel, videoModel]) {
+        const detail = await jsonResponse(await probe(`https://api.comfy.org/v2/models/${model}`, { 'X-API-Key': config.apiKey }), 'Comfy Router model');
+        if (detail.id !== model) throw new Error(`Comfy Router did not confirm ${model}.`);
+      }
+    }
+    return { ok: true, model: imageModel, imageModel, videoModel, provider };
   } catch (error) { return { ok: false, error: error.message }; }
   finally { operation.dispose(); }
 }

@@ -58,6 +58,73 @@ for (const build of ['chrome', 'firefox']) {
     assert.throws(() => config.validateMediaConfig({ provider: 'comfyui', workflow: { '6': { class_type: 'CLIPTextEncode', inputs: { text: 'fixed' } } } }), /positive prompt/);
   });
 
+  test(`${build}: image and video model settings may be left empty, and are checked when filled`, () => {
+    for (const settings of [
+      { provider: 'openrouter', apiKey: 'k' }, { provider: 'fal', apiKey: 'k', model: '', videoModel: '' },
+      { provider: 'comfyrouter', apiKey: 'k', videoModel: 'luma/ray-2', videoParameters: '{"duration":"5s"}' },
+      { provider: 'comfyui', videoWorkflow: workflow },
+    ]) assert.equal(config.isImageGenConfigured(settings), true, JSON.stringify(settings));
+    for (const [settings, error] of [
+      [{ provider: 'openrouter', model: 'image-model' }, /API Key is required/],
+      [{ provider: 'fal', apiKey: 'k', videoModel: '../escape' }, /video model ID is not valid/],
+      [{ provider: 'comfyrouter', apiKey: 'k', videoModel: 'single' }, /provider\/model/],
+      [{ provider: 'comfyrouter', apiKey: 'k', videoParameters: '{' }, /Video model input must be valid JSON/],
+      [{ provider: 'comfyui' }, /ComfyUI workflow must be a JSON object/],
+      [{ provider: 'comfyui', workflow, videoWorkflow: { '1': { class_type: 'CLIPTextEncode', inputs: { text: 'fixed' } } } }, /video workflow with \{\{prompt\}\}/],
+    ]) assert.throws(() => config.validateMediaConfig(settings), error, JSON.stringify(settings));
+  });
+
+  test(`${build}: each request uses the image or the video model, or the provider's default`, async () => {
+    // The first submission shows which model (or workflow) a request uses. It
+    // fails, so nothing is generated.
+    const submission = async (settings, kind) => {
+      let seen = null;
+      await assert.rejects(media.runMediaGeneration({ prompt: 'red apple', media: kind, config: settings, pollIntervalMs: 1, fetchImpl: async (url, init = {}) => {
+        if (url.endsWith('/images/models')) return json({ data: [{ id: 'google/gemini-2.5-flash-image' }, { id: 'image-model' }] });
+        if (url.endsWith('/videos/models')) return json({ data: [{ id: 'x-ai/grok-imagine-video-1.5-lite' }, { id: 'video-model' }] });
+        assert.equal(init.method, 'POST', url);
+        seen = { url, body: JSON.parse(init.body) };
+        return json({ error: 'not generated in this test' }, 500);
+      } }), /HTTP 500/);
+      return seen;
+    };
+    const fal = { provider: 'fal', apiKey: 'k', model: 'fal-ai/flux/dev' };
+    assert.equal((await submission(fal, 'image')).url, 'https://queue.fal.run/fal-ai/flux/dev');
+    assert.equal((await submission(fal, null)).url, 'https://queue.fal.run/fal-ai/flux/dev', 'a call that does not say gets an image');
+    assert.equal((await submission(fal, 'video')).url, 'https://queue.fal.run/xai/grok-imagine-video/v1.5/lite/text-to-video');
+    assert.equal((await submission({ provider: 'fal', apiKey: 'k' }, 'image')).url, 'https://queue.fal.run/fal-ai/flux/schnell');
+    assert.equal((await submission({ ...fal, videoModel: 'fal-ai/veo3/fast' }, 'video')).url, 'https://queue.fal.run/fal-ai/veo3/fast');
+
+    // Comfy Router: each model with its own input.
+    const comfy = { provider: 'comfyrouter', apiKey: 'k', model: 'bfl/flux-2-pro', parameters: { steps: 20, prompt: '{{prompt}}' } };
+    assert.deepEqual(await submission(comfy, 'image'), { url: 'https://api.comfy.org/v2/models/bfl/flux-2-pro/requests', body: { steps: 20, prompt: 'red apple' } });
+    assert.deepEqual(await submission(comfy, 'video'), { url: 'https://api.comfy.org/v2/models/xai/grok-imagine-video-1.5-lite/requests', body: { prompt: 'red apple' } });
+    assert.deepEqual(await submission({ ...comfy, videoModel: 'luma/ray-2', videoParameters: '{"duration":"5s"}' }, 'video'),
+      { url: 'https://api.comfy.org/v2/models/luma/ray-2/requests', body: { duration: '5s', prompt: 'red apple' } });
+
+    // ComfyUI: each kind's workflow, or the only one saved.
+    const videoWorkflow = { '3': { class_type: 'TextEncode', inputs: { text: 'video of {{prompt}}' } }, '8': { class_type: 'SaveVideo', inputs: {} } };
+    const textOf = seen => Object.values(seen.body.prompt).map(node => node.inputs.text).filter(Boolean);
+    assert.deepEqual(textOf(await submission({ provider: 'comfyui', workflow, videoWorkflow }, 'video')), ['video of red apple']);
+    assert.deepEqual(textOf(await submission({ provider: 'comfyui', workflow, videoWorkflow }, 'image')), ['red apple']);
+    assert.deepEqual(textOf(await submission({ provider: 'comfyui', workflow }, 'video')), ['red apple']);
+    assert.deepEqual(textOf(await submission({ provider: 'comfyui', videoWorkflow }, 'image')), ['video of red apple']);
+
+    // OpenRouter: an empty model is the default; a saved video model makes videos.
+    const openrouter = { provider: 'openrouter', apiKey: 'k' };
+    assert.deepEqual(await submission(openrouter, null), { url: 'https://openrouter.ai/api/v1/images', body: { model: 'google/gemini-2.5-flash-image', prompt: 'red apple' } });
+    assert.equal((await submission({ ...openrouter, model: 'image-model' }, 'video')).body.model, 'x-ai/grok-imagine-video-1.5-lite');
+    assert.equal((await submission({ ...openrouter, model: 'image-model', videoModel: 'video-model' }, 'video')).body.model, 'video-model');
+    // A video model saved as the only model, before there were two: a call that
+    // does not say gets a video from it; an image request gets the default.
+    assert.deepEqual(await submission({ ...openrouter, model: 'video-model' }, null), { url: 'https://openrouter.ai/api/v1/videos', body: { model: 'video-model', prompt: 'red apple' } });
+    assert.equal((await submission({ ...openrouter, model: 'video-model' }, 'video')).body.model, 'video-model');
+    assert.deepEqual(await submission({ ...openrouter, model: 'video-model' }, 'image'), { url: 'https://openrouter.ai/api/v1/images', body: { model: 'google/gemini-2.5-flash-image', prompt: 'red apple' } });
+    // A saved video model takes over from the only model.
+    assert.equal((await submission({ ...openrouter, model: 'image-model', videoModel: 'video-model' }, null)).body.model, 'image-model');
+    await assert.rejects(media.runMediaGeneration({ prompt: 'x', media: 'audio', config: openrouter, fetchImpl: async url => assert.fail(url) }), /media must be "image" or "video"/);
+  });
+
   test(`${build}: OpenRouter Image API returns inline media without a chat request`, async () => {
     const calls = [];
     const result = await media.runMediaGeneration({ prompt: 'red apple', config: { provider: 'openrouter', apiKey: 'or-key', model: 'google/gemini-2.5-flash-image' }, fetchImpl: async (url, init) => {
@@ -287,18 +354,41 @@ for (const build of ['chrome', 'firefox']) {
     const api = { storage: { local: { get: async () => ({ imageGenModel: selected }) } } };
     globalThis.chrome = globalThis.browser = api;
     try {
-      for (const [provider, values, responses, urls] of [
-        ['fal', { apiKey: 'k', model: 'fal-ai/flux/schnell' }, [json({})], ['https://api.fal.ai/v1/workflows?limit=1']],
-        ['openrouter', { apiKey: 'k', model: 'image-model' }, [json({ data: {} }), json({ data: [{ id: 'image-model' }] })], ['https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/images/models']],
-        ['openrouter', { apiKey: 'k', model: 'minimax/hailuo-3-max' }, [json({ data: {} }), json({ data: [] }), json({ data: [{ id: 'minimax/hailuo-3-max' }] })], ['https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/images/models', 'https://openrouter.ai/api/v1/videos/models']],
-        ['comfyrouter', { apiKey: 'k', model: 'bfl/flux-2-pro' }, [json({ id: 'bfl/flux-2-pro' })], ['https://api.comfy.org/v2/models/bfl/flux-2-pro']],
-        ['comfyui', { workflow }, [json({ system: {}, devices: [] })], ['http://127.0.0.1:8188/system_stats']],
+      const orImages = json({ data: [{ id: 'image-model' }, { id: 'google/gemini-2.5-flash-image' }] });
+      const orVideos = () => json({ data: [{ id: 'minimax/hailuo-3-max' }, { id: 'x-ai/grok-imagine-video-1.5-lite' }] });
+      // [provider, settings, responses, probed URLs, image and video models reported]
+      for (const [provider, values, responses, urls, models] of [
+        ['fal', { apiKey: 'k', model: 'fal-ai/flux/schnell' }, [json({})], ['https://api.fal.ai/v1/workflows?limit=1'],
+          ['fal-ai/flux/schnell', 'xai/grok-imagine-video/v1.5/lite/text-to-video']],
+        ['fal', { apiKey: 'k', model: '', videoModel: 'fal-ai/veo3/fast' }, [json({})], ['https://api.fal.ai/v1/workflows?limit=1'],
+          ['fal-ai/flux/schnell', 'fal-ai/veo3/fast']],
+        // Both OpenRouter models are checked in their catalogs; an empty one is the default.
+        ['openrouter', { apiKey: 'k', model: 'image-model' }, [json({ data: {} }), orImages, orVideos()],
+          ['https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/images/models', 'https://openrouter.ai/api/v1/videos/models'],
+          ['image-model', 'x-ai/grok-imagine-video-1.5-lite']],
+        // A video model saved as the only model makes the videos; images use the default.
+        ['openrouter', { apiKey: 'k', model: 'minimax/hailuo-3-max' }, [json({ data: {} }), json({ data: [{ id: 'google/gemini-2.5-flash-image' }] }), orVideos()],
+          ['https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/images/models', 'https://openrouter.ai/api/v1/videos/models'],
+          ['google/gemini-2.5-flash-image', 'minimax/hailuo-3-max']],
+        ['comfyrouter', { apiKey: 'k', model: 'bfl/flux-2-pro' }, [json({ id: 'bfl/flux-2-pro' }), json({ id: 'xai/grok-imagine-video-1.5-lite' })],
+          ['https://api.comfy.org/v2/models/bfl/flux-2-pro', 'https://api.comfy.org/v2/models/xai/grok-imagine-video-1.5-lite'],
+          ['bfl/flux-2-pro', 'xai/grok-imagine-video-1.5-lite']],
+        ['comfyui', { workflow }, [json({ system: {}, devices: [] })], ['http://127.0.0.1:8188/system_stats'], [undefined, undefined]],
       ]) {
         selected = { provider, ...values }; const calls = [];
         const result = await legacyMedia.testImageGenProvider(async (url, init) => { assert.ok(!init.method || init.method === 'GET'); calls.push(url); return responses.shift(); });
         assert.equal(result.ok, true, result.error); assert.deepEqual(calls, urls);
+        assert.deepEqual([result.imageModel, result.videoModel], models, provider);
         assert.equal((await media.testImageGenProvider(async () => json({}, 401))).ok, false);
       }
+      // Comfy Router must confirm the video model too.
+      selected = { provider: 'comfyrouter', apiKey: 'k', model: 'bfl/flux-2-pro', videoModel: 'luma/ray-2' };
+      const comfyResponses = [json({ id: 'bfl/flux-2-pro' }), json({ id: 'other/model' })];
+      assert.match((await legacyMedia.testImageGenProvider(async () => comfyResponses.shift())).error, /did not confirm luma\/ray-2/);
+      // A video model setting that names an image model is caught before any video is made.
+      selected = { provider: 'openrouter', apiKey: 'k', model: 'image-model', videoModel: 'image-model' };
+      const swapped = [json({ data: {} }), json({ data: [{ id: 'image-model' }] }), json({ data: [] })];
+      assert.match((await legacyMedia.testImageGenProvider(async () => swapped.shift())).error, /image-model makes images/);
       selected = { provider: 'openrouter', apiKey: 'k', model: 'text-only' };
       const responses = [json({ data: {} }), json({ data: [{ id: 'image-model' }] }), json({ data: [] })];
       assert.match((await legacyMedia.testImageGenProvider(async () => responses.shift())).error, /image or video generation catalog/);
@@ -316,6 +406,12 @@ for (const build of ['chrome', 'firefox']) {
         assert.deepEqual([...dictionary[key].matchAll(/\{(\w+)\}/g)].map(x => x[1]).sort(), [...english[key].matchAll(/\{(\w+)\}/g)].map(x => x[1]).sort(), `${lang.code}: ${key}`);
       }
       assert.ok(!dictionary['st.imagegen.heading'].includes('fal.ai'));
+      // The image and video model settings are translated in every language.
+      if (lang.code !== 'en') {
+        for (const key of ['st.imagegen.image_model', 'st.imagegen.video_model', 'st.imagegen.video_workflow', 'st.imagegen.connected_models', 'st.imagegen.hint.openrouter']) {
+          assert.notEqual(dictionary[key], english[key], `${lang.code}: ${key} is translated`);
+        }
+      }
     }
 
   });
