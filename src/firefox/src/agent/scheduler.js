@@ -187,6 +187,17 @@ function normalizePendingClarify(data, now = Date.now()) {
   if (unverifiedStep.guardId || unverifiedStep.action) {
     pending.unverifiedStepConfirmation = normalizeUnverifiedStepConfirmation(unverifiedStep);
   }
+  // WebBrain's card about a video longer than it makes: the lengths it shows.
+  const videoLength = asObject(obj.videoLengthConfirmation);
+  if (Number(videoLength.estimatedSeconds) > 0) {
+    const whole = value => Math.max(0, Math.min(86400, Math.round(Number(value) || 0)));
+    pending.videoLengthConfirmation = {
+      estimatedSeconds: whole(videoLength.estimatedSeconds),
+      totalSeconds: whole(videoLength.totalSeconds),
+      clipCount: whole(videoLength.clipCount),
+      maxSeconds: whole(videoLength.maxSeconds),
+    };
+  }
   return pending;
 }
 

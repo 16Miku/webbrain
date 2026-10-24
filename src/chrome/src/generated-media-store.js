@@ -2,6 +2,8 @@
 const DB_NAME = 'webbrain_generated_media';
 const STORE_NAME = 'assets';
 const MAX_BYTES = 20 * 1024 * 1024;
+// A video joined from its scenes' clips: up to two minutes of generated video.
+export const MAX_JOINED_VIDEO_BYTES = 160 * 1024 * 1024;
 const MEDIA_MIME = /^(image\/(?:png|jpeg|webp|gif)|audio\/(?:mpeg|wav|ogg)|video\/mp4)$/;
 
 async function openDB() {
@@ -19,7 +21,14 @@ export async function storeGeneratedMedia(dataUrl) {
   const binary = atob(match[2]);
   if (binary.length > MAX_BYTES) throw new Error('Generated media exceeds the 20 MB inline limit.');
   const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
-  const blob = new Blob([bytes], { type: match[1] });
+  return storeGeneratedMediaBlob(new Blob([bytes], { type: match[1] }));
+}
+
+// `maxBytes` above 20 MB is for a joined video only.
+export async function storeGeneratedMediaBlob(blob, { maxBytes = MAX_BYTES } = {}) {
+  if (!(blob instanceof Blob) || !MEDIA_MIME.test(blob.type)) throw new Error('Unsupported generated media.');
+  const limit = Math.min(maxBytes, blob.type === 'video/mp4' ? MAX_JOINED_VIDEO_BYTES : MAX_BYTES);
+  if (blob.size > limit) throw new Error(`Generated media exceeds the ${Math.round(limit / 1024 / 1024)} MB inline limit.`);
   const id = crypto.randomUUID();
   const db = await openDB();
   try {
@@ -42,7 +51,8 @@ export async function loadGeneratedMedia(id) {
       const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(id);
       request.onsuccess = () => {
         const blob = request.result?.blob;
-        resolve(blob instanceof Blob && MEDIA_MIME.test(blob.type) && blob.size <= MAX_BYTES ? blob : null);
+        const limit = blob?.type === 'video/mp4' ? MAX_JOINED_VIDEO_BYTES : MAX_BYTES;
+        resolve(blob instanceof Blob && MEDIA_MIME.test(blob.type) && blob.size <= limit ? blob : null);
       };
       request.onerror = () => reject(request.error);
     });

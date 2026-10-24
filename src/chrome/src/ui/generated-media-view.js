@@ -46,6 +46,11 @@ async function hydrateStoredMedia(wrapper, t) {
 // A synchronous placeholder keeps the asset handle in chat snapshots even if
 // the panel closes before the IndexedDB read finishes.
 export function appendGeneratedMedia(container, result, t) {
+  // A video whose clips could not be joined into one file: its clips in order.
+  if (container && result?.success && Array.isArray(result.clips) && !result.mediaId && typeof result.url !== 'string') {
+    return Promise.all(result.clips.slice(0, 24)
+      .map(clip => appendGeneratedMedia(container, { success: true, mediaId: clip?.mediaId }, t)));
+  }
   if (!container || !result?.success || (!result.mediaId && typeof result.url !== 'string')) return;
   const wrapper = document.createElement('div');
   wrapper.className = 'generated-media';

@@ -57733,8 +57733,8 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.equal(
       (clarifySource.match(/scrollToBottom\(\{ force: true \}\);/g) || []).length,
-      7,
-      `${label}: workflow healing, submit, recipient, deletion, unverified-step, permission, and clarify prompts should override reading-first scroll suppression`,
+      8,
+      `${label}: workflow healing, submit, recipient, deletion, video-length, unverified-step, permission, and clarify prompts should override reading-first scroll suppression`,
     );
     assert.match(
       panel,
@@ -134200,7 +134200,7 @@ test('generate_image tool exists in both builds, full tier only, and settings UI
 
     const agentJs = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
     assert.ok(agentJs.includes("name === 'generate_image'"), `${build}: agent.js should dispatch generate_image`);
-    assert.match(agentJs, /generateImage\(args, \{ signal: executionContext\?\._contentActionAbortSignal, \.\.\.\(executionContext\?\.imageGenConfig \? \{ config: executionContext\.imageGenConfig \} : \{\}\) \}\)/,
+    assert.match(agentJs, /generateImage\(args, \{\s*signal: executionContext\?\._contentActionAbortSignal,\s*\.\.\.\(executionContext\?\.imageGenConfig \? \{ config: executionContext\.imageGenConfig \} : \{\}\),/,
       `${build}: agent.js should pass the linked run signal into fal generation`);
 
     assert.equal(untrustedTools.has('generate_image'), true, `${build}: fal.ai output must be untrusted`);
