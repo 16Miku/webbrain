@@ -95,18 +95,16 @@ function readTrack(trak, movieTimescale, bytes) {
   if (edits.length > 1 || edits.some(edit => edit.media_time < 0 || edit.media_rate_integer !== 1)) {
     throw incompatible('a track has a complex edit list');
   }
-  // Without an edit the track is shown from its first composition time
-  // (fragmented files from some encoders start video after a B-frame delay).
-  const mediaTime = edits.length ? edits[0].media_time : samples.reduce((min, sample) => Math.min(min, sample.cts), Infinity);
-  const editDuration = edits.length && edits[0].segment_duration > 0
-    ? Math.round(edits[0].segment_duration * timescale / movieTimescale) : compositionEnd - mediaTime;
   return {
     handler,
     timescale,
     samples,
-    mediaTime,
-    presented: Math.max(0, Math.min(editDuration, compositionEnd - mediaTime)),
     hasEdit: edits.length > 0,
+    editStart: edits.length ? edits[0].media_time : 0,
+    editDuration: edits.length && edits[0].segment_duration > 0
+      ? Math.round(edits[0].segment_duration * timescale / movieTimescale) : Infinity,
+    firstComposition: samples.reduce((min, sample) => Math.min(min, sample.cts), Infinity),
+    compositionEnd,
     tkhd: trak.tkhd,
     language: mdia.mdhd.language,
     stsd: rawBox(bytes, stbl.stsd),
@@ -140,13 +138,20 @@ function parseClip(input) {
     .sort((a, b) => order[a.handler] - order[b.handler]);
   if (!tracks.length) throw incompatible('a clip has no video or audio track');
   const timing = tracks[0];
+  // Where each track's picture or sound starts (mediaTime, in its own units).
+  // Without edit lists a clip shows nothing before its first picture (some
+  // encoders' fragmented files start video after a B-frame delay), so every
+  // track starts that much later, in step with the picture.
+  const lead = timing.hasEdit ? 0 : timing.firstComposition / timing.timescale;
+  for (const track of tracks) track.mediaTime = track.editStart + Math.round(lead * track.timescale);
+  const presented = Math.max(0, Math.min(timing.editDuration, timing.compositionEnd - timing.mediaTime));
   return {
     bytes,
     movieTimescale,
     matrix: moov.mvhd.matrix,
     ftyp: rawBox(bytes, (file.boxes || []).find(box => box.type === 'ftyp')),
     tracks,
-    duration: timing.presented / timing.timescale,
+    duration: presented / timing.timescale,
   };
 }
 
@@ -316,11 +321,11 @@ function writeMovie(clips, tracks, totalSeconds) {
           writeMatrix(writer, first.tkhd?.matrix);
           writer.u32(first.tkhd?.width >>> 0 || 0); writer.u32(first.tkhd?.height >>> 0 || 0);
         });
-        if (first.hasEdit) {
-          writer.box('edts', () => writer.full('elst', 0, 0, () => {
-            writer.u32(1); writer.u32(movieDuration); writer.i32(first.mediaTime); writer.i16(1); writer.i16(0);
-          }));
-        }
+        // Every track is shown from its start, so the movie runs from 0 to
+        // exactly its declared duration.
+        writer.box('edts', () => writer.full('elst', 0, 0, () => {
+          writer.u32(1); writer.u32(movieDuration); writer.i32(first.mediaTime); writer.i16(1); writer.i16(0);
+        }));
         writer.box('mdia', () => {
           writer.full('mdhd', 0, 0, () => {
             writer.u32(0); writer.u32(0);

@@ -56,6 +56,18 @@ function parse(bytes) {
 
 const sampleBytes = (bytes, trak) => trak.samples.map(sample => bytes.subarray(sample.offset, sample.offset + sample.size));
 
+// Where a track's samples are shown on the movie's timeline, in seconds: its
+// edit names the first media time shown.
+function shown(file, trak) {
+  const timescale = trak.mdia.mdhd.timescale;
+  const start = trak.edts?.elst?.entries?.[0]?.media_time ?? 0;
+  return {
+    from: (Math.min(...trak.samples.map(sample => sample.cts)) - start) / timescale,
+    to: (Math.max(...trak.samples.map(sample => sample.cts + sample.duration)) - start) / timescale,
+    movie: file.moov.mvhd.duration / file.moov.mvhd.timescale,
+  };
+}
+
 // OpenRouter's video API: a catalog entry, jobs that complete on the first
 // poll, and clip bytes chosen per job.
 function videoApi({ entry, clip = () => fixtures['h264-aac-1'], fail = () => false }) {
@@ -144,9 +156,12 @@ for (const build of ['chrome', 'firefox']) {
     const joinedFrames = sampleBytes(bytes, video);
     assert.equal(joinedFrames.length, 24);
     joinedFrames.forEach((frame, index) => assert.deepEqual(frame, sourceFrames[index], `frame ${index}`));
-    // The second clip's frames are shown right after the first clip's.
-    const shown = video.samples.map(sample => sample.cts - video.edts.elst.entries[0].media_time).sort((a, b) => a - b);
-    assert.deepEqual(shown.map(value => value / 1024), Array.from({ length: 24 }, (_, i) => i));
+    // The second clip's frames are shown right after the first clip's, and the
+    // movie runs from its first picture to its declared length.
+    const times = video.samples.map(sample => sample.cts - video.edts.elst.entries[0].media_time).sort((a, b) => a - b);
+    assert.deepEqual(times.map(value => value / 1024), Array.from({ length: 24 }, (_, i) => i));
+    assert.deepEqual(shown(output, video), { from: 0, to: 2, movie: 2 });
+    assert.equal(shown(output, audio).to, 2);
     // Audio: the first clip's frames are all kept; the second clip's start-up
     // frame is dropped, the rest is copied as is, and its first real frame
     // plays exactly one second in, with its picture.
@@ -157,13 +172,16 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   test(`${build}: fragmented and VP9/Opus clips join too`, () => {
-    // [clips, codecs, audio frames kept from the first clip, where the second clip's audio starts]
-    for (const [names, codecs, seam, seamTime] of [
-      // No edit lists: the first clip's last kept frame is lengthened to meet the second.
-      [['h264-aac-fragmented-1', 'h264-aac-fragmented-2'], ['avc1', 'mp4a'], 14, 16000],
+    // [clips, codecs, audio frames kept from the first clip, start-up frames dropped
+    //  from the second, how far into its first kept frame the second clip's sound starts]
+    for (const [names, codecs, kept, dropped, lead] of [
+      // No edit lists: the picture starts after a B-frame delay (2048/12288 s),
+      // so every track is shown from there and the movie starts at its first picture.
+      [['h264-aac-fragmented-1', 'h264-aac-fragmented-2'], ['avc1', 'mp4a'], 17, 1, 0],
       // Opus: the first clip's short final frame would play over the second
-      // clip's first frame, so it is dropped rather than squeezed.
-      [['vp9-opus-1', 'vp9-opus-2'], ['vp09', 'Opus'], 50, 48000],
+      // clip's first frame, whose first 312 samples are the decoder's start-up,
+      // so the short frame is dropped rather than squeezed.
+      [['vp9-opus-1', 'vp9-opus-2'], ['vp09', 'Opus'], 50, 0, 312],
     ]) {
       const label = names.join('+');
       const { bytes, durationSeconds } = join.joinMp4Clips(names.map(name => fixtures[name]));
@@ -172,11 +190,13 @@ for (const build of ['chrome', 'firefox']) {
       const [video, audio] = output.moov.traks;
       assert.deepEqual(output.moov.traks.map(trak => trak.mdia.minf.stbl.stsd.entries[0].type), codecs, label);
       assert.equal(video.samples.length, 24, label);
-      const firstAudio = sampleBytes(fixtures[names[0]], parse(fixtures[names[0]]).moov.traks[1]);
-      const secondAudio = parse(fixtures[names[1]]).moov.traks[1];
-      assert.deepEqual(sampleBytes(bytes, audio).slice(0, seam), firstAudio.slice(0, seam), `${label}: the first clip's audio up to the seam`);
-      assert.deepEqual(sampleBytes(bytes, audio).slice(seam), sampleBytes(fixtures[names[1]], secondAudio), `${label}: the second clip's audio, whole`);
-      assert.equal(audio.samples[seam].cts, seamTime, `${label}: the second clip's audio starts one second in`);
+      assert.deepEqual(shown(output, video), { from: 0, to: 2, movie: 2 }, `${label}: the picture runs from 0 to the declared length`);
+      assert.equal(shown(output, audio).to, 2, `${label}: and so does the sound`);
+      const [firstAudio, secondAudio] = names.map(name => parse(fixtures[name]).moov.traks[1]);
+      assert.deepEqual(sampleBytes(bytes, audio).slice(0, kept), sampleBytes(fixtures[names[0]], firstAudio).slice(0, kept), `${label}: the first clip's audio up to the join`);
+      assert.deepEqual(sampleBytes(bytes, audio).slice(kept), sampleBytes(fixtures[names[1]], secondAudio).slice(dropped), `${label}: the second clip's audio`);
+      assert.equal(audio.samples[kept].cts + lead - audio.edts.elst.entries[0].media_time, audio.mdia.mdhd.timescale,
+        `${label}: the second clip's sound starts one second in`);
       const shortest = Math.min(...secondAudio.samples.map(sample => sample.duration));
       assert.ok(audio.samples.every(sample => sample.duration >= shortest), `${label}: no frame is squeezed`);
     }
