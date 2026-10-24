@@ -15,7 +15,7 @@ import { installPageFeedback, beforePageAgentDispatch, capturePageAgentInputComp
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText, systemOneStateBytes } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
-import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, autoModePlanForChoice, carriesUntrustedText, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
+import { AUTO_MODE, AUTO_MODE_ASK_NOTE, autoModeGenerativeMediaNote, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, autoModePlanForChoice, carriesUntrustedText, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticDataComplete, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
@@ -167,7 +167,7 @@ import {
 } from '../providers/provider-compatibility.js';
 import { resolveMaxOutputTokens } from '../providers/context-windows.js';
 import { generateImage, readMediaConfig } from './generative-media.js';
-import { GENERATIVE_MEDIA_SETUP_NOTE, isImageGenConfigured, mediaPermissionUrl, validateMediaConfig } from './media-config.js';
+import { GENERATIVE_MEDIA_SETUP_NOTE, imageGenAvailability, isImageGenConfigured, mediaPermissionUrl, validateMediaConfig } from './media-config.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, repairClarifyText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
 import { clarifyQuestionIsHard, clarifyTimedAnswer, clarifyTimeoutChoice, normalizeClarifyConsequence, normalizeClarifyTimeoutPolicy } from './clarify-timeout.js';
@@ -8245,11 +8245,18 @@ export class Agent extends LoopDetector {
     try { extensionVersion = chrome.runtime.getManifest().version || ''; } catch {}
     const effectiveMode = mode || (tabId != null ? this._effectiveRunMode(tabId) : null);
     const selectionScope = tabId != null ? this.selectionGroundingScopes.get(tabId) : null;
+    const tier = this._resolvePromptTier(provider);
+    const readOnlyProfile = tabId != null && (this._standaloneChatRunTabs.has(tabId)
+      || this._standaloneWebgpuRunTabs?.has(tabId) || this._tinyAskRunTabs?.has(tabId));
     return normalizeRuntimeTraceConfig({
       extension_version: extensionVersion,
       browser_target: 'chrome',
       ...(effectiveMode ? { mode: effectiveMode } : {}),
-      prompt_tier: this._resolvePromptTier(provider),
+      prompt_tier: tier,
+      generative_media_configured: this.imageGenConfigured === true,
+      ...(effectiveMode ? { generative_media_availability: imageGenAvailability({
+        configured: this.imageGenConfigured, tier, mode: effectiveMode, readOnlyProfile,
+      }) } : {}),
       screenshot_redaction: this.screenshotRedaction === true,
       strict_secret_mode: this.strictSecretMode === true,
       lean_mode_setting: normalizeLeanModeSetting(this.leanMode),
@@ -27668,7 +27675,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // The `run_mode` question of a routed turn, read before the turn joins the
   // conversation: the user's words, the previous turn's mode and the earlier
   // task, never page content.
-  _autoModeQuestion(messages, userMessage, previousMode = null, corrections = [], continuedTask = '') {
+  _autoModeQuestion(messages, userMessage, previousMode = null, corrections = [], continuedTask = '', provider = null) {
     const binding = this._activeTaskBinding(messages || []);
     const task = binding.index >= 0 ? String(binding.requestText || binding.text || '') : '';
     return {
@@ -27680,6 +27687,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // An earlier selection prompt with page context is not the user's own
         // words; a continued task is the request itself.
         current_task: (continuedTask || carriesUntrustedText(task)) ? '' : task,
+        ...(imageGenAvailability({ configured: this.imageGenConfigured, tier: this._resolvePromptTier(provider), mode: 'act' }) === 'available'
+          ? { generative_media_available: true } : {}),
       },
     };
   }
@@ -36146,7 +36155,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     // Last among the mode guidance, so it also overrides the WebMCP text above.
     if (mode === 'ask' && tabId != null && this._autoModeEscalationTabs.has(tabId)) {
-      prompt += `\n\n${AUTO_MODE_ASK_NOTE}`;
+      prompt += `\n\n${AUTO_MODE_ASK_NOTE}\n${autoModeGenerativeMediaNote({ configured: this.imageGenConfigured, tier })}`;
     }
 
     // Universal cookie/paywall guidance. Always relevant for http(s)
@@ -55690,7 +55699,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // context is gathered below (see auto-mode.js).
     const autoModeQuestion = runOptions?.autoModeRouting
       ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode, runOptions.autoModeRouting.corrections,
-        runOptions.autoModeRouting.continuedTask)
+        runOptions.autoModeRouting.continuedTask, this._activeProvider(tabId))
       : null;
     const autoModeRoute = autoModeQuestion ? this._routeAutoRunMode(tabId, autoModeQuestion) : null;
 

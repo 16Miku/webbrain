@@ -131,6 +131,56 @@ for (const build of ['chrome', 'firefox']) {
     assert.ok(messages[0].content.includes(GENERATIVE_MEDIA_SETUP_NOTE));
   });
 
+  test(`${build}: automatic Ask media guidance follows saved settings and the provider tier`, () => {
+    for (const tier of ['full', 'mid', 'compact']) {
+      const agent = makeAgent(Agent, { promptTier: tier });
+      const tab = 17;
+      agent._autoModeEscalationTabs.add(tab);
+      const messages = agent.getConversation(tab, 'ask');
+      messages.push({ role: 'user', content: 'Earlier task' });
+      for (const config of [undefined, fal, { ...fal, model: '' }, fal, undefined]) {
+        agent.setImageGenConfig(config);
+        const configured = agent.imageGenConfigured;
+        const available = configured && tier === 'full';
+        assert.equal(messages[0].content.includes('generate_image'), available);
+        assert.equal(messages[0].content.includes(GENERATIVE_MEDIA_SETUP_NOTE), !configured);
+        assert.equal(messages[0].content.includes(GENERATIVE_MEDIA_TIER_NOTE), configured && tier !== 'full');
+        const question = agent._autoModeQuestion(messages, 'Create a video');
+        assert.equal(question.page.generative_media_available === true, available);
+        assert.equal(messages[1].content, 'Earlier task', 'configuration changes retain history');
+      }
+      agent.setImageGenConfig(fal);
+      agent._autoModeEscalationTabs.delete(tab);
+      assert.equal(agent._buildSystemPrompt('ask', tab).includes('generate_image'), false, 'explicit Ask has no generation handoff');
+    }
+  });
+
+  test(`${build}: runtime traces explain media availability without recording provider configuration`, async () => {
+    const { normalizeRuntimeTraceConfig } = await import(`../src/${build}/src/trace/runtime-config.js`);
+    const { tracesToMarkdown } = await import(`../src/${build}/src/agent/trace-export.js`);
+    const agent = makeAgent(Agent);
+    for (const [config, tier, mode, reason] of [
+      [undefined, 'full', 'act', 'not_configured'],
+      [fal, 'full', 'ask', 'ask_mode'],
+      [fal, 'mid', 'act', 'tier_restricted'],
+      [fal, 'compact', 'act', 'tier_restricted'],
+      [fal, 'full', 'act', 'available'],
+      [fal, 'full', 'dev', 'available'],
+    ]) {
+      agent.setImageGenConfig(config);
+      const runtimeConfig = agent._runtimeTraceConfig({ promptTier: tier }, { tabId: 18, mode });
+      assert.equal(runtimeConfig.generative_media_configured, !!config);
+      assert.equal(runtimeConfig.generative_media_availability, reason);
+      assert.equal(normalizeRuntimeTraceConfig(runtimeConfig).generative_media_availability, reason);
+      assert.doesNotMatch(JSON.stringify(runtimeConfig), /synthetic-key|flux\/schnell|apiKey|baseUrl/);
+      const exported = tracesToMarkdown([{ run: { runtimeConfig, mode }, events: [] }]);
+      assert.ok(exported.markdown.includes(reason));
+    }
+    agent._standaloneChatRunTabs.add(18);
+    assert.equal(agent._runtimeTraceConfig({ promptTier: 'full' }, { tabId: 18, mode: 'act' }).generative_media_availability, 'profile_restricted');
+    assert.deepEqual(normalizeRuntimeTraceConfig({ generative_media_configured: 'true', generative_media_availability: 'synthetic-key' }), { schema_version: 1 });
+  });
+
   test(`${build}: actual planner and intent requests receive current media availability`, async () => {
     const provider = { promptTier: 'full' };
     const agent = makeAgent(Agent, provider);
