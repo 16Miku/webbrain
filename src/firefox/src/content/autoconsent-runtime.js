@@ -56,7 +56,11 @@ export function guardCookieBannerInstance(consent, hasCoverage) {
     const elements = dom.elementSelector(selector);
     if (!elements.length) return false;
     for (const element of all ? elements : elements.slice(0, 1)) {
-      if (!await dom.clickElement(element)) return false;
+      // Selector chains can enter a same-origin iframe. Upstream clickElement
+      // rejects that realm's HTMLElement; upstream selector clicks do not.
+      await requireCoverage();
+      element.click();
+      await requireCoverage();
     }
     return true;
   };

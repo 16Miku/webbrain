@@ -7,6 +7,7 @@
 // - a consent-looking iframe is injected, but the same URL on a CAPTCHA host
 //   (hcaptcha.com) never is;
 // - a rule whose opt-out needs a page-world eval snippet completes;
+// - selector-chain rules can click buttons inside same-origin iframes;
 // - WebBrain's own rules decline Efilli banners inside a shadow root (Efilli's
 //   English and Turkish templates, a renamed layout found by its Turkish text,
 //   hepsiburada's layout) and mediamarkt.com.tr's consent layer;
@@ -210,6 +211,14 @@ const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const host = String(req.headers.host || '').split(':')[0];
   const script = url.pathname.match(/^\/efilli-(stock|turkish|inline|hepsiburada)\.js$/);
+  if (url.pathname === '/iframe-choice.js') {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.end(`document.querySelector('button').onclick = () => {
+      parent.document.documentElement.dataset.consent = 'refused';
+      window.frameElement.remove();
+    };`);
+    return;
+  }
   if (url.pathname === '/late-banner.js') {
     res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
     res.end(lateBannerScript);
@@ -222,7 +231,13 @@ const server = createServer((req, res) => {
     return;
   }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  if (url.pathname.startsWith('/late-banner')) {
+  if (url.pathname === '/iframe-consent') {
+    res.end('<!doctype html><html><head><title>Iframe consent fixture</title></head><body><h1>Fixture shop</h1>'
+      + '<div id="fast-cmp-root"><iframe id="fast-cmp-iframe" src="/iframe-button"></iframe></div></body></html>');
+  } else if (url.pathname === '/iframe-button') {
+    res.end('<!doctype html><html><body><div class="fast-cmp-home-refuse"><button>Refuse</button></div>'
+      + '<script src="/iframe-choice.js"></script></body></html>');
+  } else if (url.pathname.startsWith('/late-banner')) {
     res.end(lateBannerPage);
   } else if (url.pathname === '/index.html') {
     res.end(`<!doctype html><html><body><p>${host} frame</p></body></html>`);
@@ -325,6 +340,11 @@ async function scenarios(name, driver) {
     `document.querySelectorAll('style#autoconsent-prehide, style#autoconsent-css-rules').length`);
   assert.equal(captchaStyles, 0, `${name}: autoconsent added nothing to the CAPTCHA frame`);
   pass("'everywhere' declines the banner from the isolated world; the CAPTCHA frame is untouched");
+
+  const iframeUrl = `${origin}/iframe-consent`;
+  await driver.open(iframeUrl);
+  await until(async () => (await consent()) === 'refused', `${name}: the fastcmp rule to click inside its same-origin iframe`);
+  pass('a bundled selector-chain rule declines a banner inside a same-origin iframe');
 
   // Revoking coverage must also stop a handler already searching this page.
   const lateOffUrl = `${origin}/late-banner-off`;
