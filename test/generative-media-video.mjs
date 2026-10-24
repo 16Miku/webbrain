@@ -55,6 +55,7 @@ function parse(bytes) {
 }
 
 const sampleBytes = (bytes, trak) => trak.samples.map(sample => bytes.subarray(sample.offset, sample.offset + sample.size));
+const boxBytes = (bytes, box) => bytes.subarray(box.start, box.start + box.size);
 
 const videoOf = file => file.moov.traks[0];
 
@@ -195,19 +196,25 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(sampleBytes(bytes, audio).slice(0, 17), firstAudio);
     assert.deepEqual(sampleBytes(bytes, audio).slice(17), secondAudio.slice(1));
     assert.equal(audio.samples[17].cts - audio.edts.elst.entries[0].media_time, 16000);
+    // AAC's pre-roll for seeking (a 'roll' sample group) covers every frame.
+    const sourceRoll = parse(sources[0]).moov.traks[1].mdia.minf.stbl.sgpds[0];
+    assert.deepEqual(boxBytes(bytes, audio.mdia.minf.stbl.sgpds[0]), boxBytes(sources[0], sourceRoll));
+    assert.deepEqual(audio.mdia.minf.stbl.sbgps.map(sbgp => sbgp.entries), [[{ sample_count: 33, group_description_index: 1 }]]);
   });
 
   test(`${build}: fragmented and VP9/Opus clips join too`, () => {
     // [clips, codecs, audio frames kept from the first clip, start-up frames dropped
-    //  from the second, how far into its first kept frame the second clip's sound starts]
-    for (const [names, codecs, kept, dropped, lead] of [
+    //  from the second, how far into its first kept frame the second clip's sound
+    //  starts, the audio's pre-roll groups as runs of [frames, group]]
+    for (const [names, codecs, kept, dropped, lead, roll] of [
       // No edit lists: the picture starts after a B-frame delay (2048/12288 s),
       // so every track is shown from there and the movie starts at its first picture.
-      [['h264-aac-fragmented-1', 'h264-aac-fragmented-2'], ['avc1', 'mp4a'], 17, 1, 0],
+      [['h264-aac-fragmented-1', 'h264-aac-fragmented-2'], ['avc1', 'mp4a'], 17, 1, 0, []],
       // Opus: the first clip's short final frame would play over the second
       // clip's first frame, whose first 312 samples are the decoder's start-up,
-      // so the short frame is dropped rather than squeezed.
-      [['vp9-opus-1', 'vp9-opus-2'], ['vp09', 'Opus'], 50, 0, 312],
+      // so the short frame is dropped rather than squeezed. Each clip keeps its
+      // own pre-roll groups (none for its first four frames).
+      [['vp9-opus-1', 'vp9-opus-2'], ['vp09', 'Opus'], 50, 0, 312, [[4, 0], [46, 1], [4, 0], [47, 1]]],
     ]) {
       const label = names.join('+');
       const { bytes, durationSeconds } = join.joinMp4Clips(names.map(name => fixtures[name]));
@@ -225,6 +232,7 @@ for (const build of ['chrome', 'firefox']) {
         `${label}: the second clip's sound starts one second in`);
       const shortest = Math.min(...secondAudio.samples.map(sample => sample.duration));
       assert.ok(audio.samples.every(sample => sample.duration >= shortest), `${label}: no frame is squeezed`);
+      assert.deepEqual((audio.mdia.minf.stbl.sbgps[0]?.entries || []).map(entry => [entry.sample_count, entry.group_description_index]), roll, `${label}: pre-roll groups`);
     }
     // Fragments can start at any decode time: five seconds later, the clips
     // join into the same file. A track that starts after the picture cannot join.
@@ -289,6 +297,14 @@ for (const build of ['chrome', 'firefox']) {
       'complex edit list');
     refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => view.setUint32(videoOf(file).mdia.minf.stbl.stss.start + 16, 2))],
       'does not start with a keyframe');
+    // Encrypted samples, samples kept in another file, and a different pre-roll.
+    const audioOf = file => file.moov.traks[1];
+    refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => 'enca'.split('').forEach((char, i) =>
+      view.setUint8(audioOf(file).mdia.minf.stbl.stsd.entries[0].start + 4 + i, char.charCodeAt(0))))], 'encrypted');
+    refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => view.setUint8(videoOf(file).mdia.minf.dinf.dref.entries[0].start + 11, 0))],
+      'in another file');
+    refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => view.setInt16(audioOf(file).mdia.minf.stbl.sgpds[0].start + 24, -2))],
+      'different codec settings');
   });
 
   test(`${build}: scenes fit the model's clip lengths and stay within two minutes`, () => {

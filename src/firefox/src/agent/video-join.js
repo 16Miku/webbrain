@@ -89,6 +89,22 @@ function readTrack(trak, movieTimescale, bytes) {
   if ((stbl.stsd.entries?.length || 0) !== 1 || samples.some(sample => sample.description_index !== 0)) {
     throw incompatible('a track switches codec settings');
   }
+  // Encrypted samples need their per-sample keys and IVs, which are not
+  // carried over; samples kept in another file cannot be copied from this one.
+  if (/^enc[a-z]$/.test(stbl.stsd.entries[0]?.type || '')) throw incompatible('a track is encrypted');
+  if ((minf.dinf?.dref?.entries || []).some(entry => !(entry.flags & 1))) throw incompatible('a track keeps its samples in another file');
+  // Sample groups, such as an audio codec's pre-roll for seeking: each
+  // sample's group in this clip, and the groups' description box.
+  const groups = (stbl.sbgps || []).flatMap(sbgp => {
+    const description = rawBox(bytes, (stbl.sgpds || []).find(sgpd => sgpd.grouping_type === sbgp.grouping_type));
+    if (!description) return [];
+    const indices = new Array(samples.length).fill(0);
+    let next = 0;
+    for (const entry of sbgp.entries || []) {
+      for (let n = 0; n < entry.sample_count && next < indices.length; n++) indices[next++] = entry.group_description_index;
+    }
+    return [{ type: sbgp.grouping_type, parameter: sbgp.grouping_type_parameter || 0, indices, description }];
+  });
   // Reordered frames (B-frames) are shown after they are decoded, so the
   // track's picture ends at its last composition time, not its last decode time.
   const compositionEnd = samples.reduce((end, sample) => Math.max(end, sample.cts + sample.duration), 0);
@@ -112,6 +128,8 @@ function readTrack(trak, movieTimescale, bytes) {
     language: mdia.mdhd.language,
     stsd: rawBox(bytes, stbl.stsd),
     stsdKey: sampleDescriptionKey(bytes, stbl.stsd),
+    groups,
+    groupsKey: JSON.stringify(groups.map(group => [group.type, group.parameter, Array.from(group.description)])),
     hdlr: rawBox(bytes, mdia.hdlr),
     mediaHeader: rawBox(bytes, (minf.boxes || []).find(box => MEDIA_HEADER_TYPES.has(box.type))),
     dinf: rawBox(bytes, (minf.boxes || []).find(box => box.type === 'dinf')),
@@ -222,6 +240,7 @@ function joinTrack(clips, index, starts) {
         size: sample.size,
         source: sample.offset,
         sync: sample.is_sync !== false,
+        groups: track.groups.map(group => group.indices[sample.number] ?? 0),
         clipIndex,
       });
       chunk.size += sample.size;
@@ -315,6 +334,19 @@ function writeSampleTable(writer, track) {
       for (const sample of samples) writer.u32(sample.size);
     });
     writer.full('stco', 0, 0, () => { writer.u32(chunks.length); for (const chunk of chunks) writer.u32(chunk.offset); });
+    const described = new Set();
+    first.groups.forEach((group, index) => {
+      // One description box per grouping type, however many sbgp boxes use it.
+      if (!described.has(group.type)) writer.bytes(group.description);
+      described.add(group.type);
+      const members = runs(samples.map(sample => sample.groups[index]));
+      writer.full('sbgp', group.parameter ? 1 : 0, 0, () => {
+        writer.type(group.type);
+        if (group.parameter) writer.u32(group.parameter);
+        writer.u32(members.length);
+        for (const run of members) { writer.u32(run.count); writer.u32(run.value); }
+      });
+    });
   });
 }
 
@@ -386,7 +418,8 @@ export function joinMp4Clips(inputs, { maxBytes = Infinity } = {}) {
     if (clip.tracks.length !== reference.tracks.length) throw incompatible('the clips have different tracks');
     clip.tracks.forEach((track, index) => {
       const expected = reference.tracks[index];
-      if (track.handler !== expected.handler || track.timescale !== expected.timescale || !sameBytes(track.stsdKey, expected.stsdKey)) {
+      if (track.handler !== expected.handler || track.timescale !== expected.timescale
+          || !sameBytes(track.stsdKey, expected.stsdKey) || track.groupsKey !== expected.groupsKey) {
         throw incompatible('the clips use different codec settings');
       }
       if (placement(clip.matrix, track.tkhd) !== placement(reference.matrix, expected.tkhd)) {
