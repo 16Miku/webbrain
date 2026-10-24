@@ -171,13 +171,19 @@ function parseClip(input) {
   // - an edit list that hides whole frames before or after the picture keeps
   //   them in the file, where a join would play them over the next clip;
   // - a track whose first sample comes after the clip's start (by more than a
-  //   millisecond) would need a leading gap, which one edit cannot show.
+  //   millisecond) would need a leading gap, which one edit cannot show;
+  // - a track whose own edit ends before the picture (by more than one of its
+  //   frames) would play on to the next clip in the joined file.
   const pictureEnd = timing.mediaTime + presented;
+  const endsEarly = track => track !== timing && Number.isFinite(track.editDuration)
+    && track.editDuration < Math.round(presented / timing.timescale * track.timescale)
+      - track.samples.reduce((longest, sample) => Math.max(longest, sample.duration), 0);
   const problem = timing.samples[0].is_sync === false ? 'does not start with a keyframe'
     : timing.samples.some(sample => sample.duration > 0
       && (sample.cts + sample.duration <= timing.mediaTime || sample.cts >= pictureEnd)) ? 'hides some of its frames with an edit list'
       : tracks.some(track => track.samples[0].dts - track.mediaTime > track.timescale / 1000) ? 'has a track that starts after the clip does'
-        : null;
+        : tracks.some(endsEarly) ? 'ends a track early with an edit list'
+          : null;
   return {
     bytes,
     movieTimescale,

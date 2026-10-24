@@ -305,6 +305,11 @@ for (const build of ['chrome', 'firefox']) {
       'in another file');
     refused([fixtures['h264-aac-1'], patched('h264-aac-2', (view, file) => view.setInt16(audioOf(file).mdia.minf.stbl.sgpds[0].start + 24, -2))],
       'different codec settings');
+    // Sound whose own edit ends half a second before the picture would play
+    // on in a joined file; ending within a frame of it is fine.
+    const soundEdit = milliseconds => patched('h264-aac-2', (view, file) => view.setUint32(audioOf(file).edts.elst.start + 16, milliseconds));
+    refused([fixtures['h264-aac-1'], soundEdit(500)], 'ends a track early');
+    assert.equal(join.joinMp4Clips([fixtures['h264-aac-1'], soundEdit(960)]).durationSeconds, 2);
   });
 
   test(`${build}: scenes fit the model's clip lengths and stay within two minutes`, () => {
