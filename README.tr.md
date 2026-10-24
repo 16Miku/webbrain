@@ -81,7 +81,7 @@ Yan paneli açmak için WebBrain simgesine tıklayın ve ardından şuna benzer 
 ## Bir model seçin
 
 **WebBrain Companion**, yerel modeller ve desteklenen abonelikler için ayrı
-masaüstü uygulamamızdır. [Windows, macOS veya Linux için indirin](https://github.com/esokullu/webbrain/releases/tag/systray-v0.1.2),
+masaüstü uygulamamızdır. [Windows, macOS veya Linux için indirin](https://github.com/webbrain-one/webbrain/releases/tag/systray-v0.1.2),
 ardından Sağlayıcılar sayfasındaki **WebBrain Companion** kartını seçin.
 Varsayılan yerel adres `http://127.0.0.1:8327/v1`; aynı bilgisayardaki
 eklenti için API anahtarı gerekmez. **Load Models** ile model seçip bağlantıyı
