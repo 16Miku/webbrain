@@ -6316,7 +6316,11 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
     );
     if (!shouldApplyState()) return false;
     const renderedSeq = Number(runAssistantEl.dataset.lastRenderedSeq || 0);
-    if (renderedSeq > Number(runUi.ackedSeq || 0)) {
+    // An acknowledgement lets the background drop these events. A hidden
+    // panel never saves its chat, and becoming visible restores the saved
+    // copy, so only the journal can replay what it rendered in the meantime
+    // (a video that finished generating while the user was in another tab).
+    if (document.visibilityState !== 'hidden' && renderedSeq > Number(runUi.ackedSeq || 0)) {
       await sendToBackground('agent_run_ack', {
         tabId: numericTabId,
         requestId: runUi.requestId,
