@@ -302,6 +302,24 @@ can charge for a partner generation already in flight. Inline media is limited t
 as media assets, so their previews and save links survive panel reopening without
 putting base64 bytes in the run journal or model context.
 
+With an OpenRouter video model, a video can be longer than one clip. The model
+estimates how long the requested video should run (`estimated_duration`). A
+single clip can set `duration`, `aspect_ratio` and `resolution`, which are
+checked against the model's catalog entry (`supported_durations`,
+`supported_aspect_ratios`, `supported_resolutions`) before anything is
+submitted. A longer video is passed as `scenes`: WebBrain fits each scene to the
+clip lengths the model offers, splitting a scene that is longer than its longest
+clip, generates up to three clips at a time with one retry each, and joins them
+into one MP4 without re-encoding (`src/*/src/agent/video-join.js`, which parses
+the clips with the vendored mp4box.js). Videos are capped at 120 seconds and 24
+clips. When the estimate is longer than 120 seconds, WebBrain asks on its own
+card whether to generate the shorter version before any clip is submitted; the
+card never times out, and an unattended run generates nothing. Clips that
+cannot be joined this way (different encodings, edit lists or fragment times
+the joined file cannot reproduce, or more than 160 MB together) are kept as
+separate clips and shown in order. The model never sees the video, so the tool result
+gives it the video's real length (`durationSeconds`) and `clipCount` to report.
+
 The Act system prompt and planner direct the model to call `generate_image` when
 the user asks to generate media. Provider results are treated as untrusted content.
 Inline bytes are shown in chat and excluded from model context.

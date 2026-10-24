@@ -7753,6 +7753,9 @@ export class Agent extends LoopDetector {
     if (data.unverifiedStepConfirmation) {
       display.unverifiedStepConfirmation = normalizeUnverifiedStepConfirmation(data.unverifiedStepConfirmation);
     }
+    if (data.videoLengthConfirmation) {
+      display.videoLengthConfirmation = record(data.videoLengthConfirmation, ['estimatedSeconds', 'totalSeconds', 'clipCount', 'maxSeconds']);
+    }
     if (data.researchEscalation) display.researchEscalation = record(data.researchEscalation, ['engine', 'request'], 6000);
     if (data.workflowHealing) {
       const target = value => record(value, ['role', 'name', 'label', 'ariaLabel', 'placeholder',
@@ -32738,6 +32741,50 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       click: `Click this control on ${host}?` }[step?.action] || `Submit this on ${host}?`;
   }
 
+  /**
+   * video-length-cap: the requested video needs longer than WebBrain makes
+   * (generative-media.js MAX_VIDEO_SECONDS), so before any clip is submitted
+   * the user decides on WebBrain's card whether the shorter version the model
+   * planned is worth generating. Each clip is billed, so the card never times
+   * out and never goes ahead on its own; an unattended scheduled run cannot
+   * ask and generates nothing. Returns 'once', 'deny', 'unavailable', or null
+   * when Stop or a correction cancelled the card.
+   */
+  async _promptVideoLengthConfirmation(tabId, details = {}, onUpdate = null) {
+    const seconds = value => Math.max(0, Math.round(Number(value) || 0));
+    const confirmation = {
+      estimatedSeconds: seconds(details.estimatedSeconds),
+      totalSeconds: seconds(details.totalSeconds),
+      clipCount: seconds(details.clipCount),
+      maxSeconds: seconds(details.maxSeconds),
+    };
+    if (this.scheduledRunPolicies.get(tabId)?.requireConsequentialConfirmation === false) return 'unavailable';
+    if (typeof onUpdate !== 'function') return 'unavailable';
+    const clarifyId = `video_length_${secureRandomBase36Token(12)}`;
+    const tabPending = this._pendingClarifications.get(tabId) || new Map();
+    this._pendingClarifications.set(tabId, tabPending);
+    const responsePromise = new Promise((resolve) => {
+      tabPending.set(clarifyId, { resolve, ts: Date.now(), timer: null, settled: false, timeoutSec: 0, deadlineTs: 0, onUpdate });
+    });
+    const clock = value => (value < 60 ? `${value} s` : `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`);
+    try {
+      onUpdate('clarify', {
+        promptKind: 'video_length',
+        clarifyId,
+        // English for traces and surfaces without the side panel's localized copy.
+        question: `This video needs about ${clock(confirmation.estimatedSeconds)}, but WebBrain makes videos up to `
+          + `${clock(confirmation.maxSeconds)}. Generate a ${clock(confirmation.totalSeconds)} version from ${confirmation.clipCount} clips instead?`,
+        videoLengthConfirmation: confirmation,
+        options: ['once', 'deny'],
+      });
+    } catch { /* UI emit must never break the run */ }
+    const response = await responsePromise;
+    tabPending.delete(clarifyId);
+    if (tabPending.size === 0 && this._pendingClarifications.get(tabId) === tabPending) this._pendingClarifications.delete(tabId);
+    if (response?.cancelled) return null;
+    return String(response?.answer || '').trim().toLowerCase() === 'once' ? 'once' : 'deny';
+  }
+
   // What an unverified-step card shows: text the guard already holds (a
   // composer snapshot) or the field read now. The digest binds the user's
   // answer to exactly this content; the text is bounded page content that
@@ -43276,8 +43323,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _limitToolResult(result, maxResultChars = STANDARD_TOOL_RESULT_CHARS) {
     maxResultChars = Number(maxResultChars) === 16000 ? 16000 : STANDARD_TOOL_RESULT_CHARS;
     // Inline media is rendered for the user; base64 bytes have no value in model context.
+    // The model never sees the media, so it may report only what WebBrain knows.
     if (result?.success && result?.provider && (result.inlineMedia || /^data:(image|video|audio)\//.test(result.url || ''))) {
-      result = { ...result, url: undefined, mediaId: undefined, inlineMedia: true, note: 'Generated media is displayed in the chat with a save link. Tell the user it is ready; do not invent a hosted URL.' };
+      const clips = Array.isArray(result.clips)
+        ? result.clips.map(({ mediaId: _mediaId, ...clip }) => clip) : undefined;
+      const note = 'Generated media is displayed in the chat with a save link. Tell the user it is ready. You have not seen it: '
+        + 'describe it only by what you asked for and by its durationSeconds and clipCount when present, never by its contents; '
+        + 'do not invent a hosted URL.'
+        + (result.joined === false ? ' Its clips could not be joined into one file, so the chat shows them one after another.' : '');
+      result = { ...result, url: undefined, mediaId: undefined, clips, inlineMedia: true, note };
     }
     const windowSafeResult = isReadPageWindowResult(result)
       ? fitReadPageWindowResult(result, maxResultChars)
@@ -48283,7 +48337,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await fetchUrl(args.url, args, { tabId, signal: executionContext?._contentActionAbortSignal });
     }
     if (name === 'generate_image') {
-      return await generateImage(args, { signal: executionContext?._contentActionAbortSignal, ...(executionContext?.imageGenConfig ? { config: executionContext.imageGenConfig } : {}) });
+      return await generateImage(args, {
+        signal: executionContext?._contentActionAbortSignal,
+        ...(executionContext?.imageGenConfig ? { config: executionContext.imageGenConfig } : {}),
+        onProgress: message => onUpdate?.('tool_progress', { name, message }),
+        confirmVideoLength: details => this._promptVideoLengthConfirmation(tabId, details, onUpdate),
+      });
     }
     if (name === 'read_page_source') {
       return await readPageSource(args.url, args, { tabId, signal: executionContext?._contentActionAbortSignal });
