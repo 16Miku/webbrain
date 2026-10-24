@@ -311,14 +311,19 @@ submitted. A longer video is passed as `scenes`: WebBrain fits each scene to the
 clip lengths the model offers, splitting a scene that is longer than its longest
 clip, generates up to three clips at a time with one retry each, and joins them
 into one MP4 without re-encoding (`src/*/src/agent/video-join.js`, which parses
-the clips with the vendored mp4box.js). Videos are capped at 120 seconds and 24
-clips. When the estimate is longer than 120 seconds, WebBrain asks on its own
-card whether to generate the shorter version before any clip is submitted; the
-card never times out, and an unattended run generates nothing. Clips that
-cannot be joined this way (different encodings, edit lists or fragment times
-the joined file cannot reproduce, or more than 160 MB together) are kept as
-separate clips and shown in order. The model never sees the video, so the tool result
-gives it the video's real length (`durationSeconds`) and `clipCount` to report.
+the clips with the vendored mp4box.js). A clip's sound often ends a little
+before its picture or starts after it; with AAC-LC sound (the usual MP4 audio,
+which Grok Imagine returns) the joiner fills those gaps with silent frames, so
+the sound plays without gaps and each of its frames plays within half a frame of
+its time. Videos are capped at 120 seconds and 24 clips. When the estimate is
+longer than 120 seconds, WebBrain asks on its own card whether to generate the
+shorter version before any clip is submitted; the card never times out, and an
+unattended run generates nothing. Clips that cannot be joined this way
+(different encodings, edit lists or timing the joined file cannot reproduce, or
+more than 160 MB together) are kept as separate clips and shown in order, and
+the tool result says why (`joinError`), which traces show. The model never sees
+the video, so the tool result gives it the video's real length
+(`durationSeconds`) and `clipCount` to report.
 
 The Act system prompt and planner direct the model to call `generate_image` when
 the user asks to generate media. Provider results are treated as untrusted content.

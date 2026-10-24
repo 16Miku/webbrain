@@ -455,8 +455,10 @@ function declinedVideoMessage({ answer, estimatedSeconds, totalSeconds }) {
 }
 
 // Joins a video's clips into one stored asset. Clips that cannot be joined
-// losslessly are stored one by one and shown in order.
+// losslessly are stored one by one and shown in order, and the result says why
+// (joinError) so a trace shows it.
 async function storeVideoClips(clips, onProgress) {
+  let joinError;
   if (clips.length > 1) {
     try {
       onProgress?.(`Joining ${clips.length} clips…`);
@@ -465,6 +467,7 @@ async function storeVideoClips(clips, onProgress) {
       return { ...asset, durationSeconds: roundSeconds(joined.durationSeconds), clipCount: clips.length };
     } catch (error) {
       if (!(error instanceof VideoJoinError)) throw error;
+      joinError = error.message;
     }
   }
   const stored = [];
@@ -474,7 +477,7 @@ async function storeVideoClips(clips, onProgress) {
   }
   const durationSeconds = roundSeconds(stored.reduce((sum, clip) => sum + (clip.durationSeconds || 0), 0));
   if (stored.length === 1) return { ...stored[0], inlineMedia: true, durationSeconds, clipCount: 1 };
-  return { inlineMedia: true, mimeType: 'video/mp4', clips: stored, clipCount: stored.length, durationSeconds, joined: false };
+  return { inlineMedia: true, mimeType: 'video/mp4', clips: stored, clipCount: stored.length, durationSeconds, joined: false, joinError };
 }
 
 /**
