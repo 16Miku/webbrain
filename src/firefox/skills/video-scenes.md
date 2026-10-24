@@ -22,6 +22,7 @@ Use this skill before calling `generate_image` with `scenes`. The video model ma
 ## Each scene
 
 - One action a camera could film in the clip's few seconds. Call the characters by name; do not describe them again.
+- Each scene is one clip, so keep it within the model's longest clip. WebBrain refuses a longer scene and names the limit; split it into scenes with their own prompts.
 - Keep what changed earlier: a door opened in one scene is still open in the next.
 - Show the idea happening. Video models cannot draw diagrams, arrows, equations, charts or readable text, so do not ask for them. To explain something, show it: repeat the experiment, put the outcomes side by side, or move in close on the mechanism.
 - When the idea needs words, give the scene one short narrator line in quotes, about a dozen words for an 8-second clip.

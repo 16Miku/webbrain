@@ -161,27 +161,24 @@ function videoShape(entry, video) {
 }
 
 /**
- * The clips for a video described as scenes. A scene longer than the model's
- * longest clip becomes several clips, and every clip length rounds up to one
- * the model offers. Refuses more than `maxSeconds` in total or `maxClips`.
+ * The clips for a video described as scenes, one per scene, each length
+ * rounded up to one the model offers. A scene longer than the model's longest
+ * clip is refused rather than split: its parts would get the same prompt, and
+ * the model would make the same clip twice. Refuses more than `maxSeconds` in
+ * total or `maxClips`.
  */
 export function planVideoClips(scenes, durations, { maxSeconds = MAX_VIDEO_SECONDS, maxClips = MAX_VIDEO_CLIPS } = {}) {
   if (!durations?.length) {
     throw new Error('This video model does not list the clip lengths it supports, so WebBrain cannot make a video from scenes with it. Generate one clip instead.');
   }
   const longest = durations[durations.length - 1];
-  const clips = [];
-  scenes.forEach((scene, index) => {
+  const clips = scenes.map((scene, index) => {
     const prompt = String(scene?.prompt || '').trim();
     if (!prompt) throw new Error(`Scene ${index + 1} needs a prompt.`);
-    const parts = Math.ceil(scene.duration / longest);
-    const each = Math.ceil(scene.duration / parts);
-    for (let part = 1; part <= parts; part++) {
-      clips.push({
-        prompt: parts > 1 ? `${prompt} (part ${part} of ${parts})` : prompt,
-        duration: durations.find(value => value >= each) ?? longest,
-      });
+    if (scene.duration > longest) {
+      throw new Error(`Scene ${index + 1} is ${scene.duration} s, and this model makes clips of up to ${longest} s. Split it into scenes of up to ${longest} s, each with its own prompt for its part, so no clip repeats another.`);
     }
+    return { prompt, duration: durations.find(value => value >= scene.duration) ?? longest };
   });
   const total = clips.reduce((sum, clip) => sum + clip.duration, 0);
   if (clips.length > maxClips) {
@@ -210,8 +207,9 @@ function planVideo(prompt, video, entry) {
       total,
       estimated: video.estimated_duration,
       shape,
-      // Every clip carries the shared look so the scenes match.
-      clips: clips.map((clip, index) => ({ ...clip, prompt: `${prompt}\n\nScene ${index + 1} of ${clips.length}: ${clip.prompt}` })),
+      // Every clip carries the shared look so the scenes match. No scene
+      // numbers: video models draw them on screen as titles.
+      clips: clips.map(clip => ({ ...clip, prompt: `${prompt}\n\n${clip.prompt}` })),
     };
   }
   const longest = durations?.[durations.length - 1];
