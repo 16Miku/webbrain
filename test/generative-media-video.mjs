@@ -318,6 +318,7 @@ for (const build of ['chrome', 'firefox']) {
       const config = esds.esd.descs.find(desc => desc.tag === 4).descs.find(desc => desc.tag === 5).data;
       const box = boxBytes(fixtures[name], esds);
       const at = box.findIndex((_, i) => box[i - 1] === config.length && config.every((value, k) => box[i + k] === value));
+      assert.ok(at > 0, 'the decoder configuration is in the esds box');
       view.setUint8(esds.start + at, (5 << 3) | (config[0] & 7));
     });
     assert.ok(joined([heAac('h264-aac-1'), heAac('h264-aac-2')]).bytes, 'HE-AAC clips that need no silence still join');
