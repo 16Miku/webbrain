@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Builds the WebBrain Companion site: web/index.html (English) and
-web/tr/index.html (Turkish) from one template, so both pages keep the same
-structure. No dependencies:  python3 web/build.py
+"""Builds the WebBrain Companion site in the main website's languages from
+one template. No dependencies: python3 web/build.py
 
 The pages only show the app's own windows (panel screenshots taken with
 WBC_DEMO=1 sample data) and a symbolic tray: a plain field with one status bar
 and the companion's real menu, never anyone's desktop.
 """
 import html
+import json
 import os
 import re
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent.parent
+LANGUAGES = json.loads((REPO / "web/build/languages.json").read_text(encoding="utf-8"))
 
 SITE = "https://webbrain.one/companion"  # where the pages are published
 VERSION = "0.1.2"
@@ -264,7 +269,7 @@ D1_ANSWER = """{"answers": {"completion": {
  "diagnostics": {"runtime": "onnxruntime 1.31.0 (CPU)", …}}"""
 
 PAGE = r"""<!doctype html>
-<html lang="[[lang]]" class="no-js">
+<html lang="[[lang]]" dir="[[direction]]" class="no-js">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -274,8 +279,7 @@ PAGE = r"""<!doctype html>
 <meta name="theme-color" content="#fbf6f8" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1a0f18" media="(prefers-color-scheme: dark)">
 <link rel="canonical" href="[[canonical]]">
-<link rel="alternate" hreflang="en" href="[[site]]/">
-<link rel="alternate" hreflang="tr" href="[[site]]/tr/">
+[[alternates]]
 <link rel="alternate" hreflang="x-default" href="[[site]]/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="WebBrain">
@@ -302,7 +306,14 @@ PAGE = r"""<!doctype html>
     <a href="#connect">[[nav_connect]]</a>
     <a href="#download">[[nav_download]]</a>
   </nav>
-  <a class="lang" href="[[other_href]]" hreflang="[[other_lang]]" lang="[[other_lang]]">[[other_name]]</a>
+  <details class="language-picker">
+    <summary aria-label="[[language_label]]" title="[[language_label]]">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M5 6.5h14M5 17.5h14"/></svg>
+    </summary>
+    <nav class="language-menu" aria-label="[[language_label]]">
+[[language_links]]
+    </nav>
+  </details>
 </header>
 
 <main id="main">
@@ -433,7 +444,7 @@ PAGE = r"""<!doctype html>
 <footer class="site-foot">
   <div class="wrap">
     <p>[[foot]]</p>
-    <nav aria-label="[[foot_nav]]"><a href="https://webbrain.one/">WebBrain</a><a href="[[source]]">[[source_label]]</a><a href="[[other_href]]" hreflang="[[other_lang]]" lang="[[other_lang]]">[[other_name]]</a></nav>
+    <nav aria-label="[[foot_nav]]"><a href="https://webbrain.one/">WebBrain</a><a href="[[source]]">[[source_label]]</a></nav>
   </div>
 </footer>
 </body>
@@ -468,10 +479,12 @@ def menu_html(lang):
 
 def windows_html(lang, root, t):
     out = []
+    # The app itself currently has English and Turkish screenshots.
+    shot_lang = lang if lang in ("en", "tr") else "en"
     for i, shot in enumerate(["panel", "add", "local"], 1):
         out.append(f"""      <li><figure>
         <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
-          <picture><source srcset="{root}assets/img/{shot}-{lang}-dark.webp" media="(prefers-color-scheme: dark)"><img src="{root}assets/img/{shot}-{lang}-light.webp" width="460" height="760" alt="{esc(t[f'shot{i}_alt'])}" loading="lazy" decoding="async"></picture></div>
+          <picture><source srcset="{root}assets/img/{shot}-{shot_lang}-dark.webp" media="(prefers-color-scheme: dark)"><img src="{root}assets/img/{shot}-{shot_lang}-light.webp" width="460" height="760" alt="{esc(t[f'shot{i}_alt'])}" loading="lazy" decoding="async"></picture></div>
         <figcaption><h3>{esc(t[f'shot{i}_h'])}</h3><p>{esc(t[f'shot{i}_p'])}</p></figcaption>
       </figure></li>""")
     return "\n".join(out)
@@ -488,7 +501,21 @@ def machines_html(lang, t):
     return "\n".join(out)
 
 
+def language_links(lang, root):
+    links = []
+    for locale in LANGUAGES:
+        code = locale["code"]
+        href = root + ("" if locale["isDefault"] else code + "/")
+        current = ' aria-current="page"' if code == lang else ""
+        links.append(f'      <a href="{href}" hreflang="{code}" lang="{code}" dir="{locale["dir"]}"{current}>{esc(locale["label"])}</a>')
+    return "\n".join(links)
+
+
 def render(lang):
+    locale = next(item for item in LANGUAGES if item["code"] == lang)
+    if lang not in T:
+        copy = json.loads((HERE / "locales" / f"{lang}.json").read_text(encoding="utf-8"))
+        T[lang], MENU[lang], MACHINES[lang] = copy["text"], copy["menu"], copy["machines"]
     t = T[lang]
     root = "" if lang == "en" else "../"
     v = {k: esc(x) for k, x in t.items() if isinstance(x, str)}
@@ -497,13 +524,14 @@ def render(lang):
         v[k] = t[k]
     v.update(
         lang=lang,
+        direction=locale["dir"],
         root=root,
         home="./",
         site=SITE,
-        canonical=SITE + ("/" if lang == "en" else "/tr/"),
-        other_href="tr/" if lang == "en" else "../",
-        other_lang="tr" if lang == "en" else "en",
-        other_name="Türkçe" if lang == "en" else "English",
+        canonical=SITE + ("/" if lang == "en" else f"/{lang}/"),
+        alternates="\n".join(f'<link rel="alternate" hreflang="{item["code"]}" href="{SITE}/{"" if item["isDefault"] else item["code"] + "/"}">' for item in LANGUAGES),
+        language_label=esc(json.loads((REPO / "web/build/locales" / f"{lang}.json").read_text(encoding="utf-8"))["nav.language_aria"]),
+        language_links=language_links(lang, root),
         dl_mac=FILES["mac"],
         dl_win=FILES["win"],
         dl_linux_x64=FILES["linux_x64"],
@@ -533,7 +561,9 @@ def render(lang):
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    for lang, path in (("en", "index.html"), ("tr", os.path.join("tr", "index.html"))):
+    for locale in LANGUAGES:
+        lang = locale["code"]
+        path = "index.html" if locale["isDefault"] else os.path.join(lang, "index.html")
         out = os.path.join(here, path)
         os.makedirs(os.path.dirname(out), exist_ok=True)
         with open(out, "w", encoding="utf-8") as f:

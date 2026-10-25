@@ -1,0 +1,156 @@
+[
+  {
+    "code": "en",
+    "bcp47": "en-US",
+    "label": "English",
+    "dir": "ltr",
+    "isDefault": true
+  },
+  {
+    "code": "es",
+    "bcp47": "es-ES",
+    "label": "Español",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "fr",
+    "bcp47": "fr-FR",
+    "label": "Français",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "tr",
+    "bcp47": "tr-TR",
+    "label": "Türkçe",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "zh",
+    "bcp47": "zh-CN",
+    "label": "中文",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "ru",
+    "bcp47": "ru-RU",
+    "label": "Русский",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "uk",
+    "bcp47": "uk-UA",
+    "label": "Українська",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "ar",
+    "bcp47": "ar",
+    "label": "العربية",
+    "dir": "rtl",
+    "isDefault": false
+  },
+  {
+    "code": "ja",
+    "bcp47": "ja-JP",
+    "label": "日本語",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "ko",
+    "bcp47": "ko-KR",
+    "label": "한국어",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "id",
+    "bcp47": "id-ID",
+    "label": "Bahasa Indonesia",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "th",
+    "bcp47": "th-TH",
+    "label": "ไทย",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "ms",
+    "bcp47": "ms-MY",
+    "label": "Bahasa Melayu",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "tl",
+    "bcp47": "fil-PH",
+    "label": "Filipino",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "he",
+    "bcp47": "he-IL",
+    "label": "עברית",
+    "dir": "rtl",
+    "isDefault": false
+  },
+  {
+    "code": "hi",
+    "bcp47": "hi-IN",
+    "label": "हिन्दी",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "pt",
+    "bcp47": "pt-BR",
+    "label": "Português",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "vi",
+    "bcp47": "vi-VN",
+    "label": "Tiếng Việt",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "bn",
+    "bcp47": "bn-BD",
+    "label": "বাংলা",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "fa",
+    "bcp47": "fa-IR",
+    "label": "فارسی",
+    "dir": "rtl",
+    "isDefault": false
+  },
+  {
+    "code": "nl",
+    "bcp47": "nl-NL",
+    "label": "Nederlands",
+    "dir": "ltr",
+    "isDefault": false
+  },
+  {
+    "code": "de",
+    "bcp47": "de-DE",
+    "label": "Deutsch",
+    "dir": "ltr",
+    "isDefault": false
+  }
+]

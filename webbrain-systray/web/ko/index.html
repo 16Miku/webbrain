@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ko" dir="ltr" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebBrain Companion: WebBrain의 AI 구독</title>
+<meta name="description" content="Claude, ChatGPT, Google, Grok 및 Kimi 구독을 WebBrain에 제공하는 macOS, Windows 및 Linux용 소형 트레이 앱입니다. 127.0.0.1은 각 계획의 남은 양을 보여주고 자신의 컴퓨터에서 Bonsai 2 27B를 실행합니다.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#fbf6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a0f18" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://webbrain.one/companion/ko/">
+<link rel="alternate" hreflang="en" href="https://webbrain.one/companion/">
+<link rel="alternate" hreflang="es" href="https://webbrain.one/companion/es/">
+<link rel="alternate" hreflang="fr" href="https://webbrain.one/companion/fr/">
+<link rel="alternate" hreflang="tr" href="https://webbrain.one/companion/tr/">
+<link rel="alternate" hreflang="zh" href="https://webbrain.one/companion/zh/">
+<link rel="alternate" hreflang="ru" href="https://webbrain.one/companion/ru/">
+<link rel="alternate" hreflang="uk" href="https://webbrain.one/companion/uk/">
+<link rel="alternate" hreflang="ar" href="https://webbrain.one/companion/ar/">
+<link rel="alternate" hreflang="ja" href="https://webbrain.one/companion/ja/">
+<link rel="alternate" hreflang="ko" href="https://webbrain.one/companion/ko/">
+<link rel="alternate" hreflang="id" href="https://webbrain.one/companion/id/">
+<link rel="alternate" hreflang="th" href="https://webbrain.one/companion/th/">
+<link rel="alternate" hreflang="ms" href="https://webbrain.one/companion/ms/">
+<link rel="alternate" hreflang="tl" href="https://webbrain.one/companion/tl/">
+<link rel="alternate" hreflang="he" href="https://webbrain.one/companion/he/">
+<link rel="alternate" hreflang="hi" href="https://webbrain.one/companion/hi/">
+<link rel="alternate" hreflang="pt" href="https://webbrain.one/companion/pt/">
+<link rel="alternate" hreflang="vi" href="https://webbrain.one/companion/vi/">
+<link rel="alternate" hreflang="bn" href="https://webbrain.one/companion/bn/">
+<link rel="alternate" hreflang="fa" href="https://webbrain.one/companion/fa/">
+<link rel="alternate" hreflang="nl" href="https://webbrain.one/companion/nl/">
+<link rel="alternate" hreflang="de" href="https://webbrain.one/companion/de/">
+<link rel="alternate" hreflang="x-default" href="https://webbrain.one/companion/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WebBrain">
+<meta property="og:title" content="WebBrain Companion">
+<meta property="og:description" content="Claude, ChatGPT, Google, Grok 및 Kimi 구독을 WebBrain에 제공하는 macOS, Windows 및 Linux용 소형 트레이 앱입니다. 127.0.0.1은 각 계획의 남은 양을 보여주고 자신의 컴퓨터에서 Bonsai 2 27B를 실행합니다.">
+<meta property="og:url" content="https://webbrain.one/companion/ko/">
+<meta property="og:image" content="https://webbrain.one/companion/assets/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="../assets/img/favicon.png">
+<link rel="preload" href="../assets/fonts/bricolage-grotesque-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../assets/site.css">
+<script>document.documentElement.classList.replace("no-js", "js")</script>
+<script defer src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">콘텐츠로 건너뛰기</a>
+<header class="wrap site-head">
+  <a class="brand" href="./"><img src="../assets/img/logo-128.png" alt="" width="30" height="30">WebBrain Companion</a>
+  <nav class="site-nav" aria-label="섹션">
+    <a href="#panel">패널</a>
+    <a href="#local">지역 모델</a>
+    <a href="#connect">연결하다</a>
+    <a href="#download">다운로드</a>
+  </nav>
+  <details class="language-picker">
+    <summary aria-label="언어 선택" title="언어 선택">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M5 6.5h14M5 17.5h14"/></svg>
+    </summary>
+    <nav class="language-menu" aria-label="언어 선택">
+      <a href="../" hreflang="en" lang="en" dir="ltr">English</a>
+      <a href="../es/" hreflang="es" lang="es" dir="ltr">Español</a>
+      <a href="../fr/" hreflang="fr" lang="fr" dir="ltr">Français</a>
+      <a href="../tr/" hreflang="tr" lang="tr" dir="ltr">Türkçe</a>
+      <a href="../zh/" hreflang="zh" lang="zh" dir="ltr">中文</a>
+      <a href="../ru/" hreflang="ru" lang="ru" dir="ltr">Русский</a>
+      <a href="../uk/" hreflang="uk" lang="uk" dir="ltr">Українська</a>
+      <a href="../ar/" hreflang="ar" lang="ar" dir="rtl">العربية</a>
+      <a href="../ja/" hreflang="ja" lang="ja" dir="ltr">日本語</a>
+      <a href="../ko/" hreflang="ko" lang="ko" dir="ltr" aria-current="page">한국어</a>
+      <a href="../id/" hreflang="id" lang="id" dir="ltr">Bahasa Indonesia</a>
+      <a href="../th/" hreflang="th" lang="th" dir="ltr">ไทย</a>
+      <a href="../ms/" hreflang="ms" lang="ms" dir="ltr">Bahasa Melayu</a>
+      <a href="../tl/" hreflang="tl" lang="tl" dir="ltr">Filipino</a>
+      <a href="../he/" hreflang="he" lang="he" dir="rtl">עברית</a>
+      <a href="../hi/" hreflang="hi" lang="hi" dir="ltr">हिन्दी</a>
+      <a href="../pt/" hreflang="pt" lang="pt" dir="ltr">Português</a>
+      <a href="../vi/" hreflang="vi" lang="vi" dir="ltr">Tiếng Việt</a>
+      <a href="../bn/" hreflang="bn" lang="bn" dir="ltr">বাংলা</a>
+      <a href="../fa/" hreflang="fa" lang="fa" dir="rtl">فارسی</a>
+      <a href="../nl/" hreflang="nl" lang="nl" dir="ltr">Nederlands</a>
+      <a href="../de/" hreflang="de" lang="de" dir="ltr">Deutsch</a>
+    </nav>
+  </details>
+</header>
+
+<main id="main">
+<section class="wrap hero">
+  <div>
+    <h1>이미 구독 중인 AI 서비스를 WebBrain에서 사용하세요</h1>
+    <p class="lede">WebBrain Companion는 메뉴 표시줄이나 시스템 트레이에 있습니다. Claude, ChatGPT, Google, Grok 또는 Kimi에 한 번 로그인하면 WebBrain가 컴퓨터의 한 주소에서 모두 연결됩니다. 트레이에는 각 계획의 남은 양과 재설정 시기가 표시됩니다.</p>
+    <div class="cta">
+      <a class="button primary" id="get" href="#download" data-mac="macOS용 다운로드" data-win="Windows용 다운로드" data-linux="Linux용 다운로드" data-mac-href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip" data-win-href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe" data-linux-href="#download">다운로드</a>
+      <span class="cta-note">macOS, Windows 및 Linux용 버전 0.1.2. 무료이며 오픈 소스입니다.</span>
+    </div>
+  </div>
+  <div class="desk-wrap">
+    <div class="desk" data-os="mac" role="img" aria-label="Companion의 트레이 메뉴 그림: 실행 중, 복사할 주소, Claude Max, ChatGPT Pro, Google AI Pro 및 SuperGrok의 남은 양.">
+      <div class="bar" aria-hidden="true"><span class="s s3"></span><span class="s s2"></span><span class="icon"><span class="glyph"></span></span><span class="s s1"></span></div>
+      <div class="menu" aria-hidden="true">
+        <div class="row dim"><span>WebBrain Companion — 실행 중</span></div>
+        <div class="row"><span>복사&nbsp;&nbsp;http://127.0.0.1:8327/v1</span></div>
+        <div class="sep"></div>
+        <div class="row plan"><span>Claude Max</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span>64% · 2시간 13분</span></div>
+        <div class="row plan"><span>ChatGPT Pro</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span>57% · 4d</span></div>
+        <div class="row plan"><span>Google AI Pro</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>71% · 5d</span></div>
+        <div class="row plan"><span>Grok SuperGrok</span><span class="meter"><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>12% · 3d</span></div>
+        <div class="sep"></div>
+        <div class="row"><span>패널 열기…</span></div>
+        <div class="row"><span>WebBrain Companion 종료</span></div>
+      </div>
+    </div>
+    <div class="os-switch"><span id="os-label">메뉴 사용</span><span class="seg" role="group" aria-labelledby="os-label"><button type="button" data-os="mac" aria-pressed="true">macOS</button><button type="button" data-os="win" aria-pressed="false">Windows</button><button type="button" data-os="linux" aria-pressed="false">Linux</button></span></div>
+  </div>
+</section>
+
+<section class="section" id="panel" aria-labelledby="panel-h">
+  <div class="wrap">
+    <h2 id="panel-h">다른 모든 작업은 하나의 작은 패널에서 이루어집니다.</h2>
+    <p class="intro">아이콘을 클릭하여 엽니다. 한 페이지에는 WebBrain의 주소, 남은 모든 계획 및 두 개의 로컬 모델이 포함되어 있습니다. 세부정보를 보려면 행을 클릭하고, 설정을 보려면 기어를 클릭하세요. 밝거나 어두운 설정에 따라 영어와 터키어를 구사합니다.</p>
+    <ul class="windows">
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/panel-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/panel-en-light.webp" width="460" height="760" alt="패널: 복사 버튼이 있는 주소 http://127.0.0.1:8327/v1, Claude Max, ChatGPT Pro, Google AI Pro 및 SuperGrok에 대한 사용량 측정기, d1 결정 모델 옆에서 실행되는 Bonsai 2 27B." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>한 페이지</h3><p>WebBrain에 필요한 주소, 한도가 거의 소진되는 각 계획, 메인 버튼이 있는 로컬 모델. 이 컴퓨터에는 API 키가 없습니다.</p></figcaption>
+      </figure></li>
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/add-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/add-en-light.webp" width="460" height="760" alt="Claude, ChatGPT, Google, Grok 및 Kimi가 나열된 구독 추가 시트에는 각각 로그인 방법이 나와 있습니다." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>구독 추가</h3><p>제공업체의 자체 페이지에 로그인하세요. 로그인은 컴퓨터에 유지됩니다.</p></figcaption>
+      </figure></li>
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/local-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/local-en-light.webp" width="460" height="760" alt="패널에 대한 Bonsai 2 27B 세부 정보: 이미지 입력이 켜져 있는 Apple GPU에서 실행, 65,536개의 컨텍스트 토큰 및 해당 옵션." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>현지 모델</h3><p>Bonsai 2 27B를 클릭하면 실행 위치와 이미지가 맞는지 확인하고 옵션을 변경할 수 있습니다. d1도 같은 방식으로 열립니다.</p></figcaption>
+      </figure></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="local" aria-labelledby="local-h">
+  <div class="wrap">
+    <h2 id="local-h">귀하의 기계에 맞는 Bonsai 2 27B</h2>
+    <div class="split">
+      <p class="intro">PrismML의 Ternary Bonsai 2 27B는 270억 개의 매개변수를 5.95GB에 담았습니다. 컴패니언은 Q8_0 비전 프로젝터 및 PrismML의 llama.cpp 빌드와 함께 설치하거나 Apple Silicon에 MLX 팩으로 설치하고 구독 옆에 <code>bonsai-2-27b</code>로 나열합니다.</p>
+      <p class="intro">다운로드하기 전에 모델이 실행되는 위치와 이미지 입력이 적합한지 확인합니다. 비전 프로젝터는 모델과 해당 컨텍스트 뒤에 약 1GB의 GPU 메모리가 남을 때 GPU에서 작동하고, 시스템 RAM에만 공간이 있을 때 CPU에서 작동하고, 그렇지 않으면 꺼집니다. 패널에서 선택 사항을 재정의할 수 있습니다.</p>
+    </div>
+    <table class="machines">
+      <caption>동반자가 일반적인 기계에서 선택하는 것</caption>
+      <thead><tr><th scope="col">기계</th><th scope="col">실행 대상</th><th scope="col">이미지 입력</th><th scope="col">맥락</th></tr></thead>
+      <tbody>
+        <tr><td>MacBook Air, 8GB</td><td data-label="실행 대상">Metal가 포함된 Apple GPU. Mac보다 더 많은 메모리가 필요하므로 교체가 필요합니다.</td><td data-label="이미지 입력"><span class="vis off">끄기</span></td><td data-label="맥락">8K 토큰</td></tr>
+        <tr><td>MacBook Pro, 16GB</td><td data-label="실행 대상">애플 GPU와 Metal</td><td data-label="이미지 입력"><span class="vis gpu">켜짐, GPU</span></td><td data-label="맥락">16K 토큰</td></tr>
+        <tr><td>RTX 4060(8GB) 및 16GB RAM가 탑재된 노트북</td><td data-label="실행 대상">CUDA, GPU의 64개 레이어 중 57개</td><td data-label="이미지 입력"><span class="vis cpu">켜짐, CPU</span></td><td data-label="맥락">8K 토큰</td></tr>
+        <tr><td>RTX 4090(24GB) 및 64GB RAM가 탑재된 데스크탑</td><td data-label="실행 대상">CUDA, 모두 GPU에 있음</td><td data-label="이미지 입력"><span class="vis gpu">켜짐, GPU</span></td><td data-label="맥락">64K 토큰</td></tr>
+        <tr><td>Radeon RX 7600(8GB) 및 32GB RAM가 포함된 데스크탑</td><td data-label="실행 대상">Vulkan, GPU의 64개 레이어 중 61개</td><td data-label="이미지 입력"><span class="vis cpu">켜짐, CPU</span></td><td data-label="맥락">8K 토큰</td></tr>
+        <tr><td>그래픽 카드가 없는 PC, 16GB RAM</td><td data-label="실행 대상">CPU</td><td data-label="이미지 입력"><span class="vis cpu">켜짐, CPU</span></td><td data-label="맥락">8K 토큰</td></tr>
+        <tr><td>그래픽 카드가 없는 PC, 8GB RAM</td><td data-label="실행 대상">여유 공간이 거의 없는 CPU</td><td data-label="이미지 입력"><span class="vis off">끄기</span></td><td data-label="맥락">8K 토큰</td></tr>
+      </tbody>
+    </table>
+    <p class="note">동반자의 플래너가 전체 및 여유 메모리에서 작업했습니다. 설치 시 컴퓨터의 숫자가 결정됩니다. Apple Silicon에서 MLX 팩에는 자체 비전 타워가 있으므로 이미지가 항상 켜져 있습니다.</p>
+  </div>
+</section>
+
+<section class="section" id="decision" aria-labelledby="d1-h">
+  <div class="wrap">
+    <h2 id="d1-h">WebBrain의 결정 모델, 브라우저 외부</h2>
+    <div class="split">
+      <p class="intro">WebBrain의 d1 모델은 예/아니요, 페이지에 대한 선택 및 점수 질문과 작업 완료 여부와 같은 최대 4개의 스크린샷에 대답합니다. 컴패니언은 ONNX Runtime에서 실행하고 HTTP를 통해 응답하므로 브라우저 탭이 1.9GB를 로드할 필요가 없습니다. Go 포트는 WebBrain의 JavaScript 어댑터와 동일한 토큰 및 확률을 반환합니다. 기본 d1는 Windows, Linux 및 Apple Silicon Mac에서 사용할 수 있습니다. Intel Mac에서는 사용할 수 없습니다.</p>
+      <div>
+        <p class="code-label">물어보세요</p>
+        <pre><code>curl http://127.0.0.1:8327/companion/v1/decide \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;state&quot;: &quot;Order #1042 is confirmed.&quot;,
+       &quot;questions&quot;: {&quot;completion&quot;: {
+         &quot;type&quot;: &quot;choice&quot;,
+         &quot;instructions&quot;: &quot;Did the task finish?&quot;,
+         &quot;criteria&quot;: {&quot;completed&quot;: &quot;Confirmed&quot;,
+                      &quot;not_completed&quot;: &quot;Failed or unfinished&quot;,
+                      &quot;unknown&quot;: &quot;Not established&quot;}}}}&#x27;</code></pre>
+        <p class="code-label">답변(CPU 런타임에서 273ms)</p>
+        <pre><code>{&quot;answers&quot;: {&quot;completion&quot;: {
+   &quot;choice&quot;: &quot;completed&quot;,
+   &quot;confidence&quot;: 0.99997,
+   &quot;probabilities&quot;: {&quot;completed&quot;: 0.99997,
+                     &quot;not_completed&quot;: 0.000002,
+                     &quot;unknown&quot;: 0.000033}}},
+ &quot;diagnostics&quot;: {&quot;runtime&quot;: &quot;onnxruntime 1.31.0 (CPU)&quot;, …}}</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="connect" aria-labelledby="connect-h">
+  <div class="wrap">
+    <h2 id="connect-h">WebBrain 연결</h2>
+    <p class="intro">이 작업을 한 번 수행하십시오. 이 컴퓨터의 앱에는 API 키가 필요하지 않습니다.</p>
+    <ol class="steps">
+      <li>컴패니언을 설치하고 엽니다. 패널에 구독을 추가하고 브라우저에서 로그인을 완료하세요.</li>
+      <li>기본 주소는 <code>http://127.0.0.1:8327/v1</code>입니다. 포트가 변경된 경우 패널이나 트레이 메뉴에 표시된 주소를 복사하세요.</li>
+      <li>WebBrain에서 <b>Providers</b> 페이지(측면 패널의 모델 메뉴에서 <b>More…</b>)를 열고 <b>WebBrain Companion</b>를 선택합니다. 앱에 다른 포트가 표시되지 않는 한 기본 주소를 유지합니다. 이 컴퓨터에는 API 키가 필요하지 않습니다.</li>
+      <li>카드를 활성화하기 전에 <b>Load Models</b>를 클릭하고 모델 <b>Save</b>를 선택한 다음 <b>Test Connection</b>를 실행하세요. 이미지를 허용하는 모델에 대해서만 비전을 켜십시오.</li>
+    </ol>
+    <p class="after-steps">이 컴퓨터의 모든 OpenAI, Anthropic 또는 Gemini 클라이언트는 동일한 주소를 사용할 수 있습니다. 다른 장치에서 사용하려면 패널 설정에서 네트워크 액세스를 켜십시오. 그러면 해당 장치에는 패널에 표시되는 API 키가 필요합니다.</p>
+  </div>
+</section>
+
+<section class="section" id="download" aria-labelledby="download-h">
+  <div class="wrap">
+    <h2 id="download-h">다운로드</h2>
+    <p class="intro">버전 0.1.2. 각 패키지에는 단일 프로그램이 들어 있습니다. 귀하의 설정과 로그인은 귀하의 사용자 폴더에 있습니다.</p>
+    <div class="downloads">
+      <div class="dl" data-os="mac">
+        <div><h3>macOS</h3><p class="req">macOS 12 이상, Apple Silicon 및 Intel(d1에는 Apple Silicon가 필요함)</p><span class="yours">귀하의 시스템</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip">유니버설 앱 <small>zip, 36 MB</small></a></li></ul>
+        <p class="how">WebBrain Companion를 애플리케이션으로 이동합니다. 빌드는 Apple에서 공증되지 않습니다. 처음에는 시스템 설정, 개인 정보 보호 및 보안(어쨌든 열기)에서 허용합니다. macOS 14 이하에서는 Control 키를 누른 채 클릭하고 열기를 선택합니다.</p>
+      </div>
+      <div class="dl" data-os="win">
+        <div><h3>Windows</h3><p class="req">Windows 10 및 11, x64 및 Arm64</p><span class="yours">귀하의 시스템</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe">설치자 <small>setup.exe, 23 MB</small></a></li></ul>
+        <p class="how">설치 프로그램을 실행하세요. 관리자 프롬프트 없이 계정에 설치되고 시작 메뉴에 WebBrain Companion가 추가됩니다. 설치 프로그램이 코드 서명될 때까지 SmartScreen는 &quot;Windows가 PC를 보호했습니다&quot;라고 말할 수 있습니다. 추가 정보를 선택한 다음 어쨌든 실행을 선택합니다.</p>
+      </div>
+      <div class="dl" data-os="linux">
+        <div><h3>Linux</h3><p class="req">x64 및 Arm64</p><span class="yours">귀하의 시스템</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-x64.tar.gz">x64 <small>tar.gz, 20 MB</small></a></li><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-arm64.tar.gz">Arm64 <small>tar.gz, 18 MB</small></a></li></ul>
+        <p class="how">포장을 풀고 webbrain-companion을 실행합니다. 아이콘에는 StatusNotifierItem 트레이(KDE, XFCE 또는 AppIndicator 확장이 있는 GNOME)가 필요합니다.</p>
+      </div>
+    </div>
+    <p class="more-links"><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-SHA256SUMS.txt">SHA-256 체크섬</a><a href="https://github.com/webbrain-one/webbrain/tree/main/webbrain-systray">소스 코드</a><a href="https://github.com/webbrain-one/webbrain/releases">모든 릴리스</a></p>
+  </div>
+</section>
+
+<section class="section safety" id="safety" aria-labelledby="safety-h">
+  <div class="wrap">
+    <h2 id="safety-h">로그인하기 전에</h2>
+    <div class="split even">
+      <div>
+        <h3>컴퓨터에 남아 있는 것</h3>
+        <ul class="facts">
+          <li>이 컴퓨터에는 API 키가 필요하지 않습니다. 컴패니언은 127.0.0.1의 요청에만 응답하고 웹 페이지를 거부하므로 방문하는 사이트에서 계획을 사용할 수 없습니다. WebBrain와 같은 브라우저 확장 프로그램과 이 컴퓨터의 앱에서 사용할 수 있습니다.</li>
+          <li>다른 장치는 패널 설정에서 네트워크 액세스를 활성화한 경우에만 연결할 수 있습니다. 그런 다음 0.0.0.0을 수신하며 패널에 표시되는 API 키가 필요합니다.</li>
+          <li>로그인 정보는 사용자 폴더에 저장되며 해당 서비스 제공자에게만 전송됩니다.</li>
+          <li>분석이 없습니다. 로그인한 제공업체와 별도로 CLIProxyAPI의 공개 모델 목록만 가져오고, 모델을 설치할 때 Hugging Face, GitHub 및 MLX의 경우 PyPI에서 해당 파일을 가져옵니다.</li>
+          <li>구독으로 전송된 메시지는 계속해서 해당 공급자에게 전달됩니다. Bonsai 2 27B 및 d1만 시스템에서 실행됩니다.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>귀하의 서비스 제공자가 결정하는 것</h3>
+        <ul class="facts">
+          <li>프록시를 통해 작동하는 구독은 공급자가 허용하는 구독과 동일하지 않습니다. Anthropic의 소비자 약관은 API 키 외부의 자동 액세스를 제한하고 Google의 Gemini CLI 약관에는 로그인이 타사 도구와 함께 사용될 수 없다고 명시되어 있습니다.</li>
+          <li>추가하기 전에 요금제와 지역의 약관을 확인하세요. 계정이 중요한 경우 공급자 API 키가 더 안전한 경로입니다.</li>
+          <li>공용 Wi-Fi에서는 네트워크 액세스를 차단하고 포트 8327을 인터넷에 전달하지 마십시오. API 키는 인터넷 수준의 보안이 아닙니다.</li>
+        </ul>
+        <p><a href="https://webbrain.one/docs/providers/#companion">WebBrain를 컴패니언에 연결</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <p>WebBrain Companion는 GPL-3.0-or-later 라이센스에 따른 무료 소프트웨어이며 CLIProxyAPI를 포함합니다. Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta 또는 Cognition와 관련이 없습니다.</p>
+    <nav aria-label="더보기"><a href="https://webbrain.one/">WebBrain</a><a href="https://github.com/webbrain-one/webbrain/tree/main/webbrain-systray">소스 코드</a></nav>
+  </div>
+</footer>
+</body>
+</html>

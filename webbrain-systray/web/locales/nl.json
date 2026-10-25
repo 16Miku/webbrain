@@ -1,0 +1,162 @@
+{
+  "text": {
+    "title": "WebBrain Companion: uw AI-abonnementen in WebBrain",
+    "og_title": "WebBrain Companion",
+    "description": "Een kleine lade-app voor macOS, Windows en Linux die uw Claude-, ChatGPT-, Google-, Grok- en Kimi-abonnementen op WebBrain op 127.0.0.1 laat zien hoeveel van elk plan er nog over is, en voert Bonsai 2 27B uit op uw eigen machine.",
+    "skip": "Ga naar de inhoud",
+    "nav_label": "Secties",
+    "nav_panel": "Het paneel",
+    "nav_local": "Lokaal model",
+    "nav_connect": "Verbinden",
+    "nav_download": "Downloaden",
+    "h1": "Je bestaande AI-abonnementen, klaar voor WebBrain",
+    "lede": "WebBrain Companion bevindt zich in uw menubalk of systeemvak. Meld u één keer aan bij Claude, ChatGPT, Google, Grok of Kimi en WebBrain bereikt ze allemaal op één adres op uw computer. In de lade wordt weergegeven hoeveel van elk plan er nog over is en wanneer het wordt gereset.",
+    "get": "Downloaden",
+    "get_mac": "Downloaden voor macOS",
+    "get_win": "Downloaden voor Windows",
+    "get_linux": "Downloaden voor Linux",
+    "cta_note": "Versie 0.1.2 voor macOS, Windows en Linux. Gratis en open source.",
+    "desk_label": "Illustratie van het systeemvakmenu van de Companion: actief, het adres dat moet worden gekopieerd en hoeveel er nog over is van Claude Max, ChatGPT Pro, Google AI Pro en SuperGrok.",
+    "os_label": "Menu aan",
+    "panel_h": "Al het andere gebeurt in één klein paneel",
+    "panel_intro": "Klik op het pictogram om het te openen. Eén pagina bevat het adres van WebBrain, elk plan met wat er nog over is, en de twee lokale modellen; klik op een rij voor de details, of op het tandwiel voor instellingen. Het volgt uw lichte of donkere omgeving en spreekt Engels en Turks.",
+    "shot1_h": "Eén pagina",
+    "shot1_p": "Het adres dat WebBrain nodig heeft, elk plan waarvan de limiet bijna op is, en de lokale modellen met hun hoofdknop. Geen API-sleutel op deze computer.",
+    "shot1_alt": "Het paneel: het adres http://127.0.0.1:8327/v1 met een knop Kopiëren, gebruiksmeters voor Claude Max, ChatGPT Pro, Google AI Pro en SuperGrok, en Bonsai 2 27B naast het beslissingsmodel d1.",
+    "shot2_h": "Voeg een abonnement toe",
+    "shot2_p": "Log in op de eigen pagina van de aanbieder. De login blijft op uw computer staan.",
+    "shot2_alt": "Het add-abonnementsblad met de vermelding Claude, ChatGPT, Google, Grok en Kimi, elk met hoe u zich aanmeldt.",
+    "shot3_h": "Lokale modellen",
+    "shot3_p": "Klik op Bonsai 2 27B om te zien waar het wordt uitgevoerd, of afbeeldingen passen, en om de opties te wijzigen. d1 opent op dezelfde manier.",
+    "shot3_alt": "De details van de Bonsai 2 27B op het paneel: draaien op de Apple GPU met beeldinvoer ingeschakeld, 65.536 tokens aan context en de opties ervan.",
+    "local_h": "Bonsai 2 27B, op maat van uw machine",
+    "local_p1": "PrismML's Ternary Bonsai 2 27B verpakt 27 miljard parameters in 5,95 GB. De metgezel installeert het met zijn Q8_0 vision-projector en PrismML's versie van llama.cpp, of als het MLX-pakket op Apple Silicon, en vermeldt het naast uw abonnementen als <code>bonsai-2-27b</code>.",
+    "local_p2": "Voordat er iets wordt gedownload, wordt uitgezocht waar het model draait en of de beeldinvoer past. De vision-projector gaat op de GPU als er ongeveer 1 GB GPU-geheugen over is na het model en zijn context, op de CPU als alleen systeem RAM ruimte heeft, en blijft anders uit. U kunt de keuze in het paneel overschrijven.",
+    "table_caption": "Wat de metgezel kiest op typische machines",
+    "th_machine": "Machine",
+    "th_runs": "Loopt door",
+    "th_vision": "Beeldinvoer",
+    "th_context": "Context",
+    "vis_gpu": "Aan, GPU",
+    "vis_cpu": "Aan, CPU",
+    "vis_off": "Uit",
+    "tokens": "{}-tokens",
+    "local_note": "Uitgewerkt door de planner van de metgezel vanuit volledig en vrij geheugen; de nummers op uw machine op het moment van installatie beslissen. Op de Apple Silicon heeft het MLX-pakket een eigen visietoren, zodat de beelden altijd zichtbaar zijn.",
+    "d1_h": "Het beslissingsmodel van WebBrain, buiten de browser",
+    "d1_p": "Het d1-model van WebBrain beantwoordt ja/nee, keuze- en scorevragen over een pagina en maximaal vier screenshots, zoals of een taak is voltooid. De metgezel draait het op ONNX Runtime en antwoordt via HTTP, zodat een browsertabblad geen 1,9 GB hoeft te laden. De Go-poort retourneert dezelfde tokens en kansen als de JavaScript-adapter van WebBrain. Native d1 is beschikbaar op Windows, Linux en Apple Silicon Macs; het is niet beschikbaar op Intel Macs.",
+    "d1_ask": "Vraag",
+    "d1_answer": "Antwoord (273 ms tijdens de CPU-runtime)",
+    "connect_h": "Sluit WebBrain aan",
+    "connect_p": "Dit doe je één keer. Apps op deze computer hebben geen API-sleutel nodig.",
+    "step1": "Installeer de metgezel en open deze. Voeg een abonnement toe in het paneel en voltooi het inloggen in uw browser.",
+    "step2": "Het standaardadres is <code>http://127.0.0.1:8327/v1</code>. Als de poort is gewijzigd, kopieert u het adres dat wordt weergegeven in het paneel- of lademenu.",
+    "step3": "Open in WebBrain de pagina <b>Providers</b> (<b>Meer...</b> in het modelmenu van het zijpaneel) en kies <b>WebBrain Companion</b>. Behoud het standaardadres tenzij de app een andere poort toont. Op deze computer is geen API-sleutel nodig.",
+    "step4": "Klik op <b>Models laden</b>, kies een model, <b>Opslaan</b> en voer <b>Test Connection</b> uit voordat u de kaart activeert. Schakel vision alleen in voor een model dat afbeeldingen accepteert.",
+    "after_steps": "Elke OpenAI-, Anthropic- of Gemini-client op deze computer kan hetzelfde adres gebruiken. Om het vanaf een ander apparaat te gebruiken, schakelt u netwerktoegang in de paneelinstellingen in; dat apparaat heeft dan de API-sleutel nodig die op het paneel wordt weergegeven.",
+    "download_h": "Downloaden",
+    "download_p": "Versie 0.1.2. Elk pakket bevat één programma; uw instellingen en logins staan ​​in uw gebruikersmap.",
+    "yours": "Jouw systeem",
+    "mac_req": "macOS 12 of hoger, Apple Silicon en Intel (d1 vereist Apple Silicon)",
+    "mac_file": "Universele app",
+    "mac_how": "Verplaats WebBrain Companion naar Toepassingen. De build is niet notarieel bekrachtigd door Apple: de eerste keer moet u deze toestaan ​​in Systeeminstellingen, Privacy en beveiliging (toch open). Op macOS 14 en eerder klikt u erop met de Control-toets ingedrukt en kiest u Openen.",
+    "win_req": "Windows 10 en 11, x64 en Arm64",
+    "win_file": "Installateur",
+    "win_how": "Voer het installatieprogramma uit: het wordt voor uw account geïnstalleerd, zonder beheerdersprompt, en voegt WebBrain Companion toe aan het Start-menu. Totdat het installatieprogramma is ondertekend, kan SmartScreen zeggen: \"Windows heeft uw pc beschermd\": kies Meer info en vervolgens Toch uitvoeren.",
+    "linux_req": "x64 en Arm64",
+    "linux_how": "Uitpakken en webbrain-companion uitvoeren. Het pictogram heeft een StatusNotifierItem-lade nodig: KDE, XFCE of GNOME met de extensie AppIndicator.",
+    "sums": "SHA-256-controlesommen",
+    "source": "Broncode",
+    "all": "Alle uitgaven",
+    "safety_h": "Voordat u zich aanmeldt",
+    "stays_h": "Wat er op uw computer blijft staan",
+    "stays": [
+      "Op deze computer is geen API-sleutel nodig: de begeleider beantwoordt alleen verzoeken van 127.0.0.1 en wijst webpagina's af, zodat een site die u bezoekt uw plannen niet kan besteden. Browserextensies zoals WebBrain en apps op deze computer kunnen er gebruik van maken.",
+      "Andere apparaten kunnen alleen verbinding maken als u netwerktoegang inschakelt in de paneelinstellingen. Vervolgens luistert het naar 0.0.0.0 en hebben ze de API-sleutel nodig die op het paneel wordt weergegeven.",
+      "Logins worden opgeslagen in uw gebruikersmap en alleen verzonden naar de provider waartoe ze behoren.",
+      "Er zijn geen analyses. Afgezien van de providers waarbij u zich aanmeldt, haalt het alleen de openbare modellenlijst van CLIProxyAPI op, en, wanneer u een model installeert, de bestanden van Hugging Face, GitHub en, voor MLX, PyPI.",
+      "Prompts die naar een abonnement worden gestuurd, gaan nog steeds naar die provider. Alleen Bonsai 2 27B en d1 draaien op uw machine."
+    ],
+    "provider_h": "Wat uw provider beslist",
+    "provider": [
+      "Een abonnement dat via een proxy werkt, is niet hetzelfde als een abonnement dat de provider toestaat. De consumentenvoorwaarden van Anthropic beperken geautomatiseerde toegang buiten een API-sleutel, en de Gemini CLI-voorwaarden van Google zeggen dat de aanmelding niet mag worden gebruikt met tools van derden.",
+      "Controleer de voorwaarden van uw abonnement en regio voordat u deze toevoegt. Als een account voor u belangrijk is, is een API-sleutel van een provider de veiligere route.",
+      "Houd netwerktoegang uitgeschakeld op openbare Wi-Fi en stuur poort 8327 nooit door naar internet. De API-sleutel is geen beveiliging van internetkwaliteit."
+    ],
+    "guide": "Verbind de WebBrain met Companion",
+    "foot": "WebBrain Companion is gratis software onder de GPL-3.0-or-later-licentie en bevat CLIProxyAPI. Het is niet aangesloten bij Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta of Cognition.",
+    "foot_nav": "Meer"
+  },
+  "menu": {
+    "status": "WebBrain Companion — Actief",
+    "copy": "Kopieer",
+    "plans": [
+      [
+        "Claude Max",
+        64,
+        "2u 13m"
+      ],
+      [
+        "ChatGPT Pro",
+        57,
+        "4d"
+      ],
+      [
+        "Google AI Pro",
+        71,
+        "5d"
+      ],
+      [
+        "Grok SuperGrok",
+        12,
+        "3d"
+      ]
+    ],
+    "open": "Paneel openen…",
+    "quit": "Sluit WebBrain Companion af",
+    "pct": "{}%"
+  },
+  "machines": [
+    [
+      "MacBook Air, 8 GB",
+      "Apple GPU met Metal. Het heeft meer geheugen nodig dan de Mac, dus verwacht swapping.",
+      "off",
+      "8K"
+    ],
+    [
+      "MacBook Pro, 16 GB",
+      "Apple GPU met Metal",
+      "gpu",
+      "16K"
+    ],
+    [
+      "Laptop met een RTX 4060 (8 GB) en 16 GB RAM",
+      "CUDA, 57 van 64 lagen op de GPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "Desktop met een RTX 4090 (24 GB) en 64 GB RAM",
+      "CUDA, allemaal op de GPU",
+      "gpu",
+      "64K"
+    ],
+    [
+      "Desktop met een Radeon RX 7600 (8 GB) en 32 GB RAM",
+      "Vulkan, 61 van 64 lagen op de GPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "PC zonder grafische kaart, 16 GB RAM",
+      "CPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "PC zonder grafische kaart, 8 GB RAM",
+      "CPU, met weinig ruimte over",
+      "off",
+      "8K"
+    ]
+  ]
+}

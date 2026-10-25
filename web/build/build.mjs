@@ -49,30 +49,7 @@ const LOGO_IMAGE_URL = `${SITE_ORIGIN}/logo-github.png`;
 
 // Locale config. The default locale (en) renders to web/index.html;
 // the others render to web/<code>/index.html.
-const LOCALES = [
-  { code: 'en', bcp47: 'en-US', label: 'English',          dir: 'ltr', isDefault: true  },
-  { code: 'es', bcp47: 'es-ES', label: 'Español',          dir: 'ltr', isDefault: false },
-  { code: 'fr', bcp47: 'fr-FR', label: 'Français',         dir: 'ltr', isDefault: false },
-  { code: 'tr', bcp47: 'tr-TR', label: 'Türkçe',           dir: 'ltr', isDefault: false },
-  { code: 'zh', bcp47: 'zh-CN', label: '中文',             dir: 'ltr', isDefault: false },
-  { code: 'ru', bcp47: 'ru-RU', label: 'Русский',          dir: 'ltr', isDefault: false },
-  { code: 'uk', bcp47: 'uk-UA', label: 'Українська',       dir: 'ltr', isDefault: false },
-  { code: 'ar', bcp47: 'ar',    label: 'العربية',          dir: 'rtl', isDefault: false },
-  { code: 'ja', bcp47: 'ja-JP', label: '日本語',           dir: 'ltr', isDefault: false },
-  { code: 'ko', bcp47: 'ko-KR', label: '한국어',           dir: 'ltr', isDefault: false },
-  { code: 'id', bcp47: 'id-ID', label: 'Bahasa Indonesia', dir: 'ltr', isDefault: false },
-  { code: 'th', bcp47: 'th-TH', label: 'ไทย',              dir: 'ltr', isDefault: false },
-  { code: 'ms', bcp47: 'ms-MY', label: 'Bahasa Melayu',    dir: 'ltr', isDefault: false },
-  { code: 'tl', bcp47: 'fil-PH', label: 'Filipino',        dir: 'ltr', isDefault: false },
-  { code: 'he', bcp47: 'he-IL', label: 'עברית',           dir: 'rtl', isDefault: false },
-  { code: 'hi', bcp47: 'hi-IN', label: 'हिन्दी', dir: 'ltr', isDefault: false },
-  { code: 'pt', bcp47: 'pt-BR', label: 'Português', dir: 'ltr', isDefault: false },
-  { code: 'vi', bcp47: 'vi-VN', label: 'Tiếng Việt', dir: 'ltr', isDefault: false },
-  { code: 'bn', bcp47: 'bn-BD', label: 'বাংলা', dir: 'ltr', isDefault: false },
-  { code: 'fa', bcp47: 'fa-IR', label: 'فارسی', dir: 'rtl', isDefault: false },
-  { code: 'nl', bcp47: 'nl-NL', label: 'Nederlands', dir: 'ltr', isDefault: false },
-  { code: 'de', bcp47: 'de-DE', label: 'Deutsch', dir: 'ltr', isDefault: false },
-];
+const LOCALES = JSON.parse(await readFile(new URL('./languages.json', import.meta.url), 'utf8'));
 
 // Keep the website on the same bundled 4:3 flag artwork as the extension
 // language picker. The web build copies only the flags used by web locales.
@@ -570,7 +547,7 @@ async function main() {
   await cp(path.join(ROOT, '..', 'webbrain-systray', 'web'), path.join(ROOT, 'companion'), {
     recursive: true,
     force: true,
-    filter: (source) => !['build.py', 'README.md', 'tools'].includes(path.basename(source)),
+    filter: (source) => !['build.py', 'README.md', 'tools', 'locales', '__pycache__'].includes(path.basename(source)),
   });
 
   // Load English first so others can fall back for missing keys.
@@ -645,8 +622,7 @@ async function main() {
     { loc: `${SITE_ORIGIN}/docs/settings/` },
     { loc: `${SITE_ORIGIN}/docs/captcha/` },
     { loc: `${SITE_ORIGIN}/docs/providers/` },
-    { loc: `${SITE_ORIGIN}/companion/` },
-    { loc: `${SITE_ORIGIN}/companion/tr/` },
+    ...LOCALES.map((locale) => ({ loc: `${SITE_ORIGIN}/companion/${locale.isDefault ? '' : `${locale.code}/`}` })),
     { loc: `${SITE_ORIGIN}/docs/easy-cli-proxy/`, alternates: 'easy-cli-proxy' },
     { loc: `${SITE_ORIGIN}/docs/safety/` },
     { loc: `${SITE_ORIGIN}/docs/apocalypse-mode/` },

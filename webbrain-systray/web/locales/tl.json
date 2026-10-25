@@ -1,0 +1,162 @@
+{
+  "text": {
+    "title": "WebBrain Companion: ang iyong mga subscription sa AI sa WebBrain",
+    "og_title": "WebBrain Companion",
+    "description": "Isang maliit na tray app para samacOS, WindowsatLinuxna nagsisilbi sa iyoClaude, ChatGPT, Google, GrokatKimimga subscription saWebBrainsa 127.0.0.1, ipinapakita kung gaano karami sa bawat plano ang natitira, at tumatakboBonsai 2 27Bsa sarili mong makina.",
+    "skip": "Lumaktaw sa nilalaman",
+    "nav_label": "Mga seksyon",
+    "nav_panel": "Ang panel",
+    "nav_local": "Lokal na modelo",
+    "nav_connect": "Kumonekta",
+    "nav_download": "I-download",
+    "h1": "Ang mga AI subscription mo, handa nang gamitin sa WebBrain",
+    "lede": "Ang WebBrain Companion ay nakatira sa iyong menu bar o system tray. Mag-sign in sa Claude, ChatGPT, Google, Grok o Kimi nang isang beses, at mararating ng WebBrain ang lahat ng ito sa isang address sa iyong computer. Ipinapakita ng tray kung gaano karami sa bawat plano ang natitira at kung kailan ito nagre-reset.",
+    "get": "I-download",
+    "get_mac": "I-download para sa macOS",
+    "get_win": "I-download para sa Windows",
+    "get_linux": "I-download para sa Linux",
+    "cta_note": "Bersyon 0.1.2 para sa macOS, Windows at Linux. Libre at open source.",
+    "desk_label": "Ilustrasyon ng menu ng tray ng Kasama: tumatakbo, ang address na kokopyahin, at kung magkano ang natitira sa Claude Max, ChatGPT Pro, Google AI Pro at SuperGrok.",
+    "os_label": "Naka-on ang menu",
+    "panel_h": "Lahat ng iba pa ay nangyayari sa isang maliit na panel",
+    "panel_intro": "I-click ang icon para buksan ito. Nasa isang pahina ang address para sa WebBrain, bawat plano kasama ang natitira, at ang dalawang lokal na modelo; i-click ang isang row para sa mga detalye nito, o ang gear para sa mga setting. Sinusundan nito ang iyong liwanag o madilim na setting at nagsasalita ng English at Turkish.",
+    "shot1_h": "Isang pahina",
+    "shot1_p": "Ang address na WebBrain ay kailangan, ang bawat plano ay may limitasyon na pinakamalapit sa pag-ubos, at ang mga lokal na modelo sa kanilang pangunahing button. Walang API key sa computer na ito.",
+    "shot1_alt": "Ang panel: ang address na http://127.0.0.1:8327/v1 na may button na Kopyahin, mga metro ng paggamit para sa Claude Max, ChatGPT Pro, Google AI Pro at SuperGrok, at Bonsai 2 27B na tumatakbo sa tabi ng modelo ng desisyong d1.",
+    "shot2_h": "Magdagdag ng subscription",
+    "shot2_p": "Mag-sign in sa sariling page ng provider. Ang pag-login ay mananatili sa iyong computer.",
+    "shot2_alt": "Ang listahan ng add subscription sheet na Claude, ChatGPT, Google, Grok at Kimi, bawat isa ay kung paano ka magsa-sign in.",
+    "shot3_h": "Mga lokal na modelo",
+    "shot3_p": "I-click ang Bonsai 2 27B upang makita kung saan ito tumatakbo at kung magkasya ang mga larawan, at upang baguhin ang mga opsyon nito. Ang d1 ay bumubukas sa parehong paraan.",
+    "shot3_alt": "Ang mga detalye ng Bonsai 2 27B sa ibabaw ng panel: tumatakbo sa Apple GPU na may naka-on na input ng imahe, 65,536 token ng konteksto, at mga opsyon nito.",
+    "local_h": "Bonsai 2 27B, sukat sa iyong makina",
+    "local_p1": "Ang Ternary Bonsai 2 27B ng PrismML ay naglalaman ng 27 bilyong parameter sa 5.95 GB. Ini-install ito ng kasama kasama ang Q8_0 vision projector nito at ang build ng PrismML ng llama.cpp, o bilang MLX pack sa Apple Silicon, at inililista ito sa tabi ng iyong mga subscription bilang <code>bonsai-2-27b</code>.",
+    "local_p2": "Bago mag-download ang anumang bagay, gagana ito kung saan tumatakbo ang modelo at kung umaangkop ang input ng imahe. Ang vision projector ay napupunta sa GPU kapag humigit-kumulang 1 GB ng GPU na memorya ang natitira pagkatapos ng modelo at ang konteksto nito, sa CPU kapag ang system na RAM lang ang may puwang, at nananatili kung hindi. Maaari mong i-override ang pagpipilian sa panel.",
+    "table_caption": "Ano ang pinipili ng kasama sa mga karaniwang makina",
+    "th_machine": "Makina",
+    "th_runs": "Tumatakbo sa",
+    "th_vision": "Input ng larawan",
+    "th_context": "Konteksto",
+    "vis_gpu": "Naka-on, GPU",
+    "vis_cpu": "Naka-on, CPU",
+    "vis_off": "Naka-off",
+    "tokens": "Mga token ng {}",
+    "local_note": "Ginawa ng tagaplano ng kasama mula sa kabuuan at libreng memorya; ang mga numero sa iyong makina sa oras ng pag-install ay magpapasya. Sa Apple Silicon ang MLX pack ay nagdadala ng sarili nitong vision tower, kaya laging naka-on ang mga larawan.",
+    "d1_h": "Ang modelo ng desisyon ng WebBrain, sa labas ng browser",
+    "d1_p": "Sinasagot ng modelong d1 ng WebBrain ang oo/hindi, mga tanong sa pagpili at marka tungkol sa isang page at hanggang sa apat na screenshot, gaya ng kung tapos na ang isang gawain. Pinapatakbo ito ng kasama sa ONNX Runtime at sumasagot sa HTTP, kaya hindi kailangang mag-load ng 1.9 GB ang tab ng browser. Ang Go port nito ay nagbabalik ng parehong mga token at probabilities bilang JavaScript adapter ng WebBrain. Ang katutubong d1 ay available sa Windows, Linux at Apple Silicon Mac; ito ay hindi magagamit sa Intel Mac.",
+    "d1_ask": "Magtanong",
+    "d1_answer": "Sagot (273 ms sa CPU runtime)",
+    "connect_h": "Ikonekta ang WebBrain",
+    "connect_p": "Gawin mo ito minsan. Ang mga app sa computer na ito ay hindi nangangailangan ng API key.",
+    "step1": "I-install ang kasama at buksan ito. Magdagdag ng subscription sa panel nito at tapusin ang pag-sign in sa iyong browser.",
+    "step2": "Ang default na address ay <code>http://127.0.0.1:8327/v1</code>. Kung nagbago ang port, kopyahin ang address na ipinapakita sa panel o tray menu.",
+    "step3": "SaWebBrain, buksan ang<b>Mga tagapagbigay</b>pahina (<b>Higit pa…</b>sa menu ng modelo ng side panel) at piliin<b>WebBrain Companion</b>. Panatilihin ang default na address nito maliban kung nagpapakita ang app ng isa pang port. Walang API key ang kailangan sa computer na ito.",
+    "step4": "I-click ang <b>Mag-load ng Mga Modelo</b>, pumili ng modelo, <b>Save</b>, at patakbuhin ang <b>Test Connection</b> bago i-activate ang card. I-on lang ang vision para sa isang modelong tumatanggap ng mga larawan.",
+    "after_steps": "Anumang OpenAI, Anthropic o Gemini client sa computer na ito ay maaaring gumamit ng parehong address. Upang gamitin ito mula sa isa pang device, i-on ang access sa network sa mga setting ng panel; kailangan ng device na iyon ang API key na ipinapakita ng panel.",
+    "download_h": "I-download",
+    "download_p": "Bersyon 0.1.2. Ang bawat pakete ay mayroong isang programa; ang iyong mga setting at pag-login ay nakatira sa iyong folder ng user.",
+    "yours": "Ang iyong sistema",
+    "mac_req": "macOS 12 o mas bago, Apple Silicon at Intel (nangangailangan ng d1 ng Apple Silicon)",
+    "mac_file": "Pangkalahatang app",
+    "mac_how": "Ilipat ang WebBrain Companion sa Mga Application. Ang build ay hindi notarized ng Apple: sa unang pagkakataon, payagan ito sa System Settings, Privacy at Security (Buksan Pa Rin). Sa macOS 14 at mas maaga, Control-click ito at piliin ang Buksan.",
+    "win_req": "Windows 10 at 11, x64 at Arm64",
+    "win_file": "installer",
+    "win_how": "Patakbuhin ang installer: nag-i-install ito para sa iyong account, nang walang prompt ng administrator, at nagdaragdag ng WebBrain Companion sa Start menu. Hanggang sa nalagdaan ng code ang installer, maaaring sabihin ng SmartScreen na \"Pinoprotektahan ng Windows ang iyong PC\": piliin ang Higit pang impormasyon, pagkatapos ay Patakbuhin pa rin.",
+    "linux_req": "x64 at Arm64",
+    "linux_how": "I-unpack at patakbuhin ang webbrain-companion. Ang icon ay nangangailangan ng tray na StatusNotifierItem: KDE, XFCE, o GNOME na may extension na AppIndicator.",
+    "sums": "SHA-256 na mga checksum",
+    "source": "Source code",
+    "all": "Lahat ng release",
+    "safety_h": "Bago ka mag-sign in",
+    "stays_h": "Ano ang nananatili sa iyong computer",
+    "stays": [
+      "Sa computer na ito walang API key ang kailangan: ang kasama ay sumasagot lamang ng mga kahilingan mula sa 127.0.0.1 at tinatalikuran ang mga web page, kaya ang isang site na binibisita mo ay hindi maaaring gastusin ang iyong mga plano. Magagamit ito ng mga extension ng browser gaya ng WebBrain at mga app sa computer na ito.",
+      "Makakakonekta lang ang ibang mga device kung i-on mo ang access sa network sa mga setting ng panel. Pagkatapos ay nakikinig ito sa 0.0.0.0, at kailangan nila ang API key na ipinapakita ng panel.",
+      "Ang mga pag-login ay nakaimbak sa iyong folder ng user at ipinadala lamang sa provider na kinabibilangan nila.",
+      "Walang analytics. Bukod sa mga provider kung saan ka nagsa-sign in, kinukuha lang nito ang listahan ng pampublikong modelo ng CLIProxyAPI, at, kapag nag-install ka ng modelo, ang mga file nito mula sa Hugging Face, GitHub at, para sa MLX, PyPI.",
+      "Ang mga prompt na ipinadala sa isang subscription ay mapupunta pa rin sa provider na iyon. Tanging Bonsai 2 27B at d1 lang ang tumatakbo sa iyong makina."
+    ],
+    "provider_h": "Kung ano ang desisyon ng iyong provider",
+    "provider": [
+      "Ang isang subscription na gumagana sa pamamagitan ng isang proxy ay hindi katulad ng isa na pinapayagan ng provider. Ang mga tuntunin ng consumer ng Anthropic ay naghihigpit sa awtomatikong pag-access sa labas ng isang API key, at ang mga tuntunin ng Gemini CLI ng Google ay nagsasabi na ang pag-sign-in nito ay maaaring hindi gamitin sa mga tool ng third-party.",
+      "Suriin ang mga tuntunin ng iyong plano at rehiyon bago mo ito idagdag. Kung mahalaga sa iyo ang isang account, ang API key ng provider ay ang mas ligtas na ruta.",
+      "Panatilihing naka-off ang access sa network sa pampublikong Wi-Fi, at huwag ipasa ang port 8327 sa internet. Ang API key ay hindi internet-grade security."
+    ],
+    "guide": "Ikonekta ang WebBrain sa Kasama",
+    "foot": "Ang WebBrain Companion ay libreng software sa ilalim ng lisensyang GPL-3.0-or-later at naka-embed ng CLIProxyAPI. Hindi ito kaakibat sa Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta o Cognition.",
+    "foot_nav": "Higit pa"
+  },
+  "menu": {
+    "status": "WebBrain Companion — Tumatakbo",
+    "copy": "Kopyahin",
+    "plans": [
+      [
+        "Claude Max",
+        64,
+        "2h 13m"
+      ],
+      [
+        "ChatGPT Pro",
+        57,
+        "4d"
+      ],
+      [
+        "Google AI Pro",
+        71,
+        "5d"
+      ],
+      [
+        "Grok SuperGrok",
+        12,
+        "3d"
+      ]
+    ],
+    "open": "Buksan ang panel…",
+    "quit": "Ihinto ang WebBrain Companion",
+    "pct": "{}%"
+  },
+  "machines": [
+    [
+      "MacBook Air, 8 GB",
+      "Apple GPU na may Metal. Kailangan nito ng mas maraming memorya kaysa sa Mac, kaya asahan ang pagpapalit.",
+      "off",
+      "8K"
+    ],
+    [
+      "MacBook Pro, 16 GB",
+      "Apple GPU na may Metal",
+      "gpu",
+      "16K"
+    ],
+    [
+      "Laptop na may RTX 4060 (8 GB) at 16 GB RAM",
+      "CUDA, 57 sa 64 na layer sa GPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "Desktop na may RTX 4090 (24 GB) at 64 GB RAM",
+      "CUDA, lahat sa GPU",
+      "gpu",
+      "64K"
+    ],
+    [
+      "Desktop na may Radeon RX 7600 (8 GB) at 32 GB RAM",
+      "Vulkan, 61 sa 64 na layer sa GPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "PC na walang graphics card, 16 GB RAM",
+      "CPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "PC na walang graphics card, 8 GB RAM",
+      "CPU, na may maliit na silid na matitira",
+      "off",
+      "8K"
+    ]
+  ]
+}

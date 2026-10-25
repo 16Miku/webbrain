@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="vi" dir="ltr" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebBrain Companion: đăng ký AI của bạn trong WebBrain</title>
+<meta name="description" content="Một ứng dụng khay nhỏ dành cho macOS, Windows và Linux phục vụ các đăng ký Claude, ChatGPT, Google, Grok và Kimi của bạn trên WebBrain trên 127.0.0.1, cho biết mỗi gói còn lại bao nhiêu và chạy Bonsai 2 27B trên máy của riêng bạn.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#fbf6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a0f18" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://webbrain.one/companion/vi/">
+<link rel="alternate" hreflang="en" href="https://webbrain.one/companion/">
+<link rel="alternate" hreflang="es" href="https://webbrain.one/companion/es/">
+<link rel="alternate" hreflang="fr" href="https://webbrain.one/companion/fr/">
+<link rel="alternate" hreflang="tr" href="https://webbrain.one/companion/tr/">
+<link rel="alternate" hreflang="zh" href="https://webbrain.one/companion/zh/">
+<link rel="alternate" hreflang="ru" href="https://webbrain.one/companion/ru/">
+<link rel="alternate" hreflang="uk" href="https://webbrain.one/companion/uk/">
+<link rel="alternate" hreflang="ar" href="https://webbrain.one/companion/ar/">
+<link rel="alternate" hreflang="ja" href="https://webbrain.one/companion/ja/">
+<link rel="alternate" hreflang="ko" href="https://webbrain.one/companion/ko/">
+<link rel="alternate" hreflang="id" href="https://webbrain.one/companion/id/">
+<link rel="alternate" hreflang="th" href="https://webbrain.one/companion/th/">
+<link rel="alternate" hreflang="ms" href="https://webbrain.one/companion/ms/">
+<link rel="alternate" hreflang="tl" href="https://webbrain.one/companion/tl/">
+<link rel="alternate" hreflang="he" href="https://webbrain.one/companion/he/">
+<link rel="alternate" hreflang="hi" href="https://webbrain.one/companion/hi/">
+<link rel="alternate" hreflang="pt" href="https://webbrain.one/companion/pt/">
+<link rel="alternate" hreflang="vi" href="https://webbrain.one/companion/vi/">
+<link rel="alternate" hreflang="bn" href="https://webbrain.one/companion/bn/">
+<link rel="alternate" hreflang="fa" href="https://webbrain.one/companion/fa/">
+<link rel="alternate" hreflang="nl" href="https://webbrain.one/companion/nl/">
+<link rel="alternate" hreflang="de" href="https://webbrain.one/companion/de/">
+<link rel="alternate" hreflang="x-default" href="https://webbrain.one/companion/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WebBrain">
+<meta property="og:title" content="WebBrain Companion">
+<meta property="og:description" content="Một ứng dụng khay nhỏ dành cho macOS, Windows và Linux phục vụ các đăng ký Claude, ChatGPT, Google, Grok và Kimi của bạn trên WebBrain trên 127.0.0.1, cho biết mỗi gói còn lại bao nhiêu và chạy Bonsai 2 27B trên máy của riêng bạn.">
+<meta property="og:url" content="https://webbrain.one/companion/vi/">
+<meta property="og:image" content="https://webbrain.one/companion/assets/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="../assets/img/favicon.png">
+<link rel="preload" href="../assets/fonts/bricolage-grotesque-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../assets/site.css">
+<script>document.documentElement.classList.replace("no-js", "js")</script>
+<script defer src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Chuyển đến nội dung</a>
+<header class="wrap site-head">
+  <a class="brand" href="./"><img src="../assets/img/logo-128.png" alt="" width="30" height="30">WebBrain Companion</a>
+  <nav class="site-nav" aria-label="Phần">
+    <a href="#panel">Bảng điều khiển</a>
+    <a href="#local">Mô hình địa phương</a>
+    <a href="#connect">Kết nối</a>
+    <a href="#download">Tải xuống</a>
+  </nav>
+  <details class="language-picker">
+    <summary aria-label="Chọn ngôn ngữ" title="Chọn ngôn ngữ">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M5 6.5h14M5 17.5h14"/></svg>
+    </summary>
+    <nav class="language-menu" aria-label="Chọn ngôn ngữ">
+      <a href="../" hreflang="en" lang="en" dir="ltr">English</a>
+      <a href="../es/" hreflang="es" lang="es" dir="ltr">Español</a>
+      <a href="../fr/" hreflang="fr" lang="fr" dir="ltr">Français</a>
+      <a href="../tr/" hreflang="tr" lang="tr" dir="ltr">Türkçe</a>
+      <a href="../zh/" hreflang="zh" lang="zh" dir="ltr">中文</a>
+      <a href="../ru/" hreflang="ru" lang="ru" dir="ltr">Русский</a>
+      <a href="../uk/" hreflang="uk" lang="uk" dir="ltr">Українська</a>
+      <a href="../ar/" hreflang="ar" lang="ar" dir="rtl">العربية</a>
+      <a href="../ja/" hreflang="ja" lang="ja" dir="ltr">日本語</a>
+      <a href="../ko/" hreflang="ko" lang="ko" dir="ltr">한국어</a>
+      <a href="../id/" hreflang="id" lang="id" dir="ltr">Bahasa Indonesia</a>
+      <a href="../th/" hreflang="th" lang="th" dir="ltr">ไทย</a>
+      <a href="../ms/" hreflang="ms" lang="ms" dir="ltr">Bahasa Melayu</a>
+      <a href="../tl/" hreflang="tl" lang="tl" dir="ltr">Filipino</a>
+      <a href="../he/" hreflang="he" lang="he" dir="rtl">עברית</a>
+      <a href="../hi/" hreflang="hi" lang="hi" dir="ltr">हिन्दी</a>
+      <a href="../pt/" hreflang="pt" lang="pt" dir="ltr">Português</a>
+      <a href="../vi/" hreflang="vi" lang="vi" dir="ltr" aria-current="page">Tiếng Việt</a>
+      <a href="../bn/" hreflang="bn" lang="bn" dir="ltr">বাংলা</a>
+      <a href="../fa/" hreflang="fa" lang="fa" dir="rtl">فارسی</a>
+      <a href="../nl/" hreflang="nl" lang="nl" dir="ltr">Nederlands</a>
+      <a href="../de/" hreflang="de" lang="de" dir="ltr">Deutsch</a>
+    </nav>
+  </details>
+</header>
+
+<main id="main">
+<section class="wrap hero">
+  <div>
+    <h1>Dùng các gói AI bạn đã đăng ký trong WebBrain</h1>
+    <p class="lede">WebBrain Companion tồn tại trong thanh menu hoặc khay hệ thống của bạn. Đăng nhập vào Claude, ChatGPT, Google, Grok hoặc Kimi một lần và WebBrain tiếp cận tất cả chúng tại một địa chỉ trên máy tính của bạn. Khay hiển thị số lượng mỗi gói còn lại và thời điểm đặt lại.</p>
+    <div class="cta">
+      <a class="button primary" id="get" href="#download" data-mac="Tải xuống cho macOS" data-win="Tải xuống cho Windows" data-linux="Tải xuống cho Linux" data-mac-href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip" data-win-href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe" data-linux-href="#download">Tải xuống</a>
+      <span class="cta-note">Phiên bản 0.1.2 dành cho macOS, Windows và Linux. Nguồn mở và miễn phí.</span>
+    </div>
+  </div>
+  <div class="desk-wrap">
+    <div class="desk" data-os="mac" role="img" aria-label="Minh họa menu khay của Companion: đang chạy, địa chỉ cần sao chép và dung lượng còn lại của Claude Max, ChatGPT Pro, Google AI Pro và SuperGrok.">
+      <div class="bar" aria-hidden="true"><span class="s s3"></span><span class="s s2"></span><span class="icon"><span class="glyph"></span></span><span class="s s1"></span></div>
+      <div class="menu" aria-hidden="true">
+        <div class="row dim"><span>WebBrain Companion — Đang chạy</span></div>
+        <div class="row"><span>Sao chép&nbsp;&nbsp;http://127.0.0.1:8327/v1</span></div>
+        <div class="sep"></div>
+        <div class="row plan"><span>Claude Max</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span>64% · 2h 13p</span></div>
+        <div class="row plan"><span>ChatGPT Pro</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span>57% · 4ngày</span></div>
+        <div class="row plan"><span>Google AI Pro</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>71% · 5 ngày</span></div>
+        <div class="row plan"><span>Grok SuperGrok</span><span class="meter"><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>12% · 3d</span></div>
+        <div class="sep"></div>
+        <div class="row"><span>Mở bảng điều khiển…</span></div>
+        <div class="row"><span>Thoát khỏi WebBrain Companion</span></div>
+      </div>
+    </div>
+    <div class="os-switch"><span id="os-label">Thực đơn đang bật</span><span class="seg" role="group" aria-labelledby="os-label"><button type="button" data-os="mac" aria-pressed="true">macOS</button><button type="button" data-os="win" aria-pressed="false">Windows</button><button type="button" data-os="linux" aria-pressed="false">Linux</button></span></div>
+  </div>
+</section>
+
+<section class="section" id="panel" aria-labelledby="panel-h">
+  <div class="wrap">
+    <h2 id="panel-h">Mọi thứ khác diễn ra trong một bảng điều khiển nhỏ</h2>
+    <p class="intro">Nhấp vào biểu tượng để mở nó. Một trang chứa địa chỉ của WebBrain, mọi gói còn lại và hai mô hình địa phương; nhấp vào một hàng để biết chi tiết về nó hoặc vào bánh răng để biết cài đặt. Nó tuân theo khung cảnh sáng hoặc tối của bạn và nói tiếng Anh và tiếng Thổ Nhĩ Kỳ.</p>
+    <ul class="windows">
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/panel-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/panel-en-light.webp" width="460" height="760" alt="Bảng điều khiển: địa chỉ http://127.0.0.1:8327/v1 với nút Sao chép, đồng hồ đo mức sử dụng cho Claude Max, ChatGPT Pro, Google AI Pro và SuperGrok và Bonsai 2 27B chạy bên cạnh mô hình quyết định d1." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Một trang</h3><p>Địa chỉ mà WebBrain cần, mỗi gói có giới hạn gần hết nhất và các mẫu cục bộ có nút chính của chúng. Không có khóa API trên máy tính này.</p></figcaption>
+      </figure></li>
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/add-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/add-en-light.webp" width="460" height="760" alt="Bảng bổ sung đăng ký liệt kê Claude, ChatGPT, Google, Grok và Kimi, mỗi bảng đều có cách bạn đăng nhập." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Thêm đăng ký</h3><p>Đăng nhập trên trang riêng của nhà cung cấp. Việc đăng nhập vẫn còn trên máy tính của bạn.</p></figcaption>
+      </figure></li>
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/local-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/local-en-light.webp" width="460" height="760" alt="Chi tiết về Bonsai 2 27B trên bảng điều khiển: chạy trên Apple GPU với đầu vào hình ảnh được bật, 65.536 mã thông báo ngữ cảnh và các tùy chọn của nó." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Mô hình địa phương</h3><p>Nhấp vào Bonsai 2 27B để xem nó chạy ở đâu và liệu hình ảnh có phù hợp hay không và để thay đổi các tùy chọn của nó. d1 cũng mở theo cách tương tự.</p></figcaption>
+      </figure></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="local" aria-labelledby="local-h">
+  <div class="wrap">
+    <h2 id="local-h">Bonsai 2 27B, có kích thước phù hợp với máy của bạn</h2>
+    <div class="split">
+      <p class="intro">Ternary Bonsai 2 27B của PrismML chứa 27 tỷ thông số vào 5,95 GB. Người đồng hành cài đặt nó với máy chiếu thị giác Q8_0 và bản dựng llama.cpp của PrismML hoặc dưới dạng gói MLX trên Apple Silicon và liệt kê nó bên cạnh đăng ký của bạn là <code>bonsai-2-27b</code>.</p>
+      <p class="intro">Trước khi tải xuống bất cứ thứ gì, nó sẽ tìm ra nơi mô hình chạy và liệu hình ảnh đầu vào có phù hợp hay không. Máy chiếu thị giác hoạt động trên GPU khi còn lại khoảng 1 GB bộ nhớ GPU sau kiểu máy và ngữ cảnh của nó, trên CPU khi chỉ có hệ thống RAM còn chỗ trống và nếu không thì sẽ tắt. Bạn có thể ghi đè lựa chọn trong bảng điều khiển.</p>
+    </div>
+    <table class="machines">
+      <caption>Người bạn đồng hành chọn gì trên các máy thông thường</caption>
+      <thead><tr><th scope="col">Máy</th><th scope="col">Chạy tiếp</th><th scope="col">Đầu vào hình ảnh</th><th scope="col">Bối cảnh</th></tr></thead>
+      <tbody>
+        <tr><td>MacBook Air, 8GB</td><td data-label="Chạy tiếp">Apple GPU với Metal. Nó cần nhiều bộ nhớ hơn Mac, vì vậy hãy chờ đợi việc trao đổi.</td><td data-label="Đầu vào hình ảnh"><span class="vis off">Tắt</span></td><td data-label="Bối cảnh">Mã thông báo 8K</td></tr>
+        <tr><td>MacBook Pro, 16 GB</td><td data-label="Chạy tiếp">Apple GPU với Metal</td><td data-label="Đầu vào hình ảnh"><span class="vis gpu">Bật, GPU</span></td><td data-label="Bối cảnh">Mã thông báo 16K</td></tr>
+        <tr><td>Máy tính xách tay có RTX 4060 (8 GB) và 16 GB RAM</td><td data-label="Chạy tiếp">CUDA, 57 trên 64 lớp trên GPU</td><td data-label="Đầu vào hình ảnh"><span class="vis cpu">Bật, CPU</span></td><td data-label="Bối cảnh">Mã thông báo 8K</td></tr>
+        <tr><td>Máy tính để bàn có RTX 4090 (24 GB) và 64 GB RAM</td><td data-label="Chạy tiếp">CUDA, tất cả đều có trên GPU</td><td data-label="Đầu vào hình ảnh"><span class="vis gpu">Bật, GPU</span></td><td data-label="Bối cảnh">Mã thông báo 64K</td></tr>
+        <tr><td>Máy tính để bàn có Radeon RX 7600 (8 GB) và 32 GB RAM</td><td data-label="Chạy tiếp">Vulkan, 61 trên 64 lớp trên GPU</td><td data-label="Đầu vào hình ảnh"><span class="vis cpu">Bật, CPU</span></td><td data-label="Bối cảnh">Mã thông báo 8K</td></tr>
+        <tr><td>PC không có card đồ họa, 16 GB RAM</td><td data-label="Chạy tiếp">CPU</td><td data-label="Đầu vào hình ảnh"><span class="vis cpu">Bật, CPU</span></td><td data-label="Bối cảnh">Mã thông báo 8K</td></tr>
+        <tr><td>PC không có card đồ họa, 8 GB RAM</td><td data-label="Chạy tiếp">CPU, có rất ít chỗ trống</td><td data-label="Đầu vào hình ảnh"><span class="vis off">Tắt</span></td><td data-label="Bối cảnh">Mã thông báo 8K</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Được người lập kế hoạch của người bạn đồng hành thực hiện từ bộ nhớ tổng thể và còn trống; các con số trên máy của bạn lúc cài đặt sẽ quyết định. Trên Apple Silicon, gói MLX có tháp tầm nhìn riêng nên hình ảnh luôn bật.</p>
+  </div>
+</section>
+
+<section class="section" id="decision" aria-labelledby="d1-h">
+  <div class="wrap">
+    <h2 id="d1-h">Mô hình quyết định của WebBrain, bên ngoài trình duyệt</h2>
+    <div class="split">
+      <p class="intro">Mô hình d1 của WebBrain trả lời các câu hỏi có/không, lựa chọn và cho điểm về một trang và tối đa bốn ảnh chụp màn hình, chẳng hạn như liệu một tác vụ đã hoàn thành hay chưa. Người bạn đồng hành chạy nó trên ONNX Runtime và trả lời qua HTTP, do đó, tab trình duyệt không phải tải 1,9 GB. Cổng Go của nó trả về các mã thông báo và xác suất giống như bộ điều hợp JavaScript của WebBrain. d1 gốc có sẵn trên máy Mac Windows, Linux và Apple Silicon; nó không có sẵn trên máy Mac Intel.</p>
+      <div>
+        <p class="code-label">Hỏi</p>
+        <pre><code>curl http://127.0.0.1:8327/companion/v1/decide \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;state&quot;: &quot;Order #1042 is confirmed.&quot;,
+       &quot;questions&quot;: {&quot;completion&quot;: {
+         &quot;type&quot;: &quot;choice&quot;,
+         &quot;instructions&quot;: &quot;Did the task finish?&quot;,
+         &quot;criteria&quot;: {&quot;completed&quot;: &quot;Confirmed&quot;,
+                      &quot;not_completed&quot;: &quot;Failed or unfinished&quot;,
+                      &quot;unknown&quot;: &quot;Not established&quot;}}}}&#x27;</code></pre>
+        <p class="code-label">Trả lời (273 ms trong thời gian chạy CPU)</p>
+        <pre><code>{&quot;answers&quot;: {&quot;completion&quot;: {
+   &quot;choice&quot;: &quot;completed&quot;,
+   &quot;confidence&quot;: 0.99997,
+   &quot;probabilities&quot;: {&quot;completed&quot;: 0.99997,
+                     &quot;not_completed&quot;: 0.000002,
+                     &quot;unknown&quot;: 0.000033}}},
+ &quot;diagnostics&quot;: {&quot;runtime&quot;: &quot;onnxruntime 1.31.0 (CPU)&quot;, …}}</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="connect" aria-labelledby="connect-h">
+  <div class="wrap">
+    <h2 id="connect-h">Kết nối WebBrain</h2>
+    <p class="intro">Bạn làm điều này một lần. Ứng dụng trên máy tính này không cần khóa API.</p>
+    <ol class="steps">
+      <li>Cài đặt đồng hành và mở nó. Thêm đăng ký vào bảng điều khiển và hoàn tất đăng nhập trong trình duyệt của bạn.</li>
+      <li>Địa chỉ mặc định là <code>http://127.0.0.1:8327/v1</code>. Nếu cổng thay đổi, hãy sao chép địa chỉ hiển thị trong menu bảng hoặc khay.</li>
+      <li>Trong WebBrain, mở trang <b>Providers</b> (<b>More…</b> trong menu mẫu của bảng điều khiển bên) và chọn <b>WebBrain Companion</b>. Giữ địa chỉ mặc định của nó trừ khi ứng dụng hiển thị một cổng khác. Không cần khóa API trên máy tính này.</li>
+      <li>Nhấp vào <b>Tải mô hình</b>, chọn một mô hình, <b>Save</b> và chạy <b>Test Connection</b> trước khi kích hoạt thẻ. Chỉ bật tầm nhìn cho mẫu máy chấp nhận hình ảnh.</li>
+    </ol>
+    <p class="after-steps">Mọi máy khách OpenAI, Anthropic hoặc Gemini trên máy tính này đều có thể sử dụng cùng một địa chỉ. Để sử dụng nó từ một thiết bị khác, hãy bật quyền truy cập mạng trong cài đặt của bảng điều khiển; thiết bị đó sau đó cần có khóa API mà bảng điều khiển hiển thị.</p>
+  </div>
+</section>
+
+<section class="section" id="download" aria-labelledby="download-h">
+  <div class="wrap">
+    <h2 id="download-h">Tải xuống</h2>
+    <p class="intro">Phiên bản 0.1.2. Mỗi gói chứa một chương trình duy nhất; cài đặt và thông tin đăng nhập của bạn nằm trong thư mục người dùng của bạn.</p>
+    <div class="downloads">
+      <div class="dl" data-os="mac">
+        <div><h3>macOS</h3><p class="req">macOS 12 trở lên, Apple Silicon và Intel (d1 yêu cầu Apple Silicon)</p><span class="yours">Hệ thống của bạn</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip">Ứng dụng phổ quát <small>zip, 36 MB</small></a></li></ul>
+        <p class="how">Di chuyển WebBrain Companion sang Ứng dụng. Bản dựng không được Apple công chứng: lần đầu tiên, hãy cho phép nó trong Cài đặt hệ thống, Quyền riêng tư &amp; Bảo mật (Vẫn mở). Trên macOS 14 trở về trước, hãy giữ Control khi nhấp vào nó và chọn Mở.</p>
+      </div>
+      <div class="dl" data-os="win">
+        <div><h3>Windows</h3><p class="req">Windows 10 và 11, x64 và Arm64</p><span class="yours">Hệ thống của bạn</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe">Trình cài đặt <small>setup.exe, 23 MB</small></a></li></ul>
+        <p class="how">Chạy trình cài đặt: nó sẽ cài đặt cho tài khoản của bạn mà không cần lời nhắc của quản trị viên và thêm WebBrain Companion vào menu Bắt đầu. Cho đến khi trình cài đặt được ký mã, SmartScreen có thể nói &quot;Windows đã bảo vệ PC của bạn&quot;: chọn Thông tin thêm, sau đó vẫn chạy.</p>
+      </div>
+      <div class="dl" data-os="linux">
+        <div><h3>Linux</h3><p class="req">x64 và Arm64</p><span class="yours">Hệ thống của bạn</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-x64.tar.gz">x64 <small>tar.gz, 20 MB</small></a></li><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-arm64.tar.gz">Arm64 <small>tar.gz, 18 MB</small></a></li></ul>
+        <p class="how">Giải nén và chạy webbrain-companion. Biểu tượng cần có khay StatusNotifierItem: KDE, XFCE hoặc GNOME với phần mở rộng AppIndicator.</p>
+      </div>
+    </div>
+    <p class="more-links"><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-SHA256SUMS.txt">Tổng kiểm tra SHA-256</a><a href="https://github.com/webbrain-one/webbrain/tree/main/webbrain-systray">Mã nguồn</a><a href="https://github.com/webbrain-one/webbrain/releases">Tất cả các bản phát hành</a></p>
+  </div>
+</section>
+
+<section class="section safety" id="safety" aria-labelledby="safety-h">
+  <div class="wrap">
+    <h2 id="safety-h">Trước khi bạn đăng nhập</h2>
+    <div class="split even">
+      <div>
+        <h3>Những gì còn lại trên máy tính của bạn</h3>
+        <ul class="facts">
+          <li>Trên máy tính này không cần khóa API: đồng hành chỉ trả lời các yêu cầu từ 127.0.0.1 và loại bỏ các trang web, vì vậy trang web bạn truy cập không thể sử dụng kế hoạch của bạn. Các tiện ích mở rộng của trình duyệt như WebBrain và các ứng dụng trên máy tính này có thể sử dụng nó.</li>
+          <li>Các thiết bị khác chỉ có thể kết nối nếu bạn bật quyền truy cập mạng trong cài đặt của bảng điều khiển. Sau đó, nó sẽ lắng nghe trên 0.0.0.0 và họ cần khóa API mà bảng điều khiển hiển thị.</li>
+          <li>Thông tin đăng nhập được lưu trữ trong thư mục người dùng của bạn và chỉ được gửi đến nhà cung cấp mà họ thuộc về.</li>
+          <li>Không có phân tích. Ngoài các nhà cung cấp mà bạn đăng nhập, nó chỉ tìm nạp danh sách mô hình công khai của CLIProxyAPI và khi bạn cài đặt một mô hình, các tệp của nó từ Hugging Face, GitHub và đối với MLX, PyPI.</li>
+          <li>Lời nhắc gửi tới gói đăng ký vẫn được chuyển đến nhà cung cấp đó. Chỉ Bonsai 2 27B và d1 chạy trên máy của bạn.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Nhà cung cấp của bạn quyết định điều gì</h3>
+        <ul class="facts">
+          <li>Đăng ký hoạt động thông qua proxy không giống với đăng ký mà nhà cung cấp cho phép. Các điều khoản dành cho người tiêu dùng của Anthropic hạn chế quyền truy cập tự động bên ngoài khóa API và các điều khoản Gemini CLI của Google cho biết tính năng đăng nhập của nó không thể được sử dụng với các công cụ của bên thứ ba.</li>
+          <li>Kiểm tra các điều khoản của gói và khu vực của bạn trước khi thêm nó. Nếu tài khoản quan trọng với bạn thì khóa API của nhà cung cấp là con đường an toàn hơn.</li>
+          <li>Tắt quyền truy cập mạng trên Wi-Fi công cộng và không bao giờ chuyển tiếp cổng 8327 sang internet. Khóa API không phải là bảo mật cấp Internet.</li>
+        </ul>
+        <p><a href="https://webbrain.one/docs/providers/#companion">Kết nối WebBrain với Đồng hành</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <p>WebBrain Companion là phần mềm miễn phí theo giấy phép GPL-3.0-or-later và nhúng CLIProxyAPI. Nó không liên kết với Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta hoặc Cognition.</p>
+    <nav aria-label="Thêm"><a href="https://webbrain.one/">WebBrain</a><a href="https://github.com/webbrain-one/webbrain/tree/main/webbrain-systray">Mã nguồn</a></nav>
+  </div>
+</footer>
+</body>
+</html>
