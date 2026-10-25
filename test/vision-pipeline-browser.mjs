@@ -181,10 +181,20 @@ test('content-script vision input (Firefox path) clicks, double-clicks, focuses,
     const end = source.indexOf('  let _lastClickIdent = null;');
     assert.ok(start > 0 && end > start, 'vision input block present in the Firefox content script');
     const block = source.slice(start, end);
-    await page.evaluate(code => {
+    // The native file-chooser guard every agent click runs inside.
+    const guardStart = source.indexOf('  function uniqueFileInputSelector(input) {');
+    const guardEnd = source.indexOf('  /**\n   * Click an element by selector or coordinates.');
+    assert.ok(guardStart > 0 && guardEnd > guardStart, 'file-chooser guard block present in the Firefox content script');
+    const guardBlock = source.slice(guardStart, guardEnd);
+    await page.evaluate(({ code, guardBlock }) => {
       // eslint-disable-next-line no-new-func
-      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }\n${code}\nreturn visionInput;`)();
-    }, block);
+      const content = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn { visionInput, consumeFilePickerGuard };`)();
+      window.__visionInput = content.visionInput;
+      window.__consumeFilePickerGuard = content.consumeFilePickerGuard;
+    }, { code: block, guardBlock });
     const run = params => page.evaluate(p => window.__visionInput(p), params);
     let result = await run({ type: 'click', x: 150, y: 130 });
     assert.equal(result.success, true);
@@ -211,6 +221,58 @@ test('content-script vision input (Firefox path) clicks, double-clicks, focuses,
     // Points outside the viewport are refused without dispatch.
     result = await run({ type: 'click', x: 5000, y: 10 });
     assert.equal(result.noDispatch, true);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('content-script vision clicks (Firefox path) never open a native file chooser', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.setContent(`<!doctype html><style>body{margin:0}*{position:absolute}#upload{left:20px;top:20px;width:200px;height:30px}
+      #label{left:20px;top:80px;width:200px;height:30px;background:#eee}#pick{left:20px;top:140px;width:200px;height:30px}
+      #later{left:20px;top:200px;width:200px;height:30px}#plain{left:20px;top:260px;width:200px;height:30px}#hidden1,#hidden2,#hidden3{display:none}</style>
+      <input id="upload" type="file"><label id="label" for="hidden1">Attach</label><input id="hidden1" type="file">
+      <button id="pick">Upload</button><input id="hidden2" type="file"><button id="later">Upload later</button><input id="hidden3" type="file">
+      <button id="plain">Plain</button>
+      <script>window.choosers=[];for(const id of ['upload','hidden1','hidden2','hidden3'])document.getElementById(id).addEventListener('click',e=>{if(!e.defaultPrevented)choosers.push(id)});
+      document.getElementById('pick').addEventListener('click',()=>document.getElementById('hidden2').click());
+      document.getElementById('later').addEventListener('click',()=>setTimeout(()=>document.getElementById('hidden3').click(),100));</script>`);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      const content = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn { visionInput, consumeFilePickerGuard };`)();
+      window.__visionInput = content.visionInput;
+      window.__consumeFilePickerGuard = content.consumeFilePickerGuard;
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    const settle = async guardId => { await page.waitForTimeout(600); return page.evaluate(id => window.__consumeFilePickerGuard(id), guardId); };
+    // A file input, a label for one, and a button that clicks one: blocked at once.
+    for (const [y, selector] of [[35, '#upload'], [95, '#hidden1'], [155, '#hidden2']]) {
+      const result = await run({ type: 'click', x: 100, y });
+      assert.equal(result.filePickerBlocked, true, JSON.stringify(result));
+      assert.equal(result.dispatched, true);
+      assert.equal(result.selector, selector);
+      assert.equal(result._filePickerGuardId, undefined);
+    }
+    // A chooser opened a moment later is caught when the agent settles the guard.
+    const later = await run({ type: 'click', x: 100, y: 215 });
+    assert.equal(later.success, true, JSON.stringify(later));
+    assert.match(later._filePickerGuardId, /^fpg_/);
+    const settledLater = await settle(later._filePickerGuardId);
+    assert.equal(settledLater.filePickerBlocked, true, JSON.stringify(settledLater));
+    assert.equal(settledLater.selector, '#hidden3');
+    // An ordinary control settles clean.
+    const plain = await run({ type: 'click', x: 100, y: 275 });
+    assert.equal(plain.success, true);
+    assert.deepEqual(await settle(plain._filePickerGuardId), { success: true, settled: true, filePickerBlocked: false });
+    assert.deepEqual(await page.evaluate(() => window.choosers), [], 'no file input received an unblocked click');
   } finally {
     await browser.close();
   }

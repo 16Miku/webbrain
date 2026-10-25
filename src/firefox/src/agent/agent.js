@@ -20,7 +20,7 @@ import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationCon
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, getVisionActPrompt } from './tools.js';
 import { installVisionRuntime } from './vision-runtime.js';
-import { VISION_NATIVE_TOOLS, VISION_SITE_NOTES_PREFACE, visionUniversalPreamble } from './vision-tools.js';
+import { VISION_NATIVE_TOOLS, VISION_SITE_NOTES_PREFACE, visionFilePickerBlockedResult, visionUniversalPreamble } from './vision-tools.js';
 import { visionDomProbeExpression } from './vision-dom-probe.js';
 import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
@@ -17111,9 +17111,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (preflight.refusal) return preflight.refusal;
     this._throwIfAborted(abortSignal);
     dispatchState.started = true;
-    const response = await this._visionContentInput(tabId, {
+    let response = await this._visionContentInput(tabId, {
       type: 'click', x, y, button: vision?.button || 'left', clickCount: vision?.clickCount || 1,
     }, 'click');
+    // The content click ran inside the native file-chooser guard, as an
+    // ordinary click does; settle it the same way (a deferred chooser too).
+    response = visionFilePickerBlockedResult(await this._settleContentFilePickerGuard(tabId, response));
     return {
       ...response,
       x,

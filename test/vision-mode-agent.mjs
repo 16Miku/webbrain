@@ -562,6 +562,40 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.equal(reasonAtStep2, 'workflow_needs_element_inventory');
   });
 
+  if (build === 'firefox') {
+    test('firefox: a vision click settles the file-chooser guard and reports a blocked chooser in vision terms', async () => {
+      const agent = new Agent({});
+      agent._visionClickPreflight = async () => ({ target: { tag: 'button' } });
+      agent._visionContentInput = async () => ({ success: true, dispatched: true, method: 'synthetic-vision-pointer', clicks: 1, target: { tag: 'button' }, _filePickerGuardId: 'fpg_test' });
+      const api = globalThis.browser;
+      const sendMessage = api.tabs.sendMessage;
+      const sent = [];
+      api.tabs.sendMessage = async (_tab, message) => {
+        sent.push(message);
+        return message.action === 'consume_file_picker_guard'
+          ? { success: false, dispatched: true, filePickerBlocked: true, selector: '#upload', error: 'Blocked a native file chooser. Call upload_file({selector: "#upload"}) directly.', settled: true }
+          : { ready: true };
+      };
+      try {
+        const blocked = await agent._visionDispatchClick(1, { x: 5, y: 5 }, { vision: { tool: 'click_at', imageId: 'f1' } });
+        assert.equal(blocked.filePickerBlocked, true, JSON.stringify(blocked));
+        assert.equal(blocked.success, false);
+        assert.equal(blocked.selector, '#upload');
+        assert.equal('_filePickerGuardId' in blocked, false);
+        assert.match(blocked.error, /not available in vision mode/);
+        assert.doesNotMatch(blocked.error, /upload_file/, 'never points to a tool a vision run does not have');
+        assert.deepEqual(sent.filter(message => message.action === 'consume_file_picker_guard').map(message => message.params.guardId), ['fpg_test']);
+        api.tabs.sendMessage = async (_tab, message) => (message.action === 'consume_file_picker_guard'
+          ? { success: true, settled: true, filePickerBlocked: false } : { ready: true });
+        const clean = await agent._visionDispatchClick(1, { x: 5, y: 5 }, { vision: { tool: 'click_at' } });
+        assert.equal(clean.success, true, JSON.stringify(clean));
+        assert.equal('_filePickerGuardId' in clean, false);
+      } finally {
+        api.tabs.sendMessage = sendMessage;
+      }
+    });
+  }
+
   if (build === 'chrome') {
     test('chrome: a vision click that opened no tab is known at once; a tab opened now or later is rerouted', async () => {
       const agent = new Agent({});

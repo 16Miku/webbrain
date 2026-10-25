@@ -342,6 +342,19 @@ export function visionUniversalPreamble(preamble) {
  */
 export const VISION_SITE_NOTES_PREFACE = '(Written for WebBrain\'s element tools: click_ax, set_field, type_ax, ref ids, selectors and the accessibility tree are not available in this run. Apply the facts about the site with click_at, type_text, press_keys and scroll_at on what the screenshots show.)';
 
+/**
+ * A vision click the native file-chooser guard stopped. The guard's own
+ * guidance points to upload_file, which a vision run does not offer.
+ */
+export function visionFilePickerBlockedResult(result) {
+  if (result?.filePickerBlocked !== true) return result;
+  return {
+    ...result,
+    success: false,
+    error: 'Blocked a native file chooser: it opens outside the page, where screenshots cannot show or operate it, and file uploads are not available in vision mode. Do not click this control again; finish the rest of the task and tell the user the upload needs Vision mode off (Settings → Advanced).',
+  };
+}
+
 /** Trusted label placed before a full frame. */
 export function visionKeyframeNote(frame, { coordinates = 'pixel', reason = '' } = {}) {
   const ratio = Math.round((frame.cssPerPxX || 1) * 100) / 100;

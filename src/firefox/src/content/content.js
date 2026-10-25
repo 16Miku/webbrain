@@ -2120,42 +2120,49 @@
         return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe };
       }
       hover(el);
-      for (let count = 1; count <= clicks; count++) {
-        pointer(el, 'pointerdown', { button, buttons: buttonsMask });
-        const pressAllowed = mouse(el, 'mousedown', { button, buttons: buttonsMask, detail: count });
-        if (count === 1 && button === 0 && pressAllowed) {
-          const focusable = _visionFocusable(el);
-          if (focusable && focusable !== el.ownerDocument.activeElement) focusable.focus({ preventScroll: true });
-          else if (!focusable) el.ownerDocument.activeElement?.blur?.();
+      // Like any agent click, a vision click must not open a native file
+      // chooser (a file input, its label, an upload button that clicks one):
+      // the guard blocks it, and the agent settles the guard afterwards.
+      const filePickerGuard = clickWithoutNativeFilePicker(() => {
+        for (let count = 1; count <= clicks; count++) {
+          pointer(el, 'pointerdown', { button, buttons: buttonsMask });
+          const pressAllowed = mouse(el, 'mousedown', { button, buttons: buttonsMask, detail: count });
+          if (count === 1 && button === 0 && pressAllowed) {
+            const focusable = _visionFocusable(el);
+            if (focusable && focusable !== el.ownerDocument.activeElement) focusable.focus({ preventScroll: true });
+            else if (!focusable) el.ownerDocument.activeElement?.blur?.();
+          }
+          pointer(el, 'pointerup', { button, buttons: 0 });
+          mouse(el, 'mouseup', { button, buttons: 0, detail: count });
+          if (button === 0) mouse(el, 'click', { button: 0, buttons: 0, detail: count });
+          else if (button === 1) mouse(el, 'auxclick', { button: 1, buttons: 0, detail: count });
         }
-        pointer(el, 'pointerup', { button, buttons: 0 });
-        mouse(el, 'mouseup', { button, buttons: 0, detail: count });
-        if (button === 0) mouse(el, 'click', { button: 0, buttons: 0, detail: count });
-        else if (button === 1) mouse(el, 'auxclick', { button: 1, buttons: 0, detail: count });
-      }
-      if (button === 0 && clicks >= 2) {
-        mouse(el, 'dblclick', { button: 0, buttons: 0, detail: 2 });
-        // Browsers select a word (two clicks) or the whole line/field
-        // (three) as the default action; synthetic events need it done.
-        try {
-          if (typeof el.select === 'function' && /^(input|textarea)$/.test(tag)) {
-            el.select();
-          } else {
-            const selection = el.ownerDocument.getSelection();
-            if (clicks >= 3) selection.selectAllChildren(el.closest('p,li,td,th,div,section,article,h1,h2,h3,h4,h5,h6') || el);
-            else if (typeof selection.modify === 'function') {
-              const caret = el.ownerDocument.caretPositionFromPoint?.(cx, cy);
-              if (caret?.offsetNode) {
-                selection.collapse(caret.offsetNode, caret.offset);
-                selection.modify('move', 'backward', 'word');
-                selection.modify('extend', 'forward', 'word');
+        if (button === 0 && clicks >= 2) {
+          mouse(el, 'dblclick', { button: 0, buttons: 0, detail: 2 });
+          // Browsers select a word (two clicks) or the whole line/field
+          // (three) as the default action; synthetic events need it done.
+          try {
+            if (typeof el.select === 'function' && /^(input|textarea)$/.test(tag)) {
+              el.select();
+            } else {
+              const selection = el.ownerDocument.getSelection();
+              if (clicks >= 3) selection.selectAllChildren(el.closest('p,li,td,th,div,section,article,h1,h2,h3,h4,h5,h6') || el);
+              else if (typeof selection.modify === 'function') {
+                const caret = el.ownerDocument.caretPositionFromPoint?.(cx, cy);
+                if (caret?.offsetNode) {
+                  selection.collapse(caret.offsetNode, caret.offset);
+                  selection.modify('move', 'backward', 'word');
+                  selection.modify('extend', 'forward', 'word');
+                }
               }
             }
-          }
-        } catch { /* selection is best effort */ }
-      }
-      if (button === 2) mouse(el, 'contextmenu', { button: 2, buttons: 0 });
-      return { success: true, dispatched: true, method: 'synthetic-vision-pointer', clicks, target: describe };
+          } catch { /* selection is best effort */ }
+        }
+        if (button === 2) mouse(el, 'contextmenu', { button: 2, buttons: 0 });
+      });
+      if (filePickerGuard.blocked) return { ...filePickerBlockedResponse(filePickerGuard.blocked), target: describe };
+      return { success: true, dispatched: true, method: 'synthetic-vision-pointer', clicks, target: describe,
+        ...(filePickerGuard.guardId ? { _filePickerGuardId: filePickerGuard.guardId } : {}) };
     });
   }
 

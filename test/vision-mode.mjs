@@ -591,6 +591,25 @@ test('page feedback: vision points survive page churn, keyboard follow-ups ride 
   assert.match(feedback, /\.\.\.\(visionRun \? \{\} : \{ page: /);
 });
 
+test('a blocked file chooser is reported in vision terms in both builds', () => {
+  const { visionFilePickerBlockedResult } = visionTools;
+  const blocked = visionFilePickerBlockedResult({ success: false, dispatched: true, filePickerBlocked: true, selector: '#f', error: 'Blocked a native file chooser. Call upload_file with selector "#f".' });
+  assert.equal(blocked.filePickerBlocked, true);
+  assert.equal(blocked.dispatched, true);
+  assert.equal(blocked.selector, '#f');
+  assert.match(blocked.error, /not available in vision mode/);
+  assert.doesNotMatch(blocked.error, /upload_file/);
+  const ok = { success: true, dispatched: true };
+  assert.equal(visionFilePickerBlockedResult(ok), ok);
+  // Chrome's CDP guard result and Firefox's settled content guard both pass through it.
+  assert.match(read('src/chrome/src/agent/agent.js'), /return visionFilePickerBlockedResult\(cdpClient\.fileInputClickBlockedResult\(blockedFileInput/);
+  assert.match(read('src/firefox/src/agent/agent.js'), /response = visionFilePickerBlockedResult\(await this\._settleContentFilePickerGuard\(tabId, response\)\);/);
+  // The content scripts' vision click runs inside the guard, identically in both builds.
+  for (const build of ['chrome', 'firefox']) {
+    assert.match(read(`src/${build}/src/content/content.js`), /const filePickerGuard = clickWithoutNativeFilePicker\(\(\) => \{\s*for \(let count = 1; count <= clicks; count\+\+\)/);
+  }
+});
+
 test('micro screen changes: a caret, a clock or a spinner settle; a menu or a toast does not', () => {
   const { isMicroScreenChange } = runtimeModule;
   const width = 1296, height = 810;
