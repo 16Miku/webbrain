@@ -780,3 +780,56 @@ test('the DOM probe behind the dispatch checks reads controls, text fields, focu
     await browser.close();
   }
 });
+
+test('the click submit probe reads a vision point inside open shadow roots and on plain content (both builds)', async () => {
+  const page_ = `<!doctype html><meta charset="utf-8"><title>Probe fixture</title>
+<style>body{margin:0;font:16px sans-serif}#post{position:absolute;left:20px;top:20px;width:400px;height:120px;cursor:pointer}
+#post p{margin:0;padding:10px}my-pay{position:absolute;left:20px;top:200px;width:300px;height:80px;display:block}
+#menu{position:absolute;left:500px;top:20px;width:120px;height:40px}</style>
+<article id="post"><p>Owned QA post text that opens the post when clicked</p></article>
+<my-pay></my-pay><div id="menu" role="button" aria-label="Post actions">More</div>
+<x-chip role="button" aria-label="Follow" style="position:absolute;left:500px;top:120px;width:120px;height:40px;display:block"></x-chip>
+<iframe id="pay-frame" srcdoc="<button>Pay</button>" style="position:absolute;left:500px;top:220px;width:200px;height:80px;border:0"></iframe>
+<script>
+document.getElementById('post').addEventListener('click', () => { window.opened = true; });
+customElements.define('x-chip', class extends HTMLElement {
+  constructor() { super(); this.attachShadow({ mode: 'open' }).innerHTML = '<span style="display:block;width:120px;height:40px">Follow</span>'; }
+});
+customElements.define('my-pay', class extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' }).innerHTML = '<form action="/pay" method="post"><input name="amount" value="5" style="position:absolute;left:150px;top:10px;width:100px">'
+      + '<button type="submit" style="position:absolute;left:10px;top:10px;width:120px;height:40px">Pay now</button></form>';
+  }
+});
+</script>`;
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 800, height: 400 } });
+    await page.setContent(page_);
+    for (const build of ['chrome', 'firefox']) {
+      const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+      const probe = args => page.evaluate(({ source, args }) => {
+        const fn = new Function(`return (${source})`)();
+        return fn('click', args);
+      }, { source: Agent._submitActionProbe.toString(), args });
+      // Plain content under a vision point: a non-submit target.
+      const plain = await probe({ x: 120, y: 50, coordinate_space: 'css', __wbCaptionPass: 'final', __wbCaptionReadings: {} });
+      assert.equal(plain?.resolvedPlainContent, true, `${build}: ${JSON.stringify(plain)}`);
+      assert.equal(plain.isSubmit, false);
+      // The same point from a coordinate click outside a vision run is not classified.
+      assert.equal((await probe({ x: 120, y: 50, __wbCaptionPass: 'final', __wbCaptionReadings: {} }))?.resolvedPlainContent, undefined);
+      // A control is never plain content.
+      assert.notEqual((await probe({ x: 560, y: 40, coordinate_space: 'css', __wbCaptionPass: 'final', __wbCaptionReadings: {} }))?.resolvedPlainContent, true);
+      // A frame is opaque to the top document's probe, never plain content.
+      assert.notEqual((await probe({ x: 600, y: 260, coordinate_space: 'css', __wbCaptionPass: 'final', __wbCaptionReadings: {} }))?.resolvedPlainContent, true);
+      // Text inside a web component whose host is the button is that button.
+      assert.notEqual((await probe({ x: 560, y: 140, coordinate_space: 'css', __wbCaptionPass: 'final', __wbCaptionReadings: {} }))?.resolvedPlainContent, true);
+      // The submit button inside the web component is the submit, not its host.
+      const pay = await probe({ x: 90, y: 230, coordinate_space: 'css', __wbCaptionPass: 'final', __wbCaptionReadings: {} });
+      assert.equal(pay?.isSubmit, true, `${build}: ${JSON.stringify(pay)?.slice(0, 400)}`);
+    }
+  } finally {
+    await browser.close();
+  }
+});

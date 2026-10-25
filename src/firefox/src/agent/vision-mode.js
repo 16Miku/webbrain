@@ -34,6 +34,8 @@ export function resolveVisionMode(setting, {
   selectionOnly = false,
   quality = 'balanced',
   ledgerWorkflow = false,
+  completeThreadRead = false,
+  nativeChatPage = false,
 } = {}) {
   const normalized = normalizeVisionModeSetting(setting);
   const base = { active: false, setting: normalized };
@@ -45,6 +47,16 @@ export function resolveVisionMode(setting, {
   // inventory (adapter-workflow.js requiresLedger) cannot be certified from
   // screenshots: that run keeps the accessibility-tree path.
   if (ledgerWorkflow) return { ...base, reason: 'workflow_needs_element_inventory' };
+  // A request for a whole conversation is answered only after trusted
+  // coverage through its last page with every message expanded
+  // (read-completeness.js), which the accessibility tree proves and
+  // screenshots cannot: that run keeps the tree path too.
+  if (completeThreadRead) return { ...base, reason: 'complete_thread_read' };
+  // WhatsApp Web and Telegram confirm who an open chat is with, and bind the
+  // chat they read and send in, through the element inventory (a contact
+  // check made with click_ax, chat reads and sends bound to refs): a run on
+  // their pages keeps the tree path.
+  if (nativeChatPage) return { ...base, reason: 'native_chat_needs_element_inventory' };
   if (!provider) return { ...base, reason: 'no_provider' };
   const canSee = rawImage == null ? provider.supportsVision === true : rawImage === true;
   if (!canSee) return { ...base, reason: 'model_without_images' };

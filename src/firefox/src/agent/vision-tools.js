@@ -29,7 +29,7 @@ export const VISION_REMOVED_TOOLS = Object.freeze(new Set([
   'scroll', 'browser_batch', 'wait_for_element', 'find_text', 'verify_form',
   'iframe_read', 'iframe_click', 'iframe_type', 'get_frames', 'get_shadow_dom',
   'shadow_dom_query', 'promote_iframe', 'carousel_navigate', 'upload_file',
-  'download_resource_from_page', 'gmail_count_results',
+  'download_resource_from_page',
 ]));
 
 // Tools after which WebBrain does not need to look at the screen again.

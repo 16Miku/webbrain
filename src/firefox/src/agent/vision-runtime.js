@@ -56,6 +56,10 @@ const SETTLE_MAX_EXTRA_CAPTURES = 3;
 // action, and right after the model looked it is not worth a new image.
 const MICRO_CHANGE_CELL_RATIO = 0.004;
 const MICRO_CHANGE_MIN_CELLS = 6;
+// Calls whose effect, or reading, is of the screen they acted on: in a vision
+// run their loop identity includes the screen version (_loopScreenIdentity),
+// as does the coordinate click click_at becomes.
+const VISION_LOOP_SCREEN_TOOLS = new Set([...VISION_NATIVE_TOOLS, 'type_text', 'press_keys']);
 
 export function isMicroScreenChange(diff) {
   return diff?.comparable === true && Number.isFinite(diff.changedCells)
@@ -161,6 +165,8 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       standalone,
       quality: snapshot ? snapshot.quality : this.visionQuality,
       ledgerWorkflow: this._planExecutionGuards?.get?.(tabId)?.siteWorkflow?.job?.requiresLedger === true,
+      completeThreadRead: this.readCompletenessStates?.get?.(tabId)?.required === true,
+      nativeChatPage: this._visionNativeChatPage?.(tabId) === true,
     });
   };
 
@@ -196,6 +202,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
   proto._visionForgetTab = function _visionForgetTab(tabId) {
     this._visionSessions?.delete(tabId);
     this._visionProbeContexts?.delete(tabId);
+    this._lastTabUrls?.delete(tabId);
   };
 
   proto._visionSessionFor = function _visionSessionFor(tabId, state) {
@@ -267,6 +274,75 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     return { target: point?.found ? { tag: point.tag, ...(point.role ? { role: point.role } : {}) } : null };
   };
 
+  /**
+   * A vision click that the deletion guard, or the check of a publish or
+   * commit after a correction, authorized is bound to the control the submit
+   * probe read at its point (agent _resourceMutationActionKey). A ref click
+   * cannot land anywhere else; a point can, if the page changed since. So
+   * right before input goes out the point is read again, and a different
+   * control there (or one that cannot be read) is refused.
+   */
+  proto._visionMutationBindingBlock = async function _visionMutationBindingBlock(tabId, args, detected) {
+    if (!detected || typeof this._resourceMutationActionKey !== 'function') return null;
+    const key = this._resourceMutationActionKey(tabId, 'click', args, detected);
+    const authorization = this._planExecutionGuards?.get?.(tabId)?.resourceMutationAuthorization;
+    if (!key || authorization?.key !== key) return null;
+    let fresh = null;
+    try {
+      fresh = await this._detectLikelySubmitAction(tabId, 'click', args, { mutationReconciliation: true });
+    } catch (error) {
+      if (isControlFlowError(error)) throw error;
+    }
+    if (fresh && this._resourceMutationActionKey(tabId, 'click', args, fresh) === key) return null;
+    const classification = detected.mutationKind === 'delete' ? 'delete' : detected.publicationControl === true ? 'publish' : 'submit';
+    return {
+      success: false, dispatched: false, noDispatch: true, visionScreenChanged: true,
+      actionGuard: { stage: 'resource_mutation', reason: 'resource_changed_before_dispatch', classification },
+      error: 'Not dispatched: the control at this point is no longer the one WebBrain checked. Look at the updated screen and choose the point again.',
+    };
+  };
+
+  /**
+   * Loop detection (loop-detector.js) in a vision run: an action's identity
+   * includes the screen it acted on. The same point, key or scroll after the
+   * screen visibly changed is progress (the next row moved under the point,
+   * the next stretch of a list), while a repeat on a screen that did not
+   * change still adds up to a loop.
+   */
+  proto._loopScreenIdentity = function _loopScreenIdentity(tabId, name, args) {
+    const screenTool = name === 'click' ? args?.coordinate_space === 'css' : VISION_LOOP_SCREEN_TOOLS.has(name);
+    if (!screenTool || this._visionRunState(tabId).active !== true) return '';
+    const session = this._visionSessions?.get(tabId);
+    return session?.keyframe ? `v${session.screenVersion || 0}` : '';
+  };
+
+  /** Loop advice names what a vision run offers (loop-detector.js). */
+  proto._loopVisionRun = function _loopVisionRun(tabId) {
+    return this._visionRunState(tabId).active === true;
+  };
+
+  /**
+   * A CAPTCHA gate (agent _observeCaptchaChallenge) sees a solved or manually
+   * completed challenge go away only through an authoritative root read of
+   * the accessibility tree, a tool a vision run does not have. Before a page
+   * action while a gate is pending (agent _inspectCaptchaBeforeMutation),
+   * WebBrain makes that read itself; its text never reaches the model.
+   */
+  proto._visionCaptchaRootRead = async function _visionCaptchaRootRead(tabId, abortSignal = null) {
+    if (this._visionRunState(tabId).active !== true || typeof this._observeCaptchaChallenge !== 'function') return null;
+    const args = { filter: 'all', maxDepth: 15, maxChars: 60000 };
+    let result = null;
+    // An app-owned read, like page feedback's: not the model's observation.
+    try { result = await this.executeTool(tabId, 'get_accessibility_tree', args, null, { pageFeedbackRead: true }); }
+    catch (error) {
+      if (isControlFlowError(error) || this._checkAbort?.(tabId)) throw error;
+      return null;
+    }
+    this._throwIfAborted?.(abortSignal);
+    if (!result || typeof result !== 'object' || result.error || result.success === false) return null;
+    return (await this._observeCaptchaChallenge(tabId, 'get_accessibility_tree', result, args, abortSignal))?.gate || null;
+  };
+
   proto._visionTraceNote = function _visionTraceNote(tabId, note, data) {
     const runId = this.currentRunId?.get?.(tabId);
     if (!runId || !trace?.recordNote) return;
@@ -303,6 +379,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       } catch { /* keep the capture */ }
     }
     const raster = await this._visionRasterize(dataUrl, size.width, size.height);
+    if (probe.url) (this._lastTabUrls ??= new Map()).set(tabId, String(probe.url));
     return { raster, probe, size, profile };
   };
 
@@ -383,15 +460,24 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
   };
 
   proto._visionRecordObservation = async function _visionRecordObservation(tabId, url) {
+    // While a submission waits for proof, the status texts on screen (a toast,
+    // an alert, a live region) are recorded with the update, as reading the
+    // tree records them: one gone before done was still seen.
+    let statusMessages = null;
+    if (this._completionSubmitStates?.get?.(tabId)) {
+      try { statusMessages = await this._completionLiveStatusMessages?.(tabId); }
+      catch (error) { if (isControlFlowError(error)) throw error; }
+    }
     try {
       this._recordCompletionToolResult?.(tabId, 'auto_screenshot', {}, {
         success: true, method: 'image_attach', _attachImage: true, pageUrl: url || '',
+        ...(Array.isArray(statusMessages) && statusMessages.length ? { statusMessages: statusMessages.slice(0, 6) } : {}),
       });
     } catch { /* completion bookkeeping is best effort */ }
   };
 
   /** Push a full frame (keyframe) for the current screen. */
-  proto._visionPushKeyframe = async function _visionPushKeyframe(tabId, messages, onUpdate, { state, frame = null, reason = '' } = {}) {
+  proto._visionPushKeyframe = async function _visionPushKeyframe(tabId, messages, onUpdate, { state, frame = null, reason = '', unchanged = false } = {}) {
     const session = this._visionSessionFor(tabId, state);
     const captured = frame || await this._visionCaptureFrame(tabId, state);
     const encoding = await this._visionEncoding(captured.profile);
@@ -405,7 +491,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       scrollX: captured.probe.scrollX,
       scrollY: captured.probe.scrollY,
       url: captured.probe.url,
-    }, captured.raster.pixels);
+    }, captured.raster.pixels, { unchanged });
     // Zooms taken earlier in this batch belong to the previous frame, whose
     // ids this keyframe retires; the fresh frame supersedes them.
     const droppedZooms = this._visionTakePendingZooms(tabId);
@@ -441,7 +527,11 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     const state = this._visionRunState(tabId, mode);
     if (!state.active) return null;
     try {
-      return await this._visionPushKeyframe(tabId, messages, onUpdate, { state, reason });
+      const keyframe = await this._visionPushKeyframe(tabId, messages, onUpdate, { state, reason });
+      // The opening frame is the run's first look at the page, as a read is on
+      // the tree path: a question answered from it has task evidence.
+      try { this._markPlanExecutionToolCall?.(tabId, 'take_screenshot', { success: true, method: 'image_attach' }); } catch {}
+      return keyframe;
     } catch (error) {
       if (isControlFlowError(error)) throw error;
       // The run starts with no screen (_beginVisionRun retired the last one);
@@ -468,6 +558,24 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
   proto._visionObserveAfterBatch = async function _visionObserveAfterBatch(tabId, messages, onUpdate, { toolCalls = [], force = false } = {}) {
     const state = this._visionRunState(tabId);
     if (!state.active) return null;
+    // Once per batch: the batch's own end and the wrapper that catches the
+    // batches leaving early (agent _executeToolBatch) both ask.
+    if (toolCalls.length) {
+      this._visionObservedBatches ??= new WeakSet();
+      if (this._visionObservedBatches.has(toolCalls)) return null;
+      this._visionObservedBatches.add(toolCalls);
+    }
+    const result = await this._visionObserveAfterBatchOnce(tabId, messages, onUpdate, { state, toolCalls, force });
+    // A screen that changed after looking, scrolling or waiting is new
+    // evidence: the delivery checkpoint counts only observations of a screen
+    // that stayed the same (agent DELIVERY_OBSERVATION_TOOLS).
+    if ((result?.kind === 'patch' || result?.kind === 'keyframe') && result.unchanged !== true) {
+      this.deliveryObservationStreaks?.delete?.(tabId);
+    }
+    return result;
+  };
+
+  proto._visionObserveAfterBatchOnce = async function _visionObserveAfterBatchOnce(tabId, messages, onUpdate, { state, toolCalls = [], force = false } = {}) {
     const session = this._visionSessionFor(tabId, state);
     const names = toolCalls.map(call => call?._vision?.tool || call?.function?.name).filter(Boolean);
     const observe = force || names.some(name => !VISION_NO_OBSERVE_TOOLS.has(name)) || session.forceKeyframe;
@@ -523,10 +631,15 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     const sameSize = session.keyframe && session.keyframe.width === frame.size.width && session.keyframe.height === frame.size.height;
     if (session.needsKeyframe(meta) || !sameSize) {
       const urlChanged = session.keyframe && session.keyframe.url !== frame.probe.url;
+      // A frame asked for on the same page and layout (take_screenshot) shows
+      // the model nothing new unless its pixels differ from what it saw.
+      const same = sameSize && !session.layoutChanged(meta)
+        ? diffFrames(session.seenPixels, frame.raster.pixels, frame.size.width, frame.size.height) : null;
+      const unchanged = same?.comparable === true && same.regions.length === 0;
       await this._visionPushKeyframe(tabId, messages, onUpdate, {
-        state, frame, reason: session.forceKeyframe ? 'requested' : (urlChanged ? 'page changed' : (session.keyframe ? 'layout changed' : 'first frame')),
+        state, frame, unchanged, reason: session.forceKeyframe ? 'requested' : (urlChanged ? 'page changed' : (session.keyframe ? 'layout changed' : 'first frame')),
       });
-      return { kind: 'keyframe' };
+      return { kind: 'keyframe', ...(unchanged ? { unchanged: true } : {}) };
     }
     const d = diffFrames(session.seenPixels, frame.raster.pixels, frame.size.width, frame.size.height);
     const plan = planFrameUpdate(d, {

@@ -70,6 +70,11 @@ const OBSERVATION_TOOLS = new Set([
   'inspect_viewport',
   'screenshot',
   'full_page_screenshot',
+  // Vision mode: a fresh frame, and a zoom, which captures its region of the
+  // page as it is now (the screen update after a batch records itself as
+  // auto_screenshot).
+  'take_screenshot',
+  'zoom',
   'list_downloads',
   'read_downloaded_file',
   'chrome_web_store_status',

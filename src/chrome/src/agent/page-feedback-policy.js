@@ -367,8 +367,11 @@ export function isPageIndependentCalculationCompletion(calls, state, events) {
 // These tools inspect the current top-level document without acting on focus.
 // Read-preparation tools that can click a profile or wait/scroll remain excluded
 // after page focus or synthetic input changed the interactive page state.
+// Vision mode's fresh frame, zoom and pause act on nothing either: each shows
+// the screen as it is after the change.
 const PAGE_ACTIVITY_READS = new Set([
   'get_accessibility_tree', 'get_interactive_elements', 'read_page', 'read_page_source', 'verify_form',
+  'take_screenshot', 'zoom', 'wait',
 ]);
 
 export function canRetainPageFeedbackCalls(calls, state, currentPage, events, { pending = false } = {}) {

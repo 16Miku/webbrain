@@ -54,6 +54,13 @@ export class VisionSession {
     this.seenPixels = null;
     this.forceKeyframe = false;
     this.pendingZooms = [];
+    // Bumped each time the model is shown a screen that differs from the one
+    // it saw (a patch, a new page or layout, a frame with other pixels), never
+    // for "no visible change" or a requested frame of the same screen. Loop
+    // detection (vision-runtime.js _loopScreenIdentity) uses it to tell an
+    // action repeated on an unchanged screen from the same action after the
+    // screen moved on.
+    this.screenVersion = 0;
   }
 
   get hasKeyframe() {
@@ -68,8 +75,10 @@ export class VisionSession {
   /**
    * Start a new epoch from a full frame. Older images stop resolving.
    * `pixels` is the RGBA buffer of exactly imageWidth x imageHeight.
+   * `unchanged`: the frame shows the screen the model already saw (a
+   * take_screenshot of an unchanged page), so the screen version stays.
    */
-  registerKeyframe(meta = {}, pixels = null) {
+  registerKeyframe(meta = {}, pixels = null, { unchanged = false } = {}) {
     const imageWidth = Math.max(1, Math.round(finite(meta.imageWidth) || 1));
     const imageHeight = Math.max(1, Math.round(finite(meta.imageHeight) || 1));
     const cssWidth = Math.max(1, finite(meta.cssWidth) || imageWidth);
@@ -81,6 +90,7 @@ export class VisionSession {
     }
     this.epoch += 1;
     this.updateSeq += 1;
+    if (!unchanged || !this.keyframe) this.screenVersion += 1;
     this.images = new Map();
     this.changes = [];
     this.patchChainLength = 0;
@@ -133,6 +143,7 @@ export class VisionSession {
   registerPatches(regions = [], pixels = null) {
     if (!this.keyframe) throw new Error('A keyframe is required before patches.');
     this.updateSeq += 1;
+    if (regions.length) this.screenVersion += 1;
     const seq = this.updateSeq;
     const images = regions.map(region => {
       const id = this._nextId('p');
@@ -204,7 +215,16 @@ export class VisionSession {
 
   /** Should the next observation be a full frame regardless of the diff? */
   needsKeyframe(meta = {}) {
-    if (!this.keyframe || this.forceKeyframe || !this.seenPixels) return true;
+    return this.forceKeyframe || this.layoutChanged(meta);
+  }
+
+  /**
+   * Does `meta` describe another page, viewport or scale than the current
+   * keyframe (or is there no frame to compare with)? A requested frame
+   * (forceKeyframe) of the same layout is not a layout change.
+   */
+  layoutChanged(meta = {}) {
+    if (!this.keyframe || !this.seenPixels) return true;
     const k = this.keyframe;
     const differs = (a, b, tolerance = 0.5) => Math.abs((finite(a) || 0) - (finite(b) || 0)) > tolerance;
     if (differs(meta.cssWidth, k.cssWidth) || differs(meta.cssHeight, k.cssHeight)) return true;
