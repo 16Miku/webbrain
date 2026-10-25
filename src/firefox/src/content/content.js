@@ -2191,6 +2191,18 @@
     const tag = String(el.tagName || '').toLowerCase();
     const role = el.getAttribute?.('role') || '';
     const describe = { tag, ...(role ? { role: role.slice(0, 32) } : {}) };
+    // A disabled native control (itself, or by its fieldset) takes no press
+    // and no click from a person, and el.click() honours that, but
+    // dispatched events reach its listeners all the same: a click or a drag
+    // that would press one is refused before anything is sent.
+    const disabled = type === 'click' || type === 'drag' ? el.closest?.(':disabled:not(fieldset)') : null;
+    if (disabled) {
+      const what = String(disabled.tagName || 'control').toLowerCase();
+      return {
+        success: false, dispatched: false, noDispatch: true, visionInputRefused: 'disabled_control', target: { ...describe, disabled: what },
+        error: `Not dispatched: the ${what} at this point is disabled, so a person's ${type} there would do nothing. Wait until it is enabled, or use another control.`,
+      };
+    }
     return withLocalPageDispatch(() => {
       if (type === 'hover') {
         hover(el);

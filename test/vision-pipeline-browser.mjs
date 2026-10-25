@@ -391,6 +391,55 @@ test('content-script vision drag (Firefox path) selects text like a person\'s dr
   }
 });
 
+test('content-script vision clicks and drags (Firefox path) leave disabled controls alone', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    const at = top => `position:absolute;left:20px;top:${top}px;width:200px;height:30px;margin:0`;
+    await page.setContent(`<!doctype html><style>body{margin:0}</style>
+      <button id="off" disabled style="${at(20)}">Off</button>
+      <button id="inner" disabled style="${at(70)}"><span id="innerSpan">Inner</span></button>
+      <fieldset disabled style="position:absolute;left:20px;top:120px;width:300px;height:90px;margin:0;padding:0;border:0">
+        <button id="fenced" style="${at(0).replace('left:20px', 'left:0')}">Fenced</button>
+        <a id="link" href="#ok" style="${at(50).replace('left:20px', 'left:0')};display:block">Link</a>
+      </fieldset>
+      <button id="on" style="${at(240)}">On</button>
+      <script>window.hits=[];for(const id of ['off','inner','innerSpan','fenced','link','on'])for(const t of ['pointerdown','mousedown','mouseup','click'])
+        document.getElementById(id).addEventListener(t,e=>{hits.push(id+':'+t);if(id==='link'&&t==='click')e.preventDefault()});</script>`);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    const hits = () => page.evaluate(() => window.hits.splice(0));
+    // A disabled button, a child of one, and a button disabled by its fieldset.
+    for (const [y, what] of [[35, 'button'], [85, 'button'], [135, 'button']]) {
+      const result = await run({ type: 'click', x: 100, y });
+      assert.equal(result.visionInputRefused, 'disabled_control', JSON.stringify(result));
+      assert.equal(result.noDispatch, true);
+      assert.equal(result.target.disabled, what);
+      assert.match(result.error, /is disabled/);
+      assert.deepEqual(await hits(), [], `nothing reached the page at y=${y}`);
+    }
+    const drag = await run({ type: 'drag', x: 100, y: 35, toX: 400, toY: 35, steps: 4 });
+    assert.equal(drag.visionInputRefused, 'disabled_control', JSON.stringify(drag));
+    assert.deepEqual(await hits(), []);
+    // A link inside a disabled fieldset is not a disabled control; an enabled button clicks.
+    assert.equal((await run({ type: 'click', x: 100, y: 185 })).success, true);
+    assert.ok((await hits()).includes('link:click'));
+    assert.equal((await run({ type: 'click', x: 100, y: 255 })).success, true);
+    assert.deepEqual(await hits(), ['on:pointerdown', 'on:mousedown', 'on:mouseup', 'on:click']);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision clicks (Firefox path) never open a native file chooser', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {
