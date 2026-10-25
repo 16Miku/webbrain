@@ -81,7 +81,7 @@ import {
   buildFeedbackUrl,
   normalizeState as normalizeStoreReviewState,
 } from './store-review-prompt.js';
-import { providerIconUrl } from './provider-icons.js';
+import { modelIconUrl, providerIconUrl } from './provider-icons.js';
 import { getFeedbackCopy } from './feedback-copy.js';
 import { requestFeedbackConsent, submitFeedbackWithTrace } from './feedback-consent.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
@@ -743,6 +743,8 @@ if (statusDot) statusDot.title = statusDotTitle();
 const providerPickerLabelById = new Map();
 // The configured model of each provider, for the picker's tooltip and name.
 const providerPickerModelById = new Map();
+// Duplicated provider instances keep the original provider's brand.
+const providerPickerSourceById = new Map();
 let languagePickerTypeahead = '';
 let languagePickerTypeaheadTimer = null;
 
@@ -8354,6 +8356,39 @@ function bindPickerMenuHighlight(menu) {
 bindPickerMenuHighlight(providerPickerMenu);
 bindPickerMenuHighlight(languagePickerMenu);
 
+function syncProviderPickerIcon() {
+  const icon = providerPickerBtn?.querySelector('.provider-picker-icon');
+  if (!icon) return;
+  const id = providerSelect?.value || '';
+  const src = modelIconUrl(providerPickerModelById.get(id), providerPickerSourceById.get(id) || id);
+  if (icon.dataset.src === src) return;
+  icon.dataset.src = src;
+  icon.classList.remove('has-logo');
+  icon.querySelector('img')?.remove();
+  if (!src) return;
+
+  const img = document.createElement('img');
+  img.className = 'provider-icon provider-picker-logo hidden';
+  img.alt = '';
+  img.width = 18;
+  img.height = 18;
+  img.draggable = false;
+  // Keep the engine visible until the logo loads. A late result from a
+  // previous selection must never change the current selection's icon.
+  img.onload = () => {
+    if (img.parentElement !== icon) return;
+    img.classList.remove('hidden');
+    icon.classList.add('has-logo');
+  };
+  img.onerror = () => {
+    if (img.parentElement !== icon) return;
+    img.remove();
+    icon.classList.remove('has-logo');
+  };
+  icon.appendChild(img);
+  img.src = src;
+}
+
 function syncProviderPickerButton() {
   if (!providerSelect || !providerPickerLabel) return;
   const id = providerSelect.value;
@@ -8362,6 +8397,7 @@ function syncProviderPickerButton() {
     || id
     || '';
   providerPickerLabel.textContent = shortLabel;
+  syncProviderPickerIcon();
   if (providerPickerBtn) {
     // The button shows an icon only, so its name says which provider and
     // model are active (the option text carries a status, not the model).
@@ -8393,6 +8429,7 @@ function appendProviderPickerGroup(label) {
 }
 
 function appendProviderPickerOption(id, name, meta, iconProviderId = id) {
+  providerPickerSourceById.set(id, iconProviderId);
   if (!providerPickerMenu) return;
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -8401,8 +8438,7 @@ function appendProviderPickerOption(id, name, meta, iconProviderId = id) {
   btn.dataset.value = id;
   btn.setAttribute('aria-selected', 'false');
 
-  // Icons only in the open menu — closed header stays text-only so the
-  // WebBrain mark (and other brand chips) don't compete with the chrome.
+  // Menu rows identify the provider; the closed button resolves its model's logo.
   const iconSrc = providerIconUrl(iconProviderId);
   if (iconSrc) {
     const img = document.createElement('img');
@@ -8616,6 +8652,7 @@ async function loadProviders() {
     providerPickerMenu?.replaceChildren();
     providerPickerLabelById.clear();
     providerPickerModelById.clear();
+    providerPickerSourceById.clear();
 
     // Managed tier names are presentation only; keep background IDs/configs intact.
     const cloudLabel = 'Compass Light';

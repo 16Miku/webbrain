@@ -3351,13 +3351,21 @@ html[data-ui-scale="175"] .conversation-action-label {
   padding: 4px 4px 4px 5px;
 }
 
-/* In the composer the picker is an engine icon: the model's name is its
-   tooltip and accessible name, so a long name never crowds the toolbar. */
+/* Keep the model logo and engine fallback the same size, so switching
+   providers never moves the connection badge or crowds the toolbar. */
 .provider-picker-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
 }
 
-/* The connection dot is a badge on the engine's lower corner, inside the
+.provider-picker-logo.hidden,
+.provider-picker-icon.has-logo .provider-picker-fallback {
+  display: none;
+}
+
+/* The connection dot is a badge on the logo's lower corner, inside the
    button: it reads as the model's status, and clicking it opens the menu like
    the rest of the button. A ring in the button's background keeps it clear of
    the icon's strokes. */

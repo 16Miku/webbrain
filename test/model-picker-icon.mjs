@@ -1,5 +1,5 @@
-// The composer's model picker shows an engine icon instead of the model's
-// name; the name is its tooltip and accessible name (src/*/src/ui/sidepanel.*).
+// The composer's model picker shows the selected model's logo, with an
+// engine fallback; its name remains in the tooltip and accessible name.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -13,10 +13,10 @@ const extract = (source, name) => {
 };
 
 for (const build of ['chrome', 'firefox']) {
-  test(`${build}: the closed model picker is an engine icon`, () => {
+  test(`${build}: the closed model picker keeps an engine fallback and connection badge`, () => {
     const html = read(build, 'src/ui/sidepanel.html');
     const button = html.match(/<button type="button" id="provider-picker-btn"[\s\S]*?<\/button>/)[0];
-    assert.match(button, /<span class="provider-picker-engine">\s*<svg class="provider-picker-icon"[^>]*aria-hidden="true">[\s\S]*?<\/svg>\s*<span id="status-dot" class="status-dot offline"><\/span>\s*<\/span>\s*<span class="provider-picker-label" id="provider-picker-label"><\/span>/,
+    assert.match(button, /<span class="provider-picker-engine">\s*<span class="provider-picker-icon" aria-hidden="true">\s*<svg class="provider-picker-fallback"[^>]*aria-hidden="true">[\s\S]*?<\/svg>\s*<\/span>\s*<span id="status-dot" class="status-dot offline"><\/span>\s*<\/span>\s*<span class="provider-picker-label" id="provider-picker-label"><\/span>/,
       'the icon comes first, hidden from assistive technology, with the connection dot on it');
     assert.match(button, /aria-describedby="status-dot"/, 'the connection status describes the button');
     assert.equal(html.match(/id="status-dot"/g).length, 1, 'the dot is no longer a separate toolbar item');
@@ -35,6 +35,7 @@ for (const build of ['chrome', 'firefox']) {
     const options = [{ dataset: { value: 'openrouter' }, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } },
       { dataset: { value: 'local' }, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } }];
     const context = vm.createContext({
+      syncProviderPickerIcon() {},
       t: (key, params = {}) => String(en[key] || key).replace(/\{(\w+)\}/g, (_, k) => params[k] ?? ''),
       // The option text carries the provider's status, never its model.
       providerSelect: { value: 'openrouter', selectedOptions: [{ textContent: 'OpenRouter — Active' }] },
@@ -80,6 +81,7 @@ for (const build of ['chrome', 'firefox']) {
     const panel = read(build, 'src/ui/sidepanel.js');
     let answer;
     const context = vm.createContext({
+      syncProviderPickerIcon() {},
       t: (key, params = {}) => String(en[key] || key).replace(/\{(\w+)\}/g, (_, k) => params[k] ?? ''),
       providerSelect: { value: 'openrouter' },
       providerTestRequestId: 0,
@@ -106,6 +108,7 @@ for (const build of ['chrome', 'firefox']) {
     let locale = 'en';
     let answer;
     const context = vm.createContext({
+      syncProviderPickerIcon() {},
       t: (key, params = {}) => String(dicts[locale][key] || key).replace(/\{(\w+)\}/g, (_, k) => params[k] ?? ''),
       providerSelect: { value: 'openrouter', selectedOptions: [{ textContent: 'OpenRouter — Active' }] },
       providerTestRequestId: 0,
@@ -154,6 +157,7 @@ for (const build of ['chrome', 'firefox']) {
     };
     const wait = (name) => new Promise((resolve) => { pending[name] = resolve; });
     const context = vm.createContext({
+      syncProviderPickerIcon() {},
       t: (key, params = {}) => String(en[key] || key).replace(/\{(\w+)\}/g, (_, k) => params[k] ?? ''),
       providerSelect,
       MORE_PROVIDERS_OPTION_VALUE: '__more_providers__',
