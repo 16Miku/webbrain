@@ -1867,6 +1867,58 @@
     };
   }
 
+  // A person's press in a text field or in editable text puts the caret
+  // under the pointer; focus() alone leaves it wherever it was, and typing
+  // would land there instead of where the model clicked.
+  function _visionPlaceCaret(el, cx, cy) {
+    const tag = String(el?.tagName || '').toUpperCase();
+    const caret = el ? _visionCaretAt(el.ownerDocument, cx, cy) : null;
+    if (!caret) return;
+    try {
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
+        if (caret.node === el) el.setSelectionRange(caret.offset, caret.offset);
+      } else if (caret.node.nodeType === 3 && caret.node.parentElement?.isContentEditable) {
+        el.ownerDocument.getSelection()?.collapse(caret.node, caret.offset);
+      }
+    } catch { /* a field type without a caret (email, number) */ }
+  }
+
+  // What a double click selects around a caret `offset` in `text`: the word
+  // (or the run of spaces, or the punctuation mark) under the pointer, which
+  // is the character after the caret, or the one before it when that one is
+  // part of a word and the next is not (the right half of a word's last
+  // letter). Returns [start, end].
+  function _visionWordAt(text, offset) {
+    const value = String(text || '');
+    if (!value) return [0, 0];
+    const wordChar = ch => /[\p{L}\p{N}\p{M}_']/u.test(ch || '');
+    let index = Math.min(Math.max(0, Number(offset) || 0), value.length);
+    if (index >= value.length || (!wordChar(value[index]) && wordChar(value[index - 1]))) index = Math.max(0, index - 1);
+    if (typeof Intl?.Segmenter === 'function') {
+      try {
+        for (const part of new Intl.Segmenter(undefined, { granularity: 'word' }).segment(value)) {
+          if (index >= part.index && index < part.index + part.segment.length) return [part.index, part.index + part.segment.length];
+        }
+      } catch { /* character classes below */ }
+    }
+    const kind = ch => (wordChar(ch) ? 'word' : /\s/.test(ch) ? 'space' : 'mark');
+    const at = kind(value[index]);
+    if (at === 'mark') return [index, index + 1];
+    let start = index;
+    let end = index + 1;
+    while (start > 0 && kind(value[start - 1]) === at) start--;
+    while (end < value.length && kind(value[end]) === at) end++;
+    return [start, end];
+  }
+
+  // What a triple click in a textarea selects: the line around the caret.
+  function _visionLineAt(text, offset) {
+    const value = String(text || '');
+    const index = Math.min(Math.max(0, Number(offset) || 0), value.length);
+    const end = value.indexOf('\n', index);
+    return [index > 0 ? value.lastIndexOf('\n', index - 1) + 1 : 0, end < 0 ? value.length : end];
+  }
+
   function visionInput(params = {}, actionDeadlineExpired = () => false) {
     const type = String(params.type || 'click');
     const x = Number(params.x);
@@ -1999,6 +2051,7 @@
             const focusable = _visionFocusable(el);
             if (focusable && focusable !== el.ownerDocument.activeElement) focusable.focus({ preventScroll: true });
             else if (!focusable) el.ownerDocument.activeElement?.blur?.();
+            if (focusable) _visionPlaceCaret(el, cx, cy);
           }
           pointer(el, 'pointerup', { button, buttons: 0 });
           mouse(el, 'mouseup', { button, buttons: 0, detail: count });
@@ -2007,21 +2060,24 @@
         }
         if (button === 0 && clicks >= 2) {
           mouse(el, 'dblclick', { button: 0, buttons: 0, detail: 2 });
-          // Browsers select a word (two clicks) or the whole line/field
-          // (three) as the default action; synthetic events need it done.
+          // Browsers select the word under the pointer (two clicks), or its
+          // line or the whole field (three), as the default action; synthetic
+          // events need it done. A double click never takes a whole field:
+          // the typing that usually follows would replace all of it.
           try {
-            if (typeof el.select === 'function' && /^(input|textarea)$/.test(tag)) {
-              el.select();
+            const caret = _visionCaretAt(el.ownerDocument, cx, cy);
+            if (typeof el.setSelectionRange === 'function' && /^(input|textarea)$/.test(tag)) {
+              if (clicks >= 3 && tag === 'input') el.select();
+              else if (caret?.node === el) {
+                const [start, end] = (clicks >= 3 ? _visionLineAt : _visionWordAt)(el.value, caret.offset);
+                el.setSelectionRange(start, end);
+              }
             } else {
               const selection = el.ownerDocument.getSelection();
               if (clicks >= 3) selection.selectAllChildren(el.closest('p,li,td,th,div,section,article,h1,h2,h3,h4,h5,h6') || el);
-              else if (typeof selection.modify === 'function') {
-                const caret = el.ownerDocument.caretPositionFromPoint?.(cx, cy);
-                if (caret?.offsetNode) {
-                  selection.collapse(caret.offsetNode, caret.offset);
-                  selection.modify('move', 'backward', 'word');
-                  selection.modify('extend', 'forward', 'word');
-                }
+              else if (caret?.node?.nodeType === 3) {
+                const [start, end] = _visionWordAt(caret.node.nodeValue, caret.offset);
+                selection.setBaseAndExtent(caret.node, start, caret.node, end);
               }
             }
           } catch { /* selection is best effort */ }

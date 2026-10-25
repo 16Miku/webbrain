@@ -391,6 +391,70 @@ test('content-script vision drag (Firefox path) selects text like a person\'s dr
   }
 });
 
+test('content-script vision clicks (Firefox path) put the caret at the point, double clicks select its word, triple clicks its line', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    const font = 'font:20px monospace;padding:0;border:0;margin:0;outline:0';
+    await page.setContent(`<!doctype html><style>body{margin:0}</style>
+      <input id="one" value="alpha beta gamma" style="position:absolute;left:100px;top:100px;width:400px;height:30px;${font}">
+      <textarea id="two" style="position:absolute;left:100px;top:160px;width:500px;height:90px;line-height:30px;resize:none;${font}">first line here
+second line there
+third</textarea>
+      <p id="three" style="position:absolute;left:100px;top:280px;white-space:nowrap;${font}">one two three</p>
+      <div id="editor" contenteditable="true" style="position:absolute;left:100px;top:340px;width:400px;white-space:nowrap;${font}">edit this text</div>`);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    const w = await page.evaluate(() => {
+      const probe = document.createElement('span');
+      probe.style.font = '20px monospace'; probe.textContent = 'x'.repeat(20);
+      document.body.append(probe); const width = probe.getBoundingClientRect().width / 20; probe.remove(); return width;
+    });
+    const fieldSelection = id => page.evaluate(id => { const el = document.getElementById(id); return el.value.slice(el.selectionStart, el.selectionEnd); }, id);
+    // One click: the caret goes where the pointer is (between "alpha" and its space), in a field and in editable text.
+    await run({ type: 'click', x: 100 + 5.2 * w, y: 115 });
+    assert.deepEqual(await page.evaluate(() => { const el = document.getElementById('one'); return [document.activeElement.id, el.selectionStart, el.selectionEnd]; }), ['one', 5, 5]);
+    await run({ type: 'click', x: 100 + 9.2 * w, y: 350 });
+    assert.deepEqual(await page.evaluate(() => { const s = document.getSelection(); return [document.activeElement.id, s.isCollapsed, s.anchorOffset, s.anchorNode?.parentElement?.id]; }),
+      ['editor', true, 9, 'editor'], 'the caret before "text"');
+    // "alpha beta gamma": inside "beta", on the right half of its last letter, on the left half of "gamma"'s first.
+    for (const [at, word] of [[7.5, 'beta'], [9.8, 'beta'], [11.2, 'gamma']]) {
+      await run({ type: 'click', x: 100 + at * w, y: 115, clickCount: 2 });
+      assert.equal(await fieldSelection('one'), word, `double click at character ${at}`);
+    }
+    await run({ type: 'click', x: 100 + 7.5 * w, y: 115, clickCount: 3 });
+    assert.equal(await fieldSelection('one'), 'alpha beta gamma', 'a triple click takes the whole input');
+    // The textarea's second line (y 190–220): the word, then the line.
+    await run({ type: 'click', x: 100 + 8.5 * w, y: 205, clickCount: 2 });
+    assert.equal(await fieldSelection('two'), 'line');
+    await run({ type: 'click', x: 100 + 8.5 * w, y: 205, clickCount: 3 });
+    assert.equal(await fieldSelection('two'), 'second line there');
+    // Page text: the left half of "two"'s first letter and the right half of its last.
+    const charBox = index => page.evaluate(index => {
+      const range = document.createRange();
+      const node = document.getElementById('three').firstChild;
+      range.setStart(node, index); range.setEnd(node, index + 1);
+      const r = range.getBoundingClientRect();
+      return { left: r.left, right: r.right, y: r.top + r.height / 2 };
+    }, index);
+    for (const x of [(await charBox(4)).left + 2, (await charBox(6)).right - 2]) {
+      await run({ type: 'click', x, y: (await charBox(4)).y, clickCount: 2 });
+      assert.equal(await page.evaluate(() => String(document.getSelection())), 'two', `double click at x=${x}`);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision clicks and drags (Firefox path) leave disabled controls alone', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {
