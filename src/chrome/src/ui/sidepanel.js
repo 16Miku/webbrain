@@ -3450,19 +3450,22 @@ function roleFromMessageElement(el) {
   if (el.classList.contains('user')) return 'user';
   if (el.classList.contains('assistant')) return 'assistant';
   if (el.classList.contains('error')) return 'error';
-  if (el.classList.contains('system')) return 'system';
+  if (el.classList.contains('system') || el.classList.contains('slash-command-output')) return 'system';
   return 'unknown';
 }
 
 function extractChatHistoryMessages(root = messagesEl) {
   if (!root) return [];
-  return Array.from(root.querySelectorAll(':scope > .message')).filter((msgEl) => (
+  return Array.from(root.querySelectorAll(':scope > .message')).flatMap(msgEl => [
+    ...msgEl.querySelectorAll('.slash-command-output'), msgEl,
+  ]).filter((msgEl) => (
     msgEl.querySelector('.message-text')?.dataset.responseIncomplete !== 'true'
   )).map((msgEl, index) => {
     const clone = msgEl.cloneNode(true);
     clone.querySelectorAll('button, input, textarea, select, .msg-copy-btn, .code-copy-btn, .error-retry-btn')
       .forEach((el) => el.remove());
-    const textEl = clone.querySelector('.message-text') || clone.querySelector('.message-content') || clone;
+    const textEl = clone.querySelector('.message-text') || clone.querySelector('.slash-command-text')
+      || clone.querySelector('.message-content') || clone;
     const role = roleFromMessageElement(msgEl);
     const format = role === 'assistant' || role === 'error' ? 'markdown' : 'text';
     const attachments = role === 'user' ? messageAttachmentMetadata(msgEl) : [];
@@ -4752,7 +4755,7 @@ async function renderScheduleComposer(prefillPrompt = '', tabId = currentTabId) 
   bindScheduleComposer(form);
   content.appendChild(form);
   promptInput.focus();
-  scrollToBottom();
+  scrollToBottom({ force: true });
 }
 
 async function showScratchpad(tabId = currentTabId) {
@@ -5112,7 +5115,7 @@ async function showSavedWorkflows(tabId = currentTabId) {
     const msgEl = addPersistentSlashMessage(systemHtml(t('sp.workflows.title_html')));
     const manager = document.createElement('div');
     manager.className = 'workflow-manager';
-    msgEl.querySelector('.message-text')?.appendChild(manager);
+    msgEl.querySelector('.message-text, .slash-command-text')?.appendChild(manager);
     renderSavedWorkflowManager(manager, workflows, tabId);
   } catch (error) {
     if (currentTabId === tabId) addPersistentSlashMessage(t('sp.workflows.error', { msg: error.message }));
@@ -5350,7 +5353,7 @@ function renderSavedWorkflowParameterForm(workflow, tabId = currentTabId) {
   bindSavedWorkflowParameterForm(form);
   content.appendChild(form);
   form.querySelector('input')?.focus();
-  scrollToBottom();
+  scrollToBottom({ force: true });
 }
 
 async function prepareSavedWorkflowRun(id, tabId = currentTabId) {
@@ -9252,8 +9255,31 @@ function showComposerToast(message, { duration = 2600, effect = '' } = {}) {
 }
 
 function addPersistentSlashMessage(content) {
-  const msgEl = addMessage('system', content, { beforeCurrentAssistant: true });
-  scrollToBottom({ force: true });
+  const assistantContent = isProcessing && currentAssistantEl?.parentNode === messagesEl
+    ? currentAssistantEl.querySelector('.message-content') : null;
+  const textCursor = [...(assistantContent?.children || [])]
+    .find(child => child.classList.contains('message-text'));
+  let msgEl;
+  if (textCursor) {
+    // Keep the run's event target and streaming cursor intact. A separate
+    // message before the assistant would precede the entire run; one after it
+    // would leave all subsequent tool output above the command's response.
+    msgEl = document.createElement('div');
+    msgEl.className = 'slash-command-output';
+    const contentEl = document.createElement('div');
+    contentEl.className = 'slash-command-content';
+    const textEl = document.createElement('div');
+    textEl.className = 'slash-command-text';
+    if (isSystemHtml(content)) textEl.innerHTML = content.__systemHtml;
+    else textEl.textContent = content || '';
+    contentEl.appendChild(textEl);
+    msgEl.appendChild(contentEl);
+    assistantContent.insertBefore(msgEl, textCursor);
+    syncAssistantMessageElementVisibility(currentAssistantEl);
+  } else {
+    msgEl = addMessage('system', content);
+  }
+  scrollToBottom({ force: true, reveal: msgEl });
   return msgEl;
 }
 
@@ -9666,7 +9692,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     } else {
       resolvePendingPermissionPromptsForTab(tabId);
     }
-    addPersistentSlashMessage(systemHtml(t('sp.permissions.disabled_html')));
+    if (currentTabId === tabId) addPersistentSlashMessage(systemHtml(t('sp.permissions.disabled_html')));
     return payload;
   }
 
@@ -9880,9 +9906,9 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 7000);
       }
-      addPersistentSlashMessage(t('sp.export_config.done'));
+      if (currentTabId === tabId) addPersistentSlashMessage(t('sp.export_config.done'));
     } catch (error) {
-      addPersistentSlashMessage(t('sp.export_config.error', { error: error?.message || 'unknown error' }));
+      if (currentTabId === tabId) addPersistentSlashMessage(t('sp.export_config.error', { error: error?.message || 'unknown error' }));
     }
     return '';
   }
@@ -9899,15 +9925,15 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
         res = { ok: true, ...await exportRecordedSession(store, res.sessionId, chrome.runtime.getManifest().version || '') };
       }
     } catch (e) {
-      addPersistentSlashMessage(`${t('sp.export_traces.error')} (${e?.message || e})`);
+      if (currentTabId === tabId) addPersistentSlashMessage(`${t('sp.export_traces.error')} (${e?.message || e})`);
       return '';
     }
     if (!res?.ok) {
-      addPersistentSlashMessage(`${t('sp.export_traces.error')} (${res?.error || 'unknown error'})`);
+      if (currentTabId === tabId) addPersistentSlashMessage(`${t('sp.export_traces.error')} (${res?.error || 'unknown error'})`);
       return '';
     }
     if (!(res.json || res.markdown) || res.turnCount === 0) {
-      addPersistentSlashMessage(
+      if (currentTabId === tabId) addPersistentSlashMessage(
         res.reason === 'no-conversation'
           ? t('sp.export_traces.no_conversation')
           : t('sp.export_traces.none'),
@@ -9926,6 +9952,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 7000);
     }
+    if (currentTabId !== tabId) return '';
     if (res.recordingTruncated) {
       addPersistentSlashMessage(t('sp.export_traces.recording_truncated'));
     } else if (res.partial) {
@@ -9939,11 +9966,13 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
   }
 
   if (command.value === '/export' && action === 'conversation') {
-    const messages = messagesEl.querySelectorAll('.message');
+    const messages = Array.from(messagesEl.querySelectorAll(':scope > .message')).flatMap(msgEl => [
+      ...msgEl.querySelectorAll('.slash-command-output'), msgEl,
+    ]);
     const webbrainVersion = chrome.runtime.getManifest().version || 'unknown';
     let md = `# WebBrain Conversation\n\n_Exported with WebBrain v${webbrainVersion}_\n\n`;
     for (const msg of messages) {
-      const textEl = msg.querySelector('.message-text');
+      const textEl = msg.querySelector('.message-text') || msg.querySelector('.slash-command-text');
       if (!textEl) continue;
       const content = textEl.textContent.trim();
       if (!content) continue;
@@ -9951,7 +9980,7 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
         md += `**You:** ${content}\n\n`;
       } else if (msg.classList.contains('assistant')) {
         md += `**WebBrain:** ${content}\n\n`;
-      } else if (msg.classList.contains('system')) {
+      } else if (msg.classList.contains('system') || msg.classList.contains('slash-command-output')) {
         md += `*${content}*\n\n`;
       }
     }
@@ -10237,7 +10266,6 @@ async function sendMessage(extraChatParams = {}) {
       syncSendButtonState();
       await parseSlashCommands(text, tabId, { permissionSkipContext });
       if (currentTabId === tabId) {
-        scrollToBottom({ force: true });
         if (!inputEl.value.trim() || inputEl.value.trim() === text) {
           inputEl.value = '';
           autoResizeInput();
@@ -10319,7 +10347,6 @@ async function sendMessage(extraChatParams = {}) {
   // left to send to the agent — bail out after the side effect.
   if (!text) {
     await releaseOwnedContextMenuClaim({ reason: 'preflight-empty', retryAfterMs: 1_000 });
-    scrollToBottom({ force: true });
     inputEl.value = '';
     autoResizeInput();
     syncSendButtonState();
@@ -12673,15 +12700,15 @@ function getOrCreateStepsContainer(assistantEl = currentAssistantEl) {
     .find(child => child.classList.contains('message-text')) || null;
   if (!textEl) return null;
 
-  // Each answered clarification is a timeline boundary. Reusing a compact
-  // steps container from before that boundary would place resumed events above
-  // the Q&A, so only reuse a segment between the latest answered card and the
+  // Answered clarifications and slash responses are timeline boundaries.
+  // Reusing an earlier compact steps container would place resumed events
+  // above the response, so only reuse a segment after the latest boundary and before the
   // final-text cursor.
-  const latestAnsweredCard = [...content.children]
+  const latestBoundary = [...content.children]
     .reverse()
-    .find(child => child.matches('.clarify-card.clarify-answered')) || null;
-  let candidate = latestAnsweredCard
-    ? latestAnsweredCard.nextElementSibling
+    .find(child => child.matches('.clarify-card.clarify-answered, .slash-command-output')) || null;
+  let candidate = latestBoundary
+    ? latestBoundary.nextElementSibling
     : content.firstElementChild;
   let container = null;
   while (candidate && candidate !== textEl) {
@@ -12758,9 +12785,11 @@ function appendCompactStep(toolName, args) {
   }
 
   if (isTerminalDoneTool(toolName)) {
-    const rejectedSteps = currentAssistantEl?.querySelectorAll?.(
+    // Collapse retries only within this segment, never across a user-visible
+    // slash response or answered clarification.
+    const rejectedSteps = container.querySelectorAll(
       '.step-item[data-tool="done"][data-rejected-completion="true"], .step-item[data-tool="done_json"][data-rejected-completion="true"]',
-    ) || [];
+    );
     const priorRejected = rejectedSteps[rejectedSteps.length - 1];
     if (priorRejected) {
       priorRejected.classList.remove('done');
@@ -12926,7 +12955,10 @@ function appendVerboseToolCall(name, args) {
     const rejectedTools = content.querySelectorAll(
       '.tool-call[data-tool-name="done"][data-rejected-completion="true"]',
     );
-    const priorRejected = rejectedTools[rejectedTools.length - 1];
+    const latestBoundary = [...content.children].reverse()
+      .find(child => child.matches('.clarify-card.clarify-answered, .slash-command-output'));
+    const priorRejected = [...rejectedTools].reverse().find(tool => !latestBoundary
+      || (latestBoundary.compareDocumentPosition(tool) & Node.DOCUMENT_POSITION_FOLLOWING));
     if (priorRejected) {
       priorRejected.querySelector('.tool-call-body').textContent = JSON.stringify(args, null, 2);
       priorRejected.querySelector('.tool-result')?.remove();
@@ -13116,7 +13148,7 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
     textEl.innerHTML = t('sp.stopped_by_user_html');
     clearStreamedAssistantText(textEl);
     delete textEl.dataset.suppressToolCallStream;
-    if (!assistantEl.querySelector('.msg-copy-btn')) addMessageCopyButton(assistantEl);
+    if (!assistantEl.querySelector('.msg-copy-btn:not(.scratchpad-copy-btn)')) addMessageCopyButton(assistantEl);
     return;
   }
 
@@ -13137,7 +13169,7 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
   if (renderSubscribeError(textEl, content)) {
     clearStreamedAssistantText(textEl);
     delete textEl.dataset.suppressToolCallStream;
-    if (!assistantEl.querySelector('.msg-copy-btn')) addMessageCopyButton(assistantEl);
+    if (!assistantEl.querySelector('.msg-copy-btn:not(.scratchpad-copy-btn)')) addMessageCopyButton(assistantEl);
     return;
   }
 
@@ -13177,7 +13209,7 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
   delete textEl.dataset.suppressToolCallStream;
 
   // Add copy button if not already present
-  if (!assistantEl.querySelector('.msg-copy-btn')) {
+  if (!assistantEl.querySelector('.msg-copy-btn:not(.scratchpad-copy-btn)')) {
     addMessageCopyButton(assistantEl);
   }
 }
@@ -14126,7 +14158,7 @@ function addContextCompactedNote(data) {
   } else {
     messagesEl.appendChild(note);
   }
-  scrollToBottom();
+  scrollToBottom({ force: data?.manual === true });
 }
 
 /**
@@ -14639,28 +14671,41 @@ function pinChatToBottom(container) {
   container.style.scrollBehavior = previousScrollBehavior;
 }
 
-function scrollToBottom({ force = false } = {}) {
+function scrollToBottom({ force = false, reveal = null } = {}) {
   const container = chatContainerEl;
   if (!container) return;
   // A forced jump deliberately takes the reader to the live edge (blocking
   // prompts, slash-command output, or the navigation pill). Keep subsequent
   // deltas visible until the reader scrolls upward again.
-  if (force && chatTurnIsConnected()) {
+  if (force) {
     chatAutoFollow = true;
     chatUserChoseReadingPosition = false;
   }
-  if (!force && chatTurnIsConnected() && !chatAutoFollow
-      && (chatUserChoseReadingPosition || chatTurnIsRunning() || chatTurnNeedsReadingNavigation())) {
+  if (!force && !chatAutoFollow
+      && (chatUserChoseReadingPosition
+        || (chatTurnIsConnected() && (chatTurnIsRunning() || chatTurnNeedsReadingNavigation())))) {
     scheduleChatNavigationUpdate();
     return;
   }
 
-  pinChatToBottom(container);
+  const pinAndReveal = () => {
+    pinChatToBottom(container);
+    // The final-text cursor may already contain a long streamed answer below
+    // an inline command. Reveal the requested card and preserve that reading
+    // position instead of immediately pulling it away on the next delta.
+    if (reveal?.isConnected
+        && reveal.getBoundingClientRect().top < container.getBoundingClientRect().top) {
+      reveal.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      chatAutoFollow = false;
+      chatUserChoseReadingPosition = true;
+    }
+  };
+  pinAndReveal();
   if (scrollToBottomFrame != null) cancelAnimationFrame(scrollToBottomFrame);
   scrollToBottomFrame = requestAnimationFrame(() => {
     scrollToBottomFrame = null;
     if (container.isConnected && (force || chatAutoFollow || !chatTurnIsConnected())) {
-      pinChatToBottom(container);
+      pinAndReveal();
     }
     scheduleChatNavigationUpdate();
   });
@@ -14673,7 +14718,7 @@ chatContainerEl?.addEventListener('pointermove', (event) => {
   if (event.buttons) markChatUserScrollIntent();
 }, { passive: true });
 chatContainerEl?.addEventListener('scroll', () => {
-  if (chatTurnIsConnected() && chatUserScrollActive) {
+  if ((chatTurnIsConnected() || chatUserChoseReadingPosition) && chatUserScrollActive) {
     const distanceToBottom = chatContainerEl.scrollHeight
       - chatContainerEl.scrollTop
       - chatContainerEl.clientHeight;
@@ -14879,7 +14924,7 @@ function addMessageCopyButton(msgEl) {
 
 function addScratchpadCopyButton(msgEl) {
   if (!msgEl) return;
-  const content = msgEl.querySelector('.message-content');
+  const content = msgEl.querySelector('.message-content, .slash-command-content');
   const pre = content?.querySelector('pre.scratchpad-dump');
   if (!content || !pre) return;
   const existing = content.querySelector('.scratchpad-copy-btn');
@@ -14897,7 +14942,7 @@ function addScratchpadCopyButton(msgEl) {
 }
 
 function getMessageCopyText(btn) {
-  const content = btn?.closest('.message-content');
+  const content = btn?.closest('.message-content, .slash-command-content');
   if (!content) return null;
   if (btn.classList.contains('scratchpad-copy-btn')) {
     return content.querySelector('pre.scratchpad-dump')?.textContent || '';
