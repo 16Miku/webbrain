@@ -2044,6 +2044,122 @@
     return null;
   }
 
+  // A native range input moves its thumb only for trusted input, so under a
+  // synthetic drag the value the pointer gives is set the way the browser
+  // sets it: from the point's place along the track (the thumb's centre
+  // spans the track less half a thumb at each end), snapped to the step by
+  // the input's own sanitization, with an `input` event per change and a
+  // `change` event on release. Points are in the input's document. Null
+  // when `el` is not an enabled range input.
+  function _visionRangeDrag(el) {
+    const view = el?.ownerDocument?.defaultView;
+    if (!view || !(el instanceof view.HTMLInputElement) || String(el.type).toLowerCase() !== 'range' || el.disabled) return null;
+    const setter = Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, 'value')?.set;
+    const style = view.getComputedStyle(el);
+    // Vertical by writing mode runs from the inline start (top, or bottom
+    // when right-to-left); the legacy vertical forms put the minimum at the bottom.
+    const legacyVertical = el.getAttribute('orient') === 'vertical' || /slider-vertical/.test(style.appearance || '');
+    const vertical = legacyVertical || /^vertical/.test(style.writingMode || '');
+    const reversed = legacyVertical || style.direction === 'rtl';
+    const number = (value, fallback) => (Number.isFinite(Number.parseFloat(value)) ? Number.parseFloat(value) : fallback);
+    const startValue = el.value;
+    const fire = type => el.dispatchEvent(new view.Event(type, { bubbles: true, composed: type === 'input' }));
+    return {
+      to(px, py) {
+        const rect = el.getBoundingClientRect();
+        const min = number(el.min, 0);
+        const max = Math.max(min, number(el.max, 100));
+        const length = vertical ? rect.height : rect.width;
+        const thumb = Math.min(16, vertical ? rect.width : rect.height, length / 2);
+        const along = vertical ? py - rect.top : px - rect.left;
+        let fraction = Math.min(1, Math.max(0, (along - thumb / 2) / Math.max(1, length - thumb)));
+        if (reversed) fraction = 1 - fraction;
+        const before = el.value;
+        const value = String(min + fraction * (max - min));
+        if (setter) setter.call(el, value); else el.value = value;
+        if (el.value !== before) fire('input');
+      },
+      release() {
+        if (el.value !== startValue) fire('change');
+        return el.value;
+      },
+    };
+  }
+
+  // Where a caret would go at a point of `doc` (its client coordinates, kept
+  // inside its viewport): { node, offset }, the node being the text field
+  // itself when the point is in one.
+  function _visionCaretAt(doc, x, y) {
+    const view = doc.defaultView;
+    const px = Math.min(Math.max(0, x), Math.max(0, (view?.innerWidth || 1) - 1));
+    const py = Math.min(Math.max(0, y), Math.max(0, (view?.innerHeight || 1) - 1));
+    try {
+      const position = doc.caretPositionFromPoint?.(px, py);
+      if (position?.offsetNode) return { node: position.offsetNode, offset: position.offset };
+    } catch { /* fall back to the WebKit form */ }
+    try {
+      const range = doc.caretRangeFromPoint?.(px, py);
+      if (range?.startContainer) return { node: range.startContainer, offset: range.startOffset };
+    } catch { /* no caret here */ }
+    return null;
+  }
+
+  // A synthetic press selects no text either. A drag a person's would turn
+  // into a selection (a press on selectable text or in a text field) selects
+  // from the press to the pointer, after a cancelable `selectstart` like the
+  // browser's. Null where a press would not select: a link, image, draggable
+  // item or other control, `user-select: none`, or no text at the point.
+  // Points are in the element's document.
+  function _visionTextSelection(el) {
+    const doc = el?.ownerDocument;
+    const view = doc?.defaultView;
+    if (!view) return null;
+    const tag = String(el.tagName || '').toUpperCase();
+    const field = !el.disabled && (tag === 'TEXTAREA'
+      || (tag === 'INPUT' && /^(text|search|url|tel|password)?$/.test(String(el.getAttribute('type') || '').toLowerCase()))) ? el : null;
+    if (!field) {
+      if (el.closest?.('a[href],img,[draggable="true"],button,select,option,summary,input,textarea')) return null;
+      // `user-select: auto` takes the parent's; the nearest other value decides.
+      for (let node = el, depth = 0; node?.nodeType === 1 && depth < 64; node = node.parentElement, depth++) {
+        const style = view.getComputedStyle(node);
+        const value = style.userSelect || style.webkitUserSelect || 'auto';
+        if (value === 'none') return null;
+        if (value !== 'auto') break;
+      }
+    }
+    let start = null;
+    const caret = (px, py) => {
+      if (!field) return _visionCaretAt(doc, px, py);
+      // Past the field's edge the selection runs to the edge, as it does.
+      const rect = field.getBoundingClientRect();
+      const at = _visionCaretAt(doc, Math.min(Math.max(px, rect.left + 1), rect.right - 1), Math.min(Math.max(py, rect.top + 1), rect.bottom - 1));
+      return at?.node === field ? at : null;
+    };
+    const to = (px, py) => {
+      const at = start && caret(px, py);
+      if (!at) return;
+      try {
+        if (field) field.setSelectionRange(Math.min(start.offset, at.offset), Math.max(start.offset, at.offset), at.offset < start.offset ? 'backward' : 'forward');
+        else doc.getSelection()?.setBaseAndExtent(start.node, start.offset, at.node, at.offset);
+      } catch { /* a node the selection cannot hold */ }
+    };
+    return {
+      begin(px, py) {
+        const at = caret(px, py);
+        if (!at || (!field && at.node.nodeType !== 3)) return false;
+        if (!el.dispatchEvent(new view.Event('selectstart', { bubbles: true, cancelable: true }))) return false;
+        start = at;
+        to(px, py);
+        return true;
+      },
+      to,
+      selectedChars() {
+        if (field) return Math.abs((field.selectionEnd || 0) - (field.selectionStart || 0));
+        return String(doc.getSelection() || '').length;
+      },
+    };
+  }
+
   function visionInput(params = {}, actionDeadlineExpired = () => false) {
     const type = String(params.type || 'click');
     const x = Number(params.x);
@@ -2103,7 +2219,24 @@
         const toY = Number(params.toY);
         const steps = Math.min(40, Math.max(2, Math.floor(Number(params.steps) || 12)));
         hover(el);
-        pointer(el, 'pointerdown', { button: 0, buttons: 1 }); mouse(el, 'mousedown', { button: 0, buttons: 1, detail: 1 });
+        pointer(el, 'pointerdown', { button: 0, buttons: 1 });
+        const pressAllowed = mouse(el, 'mousedown', { button: 0, buttons: 1, detail: 1 });
+        // The press focuses what it lands on, as a click's does, and starts
+        // what a person's press would: on a native range input it takes the
+        // thumb (_visionRangeDrag), on selectable text or in a text field a
+        // selection (_visionTextSelection). Either then follows the pointer
+        // in that element's own document wherever it goes.
+        if (pressAllowed) {
+          const focusable = _visionFocusable(el);
+          if (focusable && focusable !== el.ownerDocument.activeElement) focusable.focus({ preventScroll: true });
+          else if (!focusable) el.ownerDocument.activeElement?.blur?.();
+        }
+        const range = pressAllowed ? _visionRangeDrag(el) : null;
+        let selection = pressAllowed && !range ? _visionTextSelection(el) : null;
+        const pressOffsetX = x - cx;
+        const pressOffsetY = y - cy;
+        range?.to(cx, cy);
+        if (selection && !selection.begin(cx, cy)) selection = null;
         // Every point, the release included, is given in the coordinates of
         // the document under it (a same-origin frame has its own), so the
         // events a slider or canvas reads all agree. A point with nothing
@@ -2123,13 +2256,17 @@
           const moveInit = { button: 0, buttons: 1, ...pointAt(at, px, py) };
           last.dispatchEvent(new PointerCtor('pointermove', init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...moveInit })));
           last.dispatchEvent(new view.MouseEvent('mousemove', init(moveInit)));
+          range?.to(px - pressOffsetX, py - pressOffsetY);
+          selection?.to(px - pressOffsetX, py - pressOffsetY);
         }
         const end = _visionTargetAt(toX, toY);
         const releaseTarget = end?.el || last;
         const endInit = { button: 0, buttons: 0, ...pointAt(end, toX, toY) };
         releaseTarget.dispatchEvent(new PointerCtor('pointerup', init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...endInit })));
         releaseTarget.dispatchEvent(new view.MouseEvent('mouseup', init({ ...endInit, detail: 1 })));
-        return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe };
+        const rangeValue = range?.release();
+        return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe,
+          ...(range ? { rangeValue } : {}), ...(selection ? { selectedChars: selection.selectedChars() } : {}) };
       }
       hover(el);
       // Like any agent click, a vision click must not open a native file

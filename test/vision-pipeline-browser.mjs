@@ -266,6 +266,129 @@ test('content-script vision drag (Firefox path) moves and releases in a same-ori
   }
 });
 
+test('content-script vision drag (Firefox path) moves a native range input like a person\'s drag', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    // Synthetic pointer events never move a native slider by themselves.
+    const range = (id, top, extra = '') => `<input id="${id}" type="range" ${extra} style="position:absolute;left:100px;top:${top}px;width:300px;height:20px;margin:0">`;
+    const frame = `<style>body{margin:0}</style><input id="inner" type="range" min="0" max="100" value="0" style="position:absolute;left:20px;top:20px;width:200px;height:20px;margin:0">
+      <script>window.events=[];for(const t of ['input','change'])document.getElementById('inner').addEventListener(t,e=>events.push([t,e.target.value]));<\/script>`;
+    await page.setContent(`<!doctype html><style>body{margin:0}iframe{position:absolute;left:500px;top:300px;width:250px;height:80px;border:2px solid #000}</style>
+      ${range('steps', 100, 'min="0" max="100" step="5" value="10"')}${range('rtl', 160, 'min="0" max="10" value="0" dir="rtl"')}
+      ${range('off', 220, 'min="0" max="100" value="20" disabled')}${range('held', 280, 'min="0" max="100" value="20"')}
+      <iframe srcdoc="${frame.replace(/"/g, '&quot;')}"></iframe>
+      <script>window.events=[];for(const id of ['steps','rtl','off','held'])for(const t of ['input','change'])document.getElementById(id).addEventListener(t,e=>events.push([id,t,e.target.value]));
+      document.getElementById('held').addEventListener('mousedown',e=>e.preventDefault());</script>`);
+    await page.waitForFunction(() => document.querySelector('iframe').contentWindow?.events);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    const value = id => page.evaluate(id => document.getElementById(id).value, id);
+    const eventsOf = id => page.evaluate(id => window.events.filter(event => event[0] === id).map(event => event.slice(1)), id);
+    // The thumb's centre spans x 108–392 (300 px less half a 16 px thumb at
+    // each end). From the thumb at 10 to the middle: 50, snapped to steps of 5.
+    let result = await run({ type: 'drag', x: 136, y: 110, toX: 250, toY: 110, steps: 6 });
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.equal(result.rangeValue, '50');
+    assert.equal(await value('steps'), '50');
+    const steps = await eventsOf('steps');
+    assert.deepEqual(steps.at(-1), ['change', '50'], JSON.stringify(steps));
+    assert.ok(steps.filter(event => event[0] === 'input').length >= 3, `an input event per change: ${JSON.stringify(steps)}`);
+    assert.ok(steps.every(event => Number(event[1]) % 5 === 0), JSON.stringify(steps));
+    assert.equal(steps.filter(event => event[0] === 'change').length, 1);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'steps', 'the press focuses the slider');
+    // Right to left: the minimum is at the right end.
+    result = await run({ type: 'drag', x: 392, y: 170, toX: 250, toY: 170, steps: 4 });
+    assert.equal(await value('rtl'), '5', JSON.stringify(result));
+    // A disabled slider, or one whose press the page cancels, does not move.
+    result = await run({ type: 'drag', x: 160, y: 230, toX: 350, toY: 230, steps: 4 });
+    assert.equal(result.rangeValue, undefined, JSON.stringify(result));
+    result = await run({ type: 'drag', x: 160, y: 290, toX: 350, toY: 290, steps: 4 });
+    assert.equal(result.rangeValue, undefined, JSON.stringify(result));
+    assert.deepEqual([await value('off'), await value('held')], ['20', '20']);
+    assert.deepEqual([await eventsOf('off'), await eventsOf('held')], [[], []]);
+    // In a same-origin frame the thumb follows the pointer past the frame's
+    // edge: frame point (28, 30) is page point (530, 332).
+    result = await run({ type: 'drag', x: 530, y: 332, toX: 800, toY: 332, steps: 6 });
+    assert.equal(result.rangeValue, '100', JSON.stringify(result));
+    const inner = await page.evaluate(() => document.querySelector('iframe').contentWindow.events);
+    assert.deepEqual(inner.at(-1), ['change', '100'], JSON.stringify(inner));
+  } finally {
+    await browser.close();
+  }
+});
+
+test('content-script vision drag (Firefox path) selects text like a person\'s drag', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    const text = (id, top, body, style = '') => `<p id="${id}" style="position:absolute;left:100px;top:${top}px;margin:0;font:20px monospace;white-space:nowrap;${style}">${body}</p>`;
+    await page.setContent(`<!doctype html><style>body{margin:0}</style>
+      ${text('para', 100, 'alpha beta gamma delta')}
+      <textarea id="area" style="position:absolute;left:100px;top:160px;width:500px;height:40px;font:20px monospace;padding:0;border:0;resize:none;outline:0">one two three four</textarea>
+      ${text('noselect', 230, '<span>cannot select this</span>', 'user-select:none')}${text('guarded', 280, 'guarded text here')}
+      <a id="link" href="#x" style="position:absolute;left:100px;top:330px;font:20px monospace">link text here</a>
+      <script>window.starts=[];document.addEventListener('selectstart',e=>starts.push(e.target.id||e.target.parentNode?.id));
+      document.getElementById('guarded').addEventListener('selectstart',e=>e.preventDefault());</script>`);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    // Character boxes of a paragraph's text, from the layout itself.
+    const charBox = (id, index) => page.evaluate(({ id, index }) => {
+      const node = document.getElementById(id).firstChild;
+      const range = document.createRange();
+      range.setStart(node, index); range.setEnd(node, index + 1);
+      const r = range.getBoundingClientRect();
+      return { left: r.left, right: r.right, y: r.top + r.height / 2 };
+    }, { id, index });
+    // "alpha beta gamma delta": from the left half of "b" (6) to the right half of the last "a" of "gamma" (15).
+    const from = await charBox('para', 6);
+    const to = await charBox('para', 15);
+    let result = await run({ type: 'drag', x: from.left + 2, y: from.y, toX: to.right - 2, toY: to.y, steps: 5 });
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.equal(await page.evaluate(() => String(document.getSelection())), 'beta gamma');
+    assert.equal(result.selectedChars, 10);
+    // In a text field the selection is the field's own, past its edge to its end.
+    const width = await page.evaluate(() => {
+      const probe = document.createElement('span');
+      probe.style.font = '20px monospace'; probe.textContent = 'x'.repeat(20);
+      document.body.append(probe); const w = probe.getBoundingClientRect().width / 20; probe.remove(); return w;
+    });
+    result = await run({ type: 'drag', x: 100 + 4.2 * width, y: 172, toX: 100 + 12.7 * width, toY: 172, steps: 4 });
+    assert.deepEqual(await page.evaluate(() => { const a = document.getElementById('area'); return [document.activeElement.id, a.value.slice(a.selectionStart, a.selectionEnd)]; }),
+      ['area', 'two three'], JSON.stringify(result));
+    result = await run({ type: 'drag', x: 100 + 8.2 * width, y: 172, toX: 900, toY: 172, steps: 4 });
+    assert.equal(await page.evaluate(() => { const a = document.getElementById('area'); return a.value.slice(a.selectionStart, a.selectionEnd); }), 'three four');
+    // No selection where a person's drag would make none.
+    for (const [x, y, label] of [[110, 240, 'user-select: none'], [110, 290, 'selectstart cancelled'], [110, 342, 'a link']]) {
+      await page.evaluate(() => { document.activeElement?.blur?.(); document.getSelection().removeAllRanges(); });
+      result = await run({ type: 'drag', x, y, toX: x + 150, toY: y, steps: 4 });
+      assert.equal(result.selectedChars, undefined, `${label}: ${JSON.stringify(result)}`);
+      assert.equal(await page.evaluate(() => String(document.getSelection())), '', label);
+    }
+    assert.ok((await page.evaluate(() => window.starts)).includes('guarded'), 'the page saw the selectstart it cancelled');
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision clicks (Firefox path) never open a native file chooser', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {
