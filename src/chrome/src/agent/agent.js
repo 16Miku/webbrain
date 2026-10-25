@@ -33932,11 +33932,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                     host = parsed.hostname;
                   }
                 } catch {}
+                // Where the frame's own viewport starts inside its box, and
+                // the scale a CSS transform or zoom draws it at (its layout
+                // box against the drawn one; 1 up to rounding), so the probe
+                // in the frame maps the point onto what is drawn there.
+                const style = getComputedStyle(frame);
+                const length = value => Number.parseFloat(value) || 0;
+                const scale = (drawn, laid) => (laid > 0 && Math.abs(drawn - laid) > 1 ? drawn / laid : 1);
                 return {
                   left: rect.left,
                   top: rect.top,
                   width: rect.width,
                   height: rect.height,
+                  insetLeft: length(style.borderLeftWidth) + length(style.paddingLeft),
+                  insetTop: length(style.borderTopWidth) + length(style.paddingTop),
+                  scaleX: scale(rect.width, frame.offsetWidth),
+                  scaleY: scale(rect.height, frame.offsetHeight),
                   url,
                   host,
                   index,
@@ -35343,10 +35354,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const candidateRects = matchingRects.length ? matchingRects : (frameRects.length === 1 ? frameRects : []);
           let fallbackTarget = null;
           for (const frame of candidateRects) {
-            const localX = Number(args.x) - Number(frame?.left);
-            const localY = Number(args.y) - Number(frame?.top);
-            const width = Number(frame?.width);
-            const height = Number(frame?.height);
+            // The frame's drawn box, scaled back to its own viewport.
+            const scaleX = Number(frame?.scaleX) > 0 ? Number(frame.scaleX) : 1;
+            const scaleY = Number(frame?.scaleY) > 0 ? Number(frame.scaleY) : 1;
+            const localX = (Number(args.x) - Number(frame?.left)) / scaleX - (Number(frame?.insetLeft) || 0);
+            const localY = (Number(args.y) - Number(frame?.top)) / scaleY - (Number(frame?.insetTop) || 0);
+            const width = Number(frame?.width) / scaleX;
+            const height = Number(frame?.height) / scaleY;
             if (!Number.isFinite(localX) || !Number.isFinite(localY)) continue;
             if (Number.isFinite(width) && (localX < 0 || localX > width)) continue;
             if (Number.isFinite(height) && (localY < 0 || localY > height)) continue;

@@ -864,6 +864,105 @@ test('the DOM probe behind the dispatch checks reads controls, text fields, focu
   }
 });
 
+test('vision input (Firefox path) and the DOM probe place points inside scaled same-origin frames', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    // Each frame holds a button at its own (200,100)-(300,140) and a track at
+    // (0,180)-(400,220) whose document logs the press, the moves and the release.
+    const inner = (left = 200, top = 100) => `<style>body{margin:0}#b{position:absolute;left:${left}px;top:${top}px;width:100px;height:40px}
+      #t{position:absolute;left:0;top:180px;width:400px;height:40px;background:#ddd}</style><button id="b">Go</button><div id="t"></div>
+      <script>window.log=[];let down=false;document.getElementById('b').addEventListener('click',e=>log.push(['click',e.clientX,e.clientY]));
+      document.getElementById('t').addEventListener('mousedown',e=>{down=true;log.push(['down',e.clientX,e.clientY])});
+      document.addEventListener('mousemove',e=>{if(down)log.push(['move',e.clientX,e.clientY])});
+      document.addEventListener('mouseup',e=>{if(down)log.push(['up',e.clientX,e.clientY]);down=false});<\/script>`;
+    const frame = (id, style, html = inner()) => `<iframe id="${id}" style="${style}" srcdoc="${html.replace(/"/g, '&quot;')}"></iframe>`;
+    await page.setContent(`<!doctype html><style>body{margin:0}iframe{position:absolute;width:400px;height:300px;border:3px solid #000}</style>
+      ${frame('scaled', 'left:100px;top:50px;transform:scale(0.5);transform-origin:0 0')}
+      ${frame('tilted', 'left:600px;top:50px;transform:rotate(10deg)')}
+      <div style="position:absolute;left:100px;top:400px;transform:scale(1.5);transform-origin:0 0">${frame('nested', 'position:static;width:200px;height:100px;border:1px solid #000', inner(20, 10))}</div>`);
+    await page.waitForFunction(() => [...document.querySelectorAll('iframe')].every(item => item.contentWindow?.log));
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    const take = id => page.evaluate(id => document.getElementById(id).contentWindow.log.splice(0), id);
+    // The scaled frame's (x, y) is drawn at its box (100, 50) plus its 3 px border, at half size.
+    const scaled = (x, y) => ({ x: 100 + (3 + x) * 0.5, y: 50 + (3 + y) * 0.5 });
+    let result = await run({ type: 'click', ...scaled(250, 120) });
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.deepEqual(await take('scaled'), [['click', 250, 120]]);
+    // An ancestor's scale counts too: the nested frame is drawn at 1.5x inside its 1 px border.
+    result = await run({ type: 'click', x: 100 + (1 + 70) * 1.5, y: 400 + (1 + 30) * 1.5 });
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.deepEqual(await take('nested'), [['click', 70, 30]]);
+    // A drag gives every point in the scaled frame's own coordinates.
+    const from = scaled(50, 200);
+    const to = scaled(350, 200);
+    result = await run({ type: 'drag', x: from.x, y: from.y, toX: to.x, toY: to.y, steps: 6 });
+    assert.equal(result.success, true, JSON.stringify(result));
+    const drag = await take('scaled');
+    assert.deepEqual(drag[0], ['down', 50, 200], JSON.stringify(drag));
+    assert.deepEqual(drag.filter(entry => entry[0] === 'move').map(entry => entry[1]), [100, 150, 200, 250, 300, 350], JSON.stringify(drag));
+    assert.deepEqual(drag.at(-1), ['up', 350, 200], JSON.stringify(drag));
+    // No scale maps a rotated frame: the click is refused, nothing is sent.
+    const rect = await page.evaluate(() => { const box = document.getElementById('tilted').getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2 }; });
+    result = await run({ type: 'click', ...rect });
+    assert.equal(result.visionInputRefused, 'frame_unmappable', JSON.stringify(result));
+    assert.equal(result.noDispatch, true);
+    assert.deepEqual(await take('tilted'), []);
+    // The DOM probe behind the dispatch checks reads the same elements, in both builds.
+    for (const build of ['chrome', 'firefox']) {
+      const { visionDomProbeExpression } = await import(`../src/${build}/src/agent/vision-dom-probe.js`);
+      const probe = async point => (await page.evaluate(visionDomProbeExpression({ points: [point] }))).points[0];
+      assert.deepEqual(await probe(scaled(250, 120)), { found: true, tag: 'button', clickable: true, opaqueFrame: false, control: 'button' }, build);
+      assert.equal((await probe(scaled(250, 200))).tag, 'div', build);
+      assert.equal((await probe(rect)).opaqueFrame, true, `${build}: a rotated frame cannot be read`);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('the click submit probe (Chrome) reads a point inside a scaled, bordered child frame', async () => {
+  const { Agent } = await import('../src/chrome/src/agent/agent.js');
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    const inner = `<style>body{margin:0}button{position:absolute;left:200px;top:100px;width:100px;height:40px}</style>
+      <form action="/pay" method="post"><input name="amount" value="5"><button type="submit">Pay now</button></form>`;
+    await page.setContent(`<!doctype html><style>body{margin:0}</style>
+      <iframe style="position:absolute;left:100px;top:50px;width:400px;height:300px;border:3px solid #000;transform:scale(0.5);transform-origin:0 0"
+        srcdoc="${inner.replace(/"/g, '&quot;')}"></iframe>`);
+    await page.waitForFunction(() => document.querySelector('iframe').contentDocument?.querySelector('button'));
+    // The frame rectangles come from the agent's own top-frame script.
+    const agent = new Agent({ getVisionProvider: async () => null });
+    const realChrome = globalThis.chrome;
+    globalThis.chrome = { scripting: { executeScript: async ({ func, args }) => [{ result: await page.evaluate(({ source, args }) => new Function(`return (${source})`)()(...args), { source: func.toString(), args }) }] } };
+    let rects;
+    // The button's centre, (250, 120) in the frame, is drawn at (100 + (3 + 250) / 2, 50 + (3 + 120) / 2).
+    const point = { x: 226.5, y: 111.5 };
+    try { rects = await agent._iframeRectsForCoordinate(1, point.x, point.y); } finally { globalThis.chrome = realChrome; }
+    assert.equal(rects.length, 1, JSON.stringify(rects));
+    assert.deepEqual({ scaleX: rects[0].scaleX, scaleY: rects[0].scaleY, insetLeft: rects[0].insetLeft, insetTop: rects[0].insetTop }, { scaleX: 0.5, scaleY: 0.5, insetLeft: 3, insetTop: 3 });
+    const child = page.frames().find(item => item !== page.mainFrame());
+    const result = await child.evaluate(({ source, args }) => new Function(`return (${source})`)()('click', args), {
+      source: Agent._submitActionProbe.toString(),
+      args: { ...point, coordinate_space: 'css', __wbTopLevelCoordinateFrames: rects, __wbCaptionPass: 'final', __wbCaptionReadings: {} },
+    });
+    assert.equal(result?.isSubmit, true, JSON.stringify(result)?.slice(0, 400));
+  } finally {
+    await browser.close();
+  }
+});
+
 test('the click submit probe reads a vision point inside open shadow roots and on plain content (both builds)', async () => {
   const page_ = `<!doctype html><meta charset="utf-8"><title>Probe fixture</title>
 <style>body{margin:0;font:16px sans-serif}#post{position:absolute;left:20px;top:20px;width:400px;height:120px;cursor:pointer}

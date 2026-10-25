@@ -52,6 +52,49 @@ export function visionDomProbe(request) {
     if (parent && parent.nodeType === 11) return parent.host || null;
     return parent || null;
   };
+  // How a point of a document maps into a same-origin frame drawn in it
+  // (content.js _visionFrameMap does the same for Firefox input): the
+  // frame's position, borders and padding are taken off, and whatever scale
+  // a CSS transform or zoom draws it at is undone, by comparing its drawn box
+  // with the size of its own viewport. Null when the frame or an ancestor is
+  // rotated, skewed, flipped, set on a motion path or drawn in 3D, which no
+  // scale maps.
+  const frameMap = (frame, innerView) => {
+    const view = frame.ownerDocument && frame.ownerDocument.defaultView;
+    if (!view) return null;
+    const length = value => Number.parseFloat(value) || 0;
+    for (let node = frame, depth = 0; node && node.nodeType === 1 && depth < 256; depth++) {
+      const style = view.getComputedStyle(node);
+      const transform = String(style.transform || 'none');
+      if (transform !== 'none') {
+        const matrix = /^matrix\(([^)]*)\)$/.exec(transform);
+        const parts = matrix ? matrix[1].split(',').map(Number) : [];
+        if (!matrix || Math.abs(parts[1]) > 1e-6 || Math.abs(parts[2]) > 1e-6 || !(parts[0] > 0) || !(parts[3] > 0)) return null;
+      }
+      const rotate = String(style.rotate || 'none');
+      if (rotate !== 'none' && !/^0(deg|rad|grad|turn)?$/.test(rotate)) return null;
+      const scale = String(style.scale || 'none');
+      if (scale !== 'none' && scale.split(/\s+/).some(part => !(length(part) > 0))) return null;
+      // A motion path turns the element along it.
+      if (String(style.offsetPath || 'none') !== 'none') return null;
+      const root = node.getRootNode ? node.getRootNode() : null;
+      node = node.parentElement || (root && root.nodeType === 11 ? root.host : null);
+    }
+    const rect = frame.getBoundingClientRect();
+    const style = view.getComputedStyle(frame);
+    const left = length(style.borderLeftWidth) + length(style.paddingLeft);
+    const top = length(style.borderTopWidth) + length(style.paddingTop);
+    const right = length(style.borderRightWidth) + length(style.paddingRight);
+    const bottom = length(style.borderBottomWidth) + length(style.paddingBottom);
+    const innerWidth = Number(innerView && innerView.innerWidth) || Math.max(0, frame.clientWidth - length(style.paddingLeft) - length(style.paddingRight));
+    const innerHeight = Number(innerView && innerView.innerHeight) || Math.max(0, frame.clientHeight - length(style.paddingTop) - length(style.paddingBottom));
+    const width = innerWidth + left + right;
+    const height = innerHeight + top + bottom;
+    // An unscaled frame's drawn box differs from that size by rounding only.
+    const sx = width > 0 && Math.abs(rect.width - width) > 1 ? rect.width / width : 1;
+    const sy = height > 0 && Math.abs(rect.height - height) > 1 ? rect.height / height : 1;
+    return (px, py) => ({ x: (px - rect.left) / sx - left, y: (py - rect.top) / sy - top });
+  };
   const hit = (x, y) => {
     let doc = document;
     let cx = x;
@@ -68,14 +111,16 @@ export function visionDomProbe(request) {
       if (tag === 'IFRAME' || tag === 'FRAME' || tag === 'OBJECT' || tag === 'EMBED') {
         let inner = null;
         try { inner = el.contentDocument; } catch (e) { inner = null; }
-        if (inner && inner.documentElement && (tag === 'IFRAME' || tag === 'FRAME')) {
-          const rect = el.getBoundingClientRect();
-          cx -= rect.left + (el.clientLeft || 0);
-          cy -= rect.top + (el.clientTop || 0);
+        const map = inner && inner.documentElement && (tag === 'IFRAME' || tag === 'FRAME') ? frameMap(el, inner.defaultView) : null;
+        if (map) {
+          const point = map(cx, cy);
+          cx = point.x;
+          cy = point.y;
           doc = inner;
           continue;
         }
-        // A cross-origin frame (or plugin): its content is not inspectable.
+        // A cross-origin frame (or plugin), or one drawn at an angle no
+        // scale maps: what is under the point inside it cannot be read.
         return { el, opaque: true };
       }
       return { el, opaque: false };

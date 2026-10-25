@@ -1994,11 +1994,18 @@
   // coordinates, so canvases, sliders and maps see where the model pointed;
   // the default action of a press (focus) and of a click (activation) is
   // reproduced the way a browser does it. Same-origin iframes are entered.
+  //
+  // What is under a top-level viewport point: the element, its document and
+  // window, the point in that document's client coordinates (cx, cy), and
+  // toDoc(x, y), which maps any top-level point into that document the same
+  // way. A point on a same-origin frame that no scale maps (_visionFrameMap)
+  // gives { el: the frame, unmappable: true }.
   function _visionTargetAt(x, y) {
     let doc = document;
     let view = window;
     let cx = x;
     let cy = y;
+    const maps = [];
     for (let depth = 0; depth < 6; depth++) {
       let el = doc.elementFromPoint(cx, cy);
       const seen = new Set();
@@ -2014,17 +2021,56 @@
         let inner = null;
         try { inner = el.contentDocument; } catch { inner = null; }
         if (inner?.documentElement) {
-          const rect = el.getBoundingClientRect();
-          cx -= rect.left + (el.clientLeft || 0);
-          cy -= rect.top + (el.clientTop || 0);
+          const map = _visionFrameMap(el, view, inner.defaultView);
+          if (!map) return { el, doc, view, cx, cy, unmappable: true };
+          ({ x: cx, y: cy } = map(cx, cy));
+          maps.push(map);
           doc = inner;
           view = inner.defaultView || view;
           continue;
         }
       }
-      return { el, doc, view, cx, cy };
+      const toDoc = (px, py) => maps.reduce((point, map) => map(point.x, point.y), { x: px, y: py });
+      return { el, doc, view, cx, cy, toDoc };
     }
     return null;
+  }
+
+  // How a point of a document maps into a same-origin frame drawn in it:
+  // the frame's position, borders and padding are taken off, and whatever
+  // scale a CSS transform or zoom draws it at (on itself or an ancestor) is
+  // undone, by comparing its drawn box with the size of its own viewport.
+  // Null when the frame or an ancestor is rotated, skewed, flipped, set on
+  // a motion path or drawn in 3D, which no scale maps.
+  function _visionFrameMap(frame, view, innerView) {
+    const length = value => Number.parseFloat(value) || 0;
+    for (let node = frame, depth = 0; node?.nodeType === 1 && depth < 256; node = node.parentElement || node.getRootNode?.()?.host, depth++) {
+      const style = view.getComputedStyle(node);
+      const transform = String(style.transform || 'none');
+      if (transform !== 'none') {
+        const matrix = /^matrix\(([^)]*)\)$/.exec(transform);
+        const [a, b, c, d] = matrix ? matrix[1].split(',').map(Number) : [];
+        if (!matrix || Math.abs(b) > 1e-6 || Math.abs(c) > 1e-6 || !(a > 0) || !(d > 0)) return null;
+      }
+      const rotate = String(style.rotate || 'none');
+      if (rotate !== 'none' && !/^0(deg|rad|grad|turn)?$/.test(rotate)) return null;
+      const scale = String(style.scale || 'none');
+      if (scale !== 'none' && scale.split(/\s+/).some(part => !(length(part) > 0))) return null;
+      // A motion path turns the element along it.
+      if (String(style.offsetPath || 'none') !== 'none') return null;
+    }
+    const rect = frame.getBoundingClientRect();
+    const style = view.getComputedStyle(frame);
+    const left = length(style.borderLeftWidth) + length(style.paddingLeft);
+    const top = length(style.borderTopWidth) + length(style.paddingTop);
+    const right = length(style.borderRightWidth) + length(style.paddingRight);
+    const bottom = length(style.borderBottomWidth) + length(style.paddingBottom);
+    const width = (Number(innerView?.innerWidth) || Math.max(0, frame.clientWidth - length(style.paddingLeft) - length(style.paddingRight))) + left + right;
+    const height = (Number(innerView?.innerHeight) || Math.max(0, frame.clientHeight - length(style.paddingTop) - length(style.paddingBottom))) + top + bottom;
+    // An unscaled frame's drawn box differs from that size by rounding only.
+    const sx = width > 0 && Math.abs(rect.width - width) > 1 ? rect.width / width : 1;
+    const sy = height > 0 && Math.abs(rect.height - height) > 1 ? rect.height / height : 1;
+    return (x, y) => ({ x: (x - rect.left) / sx - left, y: (y - rect.top) / sy - top });
   }
 
   function _visionFocusable(el) {
@@ -2411,6 +2457,12 @@
     }
     const hit = _visionTargetAt(x, y);
     if (!hit) return { success: false, dispatched: false, noDispatch: true, error: 'Nothing is rendered at that point.' };
+    if (hit.unmappable) {
+      return {
+        success: false, dispatched: false, noDispatch: true, visionInputRefused: 'frame_unmappable',
+        error: 'Not dispatched: the point is inside an embedded frame drawn rotated, skewed, flipped or in 3D, so it cannot be placed on the frame\'s content. Use a control outside that frame.',
+      };
+    }
     if (actionDeadlineExpired()) return { success: false, dispatched: false, noDispatch: true, deadlineExpired: true, error: 'The action deadline expired before dispatch.' };
     const { el, view, cx, cy } = hit;
     const button = params.button === 'right' ? 2 : params.button === 'middle' ? 1 : 0;
@@ -2525,29 +2577,35 @@
         // gets drag events instead of pointer and mouse events.
         const html = pressAllowed && !range ? _visionHtmlDrag(el) : null;
         let htmlStarted = false;
-        const pressOffsetX = x - cx;
-        const pressOffsetY = y - cy;
         range?.to(cx, cy);
         if (selection && !selection.begin(cx, cy)) selection = null;
         // Every point, the release included, is given in the coordinates of
-        // the document under it (a same-origin frame has its own), so the
-        // events a slider or canvas reads all agree. A point with nothing
-        // under it keeps the offset of the last frame that had something.
-        let offsetX = x - cx;
-        let offsetY = y - cy;
+        // the document under it (a same-origin frame has its own, scaled as
+        // the frame is drawn), so the events a slider or canvas reads all
+        // agree. A point with nothing under it, or on a frame no scale maps,
+        // is mapped into the last document that had something.
+        let lastToDoc = hit.toDoc;
         const pointAt = (at, px, py) => {
-          if (at) { offsetX = px - at.cx; offsetY = py - at.cy; }
-          return { clientX: px - offsetX, clientY: py - offsetY, screenX: px + (window.screenX || 0), screenY: py + (window.screenY || 0) };
+          if (at) lastToDoc = at.toDoc;
+          const local = at ? { x: at.cx, y: at.cy } : lastToDoc(px, py);
+          return { clientX: local.x, clientY: local.y, screenX: px + (window.screenX || 0), screenY: py + (window.screenY || 0) };
+        };
+        const mappedAt = (px, py) => {
+          const at = _visionTargetAt(px, py);
+          return at && !at.unmappable ? at : null;
         };
         // An element holding the pointer's capture gets the events wherever
         // the pointer is, in its own document's coordinates: the press's,
         // whose window alone answered the capture call.
-        const heldAt = (point, px, py) => ({ ...point, clientX: px - pressOffsetX, clientY: py - pressOffsetY });
+        const heldAt = (point, px, py) => {
+          const local = hit.toDoc(px, py);
+          return { ...point, clientX: local.x, clientY: local.y };
+        };
         let last = el;
         for (let i = 1; i <= steps; i++) {
           const px = x + (toX - x) * (i / steps);
           const py = y + (toY - y) * (i / steps);
-          const at = _visionTargetAt(px, py);
+          const at = mappedAt(px, py);
           last = at?.el || last;
           const point = pointAt(at, px, py);
           if (html && i === 1) {
@@ -2562,10 +2620,11 @@
           if (htmlStarted) { html.move(last, point); continue; }
           const holder = capture.target({ button: 0, buttons: 1, ...heldAt(point, px, py) });
           moveOnto(holder || last, { button: 0, buttons: 1, ...(holder ? heldAt(point, px, py) : point) });
-          range?.to(px - pressOffsetX, py - pressOffsetY);
-          selection?.to(px - pressOffsetX, py - pressOffsetY);
+          const local = hit.toDoc(px, py);
+          range?.to(local.x, local.y);
+          selection?.to(local.x, local.y);
         }
-        const end = _visionTargetAt(toX, toY);
+        const end = mappedAt(toX, toY);
         const endPoint = pointAt(end, toX, toY);
         const holder = htmlStarted ? null : capture.target({ button: 0, buttons: 1, ...heldAt(endPoint, toX, toY) });
         const releaseTarget = holder || end?.el || last;
