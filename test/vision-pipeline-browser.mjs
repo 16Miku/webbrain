@@ -277,8 +277,9 @@ test('content-script vision drag (Firefox path) moves a native range input like 
     await page.setContent(`<!doctype html><style>body{margin:0}iframe{position:absolute;left:500px;top:300px;width:250px;height:80px;border:2px solid #000}</style>
       ${range('steps', 100, 'min="0" max="100" step="5" value="10"')}${range('rtl', 160, 'min="0" max="10" value="0" dir="rtl"')}
       ${range('off', 220, 'min="0" max="100" value="20" disabled')}${range('held', 280, 'min="0" max="100" value="20"')}
+      <fieldset disabled style="margin:0;padding:0;border:0">${range('fenced', 340, 'min="0" max="100" value="20"')}</fieldset>
       <iframe srcdoc="${frame.replace(/"/g, '&quot;')}"></iframe>
-      <script>window.events=[];for(const id of ['steps','rtl','off','held'])for(const t of ['input','change'])document.getElementById(id).addEventListener(t,e=>events.push([id,t,e.target.value]));
+      <script>window.events=[];for(const id of ['steps','rtl','off','held','fenced'])for(const t of ['input','change'])document.getElementById(id).addEventListener(t,e=>events.push([id,t,e.target.value]));
       document.getElementById('held').addEventListener('mousedown',e=>e.preventDefault());</script>`);
     await page.waitForFunction(() => document.querySelector('iframe').contentWindow?.events);
     const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
@@ -309,13 +310,14 @@ test('content-script vision drag (Firefox path) moves a native range input like 
     // Right to left: the minimum is at the right end.
     result = await run({ type: 'drag', x: 392, y: 170, toX: 250, toY: 170, steps: 4 });
     assert.equal(await value('rtl'), '5', JSON.stringify(result));
-    // A disabled slider, or one whose press the page cancels, does not move.
-    result = await run({ type: 'drag', x: 160, y: 230, toX: 350, toY: 230, steps: 4 });
-    assert.equal(result.rangeValue, undefined, JSON.stringify(result));
-    result = await run({ type: 'drag', x: 160, y: 290, toX: 350, toY: 290, steps: 4 });
-    assert.equal(result.rangeValue, undefined, JSON.stringify(result));
-    assert.deepEqual([await value('off'), await value('held')], ['20', '20']);
-    assert.deepEqual([await eventsOf('off'), await eventsOf('held')], [[], []]);
+    // A disabled slider (itself or by its fieldset), or one whose press the
+    // page cancels, does not move.
+    for (const y of [230, 290, 350]) {
+      result = await run({ type: 'drag', x: 160, y, toX: 350, toY: y, steps: 4 });
+      assert.equal(result.rangeValue, undefined, JSON.stringify(result));
+    }
+    assert.deepEqual([await value('off'), await value('held'), await value('fenced')], ['20', '20', '20']);
+    assert.deepEqual([await eventsOf('off'), await eventsOf('held'), await eventsOf('fenced')], [[], [], []]);
     // In a same-origin frame the thumb follows the pointer past the frame's
     // edge: frame point (28, 30) is page point (530, 332).
     result = await run({ type: 'drag', x: 530, y: 332, toX: 800, toY: 332, steps: 6 });

@@ -2053,7 +2053,8 @@
   // when `el` is not an enabled range input.
   function _visionRangeDrag(el) {
     const view = el?.ownerDocument?.defaultView;
-    if (!view || !(el instanceof view.HTMLInputElement) || String(el.type).toLowerCase() !== 'range' || el.disabled) return null;
+    // Disabled also by an enclosing disabled fieldset (:disabled).
+    if (!view || !(el instanceof view.HTMLInputElement) || String(el.type).toLowerCase() !== 'range' || el.matches(':disabled')) return null;
     const setter = Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, 'value')?.set;
     const style = view.getComputedStyle(el);
     // Vertical by writing mode runs from the inline start (top, or bottom
@@ -2115,7 +2116,7 @@
     const view = doc?.defaultView;
     if (!view) return null;
     const tag = String(el.tagName || '').toUpperCase();
-    const field = !el.disabled && (tag === 'TEXTAREA'
+    const field = !el.matches?.(':disabled') && (tag === 'TEXTAREA'
       || (tag === 'INPUT' && /^(text|search|url|tel|password)?$/.test(String(el.getAttribute('type') || '').toLowerCase()))) ? el : null;
     if (!field) {
       if (el.closest?.('a[href],img,[draggable="true"],button,select,option,summary,input,textarea')) return null;
