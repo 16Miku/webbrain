@@ -226,6 +226,46 @@ test('content-script vision input (Firefox path) clicks, double-clicks, focuses,
   }
 });
 
+test('content-script vision drag (Firefox path) moves and releases in a same-origin frame\'s own coordinates', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    // A slider inside a same-origin frame at (500, 400) of the page, with a 2 px frame border.
+    const frame = `<style>body{margin:0}#s{position:absolute;left:20px;top:20px;width:300px;height:30px;background:#ddd}</style><div id="s"></div>
+      <script>window.events=[];const s=document.getElementById('s');let down=false;
+      s.addEventListener('mousedown',e=>{down=true;events.push(['down',e.clientX,e.clientY])});
+      document.addEventListener('mousemove',e=>{if(down)events.push(['move',e.clientX,e.clientY])});
+      document.addEventListener('pointerup',e=>events.push(['pointerup',e.clientX,e.clientY]));
+      document.addEventListener('mouseup',e=>{down=false;events.push(['up',e.clientX,e.clientY])});<\/script>`;
+    await page.setContent(`<!doctype html><style>body{margin:0}iframe{position:absolute;left:500px;top:400px;width:400px;height:150px;border:2px solid #000}</style>
+      <iframe srcdoc="${frame.replace(/"/g, '&quot;')}"></iframe>`);
+    await page.waitForFunction(() => document.querySelector('iframe').contentWindow?.events);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    // Page point (532, 437) is frame point (30, 35): 500 + 2 border + 30.
+    const result = await page.evaluate(p => window.__visionInput(p), { type: 'drag', x: 532, y: 437, toX: 782, toY: 437, steps: 5 });
+    assert.equal(result.success, true, JSON.stringify(result));
+    const events = await page.evaluate(() => document.querySelector('iframe').contentWindow.events);
+    const moves = events.filter(event => event[0] === 'move');
+    const up = events.find(event => event[0] === 'up');
+    const pointerUp = events.find(event => event[0] === 'pointerup');
+    assert.deepEqual(events[0], ['down', 30, 35], JSON.stringify(events));
+    assert.deepEqual(moves.at(-1), ['move', 280, 35], JSON.stringify(events));
+    assert.deepEqual(up, ['up', 280, 35], `the release is where the last move was, in frame coordinates: ${JSON.stringify(events)}`);
+    assert.deepEqual(pointerUp, ['pointerup', 280, 35], JSON.stringify(events));
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision clicks (Firefox path) never open a native file chooser', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {

@@ -1810,19 +1810,31 @@
         const steps = Math.min(40, Math.max(2, Math.floor(Number(params.steps) || 12)));
         hover(el);
         pointer(el, 'pointerdown', { button: 0, buttons: 1 }); mouse(el, 'mousedown', { button: 0, buttons: 1, detail: 1 });
+        // Every point, the release included, is given in the coordinates of
+        // the document under it (a same-origin frame has its own), so the
+        // events a slider or canvas reads all agree. A point with nothing
+        // under it keeps the offset of the last frame that had something.
+        let offsetX = x - cx;
+        let offsetY = y - cy;
+        const pointAt = (at, px, py) => {
+          if (at) { offsetX = px - at.cx; offsetY = py - at.cy; }
+          return { clientX: px - offsetX, clientY: py - offsetY, screenX: px + (window.screenX || 0), screenY: py + (window.screenY || 0) };
+        };
         let last = el;
         for (let i = 1; i <= steps; i++) {
           const px = x + (toX - x) * (i / steps);
           const py = y + (toY - y) * (i / steps);
           const at = _visionTargetAt(px, py);
           last = at?.el || last;
-          const moveInit = { button: 0, buttons: 1, clientX: at ? at.cx : px, clientY: at ? at.cy : py };
+          const moveInit = { button: 0, buttons: 1, ...pointAt(at, px, py) };
           last.dispatchEvent(new PointerCtor('pointermove', init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...moveInit })));
           last.dispatchEvent(new view.MouseEvent('mousemove', init(moveInit)));
         }
-        const endInit = { button: 0, buttons: 0, clientX: toX, clientY: toY };
-        last.dispatchEvent(new PointerCtor('pointerup', init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...endInit })));
-        last.dispatchEvent(new view.MouseEvent('mouseup', init({ ...endInit, detail: 1 })));
+        const end = _visionTargetAt(toX, toY);
+        const releaseTarget = end?.el || last;
+        const endInit = { button: 0, buttons: 0, ...pointAt(end, toX, toY) };
+        releaseTarget.dispatchEvent(new PointerCtor('pointerup', init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...endInit })));
+        releaseTarget.dispatchEvent(new view.MouseEvent('mouseup', init({ ...endInit, detail: 1 })));
         return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe };
       }
       hover(el);

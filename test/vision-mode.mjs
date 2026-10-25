@@ -610,6 +610,17 @@ test('a blocked file chooser is reported in vision terms in both builds', () => 
   }
 });
 
+test('content scripts: the vision input path is the same in both builds', () => {
+  const visionBlock = file => {
+    const source = read(file);
+    const start = source.indexOf('  function _visionTargetAt(');
+    const end = source.indexOf('\n  }\n', source.indexOf('  function visionInput(')) + 4;
+    assert.ok(start > 0 && end > start, file);
+    return source.slice(start, end);
+  };
+  assert.equal(visionBlock('src/firefox/src/content/content.js'), visionBlock('src/chrome/src/content/content.js'));
+});
+
 test('micro screen changes: a caret, a clock or a spinner settle; a menu or a toast does not', () => {
   const { isMicroScreenChange } = runtimeModule;
   const width = 1296, height = 810;
