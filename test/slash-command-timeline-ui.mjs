@@ -271,32 +271,52 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         assert.deepEqual(result, { complete: [...prefix, { role: 'assistant', text: 'Final assistant reply' }], incomplete: prefix });
       }));
 
-      await t.test('a slash response is revealed above a long in-flight answer without replacing the stream cursor', () => fixture(async page => {
-        const initial = await page.evaluate(async () => {
-          const cursor = currentAssistantEl.querySelector('.message-text');
-          cursor.innerHTML = Array.from({ length: 100 }, (_, i) => '<p>Streaming answer line ' + i + '</p>').join('');
-          streamedAssistantTextByEl.set(cursor, 'Original streaming state');
-          window.streamCursor = cursor;
-          await parseSlashCommands('/progress');
-          const card = currentAssistantEl.querySelector('.slash-command-output');
-          const rect = card.getBoundingClientRect(), viewport = transcript.getBoundingClientRect();
-          return { visible: rect.bottom > viewport.top && rect.top < viewport.bottom, sameCursor: currentAssistantEl.querySelector('.message-text') === cursor };
-        });
-        assert.deepEqual(initial, { visible: true, sameCursor: true });
-        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-        const afterFrame = await page.evaluate(() => {
-          scrollToBottom(); // Subsequent stream events must respect the revealed card.
-          const rect = currentAssistantEl.querySelector('.slash-command-output').getBoundingClientRect();
-          const viewport = transcript.getBoundingClientRect();
-          return {
-            visible: rect.bottom > viewport.top && rect.top < viewport.bottom,
-            stream: getStreamedAssistantText(streamCursor),
-            paragraphs: streamCursor.querySelectorAll('p').length,
-            reading: chatUserChoseReadingPosition && !chatAutoFollow,
-          };
-        });
-        assert.deepEqual(afterFrame, { visible: true, stream: 'Original streaming state', paragraphs: 100, reading: true });
-      }));
+      for (const connectedTurn of [true, false]) {
+        await t.test(`a slash response remains visible above a long ${connectedTurn ? 'connected' : 'scheduled'} answer until a forced jump`, () => fixture(async page => {
+          const initial = await page.evaluate(async connected => {
+            if (!connected) chatTurnIsConnected = () => false;
+            const cursor = currentAssistantEl.querySelector('.message-text');
+            cursor.innerHTML = Array.from({ length: 100 }, (_, i) => '<p>Streaming answer line ' + i + '</p>').join('');
+            streamedAssistantTextByEl.set(cursor, 'Original streaming state');
+            window.streamCursor = cursor;
+            await parseSlashCommands('/progress');
+            const card = currentAssistantEl.querySelector('.slash-command-output');
+            const rect = card.getBoundingClientRect(), viewport = transcript.getBoundingClientRect();
+            return { visible: rect.bottom > viewport.top && rect.top < viewport.bottom, sameCursor: currentAssistantEl.querySelector('.message-text') === cursor };
+          }, connectedTurn);
+          assert.deepEqual(initial, { visible: true, sameCursor: true });
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          const afterFrame = await page.evaluate(() => {
+            scrollToBottom(); // Subsequent stream events must respect the revealed card.
+            const rect = currentAssistantEl.querySelector('.slash-command-output').getBoundingClientRect();
+            const viewport = transcript.getBoundingClientRect();
+            return {
+              visible: rect.bottom > viewport.top && rect.top < viewport.bottom,
+              stream: getStreamedAssistantText(streamCursor),
+              paragraphs: streamCursor.querySelectorAll('p').length,
+              reading: chatUserChoseReadingPosition && !chatAutoFollow,
+            };
+          });
+          assert.deepEqual(afterFrame, { visible: true, stream: 'Original streaming state', paragraphs: 100, reading: true });
+          const forced = await page.evaluate(() => {
+            scrollToBottom({ force: true });
+            return {
+              following: chatAutoFollow && !chatUserChoseReadingPosition,
+              atBottom: Math.abs(transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop) < 2,
+            };
+          });
+          assert.deepEqual(forced, { following: true, atBottom: true });
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          const continued = await page.evaluate(() => {
+            const next = document.createElement('p');
+            next.textContent = 'Next streamed paragraph';
+            streamCursor.appendChild(next);
+            scrollToBottom();
+            return Math.abs(transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop) < 2;
+          });
+          assert.equal(continued, true, 'A forced jump resumes following subsequent output');
+        }));
+      }
 
       await t.test('Markdown export keeps inline system output and the final assistant reply distinct', () => fixture(async page => {
         const exported = await page.evaluate(async () => {

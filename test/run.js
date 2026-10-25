@@ -57642,7 +57642,7 @@ test('sidepanel auto-follow bypasses smooth-scroll lag while messages grow', () 
     );
     assert.match(
       panel,
-      /function scrollToBottom\(\{ force = false, reveal = null \} = \{\}\) \{[\s\S]*?if \(force && chatTurnIsConnected\(\)\) \{[\s\S]*?chatAutoFollow = true;[\s\S]*?chatUserChoseReadingPosition = false;[\s\S]*?if \(!force && chatTurnIsConnected\(\) && !chatAutoFollow[\s\S]*?chatUserChoseReadingPosition \|\| chatTurnIsRunning\(\) \|\| chatTurnNeedsReadingNavigation\(\)[\s\S]*?pinChatToBottom\(container\);[\s\S]*?requestAnimationFrame\(\(\) => \{[\s\S]*?pinAndReveal\(\);[\s\S]*?\}\);[\s\S]*?\}/,
+      /function scrollToBottom\(\{ force = false, reveal = null \} = \{\}\) \{[\s\S]*?if \(force\) \{[\s\S]*?chatAutoFollow = true;[\s\S]*?chatUserChoseReadingPosition = false;[\s\S]*?if \(!force && !chatAutoFollow[\s\S]*?chatUserChoseReadingPosition[\s\S]*?chatTurnIsConnected\(\) && \(chatTurnIsRunning\(\) \|\| chatTurnNeedsReadingNavigation\(\)[\s\S]*?pinChatToBottom\(container\);[\s\S]*?requestAnimationFrame\(\(\) => \{[\s\S]*?pinAndReveal\(\);[\s\S]*?\}\);[\s\S]*?\}/,
       `${label}: auto-follow should re-pin after the next layout frame`,
     );
   }

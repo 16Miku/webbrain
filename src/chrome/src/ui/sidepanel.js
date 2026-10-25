@@ -14677,12 +14677,13 @@ function scrollToBottom({ force = false, reveal = null } = {}) {
   // A forced jump deliberately takes the reader to the live edge (blocking
   // prompts, slash-command output, or the navigation pill). Keep subsequent
   // deltas visible until the reader scrolls upward again.
-  if (force && chatTurnIsConnected()) {
+  if (force) {
     chatAutoFollow = true;
     chatUserChoseReadingPosition = false;
   }
-  if (!force && chatTurnIsConnected() && !chatAutoFollow
-      && (chatUserChoseReadingPosition || chatTurnIsRunning() || chatTurnNeedsReadingNavigation())) {
+  if (!force && !chatAutoFollow
+      && (chatUserChoseReadingPosition
+        || (chatTurnIsConnected() && (chatTurnIsRunning() || chatTurnNeedsReadingNavigation())))) {
     scheduleChatNavigationUpdate();
     return;
   }
@@ -14695,10 +14696,8 @@ function scrollToBottom({ force = false, reveal = null } = {}) {
     if (reveal?.isConnected
         && reveal.getBoundingClientRect().top < container.getBoundingClientRect().top) {
       reveal.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-      if (chatTurnIsConnected()) {
-        chatAutoFollow = false;
-        chatUserChoseReadingPosition = true;
-      }
+      chatAutoFollow = false;
+      chatUserChoseReadingPosition = true;
     }
   };
   pinAndReveal();
@@ -14719,7 +14718,7 @@ chatContainerEl?.addEventListener('pointermove', (event) => {
   if (event.buttons) markChatUserScrollIntent();
 }, { passive: true });
 chatContainerEl?.addEventListener('scroll', () => {
-  if (chatTurnIsConnected() && chatUserScrollActive) {
+  if ((chatTurnIsConnected() || chatUserChoseReadingPosition) && chatUserScrollActive) {
     const distanceToBottom = chatContainerEl.scrollHeight
       - chatContainerEl.scrollTop
       - chatContainerEl.clientHeight;
