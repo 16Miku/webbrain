@@ -247,6 +247,29 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       assert.ok(results.some(text => /screen changed near this point/.test(text)), results.join('\n'));
     });
 
+    test(`${label}: a drag after an earlier action of the batch is re-checked at both ends`, async () => {
+      // The click draws a block at CSS 650–810 x 420–500. The drag starts far
+      // from it; only its end (model 650,420 = CSS 722,467) sits on the block.
+      for (const [end, refused] of [[{ end_x: 650, end_y: 420 }, true], [{ end_x: 1100, end_y: 150 }, false]]) {
+        const { agent, requests, platform } = runAgent(step => {
+          if (step === 1) return { toolCalls: [call('click_at', { x: 200, y: 150 }), call('drag_at', { start_x: 100, start_y: 700, ...end })] };
+          if (step === 2) return { toolCalls: [call('done', { summary: 'Done.', outcome: 'partial' })] };
+          return { content: 'done' };
+        }, { onDispatch: (_name, _args, scene) => { scene.rects.push({ x: 650, y: 420, w: 160, h: 80, color: [0, 160, 0] }); } });
+        const tab = nextTab++;
+        await runLoop(agent, tab, streaming);
+        const drags = platform.filter(entry => entry.kind === 'drag');
+        const results = requests[1].messages.filter(message => message.role === 'tool').map(message => String(message.content));
+        if (refused) {
+          assert.equal(drags.length, 0, JSON.stringify(platform));
+          assert.ok(results.some(text => /screen changed near the drag's end point since you read it.*choose the points again/.test(text)), results.join('\n'));
+        } else {
+          assert.equal(drags.length, 1, results.join('\n'));
+          assert.ok(!results.some(text => /Not dispatched/.test(text)), results.join('\n'));
+        }
+      }
+    });
+
     test(`${label}: scroll_at, hover_at, drag_at and zoom map points through the session`, async () => {
       const { agent, requests, platform } = runAgent(step => {
         if (step === 1) return { toolCalls: [call('scroll_at', { direction: 'down', amount: 3, x: 648, y: 405 })] };
@@ -641,6 +664,49 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       } finally {
         Object.assign(api.tabs, saved);
       }
+    });
+
+    test('chrome: a late-tab watch that has seen nothing stays armed, and a tab opened while the screen settles is rerouted before the update', async () => {
+      const { agent, scene } = runAgent(() => ({ content: 'done' }));
+      agent._effectiveRunMode = () => 'act';
+      const tab = nextTab++;
+      const messages = [];
+      await agent._visionEnsureKeyframe(tab, messages, () => {});
+      assert.equal(visionMessages(messages).length, 1, 'a first frame');
+      const redirects = [];
+      agent._redirectTargetBlankClick = async (tabId, beforeTabIds) => {
+        redirects.push({ tabId, before: [...beforeTabIds] });
+        scene.url = 'https://news.example.test/late';
+        scene.rects = [{ x: 0, y: 0, w: 1440, h: 900, color: [10, 10, 10] }];
+        return { redirected: true, url: scene.url };
+      };
+      const watch = { opened: [], listening: true, stop() { this.listening = false; } };
+      agent._visionLateTabWatches = new Map([[tab, { watch, beforeTabIds: new Set([tab]), timer: null }]]);
+      // Nothing opened yet: the update goes ahead and the watch stays armed.
+      assert.equal(await agent._visionPlatformLateTab(tab), null);
+      assert.equal(agent._visionLateTabWatches.get(tab)?.watch, watch);
+      assert.equal(watch.listening, true);
+      // The page opens the tab while the update's screen settles.
+      const settle = agent._visionCaptureSettled;
+      let captures = 0;
+      agent._visionCaptureSettled = async function (...args) {
+        const frame = await settle.apply(this, args);
+        if (++captures === 1) watch.opened.push(4242);
+        return frame;
+      };
+      const update = await agent._visionObserveAfterBatch(tab, messages, () => {}, { toolCalls: [call('click_at', { x: 1, y: 1 })] });
+      assert.deepEqual(redirects, [{ tabId: tab, before: [tab] }], 'rerouted before the update');
+      assert.equal(captures, 2, 'and the screen read again');
+      assert.equal(update?.kind, 'keyframe', JSON.stringify(update));
+      assert.match(textOf(visionMessages(messages).at(-1)), /full viewport \(page changed\)/);
+      assert.equal(agent._visionLateTabWatches.has(tab), false, 'a rerouted watch is done');
+      assert.equal(watch.listening, false);
+      // A watch past its deadline that saw nothing is dropped, rerouting nothing.
+      const expired = { opened: [], listening: false, stop() {} };
+      agent._visionLateTabWatches.set(tab, { watch: expired, beforeTabIds: new Set([tab]), timer: null });
+      assert.equal(await agent._visionPlatformLateTab(tab), null);
+      assert.equal(agent._visionLateTabWatches.has(tab), false);
+      assert.equal(redirects.length, 1);
     });
   }
 

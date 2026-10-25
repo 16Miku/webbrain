@@ -490,12 +490,18 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       this._visionTraceNote(tabId, 'vision_frame_error', { stage, error: errorText(error) });
       return { kind: 'error' };
     };
-    // A tab a click of this batch opened late is rerouted into this tab
-    // first, so the update shows what the click opened (Chrome only).
-    try { await this._visionPlatformLateTab?.(tabId); } catch (error) { if (isControlFlowError(error)) throw error; }
+    // A tab a click opened late is rerouted into this tab first, so the
+    // update shows what the click opened (Chrome only); one that opens while
+    // the screen settles is rerouted and the screen read again.
+    const rerouteLateTab = async () => {
+      try { return await this._visionPlatformLateTab?.(tabId); }
+      catch (error) { if (isControlFlowError(error)) throw error; return null; }
+    };
+    await rerouteLateTab();
     let frame;
     try {
       frame = await this._visionCaptureSettled(tabId, state);
+      if ((await rerouteLateTab())?.redirected) frame = await this._visionCaptureSettled(tabId, state);
     } catch (error) {
       if (isControlFlowError(error)) throw error;
       return failed('observe', error);
@@ -640,15 +646,19 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
 
   /**
    * Before a coordinate action that follows another action in the same
-   * batch: refuse it when the screen changed near its point.
+   * batch: refuse it when the screen changed near its point. `cssPoint` may
+   * be a list (a drag's start and end), checked against one fresh capture;
+   * a point's `label` names it in the refusal.
    */
   proto._visionStabilityBlock = async function _visionStabilityBlock(tabId, cssPoint) {
     const state = this._visionRunState(tabId);
     const session = this._visionSessions?.get(tabId);
     if (!state.active || !session?.keyframe || !session.seenPixels) return null;
+    const points = (Array.isArray(cssPoint) ? cssPoint : [cssPoint]).filter(Boolean);
+    const which = points.length > 1 ? 'these points' : 'this point';
     const refuse = reason => ({
       success: false, dispatched: false, noDispatch: true, visionScreenChanged: true,
-      error: `Not dispatched: ${reason}. Look at the updated screen WebBrain shows next and choose the point again.`,
+      error: `Not dispatched: ${reason}. Look at the updated screen WebBrain shows next and choose the ${points.length > 1 ? 'points' : 'point'} again.`,
     });
     let frame;
     try { frame = await this._visionCaptureFrame(tabId, state); }
@@ -657,30 +667,49 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       // The point was chosen before the earlier action; without a fresh
       // capture nothing shows it is still right.
       session.forceKeyframe = true;
-      return refuse('WebBrain could not re-check the screen around this point');
+      return refuse(`WebBrain could not re-check the screen around ${which}`);
     }
-    if (frame.probe.url !== session.keyframe.url) return refuse('the page navigated since you read this point');
-    if (frame.size.width !== session.keyframe.width || frame.size.height !== session.keyframe.height) return refuse('the viewport changed since you read this point');
+    if (frame.probe.url !== session.keyframe.url) return refuse(`the page navigated since you read ${which}`);
+    if (frame.size.width !== session.keyframe.width || frame.size.height !== session.keyframe.height) return refuse(`the viewport changed since you read ${which}`);
     const d = diffFrames(session.seenPixels, frame.raster.pixels, frame.size.width, frame.size.height);
-    const kfPoint = session.cssToKeyframe(cssPoint.x, cssPoint.y);
-    if (d.regionAreaRatio > 0.6 || pointTouchesRegions(kfPoint, d.regions, STABILITY_MARGIN_PX)) {
-      return refuse('the screen changed near this point since you read it');
+    if (d.regionAreaRatio > 0.6) return refuse(`most of the screen changed since you read ${which}`);
+    for (const point of points) {
+      const kfPoint = session.cssToKeyframe(point.x, point.y);
+      if (pointTouchesRegions(kfPoint, d.regions, STABILITY_MARGIN_PX)) {
+        return refuse(`the screen changed near ${point.label || 'this point'} since you read it`);
+      }
     }
     return null;
   };
 
-  /** Resolve a model point to CSS for a native tool, with batch stability. */
-  proto._visionResolveForTool = async function _visionResolveForTool(tabId, point, vision) {
+  /**
+   * Resolve model points to CSS for a native tool, with batch stability:
+   * every point (a drag's end as much as its start) is re-checked against
+   * the live screen when an earlier action of the batch ran.
+   */
+  proto._visionResolvePointsForTool = async function _visionResolvePointsForTool(tabId, points, vision) {
     const state = this._visionRunState(tabId);
     if (!state.active) return { error: { success: false, noDispatch: true, error: 'Vision mode is not active for this run.' } };
     const session = this._visionSessionFor(tabId, state);
-    const resolved = session.resolvePoint(point);
-    if (!resolved.ok) return { error: { success: false, dispatched: false, noDispatch: true, visionCoordinateError: resolved.code, error: resolved.error } };
+    const resolved = [];
+    for (const point of points) {
+      const result = session.resolvePoint(point);
+      if (!result.ok) return { error: { success: false, dispatched: false, noDispatch: true, visionCoordinateError: result.code, error: result.error } };
+      resolved.push(result);
+    }
     if (vision?.needsStabilityCheck) {
-      const blocked = await this._visionStabilityBlock(tabId, { x: resolved.cssX, y: resolved.cssY });
+      const blocked = await this._visionStabilityBlock(tabId, resolved.map((result, index) => ({
+        x: result.cssX, y: result.cssY, ...(points[index].label ? { label: points[index].label } : {}),
+      })));
       if (blocked) return { error: blocked };
     }
     return { resolved, session, state };
+  };
+
+  /** Resolve one model point to CSS for a native tool, with batch stability. */
+  proto._visionResolveForTool = async function _visionResolveForTool(tabId, point, vision) {
+    const result = await this._visionResolvePointsForTool(tabId, [point], vision);
+    return result.error ? result : { resolved: result.resolved[0], session: result.session, state: result.state };
   };
 
   /**
@@ -787,11 +816,16 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       return { success: result?.success !== false, at: point, ...(result || {}) };
     }
     if (name === 'drag_at') {
-      const start = await this._visionResolveForTool(tabId, { x: args.start_x, y: args.start_y, image: args.image }, vision);
-      if (start.error) return start.error;
-      const end = session.resolvePoint({ x: args.end_x, y: args.end_y, image: args.image });
-      if (!end.ok) return { success: false, dispatched: false, noDispatch: true, visionCoordinateError: end.code, error: end.error };
-      const from = { x: start.resolved.cssX, y: start.resolved.cssY };
+      // Both ends are where the model read them: an earlier action of the
+      // batch that changed the drop target refuses the drag as surely as one
+      // that changed its start.
+      const ends = await this._visionResolvePointsForTool(tabId, [
+        { x: args.start_x, y: args.start_y, image: args.image, label: "the drag's start point" },
+        { x: args.end_x, y: args.end_y, image: args.image, label: "the drag's end point" },
+      ], vision);
+      if (ends.error) return ends.error;
+      const [start, end] = ends.resolved;
+      const from = { x: start.cssX, y: start.cssY };
       const to = { x: end.cssX, y: end.cssY };
       // A press and release on the same control is a click that no click
       // guard has seen; a frame WebBrain cannot inspect could hide one.

@@ -375,7 +375,8 @@ function urlWithoutFragment(url) {
 }
 
 // How long after a vision click a tab it opens is still rerouted into the
-// source tab (checked before the next screen update; see watchOpenedTabs).
+// source tab (checked at each screen update while the watch lasts; see
+// watchOpenedTabs and _visionPlatformLateTab).
 const VISION_LATE_TAB_WATCH_MS = 4000;
 
 // Tabs that `openerTabId` opens from now on (a target=_blank link or
@@ -20701,11 +20702,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   /**
    * A tab the last vision click opened after its quiet window (watchOpenedTabs)
    * is rerouted into this tab before the next screen update, as one opened at
-   * once would have been. `cancel` drops the watch (a new click or run).
+   * once would have been. A watch that has seen no tab yet stays armed until
+   * its deadline, for a tab the page opens while the screen settles or the
+   * model decides (a later update reroutes it); `cancel` drops the watch (a
+   * new click or run).
    */
   async _visionPlatformLateTab(tabId, { cancel = false } = {}) {
     const entry = this._visionLateTabWatches?.get(tabId);
     if (!entry) return null;
+    if (!cancel && !entry.watch.opened.length && entry.watch.listening) return null;
     this._visionLateTabWatches.delete(tabId);
     clearTimeout(entry.timer);
     entry.watch.stop();
