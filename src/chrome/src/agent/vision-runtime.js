@@ -27,8 +27,24 @@ import {
   VISION_SCROLL_STEP_CSS_PX, VISION_DEFAULT_SCROLL_STEPS, VISION_MAX_WAIT_SECONDS,
   translateVisionClick, visionKeyframeNote, visionPatchNote, visionNoChangeNote, visionZoomNote,
 } from './vision-tools.js';
+import {
+  VISION_MIN_DRAG_CSS_PX, visionMultiClickRefusal, visionDragRefusal, visionWheelRefusal,
+} from './vision-dom-probe.js';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// Errors that steer the run (stop, deadlines, page feedback) pass through;
+// anything else in a vision tool or screen update becomes a result or a note
+// instead of ending the run.
+function isControlFlowError(error) {
+  return error?.name === 'AbortError'
+    || error?.code === 'content_action_timeout'
+    || error?.code === 'page_feedback_pending';
+}
+
+function errorText(error) {
+  return String(error?.message || error || 'unknown error').slice(0, 200);
+}
 // A point within this many keyframe px of a change made earlier in the same
 // batch is refused: the model chose it on the screen before that change.
 const STABILITY_MARGIN_PX = 12;
@@ -55,32 +71,53 @@ function regionLabel(region) {
   return { x: Math.round(region.x), y: Math.round(region.y), width: Math.round(region.width), height: Math.round(region.height) };
 }
 
+/** Highest epoch and image number a history already used (session seeds). */
+export function visionHistoryCounters(messages) {
+  let epoch = 0;
+  let counter = 0;
+  if (Array.isArray(messages)) {
+    for (const message of messages) {
+      const tag = visionFrameTag(message);
+      if (!tag) continue;
+      epoch = Math.max(epoch, Number(tag.epoch) || 0);
+      for (const id of Array.isArray(tag.ids) ? tag.ids : []) {
+        const number = Number(String(id).slice(1));
+        if (Number.isFinite(number)) counter = Math.max(counter, number);
+      }
+    }
+  }
+  return { epoch, counter };
+}
+
 /**
- * Keep only the current vision epoch's images (latest frame, its patches and
- * zooms). Exported for the unit suite; agents call it via _pruneOldImages.
+ * Keep only the current screen's images: the LAST full frame in the history
+ * and the patches and zooms after it. Position decides, not the epoch
+ * number, which starts over in a new session (another model, a restarted
+ * worker). Exported for the unit suite; agents call it via _pruneOldImages.
  * Returns { messages, latestEpoch } where `messages` is a shallow copy.
  */
 export function pruneVisionImages(messages) {
   if (!Array.isArray(messages)) return { messages, latestEpoch: 0 };
-  let latestEpoch = 0;
   let latestKeyIndex = -1;
-  messages.forEach((message, index) => {
-    const tag = visionFrameTag(message);
-    if (!tag) return;
-    const epoch = Number(tag.epoch) || 0;
-    if (epoch >= latestEpoch) latestEpoch = epoch;
-    if (tag.kind === 'key' && epoch >= latestEpoch) latestKeyIndex = index;
-  });
-  if (!latestEpoch) return { messages, latestEpoch: 0 };
+  let retireIndex = -1;
+  for (let index = messages.length - 1; index >= 0 && latestKeyIndex < 0; index--) {
+    const tag = visionFrameTag(messages[index]);
+    if (tag?.kind === 'key') latestKeyIndex = index;
+    else if (tag?.kind === 'retire' && retireIndex < 0) retireIndex = index;
+  }
+  if (latestKeyIndex < 0) return { messages, latestEpoch: 0 };
+  const latestEpoch = Math.max(1, Number(visionFrameTag(messages[latestKeyIndex]).epoch) || 1);
+  // A run whose first capture failed retires the last frame: it showed an
+  // earlier run's screen, and no point may be read from it any more.
+  const boundary = retireIndex > latestKeyIndex ? retireIndex : latestKeyIndex;
   const out = messages.map((message, index) => {
     const tag = visionFrameTag(message);
     if (!Array.isArray(message?.content)) return message;
-    const keep = tag ? (Number(tag.epoch) || 0) === latestEpoch : false;
-    if (tag && keep) return message;
+    if (tag && index >= boundary) return message;
     // Untagged screenshots older than the current frame (an Ask-mode capture
     // before an automatic switch to Act) are superseded by it too. User
     // attachments are never touched.
-    if (!tag && (index > latestKeyIndex || message.role !== 'user')) return message;
+    if (!tag && (index > boundary || message.role !== 'user')) return message;
     let inAttachments = false;
     let changed = false;
     const content = message.content.map(block => {
@@ -121,29 +158,88 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     return state.active ? { coordinates: state.coordinates } : null;
   };
 
-  /** Freeze the setting for the length of one run (see vision-mode.js). */
+  /**
+   * Freeze the setting for the length of one run (see vision-mode.js). The
+   * previous run's screen is retired: a run acts only on frames it captured
+   * itself, so a failed first capture can never leave the model aiming at
+   * the last run's page.
+   */
   proto._beginVisionRun = function _beginVisionRun(tabId) {
     if (!this._visionRunSnapshots) this._visionRunSnapshots = new Map();
     this._visionRunSnapshots.set(tabId, {
       setting: normalizeVisionModeSetting(this.visionMode, 'off'),
       quality: normalizeVisionQuality(this.visionQuality),
     });
+    this._visionSessions?.get(tabId)?.retireKeyframe?.();
   };
 
-  proto._endVisionRun = function _endVisionRun(tabId) {
-    this._visionRunSnapshots?.delete(tabId);
-    this._visionBatches?.delete(tabId);
+  /** `previous` is the snapshot of an enclosing run on the same tab, if any. */
+  proto._endVisionRun = function _endVisionRun(tabId, previous = null) {
+    if (previous) this._visionRunSnapshots?.set(tabId, previous);
+    else this._visionRunSnapshots?.delete(tabId);
+  };
+
+  /** A closed tab or cleared conversation drops its screen state. */
+  proto._visionForgetTab = function _visionForgetTab(tabId) {
+    this._visionSessions?.delete(tabId);
+    this._visionProbeContexts?.delete(tabId);
   };
 
   proto._visionSessionFor = function _visionSessionFor(tabId, state) {
     if (!this._visionSessions) this._visionSessions = new Map();
-    let session = this._visionSessions.get(tabId);
-    if (!session || session.coordinates !== state.coordinates || session.profileId !== state.profileId) {
-      session = new VisionSession({ coordinates: state.coordinates });
-      session.profileId = state.profileId;
-      this._visionSessions.set(tabId, session);
+    const previous = this._visionSessions.get(tabId);
+    if (previous && previous.coordinates === state.coordinates && previous.profileId === state.profileId) return previous;
+    // A new session (first use, another model, a restarted worker) continues
+    // the history's numbering so its ids and epochs never repeat.
+    const history = visionHistoryCounters(this.conversations?.get?.(tabId));
+    const session = new VisionSession({
+      coordinates: state.coordinates,
+      startEpoch: Math.max(history.epoch, previous?.epoch || 0),
+      startCounter: Math.max(history.counter, previous?.counter || 0),
+    });
+    session.profileId = state.profileId;
+    if (previous) {
+      for (const [id, retired] of previous.retired) session.retired.set(id, retired);
+      for (const [id, image] of previous.images) session.retired.set(id, { epoch: image.epoch, replacedBy: null });
     }
+    this._visionSessions.set(tabId, session);
     return session;
+  };
+
+  /** What is under CSS points (vision-dom-probe.js); null when it cannot be read. */
+  proto._visionDomProbe = async function _visionDomProbe(tabId, request) {
+    if (typeof this._visionPlatformDomProbe !== 'function') return null;
+    try {
+      return await this._visionPlatformDomProbe(tabId, request);
+    } catch (error) {
+      if (isControlFlowError(error)) throw error;
+      return null;
+    }
+  };
+
+  /**
+   * Checks right before a vision click is dispatched, in both builds: a
+   * native <select> is focused for type_text (its popup never shows in a
+   * screenshot), and a double/triple click that would repeat a control's
+   * action is refused. Returns { refusal } or { target }.
+   */
+  proto._visionClickPreflight = async function _visionClickPreflight(tabId, {
+    x, y, button = 'left', clickCount = 1, recipientGuarded = false, submitDetected = false,
+  } = {}) {
+    const probe = await this._visionDomProbe(tabId, { points: [{ x, y }], focusSelect: button === 'left' });
+    const point = probe?.points?.[0] || null;
+    if (point?.select && button === 'left') {
+      return {
+        refusal: {
+          success: false, dispatched: false, noDispatch: true, nativeSelect: true, tag: 'SELECT',
+          text: point.select.current, options: point.select.options,
+          error: `That point is a native dropdown (current: "${point.select.current}"). It is focused now: choose an option with type_text({text: "<option label>"}). Options: ${point.select.options.join(', ')}`,
+        },
+      };
+    }
+    const refusal = visionMultiClickRefusal(probe, { clickCount, recipientGuarded, submitDetected });
+    if (refusal) return { refusal };
+    return { target: point?.found ? { tag: point.tag, ...(point.role ? { role: point.role } : {}) } : null };
   };
 
   proto._visionTraceNote = function _visionTraceNote(tabId, note, data) {
@@ -171,7 +267,15 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     let dataUrl = await this._visionPlatformCapture(tabId, { probe, outWidth: size.width, outHeight: size.height });
     if (!dataUrl) throw new Error('The browser returned no screenshot.');
     if (this.screenshotRedaction && typeof this._redactScreenshotDataUrl === 'function') {
-      try { dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' }); } catch { /* keep the capture */ }
+      try {
+        // The capture spans the visual viewport (no scrollbars), so the
+        // redactor gets that box in page space rather than its own
+        // innerWidth-based viewport.
+        dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, {
+          coordinateSpace: 'page',
+          capturedCssBounds: { x: probe.scrollX || 0, y: probe.scrollY || 0, width: probe.cssWidth, height: probe.cssHeight },
+        });
+      } catch { /* keep the capture */ }
     }
     const raster = await this._visionRasterize(dataUrl, size.width, size.height);
     return { raster, probe, size, profile };
@@ -288,8 +392,11 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     try {
       return await this._visionPushKeyframe(tabId, messages, onUpdate, { state, reason });
     } catch (error) {
-      const message = `[SCREEN: the first screenshot could not be captured (${String(error?.message || error).slice(0, 160)}). Call take_screenshot to try again.]`;
-      messages.push(visionUserMessage(message, { epoch: 0, kind: 'error' }));
+      if (isControlFlowError(error)) throw error;
+      // The run starts with no screen (_beginVisionRun retired the last one);
+      // the tag retires the last frame in the history for the model too.
+      const message = `[SCREEN: the first screenshot could not be captured (${errorText(error).slice(0, 160)}). Earlier screenshots show an older screen and cannot be used for coordinates. Call take_screenshot to try again.]`;
+      messages.push(visionUserMessage(message, { epoch: 0, kind: 'retire' }));
       this._visionTraceNote(tabId, 'vision_frame_error', { stage: 'start', error: String(error?.message || error).slice(0, 200) });
       return null;
     }
@@ -323,16 +430,32 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       return { kind: 'zoom' };
     }
     if (!observe) return null;
+    const failed = (stage, error) => {
+      // The next update is a full frame; until then the model knows the
+      // screen it last saw may be out of date.
+      session.forceKeyframe = true;
+      messages.push(visionUserMessage(`[SCREEN: the screen could not be ${stage === 'observe' ? 'captured' : 'prepared'} after the action (${errorText(error).slice(0, 160)}). Call take_screenshot to look again.]`,
+        { epoch: session.epoch, kind: 'error' }));
+      this._visionTraceNote(tabId, 'vision_frame_error', { stage, error: errorText(error) });
+      return { kind: 'error' };
+    };
     let frame;
     try {
       frame = await this._visionCaptureSettled(tabId, state);
     } catch (error) {
-      session.forceKeyframe = true;
-      messages.push(visionUserMessage(`[SCREEN: the screen could not be captured after the action (${String(error?.message || error).slice(0, 160)}). Call take_screenshot to look again.]`,
-        { epoch: session.epoch, kind: 'error' }));
-      this._visionTraceNote(tabId, 'vision_frame_error', { stage: 'observe', error: String(error?.message || error).slice(0, 200) });
-      return { kind: 'error' };
+      if (isControlFlowError(error)) throw error;
+      return failed('observe', error);
     }
+    try {
+      return await this._visionObserveFrame(tabId, messages, onUpdate, { state, session, frame });
+    } catch (error) {
+      if (isControlFlowError(error)) throw error;
+      return failed('encode', error);
+    }
+  };
+
+  /** The part of _visionObserveAfterBatch after a settled capture. */
+  proto._visionObserveFrame = async function _visionObserveFrame(tabId, messages, onUpdate, { state, session, frame }) {
     const meta = {
       cssWidth: frame.probe.cssWidth, cssHeight: frame.probe.cssHeight,
       devicePixelRatio: frame.probe.devicePixelRatio, url: frame.probe.url,
@@ -437,13 +560,19 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     const state = this._visionRunState(tabId);
     const session = this._visionSessions?.get(tabId);
     if (!state.active || !session?.keyframe || !session.seenPixels) return null;
-    let frame;
-    try { frame = await this._visionCaptureFrame(tabId, state); }
-    catch { return null; }
     const refuse = reason => ({
       success: false, dispatched: false, noDispatch: true, visionScreenChanged: true,
       error: `Not dispatched: ${reason} after your previous action in this turn. Look at the updated screen WebBrain shows next and choose the point again.`,
     });
+    let frame;
+    try { frame = await this._visionCaptureFrame(tabId, state); }
+    catch (error) {
+      if (isControlFlowError(error)) throw error;
+      // The point was chosen before the earlier action; without a fresh
+      // capture nothing shows it is still right.
+      session.forceKeyframe = true;
+      return refuse('WebBrain could not re-check the screen');
+    }
     if (frame.probe.url !== session.keyframe.url) return refuse('the page navigated');
     if (frame.size.width !== session.keyframe.width || frame.size.height !== session.keyframe.height) return refuse('the viewport changed');
     const d = diffFrames(session.seenPixels, frame.raster.pixels, frame.size.width, frame.size.height);
@@ -468,8 +597,28 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     return { resolved, session, state };
   };
 
-  /** Execute take_screenshot, zoom, scroll_at, hover_at, drag_at and wait. */
+  /**
+   * Execute take_screenshot, zoom, scroll_at, hover_at, drag_at and wait. A
+   * failure becomes a tool result (no dispatch, or an unknown outcome once
+   * input may have been sent) instead of ending the run.
+   */
   proto._executeVisionTool = async function _executeVisionTool(tabId, name, args = {}, context = {}) {
+    const dispatch = { started: false };
+    try {
+      return await this._executeVisionToolInner(tabId, name, args, context, dispatch);
+    } catch (error) {
+      if (isControlFlowError(error)) throw error;
+      this._visionTraceNote(tabId, 'vision_tool_error', { tool: name, error: errorText(error), dispatched: dispatch.started });
+      if (dispatch.started) {
+        const session = this._visionSessions?.get(tabId);
+        if (session) session.forceKeyframe = true;
+        return { success: false, outcomeUnknown: true, error: `${name} failed while sending input (${errorText(error)}). Look at the next screen before repeating it.` };
+      }
+      return { success: false, dispatched: false, noDispatch: true, error: `${name} failed before any input was sent (${errorText(error)}).` };
+    }
+  };
+
+  proto._executeVisionToolInner = async function _executeVisionToolInner(tabId, name, args, context, dispatch) {
     const vision = context?._vision || null;
     const state = this._visionRunState(tabId);
     if (!state.active) {
@@ -493,6 +642,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       const probe = await this._visionPlatformProbe(tabId);
       const plan = planZoomImageSize({ regionWidth: region.cssRegion.width, regionHeight: region.cssRegion.height, devicePixelRatio: probe?.devicePixelRatio || 1, profile });
       let dataUrl = await this._visionPlatformCapture(tabId, { probe, cssRegion: region.cssRegion, outWidth: plan.width, outHeight: plan.height });
+      if (!dataUrl) throw new Error('The browser returned no screenshot.');
       if (this.screenshotRedaction && typeof this._redactScreenshotDataUrl === 'function') {
         try {
           // A crop is a page-space box; the redactor maps element rects into it.
@@ -532,9 +682,13 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
         const probe = await this._visionPlatformProbe(tabId);
         point = { x: (probe?.cssWidth || 800) / 2, y: (probe?.cssHeight || 600) / 2 };
       }
+      // A focused number field under the pointer takes the wheel as +/-.
+      const refused = visionWheelRefusal(await this._visionDomProbe(tabId, { points: [point] }));
+      if (refused) return { ...refused, at: point };
       const distance = steps * VISION_SCROLL_STEP_CSS_PX;
       const deltaX = direction === 'left' ? -distance : direction === 'right' ? distance : 0;
       const deltaY = direction === 'up' ? -distance : direction === 'down' ? distance : 0;
+      dispatch.started = true;
       const result = await this._visionPlatformWheel(tabId, { x: point.x, y: point.y, deltaX, deltaY });
       return { success: result?.success !== false, dispatched: result?.dispatched !== false, direction, amount: steps, at: point, ...(result || {}) };
     }
@@ -542,6 +696,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       const resolved = await this._visionResolveForTool(tabId, { x: args.x, y: args.y, image: args.image }, vision);
       if (resolved.error) return resolved.error;
       const point = { x: resolved.resolved.cssX, y: resolved.resolved.cssY };
+      dispatch.started = true;
       const result = await this._visionPlatformHover(tabId, point);
       return { success: result?.success !== false, at: point, ...(result || {}) };
     }
@@ -552,6 +707,13 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       if (!end.ok) return { success: false, dispatched: false, noDispatch: true, visionCoordinateError: end.code, error: end.error };
       const from = { x: start.resolved.cssX, y: start.resolved.cssY };
       const to = { x: end.cssX, y: end.cssY };
+      // A press and release on the same control is a click that no click
+      // guard has seen; a frame WebBrain cannot inspect could hide one.
+      const longEnough = Math.hypot(to.x - from.x, to.y - from.y) >= VISION_MIN_DRAG_CSS_PX;
+      const probe = longEnough ? await this._visionDomProbe(tabId, { points: [from, to], pair: true }) : null;
+      const refused = visionDragRefusal(probe, from, to);
+      if (refused) return { ...refused, from, to };
+      dispatch.started = true;
       const result = await this._visionPlatformDrag(tabId, { from, to, steps: 12 });
       return { success: result?.success !== false, from, to, ...(result || {}) };
     }

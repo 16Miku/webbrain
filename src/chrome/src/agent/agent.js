@@ -22,6 +22,7 @@ import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, 
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT, getVisionActPrompt } from './tools.js';
 import { installVisionRuntime } from './vision-runtime.js';
 import { VISION_NATIVE_TOOLS } from './vision-tools.js';
+import { visionDomProbeExpression } from './vision-dom-probe.js';
 import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
@@ -16103,6 +16104,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (tc._vision?.error) {
         const recovery = await recordPreparationFailure(toolIndex, tc._vision.tool || fnName, this._parseToolCallArgs(tc).args || {}, tc._vision.error);
         if (recovery) return recovery;
+        // The rest of the batch was planned on that point: type_text would
+        // type into whatever has focus. The model decides again.
+        if (interruptFailedBrowserAction(toolIndex, tc._vision.tool || fnName)) { navNotices.length = 0; break; }
         continue;
       }
       // Where this call's time goes before dispatch (_predispatchTimer), from
@@ -19322,11 +19326,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   _viewportCaptureClip(probe, cssW, cssH, scale = 1) {
     const dpr = Math.max(0.25, Number(probe?.dpr) || 1);
+    // The clip is in device-independent pixels: CSS px times browser zoom
+    // (the DPR already contains the zoom, so the scale stays scale / DPR).
+    const zoom = Math.max(0.25, Number(probe?.zoom) || 1);
     return {
-      x: Math.max(0, Number(probe?.scrollX) || 0),
-      y: Math.max(0, Number(probe?.scrollY) || 0),
-      width: cssW,
-      height: cssH,
+      x: Math.max(0, Number(probe?.scrollX) || 0) * zoom,
+      y: Math.max(0, Number(probe?.scrollY) || 0) * zoom,
+      width: cssW * zoom,
+      height: cssH * zoom,
       scale: scale / dpr,
     };
   }
@@ -20123,7 +20130,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         })()
       `);
-      return probe?.result?.value || null;
+      const value = probe?.result?.value || null;
+      if (value) {
+        // Browser zoom: capture clips are in CSS px x zoom (_viewportCaptureClip).
+        try {
+          const zoom = Number((await cdpClient.sendCommand(tabId, 'Page.getLayoutMetrics'))?.cssVisualViewport?.zoom);
+          if (zoom > 0) value.zoom = zoom;
+        } catch {}
+      }
+      return value;
     } catch {
       return null;
     }
@@ -20609,15 +20624,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       scrollX: Number.isFinite(Number(visual?.pageX)) ? Number(visual.pageX) : (Number(value.sx) || 0),
       scrollY: Number.isFinite(Number(visual?.pageY)) ? Number(visual.pageY) : (Number(value.sy) || 0),
       devicePixelRatio: Number(value.dpr) || 1,
+      // Browser zoom (CSS px -> device-independent px); part of the DPR.
+      zoom: Number(visual?.zoom) > 0 ? Number(visual.zoom) : 1,
       url,
     };
   }
 
   /**
    * Capture the viewport (or `cssRegion` of it) close to outWidth x
-   * outHeight. The compositor renders clip x scale x device pixel ratio, so
-   * the requested scale divides the DPR out; whatever size actually comes
-   * back is resampled to the plan by the runtime.
+   * outHeight. The clip is in device-independent pixels (CSS px x browser
+   * zoom) and the compositor renders clip x scale x device scale factor, so
+   * with the DPR (= device scale factor x zoom) divided out of the scale the
+   * output is outWidth wide. Whatever size actually comes back is resampled
+   * to the plan by the runtime.
    */
   async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight }) {
     await cdpClient.attach(tabId);
@@ -20625,16 +20644,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await this._preparePageForCapture(tabId);
     const region = cssRegion || { x: 0, y: 0, width: probe.cssWidth, height: probe.cssHeight };
     const dpr = Math.max(0.25, Number(probe?.devicePixelRatio) || 1);
+    const zoom = Math.max(0.25, Number(probe?.zoom) || 1);
     const scale = Math.max(0.05, Math.min(4, Number(outWidth) / (Math.max(1, region.width) * dpr)));
     const shot = await this._withIndicatorsHidden(tabId, () => cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
       format: 'jpeg',
       quality: 90,
       fromSurface: true,
       clip: {
-        x: (Number(probe?.scrollX) || 0) + region.x,
-        y: (Number(probe?.scrollY) || 0) + region.y,
-        width: Math.max(1, region.width),
-        height: Math.max(1, region.height),
+        x: ((Number(probe?.scrollX) || 0) + region.x) * zoom,
+        y: ((Number(probe?.scrollY) || 0) + region.y) * zoom,
+        width: Math.max(1, region.width) * zoom,
+        height: Math.max(1, region.height) * zoom,
         scale,
       },
     }));
@@ -20662,8 +20682,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // pointer already rests at the point.
     await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.max(0, x - 1), y: Math.max(0, y - 1), button: 'none', buttons: 0 });
     await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 });
-    const hit = await this._visionHitTest(tabId, x, y);
-    return { success: true, dispatched: true, method: 'cdp-hover', ...(hit?.target ? { target: hit.target } : {}) };
+    const point = (await this._visionDomProbe(tabId, { points: [{ x, y }] }))?.points?.[0];
+    const target = point?.found ? { tag: point.tag, ...(point.role ? { role: point.role } : {}) } : null;
+    return { success: true, dispatched: true, method: 'cdp-hover', ...(target ? { target } : {}) };
   }
 
   async _visionPlatformDrag(tabId, { from, to, steps = 12 }) {
@@ -20691,30 +20712,46 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { success: true, dispatched: pressed, method: 'cdp-drag' };
   }
 
-  /** Tag and role under a CSS point (no accessible name: it can identify the signed-in user). */
-  async _visionHitTest(tabId, x, y) {
+  /**
+   * What is under CSS points (vision-dom-probe.js), evaluated in an isolated
+   * world so page scripts cannot redefine the DOM methods the checks use. The
+   * world is created once per document (frame loader) and reused.
+   */
+  async _visionPlatformDomProbe(tabId, request) {
+    await cdpClient.attach(tabId);
+    await cdpClient.sendCommand(tabId, 'Runtime.enable');
+    if (!this._visionProbeContexts) this._visionProbeContexts = new Map();
+    let contextId = null;
     try {
-      const response = await cdpClient.evaluate(tabId, `(() => {
-        let el = document.elementFromPoint(${Number(x)}, ${Number(y)});
-        for (let depth = 0; el?.shadowRoot && depth < 8; depth++) {
-          const inner = el.shadowRoot.elementFromPoint(${Number(x)}, ${Number(y)});
-          if (!inner || inner === el) break;
-          el = inner;
-        }
-        if (!el) return null;
-        const select = el.closest ? el.closest('select') : null;
-        if (select) {
-          select.focus();
-          return { isSelect: true, current: select.options[select.selectedIndex]?.text?.trim() || '',
-            options: Array.from(select.options).slice(0, 60).map(option => option.text.trim()), target: { tag: 'select' } };
-        }
-        const role = el.getAttribute && el.getAttribute('role');
-        return { isSelect: false, target: { tag: String(el.tagName || '').toLowerCase(), ...(role ? { role: role.slice(0, 32) } : {}) } };
-      })()`);
-      return response?.result?.value || null;
-    } catch {
-      return null;
+      await cdpClient.sendCommand(tabId, 'Page.enable');
+      const frame = (await cdpClient.sendCommand(tabId, 'Page.getFrameTree'))?.frameTree?.frame;
+      const cached = this._visionProbeContexts.get(tabId);
+      if (frame?.id && cached?.frameId === frame.id && cached.loaderId === frame.loaderId) {
+        contextId = cached.contextId;
+      } else if (frame?.id) {
+        contextId = (await cdpClient.sendCommand(tabId, 'Page.createIsolatedWorld', {
+          frameId: frame.id, worldName: 'webbrain-vision-probe', grantUniveralAccess: false,
+        }))?.executionContextId || null;
+        if (contextId) this._visionProbeContexts.set(tabId, { frameId: frame.id, loaderId: frame.loaderId, contextId });
+      }
+    } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
+      contextId = null;
     }
+    let response;
+    try {
+      response = await cdpClient.sendCommand(tabId, 'Runtime.evaluate', {
+        expression: visionDomProbeExpression(request),
+        returnByValue: true,
+        ...(contextId ? { contextId } : {}),
+      });
+    } catch (error) {
+      // A context that went away with its document is made again next time.
+      this._visionProbeContexts.delete(tabId);
+      throw error;
+    }
+    if (response?.exceptionDetails) return null;
+    return response?.result?.value || null;
   }
 
   /**
@@ -20728,6 +20765,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     vision = null,
     messageRecipientGuardRequired = false,
     messageRecipientDispatchBinding = null,
+    detectedSubmitAction = null,
     throwIfAborted = () => {},
     markDispatched = () => {},
     cancelPressedPointer = async () => {},
@@ -20739,17 +20777,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     throwIfAborted();
     await cdpClient.attach(tabId);
     throwIfAborted();
-    // A native <select> opens an OS popup no screenshot can show; it is
-    // focused instead so type_text picks the option.
-    const hit = await this._visionHitTest(tabId, x, y);
+    // A native <select> opens an OS popup no screenshot can show (it is
+    // focused for type_text instead), and a double/triple click on a control
+    // would repeat the one action the checks approved.
+    const preflight = await this._visionClickPreflight(tabId, {
+      x, y, button, clickCount,
+      recipientGuarded: messageRecipientGuardRequired === true,
+      submitDetected: detectedSubmitAction?.isSubmit === true,
+    });
     throwIfAborted();
-    if (hit?.isSelect && button === 'left') {
-      return {
-        success: false, dispatched: false, noDispatch: true, nativeSelect: true, tag: 'SELECT', text: hit.current,
-        options: hit.options,
-        error: `That point is a native dropdown (current: "${hit.current}"). It is focused now: choose an option with type_text({text: "<option label>"}). Options: ${hit.options.join(', ')}`,
-      };
-    }
+    if (preflight.refusal) return preflight.refusal;
+    const hit = { target: preflight.target };
     const beforeTabIds = new Set((await chrome.tabs.query({})).map(tab => tab.id));
     const progressBefore = await this._clickProgressSnapshot(tabId);
     throwIfAborted();
@@ -32254,7 +32292,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '', executionContext = null) {
     const name = String(toolName || '');
     const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys', 'upload_file']);
-    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool']);
+    // drag_at (vision mode) presses and releases where the model points; no
+    // recipient binding covers that, and a short drag is a click.
+    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool', 'drag_at']);
     if (!ordinaryGuardedTools.has(name) && !unbindableDispatchTools.has(name)) return null;
     if (name === 'press_keys' && String(args?.key || '') !== 'Enter') return null;
     if (name === 'set_field' && args?.submit !== true) return null;
@@ -32304,7 +32344,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? (!uploadSourceKey
             ? 'Attachment blocked: use exactly one attachmentId, downloadId, or absolute filePath. Remove fallback sources and retry with the same authorized recipient.'
             : 'Attachment blocked: choose an exact, unique file-input selector in the active authorized conversation. Re-read the file-input inventory before retrying.')
-          : `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
+          : name === 'drag_at'
+            ? 'Message action blocked: drag_at cannot bind its effects to the verified active recipient. Use click_at on the control, or a single Enter press in the visible composer, instead.'
+            : `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
       };
     }
 
@@ -37469,6 +37511,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     void cdpClient.cleanupTab(tabId).catch(() => {});
     this._cancelPendingPlans(tabId, 'tab closed');
     this._isPdfTabCache.delete(tabId);
+    this._visionForgetTab?.(tabId);
     this._lastTypeFieldIdent?.delete(tabId);
     this._lastTypeFieldEpoch?.delete(tabId);
     // A cleared conversation or closed tab takes its filled credentials along.
@@ -51006,6 +51049,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             vision: dispatchContext._vision,
             messageRecipientGuardRequired,
             messageRecipientDispatchBinding,
+            detectedSubmitAction: dispatchContext.detectedSubmitAction || null,
             throwIfAborted: throwIfEarlyCdpAborted,
             markDispatched: markEarlyCdpDispatched,
             cancelPressedPointer: cancelEarlyCdpPressedPointer,
@@ -55730,6 +55774,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode is resolved once, now that the run's mode and provider are
     // known, and holds for every tool list, prompt and guard of this run.
     const previousLeanRun = this._leanRuns?.get(tabId);
+    const previousVisionRun = this._visionRunSnapshots?.get(tabId);
     this._beginLeanRun(tabId, mode);
     const previousBotMemory = this._botMemorySessions.get(tabId);
     let botMemorySession = null;
@@ -55773,7 +55818,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
-      this._endVisionRun(tabId);
+      this._endVisionRun(tabId, previousVisionRun);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousRunProviderOverride) this._runProviderOverrides.set(tabId, previousRunProviderOverride);
@@ -57779,6 +57824,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode is resolved once, now that the run's mode and provider are
     // known, and holds for every tool list, prompt and guard of this run.
     const previousLeanRun = this._leanRuns?.get(tabId);
+    const previousVisionRun = this._visionRunSnapshots?.get(tabId);
     this._beginLeanRun(tabId, mode);
     const previousBotMemory = this._botMemorySessions.get(tabId);
     let botMemorySession = null;
@@ -57821,7 +57867,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
-      this._endVisionRun(tabId);
+      this._endVisionRun(tabId, previousVisionRun);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousRunProviderOverride) this._runProviderOverrides.set(tabId, previousRunProviderOverride);

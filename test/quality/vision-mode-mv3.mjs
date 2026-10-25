@@ -15,8 +15,12 @@ import { fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
 //   node test/quality/vision-mode-mv3.mjs              DPR 1
 //   node test/quality/vision-mode-mv3.mjs --dpr=2      retina
 //   node test/quality/vision-mode-mv3.mjs --zoom=1.25  browser zoom 125%
+//   node test/quality/vision-mode-mv3.mjs --scroll=100 page scrolled 100 CSS px
+// Two colored markers (one fixed, one in the document) must appear in the
+// first frame exactly where the frame label's scale puts their CSS boxes.
 const dpr = Number((process.argv.find(arg => arg.startsWith('--dpr=')) || '--dpr=1').slice(6)) || 1;
 const zoom = Number((process.argv.find(arg => arg.startsWith('--zoom=')) || '--zoom=1').slice(7)) || 1;
+const scroll = Number((process.argv.find(arg => arg.startsWith('--scroll=')) || '--scroll=0').slice(9)) || 0;
 const out = path.resolve(process.env.WEBBRAIN_QUALITY_ARTIFACTS || 'ci/artifacts/vision-mode-mv3');
 await fs.mkdir(out, { recursive: true });
 
@@ -24,15 +28,24 @@ await fs.mkdir(out, { recursive: true });
 const LAYOUT = {
   name: { x: 60, y: 140, w: 320, h: 36 },
   submit: { x: 60, y: 220, w: 180, h: 44 },
+  // Viewport-fixed and document-positioned markers for the pixel check.
+  fixedMarker: { x: 700, y: 60, w: 80, h: 40 },
+  pageMarker: { x: 600, y: 230, w: 60, h: 50 },
 };
 const body = `<!doctype html><meta charset="utf-8"><title>Vision MV3 fixture</title>
 <style>body{margin:0;font:16px sans-serif}h1{position:absolute;left:60px;top:40px;margin:0}
 #name{position:absolute;left:${LAYOUT.name.x}px;top:${LAYOUT.name.y}px;width:${LAYOUT.name.w}px;height:${LAYOUT.name.h}px;box-sizing:border-box;font:16px sans-serif}
 #submit{position:absolute;left:${LAYOUT.submit.x}px;top:${LAYOUT.submit.y}px;width:${LAYOUT.submit.w}px;height:${LAYOUT.submit.h}px;background:#1a73e8;color:#fff;border:0;font:16px sans-serif}
 #result{position:absolute;left:60px;top:300px;width:400px;height:30px}
-label{position:absolute;left:60px;top:112px}</style>
+label{position:absolute;left:60px;top:112px}
+#fixed-marker{position:fixed;left:${LAYOUT.fixedMarker.x}px;top:${LAYOUT.fixedMarker.y}px;width:${LAYOUT.fixedMarker.w}px;height:${LAYOUT.fixedMarker.h}px;background:rgb(255,0,255)}
+#page-marker{position:absolute;left:${LAYOUT.pageMarker.x}px;top:${LAYOUT.pageMarker.y}px;width:${LAYOUT.pageMarker.w}px;height:${LAYOUT.pageMarker.h}px;background:rgb(0,255,255)}
+#tall{position:absolute;left:0;top:0;width:1px;height:2400px}</style>
+<div id="tall"></div><div id="fixed-marker"></div><div id="page-marker"></div>
 <h1>Vision form</h1><label for="name">Name</label><input id="name" name="name" autocomplete="off"><button id="submit" type="button">Send name</button><div id="result" role="status"></div>
-<script>document.getElementById('submit').addEventListener('click', async () => {
+<script>// A hostile page cannot blind the dispatch checks: they run in an isolated world.
+Document.prototype.elementFromPoint = function () { return null; };
+document.getElementById('submit').addEventListener('click', async () => {
   const value = document.getElementById('name').value;
   await fetch('/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: value }) });
   document.getElementById('result').textContent = 'Saved: ' + value;
@@ -73,7 +86,7 @@ let keyframe = null;
 // label declares, as a model reading the label would.
 const centre = (rect, image) => ({
   x: Math.round((rect.x + rect.w / 2) / image.ratio),
-  y: Math.round((rect.y + rect.h / 2) / image.ratio),
+  y: Math.round((rect.y - scroll + rect.h / 2) / image.ratio),
 });
 
 const server = http.createServer(async (request, response) => {
@@ -101,17 +114,27 @@ const server = http.createServer(async (request, response) => {
           const key = /SCREENSHOT (f\d+)/.exec(label)?.[1];
           if (key && !frames.some(frame => frame.id === key)) {
             const declared = /(\d+)x(\d+) image; 1 image px = ([\d.]+) CSS px/.exec(label);
-            frames.push({ id: key, size, declared: declared ? { width: Number(declared[1]), height: Number(declared[2]), ratio: Number(declared[3]) } : null, call: providerCalls.length });
+            frames.push({ id: key, size, declared: declared ? { width: Number(declared[1]), height: Number(declared[2]), ratio: Number(declared[3]) } : null, call: providerCalls.length, ...(frames.length ? {} : { dataUrl: url }) });
           }
         }
       }
       keyframe = frames.at(-1)?.declared || null;
       const step = actionCalls++;
+      // Decide from the history, not a step count: WebBrain may set a
+      // response aside when the page changed while the model was thinking.
+      const results = new Map(input.messages.filter(message => message.role === 'tool').map(message => [message.tool_call_id, String(message.content)]));
+      const pairs = input.messages.filter(message => message.role === 'assistant').flatMap(message => message.tool_calls || [])
+        .map(item => ({ name: item.function.name, ok: /"success":true/.test(results.get(item.id) || '') }));
+      const typedAt = pairs.findLastIndex(pair => pair.name === 'type_text' && pair.ok);
+      const submitted = typedAt >= 0 && pairs.slice(typedAt + 1).some(pair => pair.name === 'click_at' && pair.ok);
       let call;
       if (!keyframe) call = { name: 'take_screenshot', args: {} };
-      else if (step === 0) call = { name: 'click_at', args: centre(LAYOUT.name, keyframe) };
-      else if (step === 1) call = { name: 'type_text', args: { text: 'Vision QA' } };
-      else if (step === 2) call = { name: 'click_at', args: centre(LAYOUT.submit, keyframe) };
+      else if (typedAt < 0) {
+        const last = pairs.at(-1);
+        call = last?.name === 'click_at' && last.ok
+          ? { name: 'type_text', args: { text: 'Vision QA' } }
+          : { name: 'click_at', args: centre(LAYOUT.name, keyframe) };
+      } else if (!submitted) call = { name: 'click_at', args: centre(LAYOUT.submit, keyframe) };
       else call = { name: 'done', args: { summary: 'The name was sent.', outcome: 'success' } };
       completion = { role: 'assistant', content: '', tool_calls: [{ id: `vision-${step}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) } }] };
     }
@@ -151,14 +174,18 @@ try {
     await harness.evaluate(async ({ tabId, zoom }) => chrome.tabs.setZoom(tabId, zoom), { tabId, zoom });
     await page.waitForFunction(expected => Math.abs(window.devicePixelRatio - expected) < 0.05, dpr * zoom);
   }
+  if (scroll) {
+    await page.evaluate(y => window.scrollTo(0, y), scroll);
+    await page.waitForFunction(y => Math.abs(window.scrollY - y) < 1, scroll);
+  }
   // What the scripted model knows about the screen: its CSS size.
-  cssViewport = await page.evaluate(() => ({ width: document.documentElement.clientWidth, height: document.documentElement.clientHeight, dpr: devicePixelRatio }));
+  cssViewport = await page.evaluate(() => ({ width: document.documentElement.clientWidth, height: document.documentElement.clientHeight, dpr: devicePixelRatio, scrollY: window.scrollY }));
   const started = performance.now();
   const result = await message('chat', { tabId, text: 'Type Vision QA into the Name field and press Send name.', mode: 'act', requestId: 'vision-mv3', locale: 'en' });
   const elapsedMs = Math.round(performance.now() - started);
   const events = await harness.evaluate(() => events);
   const value = await page.locator('#name').inputValue();
-  await fs.writeFile(path.join(out, `evidence-dpr${dpr}-zoom${zoom}.json`), JSON.stringify({ result, value, submissions, frames, cssViewport, elapsedMs, events, providerCalls },
+  await fs.writeFile(path.join(out, `evidence-dpr${dpr}-zoom${zoom}-scroll${scroll}.json`), JSON.stringify({ result, value, submissions, frames, cssViewport, elapsedMs, events, providerCalls },
     (_key, item) => typeof item === 'string' && item.startsWith('data:image/') ? `[image ${JSON.stringify(imageSize(item))}]` : item, 2));
 
   const actionRequests = providerCalls.filter(call => Array.isArray(call.tools) && call.tools.length);
@@ -174,13 +201,52 @@ try {
   assert.equal(first.size.type, 'webp', 'Anthropic-family models get WebP');
   // Never device pixels: at most one image px per CSS px.
   assert.ok(first.size.width <= cssViewport.width, `image ${first.size.width}px for a ${cssViewport.width}px CSS viewport at DPR ${cssViewport.dpr}`);
+  // The pixels show the page where the label's scale says: each marker's box
+  // in the image, times the declared CSS px per image px, is its CSS box in
+  // the viewport (browser zoom and scrolling included).
+  const boxes = await page.evaluate(async dataUrl => {
+    const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext('2d');
+    context.drawImage(bitmap, 0, 0);
+    const { data, width, height } = context.getImageData(0, 0, bitmap.width, bitmap.height);
+    const find = test => {
+      let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        if (test(data[i], data[i + 1], data[i + 2])) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+      }
+      return x1 < 0 ? null : { x0, y0, x1: x1 + 1, y1: y1 + 1 };
+    };
+    return {
+      fixed: find((r, g, b) => r > 200 && g < 90 && b > 200),
+      page: find((r, g, b) => r < 90 && g > 200 && b > 200),
+    };
+  }, first.dataUrl);
+  const ratio = first.declared.ratio;
+  for (const [key, rect, offsetY] of [['fixed', LAYOUT.fixedMarker, 0], ['page', LAYOUT.pageMarker, cssViewport.scrollY]]) {
+    const box = boxes[key];
+    assert.ok(box, `${key} marker visible in f1`);
+    const css = { x0: box.x0 * ratio, y0: box.y0 * ratio, x1: box.x1 * ratio, y1: box.y1 * ratio };
+    // Clipped to the viewport (at 150% zoom it is only 853 CSS px wide).
+    const expected = {
+      x0: Math.max(0, rect.x), y0: Math.max(0, rect.y - offsetY),
+      x1: Math.min(cssViewport.width, rect.x + rect.w), y1: Math.min(cssViewport.height, rect.y - offsetY + rect.h),
+    };
+    for (const side of ['x0', 'y0', 'x1', 'y1']) {
+      assert.ok(Math.abs(css[side] - expected[side]) <= 3, `${key} marker ${side}: image says CSS ${css[side].toFixed(1)}, page has ${expected[side]} (${JSON.stringify({ box, ratio, cssViewport })})`);
+    }
+  }
   assert.equal(value, 'Vision QA', `the click focused the field and typing reached it: ${JSON.stringify(result).slice(0, 600)}`);
   assert.equal(submissions.length, 1, JSON.stringify(events.filter(event => event.type === 'tool_result').map(event => event.data), null, 1).slice(0, 3000));
   assert.deepEqual(submissions[0], { name: 'Vision QA' });
   // The model-facing click results (tool messages) name the exact-point path.
   const toolResults = actionRequests.at(-1).messages.filter(message => message.role === 'tool').map(message => String(message.content));
   const clickResults = toolResults.filter(text => /"method":"cdp-vision-pointer"/.test(text));
-  assert.equal(clickResults.length, 2, toolResults.join('\n').slice(0, 2000));
+  assert.ok(clickResults.length >= 2, toolResults.join('\n').slice(0, 2000));
+  // The pre-dispatch probe saw the real button although the page replaced
+  // elementFromPoint in its own world.
+  assert.ok(clickResults.some(text => /"target":\{"tag":"button"\}/.test(text)), clickResults.join('\n'));
   // After the first frame the model got patches or "no visible change", not
   // a new full frame per action.
   const laterImages = actionRequests.slice(1).flatMap(call => call.messages.filter(message => Array.isArray(message.content))
@@ -189,7 +255,7 @@ try {
   const lastRequest = actionRequests.at(-1);
   const imagesInLast = lastRequest.messages.flatMap(message => (Array.isArray(message.content) ? message.content : [])).filter(block => block.type === 'image_url').length;
   assert.ok(imagesInLast <= 6, `old images were pruned (${imagesInLast} in the last request)`);
-  console.log(JSON.stringify({ passed: true, dpr, zoom, cssViewport, firstFrame: first, frames: frames.length, actionRequests: actionRequests.length, submitted: submissions.length, elapsedMs }));
+  console.log(JSON.stringify({ passed: true, dpr, zoom, scroll, cssViewport, firstFrame: { ...first, dataUrl: undefined }, markers: boxes, frames: frames.length, actionRequests: actionRequests.length, submitted: submissions.length, elapsedMs }));
 } finally {
   await context?.close(); await new Promise(resolve => server.close(resolve));
   const resolved = path.resolve(profile);

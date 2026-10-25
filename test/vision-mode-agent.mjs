@@ -37,6 +37,14 @@ function createScene({ cssWidth = 1440, cssHeight = 900, devicePixelRatio = 2 } 
     cssWidth, cssHeight, devicePixelRatio, url: PAGE, scrollX: 0, scrollY: 0,
     rects: [{ x: 100, y: 100, w: 300, h: 60, color: [30, 90, 200] }],
     captures: 0,
+    probes: [],
+    // What the DOM probe reports under points (vision-dom-probe.js shape).
+    probe(request) {
+      return {
+        points: (request.points || []).map(() => ({ found: true, tag: 'div', clickable: false, opaqueFrame: false })),
+        ...(request.pair ? { pair: { known: true, clickEquivalent: false } } : {}),
+      };
+    },
     render(width, height) {
       const data = new Uint8ClampedArray(width * height * 4).fill(255);
       const sx = width / this.cssWidth;
@@ -98,6 +106,7 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       _visionPlatformWheel: async (_tab, input) => { platform.push({ kind: 'wheel', ...input }); return { success: true, dispatched: true }; },
       _visionPlatformHover: async (_tab, input) => { platform.push({ kind: 'hover', ...input }); return { success: true, dispatched: true }; },
       _visionPlatformDrag: async (_tab, input) => { platform.push({ kind: 'drag', ...input }); return { success: true, dispatched: true }; },
+      _visionPlatformDomProbe: async (_tab, request) => { scene.probes.push(request); return scene.probe(request); },
     });
     for (const name of ['_chromeProtectedPageFailure', '_captchaMutationPreflight', '_workflowPreSubmitDispatchBlock',
       '_messageRecipientGuardBlock', '_detectLikelySubmitAction', '_socialPublicationPreSubmitBlock']) agent[name] = async () => null;
@@ -113,7 +122,7 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       onDispatch?.(name, args, scene);
       return { success: true, dispatched: true };
     };
-    return { agent, requests, dispatched, platform, scene };
+    return { agent, requests, dispatched, platform, scene, provider: scripted };
   }
   const runLoop = (agent, tab, streaming, text = 'Fill the form.') => streaming
     ? agent.processMessageStream(tab, text, () => {}, 'act', { detachedRequestId: `vision-${tab}` })
@@ -275,6 +284,160 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       }
     });
   }
+
+  const toolTexts = request => request.messages.filter(message => message.role === 'tool').map(message => String(message.content));
+  const totalImages = request => request.messages.reduce((sum, message) => sum + imageCount(message), 0);
+
+  test(`${build}: a refused click_at stops the rest of its batch`, async () => {
+    const { agent, requests, dispatched } = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 5000, y: 5000 }), call('type_text', { text: 'hunter2' })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'Stopped.', outcome: 'partial' })] };
+      return { content: 'done' };
+    });
+    await runLoop(agent, nextTab++, false);
+    // type_text types into whatever has focus; it was planned on the refused point.
+    assert.ok(!dispatched.some(entry => entry.name === 'type_text'), JSON.stringify(dispatched.map(entry => entry.name)));
+    assert.ok(toolTexts(requests[1]).some(text => /outside f1/.test(text)), toolTexts(requests[1]).join('\n'));
+  });
+
+  test(`${build}: a vision tool that throws returns a tool error and the run goes on`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('scroll_at', { direction: 'down' })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'Could not scroll.', outcome: 'partial' })] };
+      return { content: 'done' };
+    });
+    ctx.agent._visionPlatformWheel = async () => { throw new Error('Could not establish connection. Receiving end does not exist.'); };
+    const result = await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.requests.length, 2, `the model decided again: ${JSON.stringify(result).slice(0, 300)}`);
+    assert.ok(toolTexts(ctx.requests[1]).some(text => /scroll_at failed while sending input/.test(text)), toolTexts(ctx.requests[1]).join('\n'));
+  });
+
+  test(`${build}: a screen update that cannot be encoded leaves a note, then a full frame follows`, async () => {
+    let failPatch = true;
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 648, y: 405 })] };
+      if (step === 2) return { toolCalls: [call('click_at', { x: 200, y: 150 })] };
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Clicked twice.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { onDispatch: (name, _args, scene) => { if (name === 'click') scene.rects.push({ x: 600 + scene.rects.length * 20, y: 420, w: 60, h: 40, color: [200, 40, 40] }); } });
+    const encode = ctx.agent._visionEncodeRegion;
+    ctx.agent._visionEncodeRegion = async (canvas, region, options) => {
+      if (region && failPatch) { failPatch = false; throw new Error('convertToBlob failed'); }
+      return encode(canvas, region, options);
+    };
+    await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.requests.length, 3);
+    assert.match(textOf(visionMessages(ctx.requests[1].messages).at(-1)), /could not be prepared after the action/);
+    const latest = visionMessages(ctx.requests[2].messages).at(-1);
+    assert.equal(latest.webbrainVisionFrame.kind, 'key', textOf(latest));
+    assert.match(textOf(latest), /full viewport \(requested\)/);
+  });
+
+  test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };
+      if (step === 2) return { toolCalls: [call('click_at', { x: 648, y: 405 })] };
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Could not see.', outcome: 'partial' })] };
+      return { content: 'done' };
+    });
+    const tab = nextTab++;
+    await runLoop(ctx.agent, tab, false, 'Look at the page.');
+    ctx.agent._visionPlatformCapture = async () => { throw new Error('capture failed'); };
+    await runLoop(ctx.agent, tab, false, 'Click the button.');
+    assert.ok(!ctx.dispatched.some(entry => entry.name === 'click'), 'nothing was clicked');
+    const firstOfRun2 = ctx.requests[1];
+    assert.match(textOf(visionMessages(firstOfRun2.messages).at(-1)), /first screenshot could not be captured/);
+    assert.equal(totalImages(firstOfRun2), 0, 'the previous run\'s frame is not shown');
+    assert.ok(toolTexts(ctx.requests[2]).some(text => /No screenshot of this page has been taken yet/.test(text)), toolTexts(ctx.requests[2]).join('\n'));
+  });
+
+  test(`${build}: after a model switch between runs the new frame is kept and ids never repeat`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 648, y: 405 })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'Run one.', outcome: 'success' })] };
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Run two.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { onDispatch: (_name, _args, scene) => { scene.url = `${PAGE}?n=${scene.captures}`; scene.rects = [{ x: 0, y: 0, w: 1440, h: 900, color: [20, 20, 20] }]; } });
+    const tab = nextTab++;
+    await runLoop(ctx.agent, tab, false, 'Run one.');
+    // Another family: a new vision session (other image sizes) for run two.
+    Object.assign(ctx.provider, { name: 'openai', model: 'gpt-4.1', config: { category: 'cloud', type: 'openai', model: 'gpt-4.1' } });
+    ctx.scene.rects = [{ x: 50, y: 50, w: 100, h: 100, color: [0, 120, 0] }];
+    await runLoop(ctx.agent, tab, false, 'Run two.');
+    const run2 = ctx.requests[2];
+    const keys = visionMessages(run2.messages).filter(message => message.webbrainVisionFrame.kind === 'key');
+    assert.ok(keys.length >= 3, `frames of both runs are in the history (${keys.length})`);
+    assert.equal(imageCount(keys.at(-1)), 1, 'the new run\'s frame is sent');
+    assert.equal(totalImages(run2), 1, 'and nothing older');
+    const ids = keys.map(message => message.webbrainVisionFrame.ids[0]);
+    assert.equal(new Set(ids).size, ids.length, `ids never repeat: ${ids}`);
+  });
+
+  test(`${build}: drag_at refuses click-length drags and drags that would click a control`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('drag_at', { start_x: 300, start_y: 300, end_x: 302, end_y: 301 })] };
+      if (step === 2) return { toolCalls: [call('drag_at', { start_x: 300, start_y: 300, end_x: 360, end_y: 300 })] };
+      if (step === 3) return { toolCalls: [call('done', { summary: 'No drag.', outcome: 'partial' })] };
+      return { content: 'done' };
+    });
+    ctx.scene.probe = request => ({
+      points: request.points.map(() => ({ found: true, tag: 'button', clickable: true, control: 'button', opaqueFrame: false })),
+      ...(request.pair ? { pair: { known: true, clickEquivalent: true, control: 'button' } } : {}),
+    });
+    await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.platform.filter(entry => entry.kind === 'drag').length, 0, 'no drag was dispatched');
+    assert.ok(toolTexts(ctx.requests[1]).some(text => /a drag this short is a click/.test(text)), toolTexts(ctx.requests[1]).join('\n'));
+    assert.ok(toolTexts(ctx.requests[2]).some(text => /would click the button under both ends/.test(text)), toolTexts(ctx.requests[2]).join('\n'));
+    // The probe was asked about the press and release points together.
+    assert.ok(ctx.scene.probes.some(request => request.pair === true && request.points.length === 2));
+  });
+
+  test(`${build}: scroll_at over a focused number field is refused`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('scroll_at', { direction: 'down', x: 648, y: 405 })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'No scroll.', outcome: 'partial' })] };
+      return { content: 'done' };
+    });
+    ctx.scene.probe = request => ({ points: request.points.map(() => ({ found: true, tag: 'input', clickable: false, opaqueFrame: false, focusedNumberInput: true })) });
+    await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.platform.filter(entry => entry.kind === 'wheel').length, 0);
+    assert.ok(toolTexts(ctx.requests[1]).some(text => /focused number field/.test(text)), toolTexts(ctx.requests[1]).join('\n'));
+  });
+
+  test(`${build}: drag_at is blocked on a protected messaging page`, async () => {
+    const agent = new Agent({});
+    const block = await agent._messageRecipientGuardBlock(1, 'drag_at', { start_x: 1, start_y: 1, end_x: 50, end_y: 1 }, 'https://web.whatsapp.com/');
+    assert.equal(block?.reasonCode, 'recipient_unverifiable_dispatch_path', JSON.stringify(block));
+    assert.match(block.error, /drag_at cannot bind its effects/);
+    assert.equal(await agent._messageRecipientGuardBlock(1, 'drag_at', {}, 'https://owned.example.test/form'), null);
+  });
+
+  test(`${build}: the click preflight refuses repeated clicks on controls and focuses native selects`, async () => {
+    const agent = new Agent({});
+    let answer = null;
+    const requests = [];
+    agent._visionPlatformDomProbe = async (_tab, request) => { requests.push(request); return answer; };
+    const point = extra => ({ points: [{ found: true, tag: 'span', clickable: false, opaqueFrame: false, ...extra }] });
+    answer = point({ clickable: true, control: 'button' });
+    assert.equal((await agent._visionClickPreflight(1, { x: 5, y: 5, clickCount: 2 })).refusal?.visionInputRefused, 'repeated_click');
+    assert.equal((await agent._visionClickPreflight(1, { x: 5, y: 5, clickCount: 1 })).refusal, undefined);
+    answer = point({});
+    assert.deepEqual((await agent._visionClickPreflight(1, { x: 5, y: 5, clickCount: 2 })).target, { tag: 'span' }, 'text may be double-clicked');
+    assert.ok((await agent._visionClickPreflight(1, { x: 5, y: 5, clickCount: 3, recipientGuarded: true })).refusal);
+    assert.ok((await agent._visionClickPreflight(1, { x: 5, y: 5, clickCount: 2, submitDetected: true })).refusal);
+    answer = point({ opaqueFrame: true });
+    assert.ok((await agent._visionClickPreflight(1, { x: 5, y: 5, clickCount: 2 })).refusal);
+    answer = null;
+    assert.ok((await agent._visionClickPreflight(1, { x: 5, y: 5, clickCount: 2 })).refusal, 'unknown target: no repeated click');
+    assert.equal((await agent._visionClickPreflight(1, { x: 5, y: 5, clickCount: 1 })).refusal, undefined, 'a single click still goes');
+    answer = point({ tag: 'select', select: { current: 'Red', options: ['Red', 'Blue'] } });
+    const select = await agent._visionClickPreflight(1, { x: 5, y: 5, clickCount: 1, button: 'left' });
+    assert.equal(select.refusal?.nativeSelect, true);
+    assert.match(select.refusal.error, /native dropdown \(current: "Red"\).*Options: Red, Blue/);
+    assert.equal(requests.at(-1).focusSelect, true);
+    assert.equal((await agent._visionClickPreflight(1, { x: 5, y: 5, clickCount: 1, button: 'right' })).refusal, undefined);
+    assert.equal(requests.at(-1).focusSelect, false, 'a right click does not focus the select');
+  });
 
   test(`${build}: _pruneOldImages keeps the current frame with its patches and zooms only`, () => {
     const agent = new Agent({});

@@ -39,13 +39,18 @@ The vision prompt (`buildVisionActPrompt`, used through `getVisionActPrompt` in 
 
 Every image is labeled with an id: `f<n>` for a full frame, `p<n>` for a patch, `z<n>` for a zoom. The model gives a point in the pixels of the image it read it from and names that image with `image` when it is a patch or zoom; with no `image` the point is read from the current screen (latest frame plus its patches). `VisionSession` (`vision-session.js`) keeps each image's map to the frame and the frame's map to CSS pixels, so the model never rescales anything.
 
-Gemini and Qwen3-VL point in relative 0..1000 coordinates; for them the tools and prompt say so and the session converts (`coordinates: 'normalized'`). Every other model uses image pixels.
+Gemini, Qwen3-VL, GLM-4.xV and InternVL point in relative 0..1000 coordinates; for them the tools and prompt say so and the session converts (`coordinates: 'normalized'`). Every other model uses image pixels. An `image` value that is not an exact id (`"z2.png"`, `"zoom z2"`) is refused (`unknown_image`) instead of being read as the current screen.
 
 A point is refused before any dispatch when:
 
 - its image belongs to an earlier frame (`stale_image`), or the area around it changed in a later patch (`stale_area`);
 - it lies outside the image;
-- it is the second or later coordinate action of one model turn and the live screen changed near it after the earlier action (`_visionStabilityBlock`, checked right before dispatch, after every gate).
+- it is the second or later coordinate action of one model turn and the live screen changed near it after the earlier action, or the screen could not be re-captured to check (`_visionStabilityBlock`, checked right before dispatch, after every gate);
+- the run has no frame of its own yet (`no_frame`).
+
+A refused point also stops the rest of the model's batch: the calls after it (a `type_text`, say) were planned on that point.
+
+Every run starts on a frame it captured itself: `_beginVisionRun` retires the previous run's screen, so if the first capture fails the model is told so, earlier screenshots leave the request, and coordinates are refused until `take_screenshot` succeeds. Image ids and epochs continue across sessions of one conversation (another model, a restarted worker), and the current screen is the last full frame in the history by position.
 
 ### Capture, retina and zoom
 
@@ -58,6 +63,7 @@ A point is refused before any dispatch when:
 | Gemini | ≤ 1536, ≤ 1.2 MP; 0..1000 points | WebP |
 | Qwen2/2.5-VL, UI-TARS | ≤ 1.0 MP, multiples of 28 (so `smart_resize` is the identity) | JPEG |
 | Qwen3-VL / Qwen3.5+ | ≤ 1.05 MP, multiples of 32; 0..1000 points | JPEG |
+| GLM-4.xV, InternVL | ≤ 1280, ≤ 1.0 MP, multiples of 28; 0..1000 points | JPEG |
 | Local (llama.cpp, Ollama, LM Studio, WebGPU) | ≤ 1280, ≤ 1.0 MP, multiples of 28 | JPEG (llama.cpp cannot decode WebP) |
 
 An image never has more pixels than the CSS viewport: a retina capture is downscaled locally, and `zoom` is the path to fine detail. WebP is ~30% smaller than JPEG for UI screenshots, so uploads are faster; providers bill images by pixels, so the token cost is the same.
@@ -65,9 +71,11 @@ An image never has more pixels than the CSS viewport: a retina capture is downsc
 Chrome captures with CDP `Page.captureScreenshot`. Two properties of that call drive the implementation (verified in `test/vision-pipeline-browser.mjs`):
 
 - **Clip coordinates are document coordinates.** A clip at `0,0` on a scrolled page captures the unrendered top of the document, a blank frame. The clip starts at the visual viewport's page offset (`Page.getLayoutMetrics`).
-- **The output is clip × scale × device pixel ratio.** The requested scale divides the DPR out (browser zoom is part of the DPR), and whatever size actually comes back is resampled to the plan (`rasterizeFrame`), so emulated DPRs and compositor quirks cannot change the coordinate map.
+- **The clip is in device-independent pixels**, CSS pixels times the browser zoom (`Page.getLayoutMetrics().cssVisualViewport.zoom`), and **the output is clip × scale × device scale factor.** With the DPR (device scale factor × zoom) divided out of the scale, the image comes back at the planned size; whatever size actually comes back is resampled to the plan (`rasterizeFrame`), so emulated DPRs and compositor quirks cannot change the coordinate map. The legacy auto-screenshot clip (`_viewportCaptureClip`) applies the same zoom factor.
 
-Firefox captures with `tabs.captureTab`, whose `scale` is image pixels per CSS pixel (no DPR factor) and whose `rect` is page-relative.
+Firefox captures with `tabs.captureTab`, whose `scale` is image pixels per CSS pixel (no DPR factor) and whose `rect` is page-relative. The rect is always the visual viewport: without one Firefox captures the whole content area, classic scrollbars included.
+
+Screenshot redaction maps element boxes into the captured visual-viewport box (page space), so a field next to a scrollbar is still covered.
 
 ### Diffs
 
@@ -81,6 +89,8 @@ The "seen" buffer copies only patched regions, so changes below the threshold ac
 
 Only the current frame, its patches and zooms stay in the model request (`pruneVisionImages`); older images become a short placeholder. Screen updates are app-owned user turns (`webbrainAppOwned`), never mistaken for a new request.
 
+A capture, encoding or input failure never ends the run: a screen update that cannot be prepared becomes a one-line note and the next update is a full frame; a vision tool that fails returns a tool error (an unknown outcome once input may have gone out).
+
 ## Input dispatch and safety
 
 `click_at` is rewritten into an ordinary coordinate `click` (`translateVisionClick`) before the batch pipeline runs, so the permission gate, the submit probe and every hard guard (recipient, deletion, money, credentials, publishing) inspect it like any other click. Only the final dispatch differs:
@@ -88,11 +98,17 @@ Only the current frame, its patches and zooms stay in the model request (`pruneV
 - **Chrome**: trusted CDP pointer events at exactly the point (`_visionDispatchClick`), with the coordinate path's dispatch-time protections kept: a native `<select>` is focused for `type_text` instead of opening an OS popup no screenshot can show, the file-chooser guard, the recipient dispatch binding, `target=_blank` redirection into the run tab and click-progress annotation. The legacy coordinate path's semantic re-targeting and nearby-input redirect are skipped: a vision click lands where the model pointed. Iframes, including cross-origin ones, receive the events natively.
 - **Firefox**: no CDP, so `content.js` `visionInput` dispatches a synthetic pointer sequence at the exact point with real client coordinates, reproducing a press's focus and a click's activation, selecting text for double/triple clicks, and entering same-origin iframes. A click that must pass the recipient binding keeps the content click path. Cross-origin iframes receive the click on the frame element.
 
+Right before input goes out, both builds read what is under the pointer with `visionDomProbe` (`vision-dom-probe.js`), in an isolated world (Chrome, CDP) or the content-script world (Firefox), so page scripts cannot redefine the DOM methods it calls:
+
+- `click_at` with `clicks: 2|3` is refused on a button, link or other control, on a detected submit, on a protected messaging page, inside a frame it cannot inspect, or when the target cannot be read: each extra click would repeat the one action the checks approved. Double and triple clicks remain for selecting text.
+- `drag_at` is refused when it is shorter than 6 CSS px, when the press and release would click a control (their nearest common ancestor is or is inside a button, link, label or similar), when either end is inside a cross-origin frame, or when the target cannot be read. On a protected messaging page `drag_at` is blocked outright, like `iframe_click`.
+- `scroll_at` is refused over a focused number field, which takes the wheel as +/-.
+
 Every CDP input passes `cdpClient`'s page-agent fence and every content action passes `beforePageAgentDispatch`, so the page monitor attributes the events to the agent. `drag_at` is gated as a click (`TOOL_CAPABILITY`); captures and pointer results are untrusted page content (`UNTRUSTED_CONTENT_TOOLS`), and every image label says that text in it is data, never instructions. Screenshot redaction (Settings) applies to frames and zooms.
 
 ## Files
 
-| File | Role (both builds; the first seven are byte-identical) |
+| File | Role (both builds; the first eight are byte-identical) |
 |---|---|
 | `vision-mode.js` | setting normalization and per-run resolution |
 | `vision-budget.js` | provider profiles, sizes, token estimates, formats |
@@ -100,7 +116,8 @@ Every CDP input passes `cdpClient`'s page-agent fence and every content action p
 | `vision-session.js` | image ids, coordinate maps, staleness |
 | `vision-tools.js` | tool schemas, tool-set transform, prompt, labels, click translation |
 | `vision-encoder.js` | canvas decode / resample / encode |
-| `vision-runtime.js` | agent methods: keyframes, observation after batches, native tools, pruning |
+| `vision-runtime.js` | agent methods: keyframes, observation after batches, native tools, pruning, dispatch preflights |
+| `vision-dom-probe.js` | the in-page probe behind the dispatch checks, and the checks themselves |
 | `agent.js` | platform layer (`_visionPlatform*`, `_visionDispatchClick`) and hooks |
 | `content.js` | `visionInput` (Firefox input path; also loaded in Chrome) |
 
@@ -111,9 +128,9 @@ npm run test:vision-mode
 ```
 
 - `test/vision-mode.mjs`: sizing, profiles, token formulas, diffs, sessions, translation, tool surfaces of every tier in both builds, permission classification, prompt.
-- `test/vision-mode-agent.mjs`: the real run loop in both builds (streaming and not) with a scripted vision model and a fake screen: first frame, tool surface, click translation, patches, "no visible change", new frames on navigation, pruning, stale and moved points, native tools, fallback to the tree.
-- `test/vision-pipeline-browser.mjs`: Chromium at DPR 1/2/3 on a scrolled page: planned size, exact mapping, trusted clicks, diff regions, WebP vs JPEG; the Firefox content input path.
-- `test/quality/vision-mode-mv3.mjs` (`--dpr=2`, `--zoom=1.25`, combinable): the installed MV3 extension with a loopback model that reads the frame labels and fills and submits a form with `click_at` and `type_text`.
+- `test/vision-mode-agent.mjs`: the real run loop in both builds (streaming and not) with a scripted vision model and a fake screen: first frame, tool surface, click translation, patches, "no visible change", new frames on navigation, pruning, stale and moved points, native tools, fallback to the tree; a refused click stopping its batch, tool and encoding failures, a failed first capture in a later run, a model switch between runs, drag/wheel/repeated-click refusals, `drag_at` on a protected messaging page.
+- `test/vision-pipeline-browser.mjs`: Chromium at DPR 1/2/3 on a scrolled page: planned size, exact mapping, trusted clicks, diff regions, WebP vs JPEG; the Firefox content input path; the DOM probe on buttons, labelled text fields, focused number fields, selects, link cards, sliders and same-/cross-origin frames.
+- `test/quality/vision-mode-mv3.mjs` (`--dpr=2`, `--zoom=1.25`, `--scroll=100`, combinable): the installed MV3 extension with a loopback model that reads the frame labels and fills and submits a form with `click_at` and `type_text`; two colored markers (viewport-fixed and in the document) must appear in the first frame exactly where the label's scale puts them.
 
 The older MV3 quality fixtures script an accessibility-tree model (they answer with `ref_id`s read from `get_accessibility_tree`) under model names that WebBrain recognizes as vision-capable, so they seed `visionMode: 'off'` with their other settings. A new fixture that scripts tree tools needs the same line.
 
@@ -122,4 +139,5 @@ The older MV3 quality fixtures script an accessibility-tree model (they answer w
 - File uploads (`upload_file`) and page-resource downloads by selector are not offered in vision mode; switch it off for those tasks.
 - Closed shadow roots and canvas apps are reachable by pointer, but a native `<select>` popup is never visible in a screenshot: such a field is focused and `type_text` picks the option.
 - HTML5 drag and drop driven only by `dataTransfer` may not react to synthetic or CDP pointer drags.
+- A drag is not shown to the submit, money or publishing checks; it is refused when it would click a control, but a custom "slide to confirm" widget is only as safe as the page makes it.
 - Firefox input is synthetic (`isTrusted: false`); pages that require trusted events need Chrome.

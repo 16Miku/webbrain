@@ -10,7 +10,7 @@ import { test } from 'node:test';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const read = file => fs.readFileSync(path.join(ROOT, file), 'utf8');
-const SHARED = ['vision-budget.js', 'vision-diff.js', 'vision-session.js', 'vision-tools.js', 'vision-mode.js', 'vision-encoder.js', 'vision-runtime.js'];
+const SHARED = ['vision-budget.js', 'vision-diff.js', 'vision-session.js', 'vision-tools.js', 'vision-mode.js', 'vision-encoder.js', 'vision-runtime.js', 'vision-dom-probe.js'];
 
 const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
 const api = {
@@ -423,3 +423,106 @@ for (const build of ['chrome', 'firefox']) {
       { schema_version: 1, vision_mode: true, vision_mode_setting: 'on' });
   });
 }
+
+const probeModule = await import('../src/chrome/src/agent/vision-dom-probe.js');
+const runtimeModule = await import('../src/chrome/src/agent/vision-runtime.js');
+
+test('session: numbering continues across sessions and a retired screen refuses points', () => {
+  const session = new VisionSession({ startEpoch: 3, startCounter: 7 });
+  const frame = session.registerKeyframe({ imageWidth: 1000, imageHeight: 500, cssWidth: 1000, cssHeight: 500 });
+  assert.equal(frame.id, 'f8');
+  assert.equal(frame.epoch, 4);
+  assert.ok(session.resolvePoint({ x: 10, y: 10 }).ok);
+  session.retireKeyframe();
+  assert.equal(session.resolvePoint({ x: 10, y: 10 }).code, 'no_frame');
+  assert.equal(session.forceKeyframe, true);
+  const next = session.registerKeyframe({ imageWidth: 1000, imageHeight: 500, cssWidth: 1000, cssHeight: 500 });
+  assert.equal(next.id, 'f9');
+  assert.equal(session.resolvePoint({ x: 10, y: 10, image: 'f8' }).code, 'stale_image');
+});
+
+test('session: an image value that is not an id is refused, not read as the current screen', () => {
+  const session = new VisionSession();
+  session.registerKeyframe({ imageWidth: 1000, imageHeight: 500, cssWidth: 2000, cssHeight: 1000 });
+  const zoom = session.registerZoom({ x: 500, y: 250, width: 250, height: 125 }, 500, 250);
+  assert.equal(zoom.id, 'z2');
+  for (const value of ['zoom z2', 'z2.png', 'Z-2', 'image z2']) {
+    const point = session.resolvePoint({ x: 200, y: 100, image: value });
+    assert.equal(point.code, 'unknown_image', value);
+    assert.match(point.error, /Name an image exactly as labeled/);
+  }
+  // Case and whitespace are forgiven; the zoom maps through its own scale.
+  const exact = session.resolvePoint({ x: 200, y: 100, image: ' Z2 ' });
+  assert.ok(exact.ok);
+  assert.deepEqual({ x: exact.cssX, y: exact.cssY }, { x: 1200, y: 600 });
+  for (const value of [undefined, null, '']) assert.equal(session.resolvePoint({ x: 10, y: 10, image: value }).imageId, 'f1');
+});
+
+test('session: a normalized zoom whose far corner changed keeps its requested size', () => {
+  const session = new VisionSession({ coordinates: 'normalized' });
+  session.registerKeyframe({ imageWidth: 1280, imageHeight: 720, cssWidth: 1280, cssHeight: 720 });
+  // The bottom-right area changed after f1: the far corner is stale.
+  session.registerPatches([{ x: 600, y: 300, width: 400, height: 300 }]);
+  const region = session.resolveRegion({ x: 250, y: 250, width: 250, height: 250, image: 'f1' });
+  assert.ok(region.ok, JSON.stringify(region));
+  // 250/1000 of 1280x720, not 250 keyframe px.
+  assert.deepEqual({ width: region.keyframeRegion.width, height: region.keyframeRegion.height }, { width: 320, height: 180 });
+});
+
+test('pruning: the last frame in the history is current, whatever its epoch number', () => {
+  const img = id => ({ type: 'image_url', image_url: { url: `data:image/webp;base64,${id}` } });
+  const frame = (epoch, kind, ids) => ({ role: 'user', content: [{ type: 'text', text: ids.join(',') }, ...ids.map(img)], webbrainVisionFrame: { epoch, kind, ids } });
+  // Session A (epochs 1..3), then session B restarted at epoch 1.
+  const messages = [frame(1, 'key', ['f1']), frame(1, 'patch', ['p2']), frame(3, 'key', ['f3']), frame(3, 'zoom', ['z4']), frame(1, 'key', ['f1']), frame(1, 'patch', ['p2'])];
+  const kept = list => list.flatMap(message => message.content).filter(block => block.type === 'image_url').length;
+  const { messages: pruned, latestEpoch } = runtimeModule.pruneVisionImages(messages);
+  assert.equal(latestEpoch, 1);
+  assert.equal(kept(pruned.slice(0, 4)), 0, 'session A images are omitted');
+  assert.equal(kept(pruned.slice(4)), 2, 'session B frame and patch are kept');
+  // A failed first capture retires the last frame for the model too.
+  const retired = runtimeModule.pruneVisionImages([...messages, { role: 'user', content: 'no frame', webbrainVisionFrame: { epoch: 0, kind: 'retire' } }]).messages;
+  assert.equal(kept(retired), 0);
+  assert.deepEqual(runtimeModule.visionHistoryCounters(messages), { epoch: 3, counter: 4 });
+});
+
+test('dispatch checks: repeated clicks, drags that click, wheels over number fields', () => {
+  const at = extra => ({ points: [{ found: true, tag: 'span', clickable: false, opaqueFrame: false, ...extra }] });
+  const { visionMultiClickRefusal, visionDragRefusal, visionWheelRefusal } = probeModule;
+  assert.equal(visionMultiClickRefusal(at({ clickable: true, control: 'button' }), { clickCount: 1 }), null);
+  assert.match(visionMultiClickRefusal(at({ clickable: true, control: 'button' }), { clickCount: 2 }).error, /double click was refused because the point is on a button/);
+  assert.equal(visionMultiClickRefusal(at({}), { clickCount: 3 }), null);
+  assert.ok(visionMultiClickRefusal(at({}), { clickCount: 2, recipientGuarded: true }));
+  assert.ok(visionMultiClickRefusal(null, { clickCount: 2 }));
+  const pair = (pairInfo, extra = {}) => ({ points: [at(extra).points[0], at(extra).points[0]], pair: pairInfo });
+  const from = { x: 10, y: 10 };
+  assert.equal(visionDragRefusal(pair({ known: true, clickEquivalent: false }), from, { x: 12, y: 13 }).visionInputRefused, 'drag_too_short');
+  assert.equal(visionDragRefusal(pair({ known: true, clickEquivalent: false }), from, { x: 200, y: 10 }), null);
+  assert.equal(visionDragRefusal(pair({ known: true, clickEquivalent: true, control: 'a' }), from, { x: 200, y: 10 }).visionInputRefused, 'drag_is_click');
+  assert.equal(visionDragRefusal(pair({ known: true, clickEquivalent: false }, { opaqueFrame: true }), from, { x: 200, y: 10 }).visionInputRefused, 'drag_opaque_frame');
+  assert.equal(visionDragRefusal(null, from, { x: 200, y: 10 }).visionInputRefused, 'drag_unchecked');
+  assert.equal(visionWheelRefusal(at({ focusedNumberInput: true })).visionInputRefused, 'wheel_number_input');
+  assert.equal(visionWheelRefusal(at({ focusedNumberInput: false })), null);
+  assert.equal(visionWheelRefusal(null), null, 'an unreadable target does not block scrolling');
+  // The probe travels as text: it must stay self-contained.
+  const expression = probeModule.visionDomProbeExpression({ points: [{ x: 1, y: 2 }], pair: false });
+  assert.match(expression, /^\(function visionDomProbe\(request\)/);
+  assert.match(expression, /\(\{"points":\[\{"x":1,"y":2\}\],"pair":false\}\)$/);
+});
+
+test('profiles: GLM-4.xV and InternVL point in relative 0..1000', () => {
+  for (const model of ['z-ai/glm-4.5v', 'zai-org/GLM-4.6V', 'THUDM/GLM-4.1V-9B-Thinking', 'OpenGVLab/InternVL3-78B']) {
+    const profile = budget.detectVisionProfile({ name: 'openrouter', config: { model } });
+    assert.equal(profile.id, 'relative1000', model);
+    assert.equal(profile.coordinates, 'normalized');
+    assert.equal(profile.format, 'jpeg');
+  }
+  assert.equal(budget.detectVisionProfile({ name: 'openrouter', config: { model: 'z-ai/glm-4.6' } }).id, 'default', 'text GLM is unaffected');
+});
+
+test('click_at at the top-left CSS pixel is nudged off the normalized-fraction range', () => {
+  const session = new VisionSession();
+  session.registerKeyframe({ imageWidth: 1000, imageHeight: 500, cssWidth: 1000, cssHeight: 500 });
+  const result = visionTools.translateVisionClick({ x: 0, y: 1 }, session);
+  assert.deepEqual(result.args, { x: 1.5, y: 1.5, coordinate_space: 'css' });
+  assert.deepEqual(visionTools.translateVisionClick({ x: 0, y: 40 }, session).args, { x: 0, y: 40, coordinate_space: 'css' });
+});

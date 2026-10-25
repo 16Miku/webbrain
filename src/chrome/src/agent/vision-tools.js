@@ -81,7 +81,7 @@ export function visionToolDefinitions({ coordinates = 'pixel' } = {}) {
       type: 'function',
       function: {
         name: 'click_at',
-        description: `Click at a point with a real mouse event. x/y are ${words.unit}. WebBrain converts the point to the page (retina displays and browser zoom included); never rescale it yourself. Aim at the visual centre of the target. clicks:2 double-clicks, clicks:3 selects a line or paragraph, button:"right" opens a context menu.`,
+        description: `Click at a point with a real mouse event. x/y are ${words.unit}. WebBrain converts the point to the page (retina displays and browser zoom included); never rescale it yourself. Aim at the visual centre of the target. clicks:2 double-clicks and clicks:3 selects a line or paragraph, for selecting text only: repeated clicks on a button, link or other control are refused. button:"right" opens a context menu.`,
         parameters: {
           type: 'object',
           properties: {
@@ -127,7 +127,7 @@ export function visionToolDefinitions({ coordinates = 'pixel' } = {}) {
       type: 'function',
       function: {
         name: 'drag_at',
-        description: `Press the left mouse button at the start point, move to the end point and release (sliders, reordering, selecting text, drawing). Coordinates are ${words.unit}; both points come from the same image.`,
+        description: `Press the left mouse button at the start point, move to the end point and release (sliders, reordering, selecting text, drawing). Coordinates are ${words.unit}; both points come from the same image. Not a way to click: a drag of a few pixels, or one that presses and releases on the same button or link, is refused; use click_at.`,
         parameters: {
           type: 'object',
           properties: {
@@ -238,15 +238,20 @@ export function translateVisionClick(args = {}, session) {
     };
   }
   const { button, clicks } = normalizeClickArgs(args);
+  // The coordinate click path reads x,y both within 0..1 as a normalized
+  // fraction; the top-left CSS pixel is nudged off that range.
+  const corner = point.cssX <= 1 && point.cssY <= 1;
+  const cssX = corner ? 1.5 : point.cssX;
+  const cssY = corner ? 1.5 : point.cssY;
   return {
     ok: true,
     name: 'click',
-    args: { x: point.cssX, y: point.cssY, coordinate_space: 'css' },
+    args: { x: cssX, y: cssY, coordinate_space: 'css' },
     vision: {
       tool: 'click_at',
       button,
       clickCount: clicks,
-      cssPoint: { x: point.cssX, y: point.cssY },
+      cssPoint: { x: cssX, y: cssY },
       keyframePoint: point.keyframePoint,
       imageId: point.imageId,
       keyframeId: point.keyframeId,

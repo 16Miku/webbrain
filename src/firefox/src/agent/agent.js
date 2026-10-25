@@ -21,6 +21,7 @@ import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, 
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, getVisionActPrompt } from './tools.js';
 import { installVisionRuntime } from './vision-runtime.js';
 import { VISION_NATIVE_TOOLS } from './vision-tools.js';
+import { visionDomProbeExpression } from './vision-dom-probe.js';
 import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
@@ -14331,6 +14332,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (tc._vision?.error) {
         const recovery = await recordPreparationFailure(toolIndex, tc._vision.tool || fnName, this._parseToolCallArgs(tc).args || {}, tc._vision.error);
         if (recovery) return recovery;
+        // The rest of the batch was planned on that point: type_text would
+        // type into whatever has focus. The model decides again.
+        if (interruptFailedBrowserAction(toolIndex, tc._vision.tool || fnName)) { navNotices.length = 0; break; }
         continue;
       }
       // Where this call's time goes before dispatch (_predispatchTimer), from
@@ -17025,29 +17029,54 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   /**
    * captureTab renders at `scale` image pixels per CSS pixel (not times the
-   * DPR), so the plan's scale is passed directly. A region is a page-space
-   * rect (captureTab's rect is relative to the document).
+   * DPR), so the plan's scale is passed directly. The rect is always given
+   * (page-relative, like captureTab's rect): without one Firefox captures
+   * the whole content area, classic scrollbars included, while the probe's
+   * visual viewport excludes them, and points would drift by the scrollbar.
    */
   async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight }) {
     const region = cssRegion || { x: 0, y: 0, width: probe.cssWidth, height: probe.cssHeight };
     const scale = Math.max(0.05, Math.min(4, Number(outWidth) / Math.max(1, region.width)));
-    const options = { format: 'jpeg', quality: 90, scale };
-    if (cssRegion) {
-      options.rect = {
+    const options = {
+      format: 'jpeg',
+      quality: 90,
+      scale,
+      rect: {
         x: (Number(probe?.scrollX) || 0) + region.x,
         y: (Number(probe?.scrollY) || 0) + region.y,
         width: Math.max(1, region.width),
         height: Math.max(1, region.height),
-      };
-    }
+      },
+    };
     return this._withIndicatorsHidden(tabId, () => browser.tabs.captureTab(tabId, options));
+  }
+
+  /**
+   * What is under CSS points (vision-dom-probe.js), evaluated in the
+   * content-script world, whose DOM methods page scripts cannot redefine.
+   */
+  async _visionPlatformDomProbe(tabId, request) {
+    const results = await browser.tabs.executeScript(tabId, { code: visionDomProbeExpression(request), frameId: 0 });
+    return Array.isArray(results) ? results[0] || null : null;
   }
 
   async _visionContentInput(tabId, params, kind = 'click') {
     await beforePageAgentDispatch(browser, tabId, {
       kind, frameId: 0, navigationCandidate: kind === 'click' && params.type === 'click', fenceOnly: true,
     });
-    const response = await browser.tabs.sendMessage(tabId, { target: 'content', action: 'vision_input', params }, { frameId: 0 });
+    let response;
+    try {
+      response = await browser.tabs.sendMessage(tabId, { target: 'content', action: 'vision_input', params }, { frameId: 0 });
+    } catch (error) {
+      const message = String(error?.message || error).slice(0, 160);
+      // No content script answered (still loading, restricted page): nothing
+      // was sent. Any other failure may come after the input went out (the
+      // click navigated away), so its outcome is unknown.
+      if (/receiving end does not exist|could not establish connection/i.test(message)) {
+        return { success: false, dispatched: false, noDispatch: true, error: `The page could not receive the input yet (${message}). Take a screenshot and try again.` };
+      }
+      return { success: false, outcomeUnknown: true, error: `The page stopped answering during the input (${message}). Look at the next screen before repeating it.` };
+    }
     return response || { success: false, dispatched: false, noDispatch: true, error: 'The page did not answer the vision input.' };
   }
 
@@ -17068,28 +17097,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * point. Batch-level gates and guards already ran on this `click`; a
    * native <select> is focused for type_text instead of opening its popup.
    */
-  async _visionDispatchClick(tabId, args, { vision = null, abortSignal = null, dispatchState = { started: false } } = {}) {
+  async _visionDispatchClick(tabId, args, { vision = null, abortSignal = null, dispatchState = { started: false }, detectedSubmitAction = null } = {}) {
     const x = Number(args.x);
     const y = Number(args.y);
     this._throwIfAborted(abortSignal);
-    let select = null;
-    try {
-      const results = await browser.tabs.executeScript(tabId, { code: `(() => {
-        const el = document.elementFromPoint(${x}, ${y});
-        const select = el && el.closest ? el.closest('select') : null;
-        if (!select) return null;
-        select.focus();
-        return { current: select.options[select.selectedIndex] ? select.options[select.selectedIndex].text.trim() : '',
-          options: Array.from(select.options).slice(0, 60).map(option => option.text.trim()) };
-      })()` });
-      select = Array.isArray(results) ? results[0] : null;
-    } catch { select = null; }
-    if (select && (vision?.button || 'left') === 'left') {
-      return {
-        success: false, dispatched: false, noDispatch: true, nativeSelect: true, tag: 'SELECT', text: select.current, options: select.options,
-        error: `That point is a native dropdown (current: "${select.current}"). It is focused now: choose an option with type_text({text: "<option label>"}). Options: ${select.options.join(', ')}`,
-      };
-    }
+    // A native <select> is focused for type_text instead of opening a popup
+    // no screenshot shows; a repeated click on a control is refused.
+    const preflight = await this._visionClickPreflight(tabId, {
+      x, y, button: vision?.button || 'left', clickCount: vision?.clickCount || 1,
+      submitDetected: detectedSubmitAction?.isSubmit === true,
+    });
+    if (preflight.refusal) return preflight.refusal;
     this._throwIfAborted(abortSignal);
     dispatchState.started = true;
     const response = await this._visionContentInput(tabId, {
@@ -29102,7 +29120,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '', executionContext = null) {
     const name = String(toolName || '');
     const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys', 'upload_file']);
-    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool']);
+    // drag_at (vision mode) presses and releases where the model points; no
+    // recipient binding covers that, and a short drag is a click.
+    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool', 'drag_at']);
     if (!ordinaryGuardedTools.has(name) && !unbindableDispatchTools.has(name)) return null;
     if (name === 'press_keys' && String(args?.key || '') !== 'Enter') return null;
     if (name === 'set_field' && args?.submit !== true) return null;
@@ -29152,7 +29172,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? (!uploadSourceKey
             ? 'Attachment blocked: use exactly one attachmentId, downloadId, or absolute filePath. Remove fallback sources and retry with the same authorized recipient.'
             : 'Attachment blocked: choose an exact, unique file-input selector in the active authorized conversation. Re-read the file-input inventory before retrying.')
-          : `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
+          : name === 'drag_at'
+            ? 'Message action blocked: drag_at cannot bind its effects to the verified active recipient. Use click_at on the control, or a single Enter press in the visible composer, instead.'
+            : `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
       };
     }
 
@@ -35281,6 +35303,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._cancelPendingPlans(tabId, 'tab closed');
     this._clarificationAuthorizationGuards.delete(tabId);
     this._isPdfTabCache.delete(tabId);
+    this._visionForgetTab?.(tabId);
     this._lastTypeFieldIdent?.delete(tabId);
     this._lastTypeFieldEpoch?.delete(tabId);
     // A cleared conversation or closed tab takes its filled credentials along.
@@ -46281,6 +46304,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           vision: dispatchContext._vision,
           abortSignal: contentPipelineAbortSignal,
           dispatchState: contentPipelineDispatchState,
+          detectedSubmitAction: dispatchContext.detectedSubmitAction || null,
         });
       }
       if (coordinatePoint && !dispatchBinding?.token) {
@@ -47088,6 +47112,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode is resolved once, now that the run's mode and provider are
     // known, and holds for every tool list, prompt and guard of this run.
     const previousLeanRun = this._leanRuns?.get(tabId);
+    const previousVisionRun = this._visionRunSnapshots?.get(tabId);
     this._beginLeanRun(tabId, mode);
     const previousBotMemory = this._botMemorySessions.get(tabId);
     let botMemorySession = null;
@@ -47123,7 +47148,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
-      this._endVisionRun(tabId);
+      this._endVisionRun(tabId, previousVisionRun);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousStandaloneChatRun) this._standaloneChatRunTabs.add(tabId);
@@ -48930,6 +48955,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode is resolved once, now that the run's mode and provider are
     // known, and holds for every tool list, prompt and guard of this run.
     const previousLeanRun = this._leanRuns?.get(tabId);
+    const previousVisionRun = this._visionRunSnapshots?.get(tabId);
     this._beginLeanRun(tabId, mode);
     const previousBotMemory = this._botMemorySessions.get(tabId);
     let botMemorySession = null;
@@ -48964,7 +48990,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
-      this._endVisionRun(tabId);
+      this._endVisionRun(tabId, previousVisionRun);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousStandaloneChatRun) this._standaloneChatRunTabs.add(tabId);

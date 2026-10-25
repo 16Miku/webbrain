@@ -36,10 +36,15 @@ export function normalizeImageId(value) {
 }
 
 export class VisionSession {
-  constructor({ coordinates = 'pixel' } = {}) {
+  /**
+   * `startEpoch` / `startCounter` continue the numbering of an earlier
+   * session of the same conversation (another model, a restarted worker), so
+   * ids and epochs never repeat within one history.
+   */
+  constructor({ coordinates = 'pixel', startEpoch = 0, startCounter = 0 } = {}) {
     this.coordinates = VISION_COORDINATE_FORMATS.includes(coordinates) ? coordinates : 'pixel';
-    this.counter = 0;
-    this.epoch = 0;
+    this.counter = Math.max(0, Math.floor(finite(startCounter) || 0));
+    this.epoch = Math.max(0, Math.floor(finite(startEpoch) || 0));
     this.updateSeq = 0;
     this.keyframe = null;
     this.images = new Map();
@@ -106,6 +111,22 @@ export class VisionSession {
     this.images.set(id, this.keyframe);
     this.seenPixels = pixels ? new Uint8ClampedArray(pixels) : null;
     return this.keyframe;
+  }
+
+  /**
+   * Forget the current screen (a new run starts, or the screen can no longer
+   * be trusted): its images become "from an earlier screen" and coordinate
+   * tools are refused until the next keyframe.
+   */
+  retireKeyframe() {
+    for (const [id, image] of this.images) this.retired.set(id, { epoch: image.epoch, replacedBy: null });
+    this.images = new Map();
+    this.keyframe = null;
+    this.seenPixels = null;
+    this.changes = [];
+    this.patchChainLength = 0;
+    this.pendingZooms = [];
+    this.forceKeyframe = true;
   }
 
   /** Record patches (keyframe px regions) the model is about to receive. */
@@ -178,8 +199,13 @@ export class VisionSession {
   }
 
   _imageFor(imageId) {
-    const id = normalizeImageId(imageId);
-    if (!id) return { image: this.keyframe, id: this.keyframe?.id || '', composite: true };
+    const raw = imageId == null ? '' : String(imageId).trim();
+    // No image named: the current screen. A value that is not an image id
+    // ("zoom z2", "z2.png") is refused rather than read as the current screen,
+    // which would map a zoom's point through the keyframe.
+    if (!raw) return { image: this.keyframe, id: this.keyframe?.id || '', composite: true };
+    const id = normalizeImageId(raw);
+    if (!id) return { image: null, id: raw.slice(0, 40), retired: null };
     const image = this.images.get(id);
     if (image) return { image, id, composite: false };
     return { image: null, id, retired: this.retired.get(id) || null };
@@ -199,7 +225,7 @@ export class VisionSession {
       if (lookup.retired) {
         return { ok: false, code: 'stale_image', error: `Image ${lookup.id} is from an earlier screen. The current full frame is ${this.keyframe.id}; read the point from it or from a later patch.` };
       }
-      return { ok: false, code: 'unknown_image', error: `Unknown image "${image}". Valid images now: ${[...this.images.keys()].join(', ')}.` };
+      return { ok: false, code: 'unknown_image', error: `Unknown image "${lookup.id}". Name an image exactly as labeled (valid now: ${[...this.images.keys()].join(', ')}), or omit image for the current screen.` };
     }
     const target = lookup.image;
     const px = finite(x);
@@ -261,9 +287,13 @@ export class VisionSession {
     const bottomRight = this.resolvePoint({ x: bx, y: by, image });
     if (!bottomRight.ok && bottomRight.code !== 'stale_area') return bottomRight;
     const k0 = topLeft.keyframePoint;
+    // The rectangle's size in the target image's own pixels (normalized
+    // coordinates are 0..1000 of that image).
+    const wImage = this.coordinates === 'normalized' ? (w / NORMALIZED_COORDINATE_SCALE) * target.width : w;
+    const hImage = this.coordinates === 'normalized' ? (h / NORMALIZED_COORDINATE_SCALE) * target.height : h;
     const k1 = bottomRight.ok ? bottomRight.keyframePoint : {
-      x: Math.min(this.keyframe.width, k0.x + w * target.scaleX),
-      y: Math.min(this.keyframe.height, k0.y + h * target.scaleY),
+      x: Math.min(this.keyframe.width, k0.x + wImage * target.scaleX),
+      y: Math.min(this.keyframe.height, k0.y + hImage * target.scaleY),
     };
     const kfRegion = {
       x: Math.max(0, Math.floor(k0.x)),

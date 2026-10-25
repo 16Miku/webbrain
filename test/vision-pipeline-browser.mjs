@@ -215,3 +215,60 @@ test('content-script vision input (Firefox path) clicks, double-clicks, focuses,
     await browser.close();
   }
 });
+
+test('the DOM probe behind the dispatch checks reads controls, text fields, focus, selects and frames', async () => {
+  const { visionDomProbeExpression } = await import('../src/chrome/src/agent/vision-dom-probe.js');
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.setContent(`<!doctype html><style>body{margin:0;font:14px sans-serif}*{box-sizing:border-box}
+      #btn{position:absolute;left:100px;top:100px;width:200px;height:50px}
+      #lab{position:absolute;left:100px;top:180px}#txt{width:200px}
+      #num{position:absolute;left:100px;top:240px;width:120px}
+      #sel{position:absolute;left:100px;top:300px;width:120px}
+      #card{position:absolute;left:100px;top:380px;width:250px;height:100px;display:block;background:#eee}
+      #slider{position:absolute;left:400px;top:100px;width:300px;height:30px;background:#ddd}
+      #same{position:absolute;left:400px;top:200px;width:300px;height:150px;border:0}
+      #cross{position:absolute;left:400px;top:400px;width:200px;height:100px;border:0}</style>
+      <button id="btn"><span>Send</span></button>
+      <label id="lab">Name <input id="txt" type="text" value="hello world"></label>
+      <input id="num" type="number" value="10">
+      <select id="sel"><option>Red</option><option>Blue</option></select>
+      <a id="card" href="#card">Card <span>inner</span></a>
+      <div id="slider" role="slider" aria-valuenow="1"><div style="width:20px;height:30px;background:#333"></div></div>
+      <iframe id="same" srcdoc="<style>body{margin:0}</style><button style='position:absolute;left:20px;top:20px;width:100px;height:40px'>In frame</button>"></iframe>
+      <iframe id="cross" src="data:text/html,<button>x</button>"></iframe>`);
+    await page.waitForFunction(() => document.getElementById('same').contentDocument?.querySelector('button'));
+    const probe = request => page.evaluate(visionDomProbeExpression(request));
+    const one = async (x, y, extra = {}) => (await probe({ points: [{ x, y }], ...extra })).points[0];
+
+    const onButton = await one(150, 125);
+    assert.ok(['button', 'span'].includes(onButton.tag), JSON.stringify(onButton));
+    assert.deepEqual({ ...onButton, tag: 'x' }, { found: true, tag: 'x', clickable: true, opaqueFrame: false, control: 'button' });
+    const text = await one(200, 190);
+    assert.equal(text.tag, 'input');
+    assert.equal(text.clickable, false, 'a click in a text field inside a label only places the caret');
+    await page.focus('#num');
+    assert.equal((await one(130, 250)).focusedNumberInput, true);
+    await page.evaluate(() => document.activeElement.blur());
+    assert.equal((await one(130, 250)).focusedNumberInput, false);
+    const select = await one(130, 310, { focusSelect: true });
+    assert.deepEqual(select.select, { current: 'Red', options: ['Red', 'Blue'] });
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'sel', 'the select is focused for type_text');
+    const inFrame = await one(400 + 50, 200 + 30);
+    assert.equal(inFrame.tag, 'button');
+    assert.equal(inFrame.clickable, true);
+    assert.equal(inFrame.opaqueFrame, false, 'same-origin frames are entered');
+    assert.equal((await one(450, 430)).opaqueFrame, true, 'a cross-origin frame is opaque');
+
+    const pair = async (a, b) => (await probe({ points: [a, b], pair: true })).pair;
+    assert.deepEqual(await pair({ x: 110, y: 110 }, { x: 290, y: 140 }), { known: true, clickEquivalent: true, control: 'button' });
+    assert.deepEqual(await pair({ x: 150, y: 125 }, { x: 600, y: 115 }), { known: true, clickEquivalent: false }, 'press on a button, release elsewhere');
+    assert.equal((await pair({ x: 110, y: 400 }, { x: 330, y: 470 })).control, 'a', 'inside one link card');
+    assert.deepEqual(await pair({ x: 405, y: 115 }, { x: 650, y: 115 }), { known: true, clickEquivalent: false }, 'a slider drag');
+    assert.equal((await pair({ x: 425, y: 225 }, { x: 515, y: 255 })).clickEquivalent, true, 'inside a button in a same-origin frame');
+    assert.deepEqual(await pair({ x: 150, y: 125 }, { x: 5000, y: 10 }), { known: false });
+  } finally {
+    await browser.close();
+  }
+});

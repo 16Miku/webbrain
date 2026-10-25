@@ -52,6 +52,13 @@ export const VISION_PROFILES = Object.freeze({
     maxLongEdge: Infinity, maxPixels: 1_048_576, maxShortEdge: Infinity, align: 32,
     format: 'jpeg', quality: 0.8,
   }),
+  relative1000: Object.freeze({
+    id: 'relative1000', tokenModel: 'patch28', coordinates: 'normalized',
+    // GLM-4.xV and InternVL are trained on boxes normalized to 0..1000.
+    // JPEG because they are often served by local runtimes too.
+    maxLongEdge: 1280, maxPixels: 1_003_520, maxShortEdge: Infinity, align: 28,
+    format: 'jpeg', quality: 0.8,
+  }),
   local: Object.freeze({
     id: 'local', tokenModel: 'patch28', coordinates: 'pixel',
     // llama.cpp's image loader (stb_image) cannot decode WebP; JPEG is the
@@ -85,6 +92,7 @@ export function detectVisionProfile(provider = {}) {
   const category = lower(config.category || provider?.category);
   // Qwen3-VL and the natively multimodal Qwen3.5+ point in relative 0..1000.
   if (/qwen3(\.\d+)?-(vl|omni)|qwen3\.[5-9]/.test(model)) return VISION_PROFILES.qwen3;
+  if (/glm-4(\.\d+)?v|internvl/.test(model)) return VISION_PROFILES.relative1000;
   if (/gemini/.test(model)) return VISION_PROFILES.gemini;
   if (/claude|anthropic/.test(model) || ['anthropic', 'vertex-anthropic', 'oauth-claude', 'claude'].includes(name)) {
     return VISION_PROFILES.anthropic;
