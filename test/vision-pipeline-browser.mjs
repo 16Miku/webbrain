@@ -548,6 +548,66 @@ test('content-script vision wheel (Firefox path) scrolls what the browser would'
   }
 });
 
+test('content-script vision drag (Firefox path) runs HTML5 drag and drop for a draggable item', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    const at = (left, top) => `position:absolute;left:${left}px;top:${top}px;width:200px;height:60px;margin:0`;
+    await page.setContent(`<!doctype html><style>body{margin:0}</style>
+      <div id="a" draggable="true" style="${at(50, 50)};background:#fcc">A</div>
+      <div id="b" draggable="true" style="${at(50, 150)};background:#cfc">B</div>
+      <div id="c" draggable="true" style="${at(50, 250)};background:#ccf">C</div>
+      <div id="zone" style="${at(400, 50)};height:200px;background:#eee"></div>
+      <div id="plain" style="${at(400, 300)};background:#ddd"></div>
+      <script>window.events=[];
+      for(const id of ['a','b','c']){const el=document.getElementById(id);
+        el.addEventListener('dragstart',e=>{if(id==='c'){e.preventDefault();return;}e.dataTransfer.setData('text/plain',id);e.dataTransfer.effectAllowed='move';events.push('dragstart:'+id)});
+        el.addEventListener('dragend',()=>events.push('dragend:'+id))}
+      const zone=document.getElementById('zone');
+      zone.addEventListener('dragenter',e=>{e.preventDefault();events.push('dragenter:zone')});
+      zone.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='move'});
+      zone.addEventListener('dragleave',()=>events.push('dragleave:zone'));
+      zone.addEventListener('drop',e=>{e.preventDefault();const id=e.dataTransfer.getData('text/plain');events.push('drop:'+id);zone.append(document.getElementById(id))});
+      for(const t of ['mousemove','mouseup'])document.addEventListener(t,()=>{if(events.at(-1)!==t)events.push(t)});</script>`);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    // Events from the drag's start on (the pointer arriving on the item moves the mouse first).
+    const take = () => page.evaluate(() => {
+      const all = window.events.splice(0);
+      const start = all.findIndex(event => event.startsWith('dragstart') || event === 'mouseup');
+      return start < 0 ? all : all.slice(start);
+    });
+    // A onto the drop zone: the page's drop handler moves it there; no mouse events while dragging.
+    let result = await run({ type: 'drag', x: 150, y: 80, toX: 500, toY: 150, steps: 6 });
+    assert.deepEqual(result.html5Drag, { started: true, dropped: true, dropHandled: true }, JSON.stringify(result));
+    assert.deepEqual(await take(), ['dragstart:a', 'dragenter:zone', 'drop:a', 'dragend:a']);
+    assert.equal(await page.evaluate(() => document.getElementById('a').parentElement.id), 'zone');
+    // B onto an element that accepts no drop: no drop, the drag ends with no effect.
+    result = await run({ type: 'drag', x: 150, y: 180, toX: 500, toY: 330, steps: 6 });
+    assert.deepEqual(result.html5Drag, { started: true, dropped: false, dropHandled: false }, JSON.stringify(result));
+    const missed = await take();
+    assert.deepEqual(missed.filter(event => !event.startsWith('drag')), [], JSON.stringify(missed));
+    assert.deepEqual(missed.filter(event => /^drag(start|end)|^drop/.test(event)), ['dragstart:b', 'dragend:b']);
+    assert.notEqual(await page.evaluate(() => document.getElementById('b').parentElement.id), 'zone');
+    // C cancels its dragstart: no drag starts and the pointer drag goes on as mouse events.
+    result = await run({ type: 'drag', x: 150, y: 280, toX: 500, toY: 150, steps: 6 });
+    assert.equal(result.html5Drag, undefined, JSON.stringify(result));
+    const plain = await take();
+    assert.ok(plain.includes('mouseup') && !plain.some(event => event.startsWith('drop')), JSON.stringify(plain));
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision clicks and drags (Firefox path) leave disabled controls alone', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {

@@ -2121,6 +2121,63 @@
     };
   }
 
+  // An HTML5 draggable item (draggable="true") under a press starts the
+  // browser's drag and drop, which synthetic pointer events never do. This
+  // runs that sequence the way the browser does: dragstart on the item with
+  // a DataTransfer the page fills (cancelled: no drag), then per pointer
+  // step drag on the item, dragenter on a newly entered element (then
+  // dragleave on the one left) and dragover on the current one, whose
+  // cancelling makes it a drop target for its dropEffect; on release drop
+  // there (or dragleave when nothing accepted it) and dragend on the item.
+  // Null when no draggable item is under `el`.
+  function _visionHtmlDrag(el) {
+    const source = el?.closest?.('[draggable="true"]');
+    const view = source?.ownerDocument?.defaultView;
+    if (!view || typeof view.DragEvent !== 'function' || typeof view.DataTransfer !== 'function') return null;
+    let transfer;
+    try { transfer = new view.DataTransfer(); } catch { return null; }
+    let current = null;
+    let accepted = false;
+    // Whether this engine lets a constructed DataTransfer carry a drop
+    // effect (Chromium ignores it outside a real drag); without one, a
+    // cancelled dragover alone makes the drop target.
+    let effects = false;
+    try { transfer.dropEffect = 'copy'; effects = transfer.dropEffect === 'copy'; transfer.dropEffect = 'none'; } catch { effects = false; }
+    // The operation a dragenter or dragover starts from (HTML drag-and-drop
+    // processing model), which the page may change before cancelling.
+    const initialEffect = () => {
+      const allowed = String(transfer.effectAllowed || 'uninitialized');
+      return allowed === 'none' ? 'none' : allowed === 'move' ? 'move' : /^link/.test(allowed) ? 'link' : 'copy';
+    };
+    const fire = (target, type, init, cancelable = true) => target.dispatchEvent(new view.DragEvent(type, {
+      bubbles: true, cancelable, composed: true, view, button: 0, buttons: 1, ...init, dataTransfer: transfer,
+    }));
+    const offer = (target, type, init) => {
+      if (effects) transfer.dropEffect = initialEffect();
+      return !fire(target, type, init) && (!effects || transfer.dropEffect !== 'none');
+    };
+    return {
+      start: init => fire(source, 'dragstart', init),
+      move(target, init) {
+        fire(source, 'drag', init);
+        if (target !== current) {
+          offer(target, 'dragenter', init);
+          if (current) fire(current, 'dragleave', { ...init, relatedTarget: target }, false);
+          current = target;
+        }
+        accepted = offer(current, 'dragover', init);
+      },
+      end(init) {
+        let handled = false;
+        if (current && accepted) handled = !fire(current, 'drop', { ...init, buttons: 0 });
+        else if (current) fire(current, 'dragleave', { ...init, buttons: 0 }, false);
+        if (effects && !(current && accepted)) transfer.dropEffect = 'none';
+        fire(source, 'dragend', { ...init, buttons: 0 }, false);
+        return { started: true, dropped: !!(current && accepted), dropHandled: handled };
+      },
+    };
+  }
+
   // Where a caret would go at a point of `doc` (its client coordinates, kept
   // inside its viewport): { node, offset }, the node being the text field
   // itself when the point is in one.
@@ -2370,6 +2427,11 @@
         }
         const range = pressAllowed ? _visionRangeDrag(el) : null;
         let selection = pressAllowed && !range ? _visionTextSelection(el) : null;
+        // A draggable item starts HTML5 drag and drop at the first step
+        // (_visionHtmlDrag); from then on, as for a person's drag, the page
+        // gets drag events instead of pointer and mouse events.
+        const html = pressAllowed && !range ? _visionHtmlDrag(el) : null;
+        let htmlStarted = false;
         const pressOffsetX = x - cx;
         const pressOffsetY = y - cy;
         range?.to(cx, cy);
@@ -2390,13 +2452,24 @@
           const py = y + (toY - y) * (i / steps);
           const at = _visionTargetAt(px, py);
           last = at?.el || last;
-          moveOnto(last, { button: 0, buttons: 1, ...pointAt(at, px, py) });
+          const point = pointAt(at, px, py);
+          if (html && i === 1) {
+            htmlStarted = html.start(point);
+            if (htmlStarted) pointer(el, 'pointercancel', { ...point, buttons: 0, cancelable: false });
+          }
+          if (htmlStarted) { html.move(last, point); continue; }
+          moveOnto(last, { button: 0, buttons: 1, ...point });
           range?.to(px - pressOffsetX, py - pressOffsetY);
           selection?.to(px - pressOffsetX, py - pressOffsetY);
         }
         const end = _visionTargetAt(toX, toY);
         const releaseTarget = end?.el || last;
         const endInit = { button: 0, buttons: 0, ...pointAt(end, toX, toY) };
+        if (htmlStarted) {
+          const html5Drag = html.end(endInit);
+          _visionPointerOver = releaseTarget;
+          return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe, html5Drag };
+        }
         if (releaseTarget !== _visionPointerOver) moveOnto(releaseTarget, { ...endInit, buttons: 1 });
         pointer(releaseTarget, 'pointerup', endInit);
         mouse(releaseTarget, 'mouseup', { ...endInit, detail: 1 });
