@@ -247,6 +247,46 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       assert.ok(results.some(text => /screen changed near this point/.test(text)), results.join('\n'));
     });
 
+    test(`${label}: a zoom after an earlier action of its batch stays usable beside that batch's patch, except where the screen changed after it`, async () => {
+      // The click draws a block at CSS 600–800 x 420–500; the zoom (f1 px
+      // 540,380 200x100 = CSS 600,422 222x111) is taken after it, and its
+      // point (100,50) is CSS 650,447, inside the block.
+      for (const changedAfterZoom of [false, true]) {
+        const { agent, requests, dispatched, scene } = runAgent((step, messages) => {
+          if (step === 1) return { toolCalls: [call('click_at', { x: 200, y: 150 }), call('zoom', { x: 540, y: 380, width: 200, height: 100 })] };
+          if (step === 2) {
+            const zoomId = /UNTRUSTED ZOOM (z\d+)/.exec(messages.map(textOf).findLast(text => /UNTRUSTED ZOOM z\d+/.test(text)) || '')?.[1];
+            assert.ok(zoomId, 'the zoom reached the model with the update');
+            return { toolCalls: [call('click_at', { x: 100, y: 50, image: zoomId })] };
+          }
+          if (step === 3) return { toolCalls: [call('done', { summary: 'Done.', outcome: 'partial' })] };
+          return { content: 'done' };
+        }, { onDispatch: (name, _args, scene) => {
+          if (name === 'click' && scene.rects.length === 1) scene.rects.push({ x: 600, y: 420, w: 200, h: 80, color: [0, 160, 0] });
+        } });
+        if (changedAfterZoom) {
+          // The page draws again inside the zoomed area right after the zoom's capture.
+          const capture = agent._visionPlatformCapture;
+          agent._visionPlatformCapture = async function (tab, options) {
+            const result = await capture.call(this, tab, options);
+            if (options?.cssRegion && scene.rects.length === 2) scene.rects.push({ x: 620, y: 430, w: 80, h: 40, color: [20, 20, 200] });
+            return result;
+          };
+        }
+        const tab = nextTab++;
+        await runLoop(agent, tab, streaming);
+        const clicks = dispatched.filter(entry => entry.name === 'click');
+        const results = requests[2].messages.filter(message => message.role === 'tool').map(message => String(message.content));
+        if (changedAfterZoom) {
+          assert.equal(clicks.length, 1, JSON.stringify(dispatched.map(entry => entry.name)));
+          assert.ok(results.some(text => /changed after z\d+ was taken/.test(text)), results.join('\n'));
+        } else {
+          assert.equal(clicks.length, 2, results.join('\n'));
+          assert.ok(Math.abs(clicks[1].args.x - 650) <= 2 && Math.abs(clicks[1].args.y - 447) <= 2, JSON.stringify(clicks[1].args));
+        }
+      }
+    });
+
     test(`${label}: a drag after an earlier action of the batch is re-checked at both ends`, async () => {
       // The click draws a block at CSS 650–810 x 420–500. The drag starts far
       // from it; only its end (model 650,420 = CSS 722,467) sits on the block.

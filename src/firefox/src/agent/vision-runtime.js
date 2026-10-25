@@ -543,6 +543,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     const zooms = this._visionTakePendingZooms(tabId);
     if (plan.kind === 'none') {
       session.registerNoChange();
+      this._visionRefreshZooms(session, zooms, frame);
       const note = visionNoChangeNote(session.keyframe);
       if (zooms.length) {
         messages.push(this._visionImageMessage([note, ...zooms.map(zoom => zoom.note)].join('\n'), zooms,
@@ -562,6 +563,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       encodedPatches.push({ region, encoded });
     }
     const patches = session.registerPatches(plan.regions.map(regionLabel), frame.raster.pixels);
+    this._visionRefreshZooms(session, zooms, frame);
     const note = visionPatchNote(patches, session.keyframe, { coordinates: session.coordinates });
     const images = patches.map((patch, index) => ({ id: patch.id, kind: 'patch', dataUrl: encodedPatches[index].encoded.dataUrl }));
     messages.push(this._visionImageMessage([note, ...zooms.map(zoom => zoom.note)].join('\n'), [...images, ...zooms],
@@ -579,6 +581,20 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     });
     await this._visionRecordObservation(tabId, frame.probe.url);
     return { kind: 'patch', patches };
+  };
+
+  /**
+   * Zooms of this batch sent with this update: one taken after the batch's
+   * earlier actions (with a frame-scale capture beside it) already shows
+   * what this update reports, so it is made as current as the update and
+   * stays stale only where the screen changed after the zoom.
+   */
+  proto._visionRefreshZooms = function _visionRefreshZooms(session, zooms, frame) {
+    for (const zoom of zooms || []) {
+      const base = zoom?.base;
+      if (!base || base.width !== frame.size.width || base.height !== frame.size.height || base.url !== frame.probe.url) continue;
+      session.markZoomCurrent(zoom.id, diffFrames(base.pixels, frame.raster.pixels, frame.size.width, frame.size.height).regions);
+    }
   };
 
   /**
@@ -753,6 +769,19 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       if (!session.keyframe) return { success: false, noDispatch: true, error: 'Take a screenshot before zooming.' };
       const region = session.resolveRegion({ x: args.x, y: args.y, width: args.width, height: args.height, image: args.image });
       if (!region.ok) return { success: false, noDispatch: true, visionCoordinateError: region.code, error: region.error };
+      // After an earlier action of the batch the zoom shows the screen that
+      // action left, which the update after the batch reports as changed. A
+      // frame-scale capture now lets that update keep the zoom current where
+      // nothing changed after it (_visionRefreshZooms).
+      let base = null;
+      if (vision?.needsStabilityCheck) {
+        try {
+          const frame = await this._visionCaptureFrame(tabId, state);
+          base = { pixels: frame.raster.pixels, width: frame.size.width, height: frame.size.height, url: frame.probe.url };
+        } catch (error) {
+          if (isControlFlowError(error)) throw error;
+        }
+      }
       const profile = VISION_PROFILES[state.profileId] || VISION_PROFILES.default;
       const probe = await this._visionPlatformProbe(tabId);
       const plan = planZoomImageSize({ regionWidth: region.cssRegion.width, regionHeight: region.cssRegion.height, devicePixelRatio: probe?.devicePixelRatio || 1, profile });
@@ -779,6 +808,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       session.pendingZooms.push({
         id: zoom.id, kind: 'zoom', dataUrl: encoded.dataUrl,
         note: visionZoomNote(zoom, session.keyframe, region.keyframeRegion, { coordinates: session.coordinates }),
+        ...(base ? { base } : {}),
       });
       this._visionTraceNote(tabId, 'vision_frame', { kind: 'zoom', id: zoom.id, region: region.keyframeRegion, width: plan.width, height: plan.height, bytes: encoded.bytes });
       return { success: true, image: zoom.id, width: plan.width, height: plan.height, note: `Zoom ${zoom.id} follows this result.` };

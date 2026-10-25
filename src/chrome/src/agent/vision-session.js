@@ -187,6 +187,21 @@ export class VisionSession {
     return image;
   }
 
+  /**
+   * A zoom taken after earlier actions of its batch shows the screen those
+   * actions left, which the update after the batch then reports as changed
+   * (patches newer than the zoom). That update found `changedSince` (frame
+   * px regions) changed after the zoom's capture: the zoom becomes as
+   * current as the update and stays stale only there.
+   */
+  markZoomCurrent(id, changedSince = []) {
+    const image = this.images.get(id);
+    if (image?.kind !== 'zoom' || image.epoch !== this.epoch) return false;
+    image.seq = this.updateSeq;
+    image.staleRegions = (changedSince || []).map(region => ({ x: region.x, y: region.y, width: region.width, height: region.height }));
+    return true;
+  }
+
   /** Should the next observation be a full frame regardless of the diff? */
   needsKeyframe(meta = {}) {
     if (!this.keyframe || this.forceKeyframe || !this.seenPixels) return true;
@@ -247,7 +262,7 @@ export class VisionSession {
     const kx = Math.min(this.keyframe.width - 0.5, target.offsetX + Math.min(ix, target.width - 0.5) * target.scaleX);
     const ky = Math.min(this.keyframe.height - 0.5, target.offsetY + Math.min(iy, target.height - 0.5) * target.scaleY);
     if (!lookup.composite) {
-      const later = this.changes.filter(change => change.seq > target.seq).flatMap(change => change.regions);
+      const later = [...this.changes.filter(change => change.seq > target.seq).flatMap(change => change.regions), ...(target.staleRegions || [])];
       if (pointTouchesRegions({ x: kx, y: ky }, later, STALE_MARGIN_PX)) {
         const newest = [...this.images.values()].filter(img => img.kind === 'patch' && img.seq > target.seq)
           .find(img => pointTouchesRegions({ x: kx, y: ky }, [{ x: img.offsetX, y: img.offsetY, width: img.width, height: img.height }], STALE_MARGIN_PX));
