@@ -42,6 +42,11 @@ export const VISION_UPDATE_DEFAULTS = Object.freeze({
   // Smallest patch side (image px). Tiny slivers are hard to read, so they
   // are grown to at least this size around their centre.
   minPatchSide: 48,
+  // The provider's image grid (vision-budget.js profile.align). Patch sides
+  // are grown to multiples of it, like frames and zooms, so a server that
+  // resizes images to its grid (Qwen2/2.5-VL, UI-TARS: 28 px) receives the
+  // patch unchanged and its pixels map 1:1 to the frame.
+  align: 1,
 });
 
 function clamp(value, lo, hi) {
@@ -233,6 +238,37 @@ export function ensureMinimumSize(region, minSide, width, height) {
 }
 
 /**
+ * Grow a region so both sides are multiples of `align` (at least two grid
+ * cells), centred on the original and kept inside the frame. A frame planned
+ * for the profile is itself a multiple of `align`, so the result covers the
+ * original region whenever that fits.
+ */
+export function alignRegion(region, align, width, height) {
+  const step = Math.max(1, Math.floor(Number(align) || 1));
+  if (step <= 1) return region;
+  const fit = (size, bound) => {
+    const aligned = Math.max(step * 2, Math.ceil(size / step) * step);
+    return aligned <= bound ? aligned : (Math.floor(bound / step) * step || bound);
+  };
+  const w = fit(region.width, width);
+  const h = fit(region.height, height);
+  const x = clamp(Math.round(region.x + region.width / 2 - w / 2), 0, Math.max(0, width - w));
+  const y = clamp(Math.round(region.y + region.height / 2 - h / 2), 0, Math.max(0, height - h));
+  return { ...region, x, y, width: w, height: h };
+}
+
+// Aligned regions can touch or overlap again: merge, re-align, until stable.
+function alignRegions(regions, align, width, height) {
+  let list = regions.map(region => alignRegion(region, align, width, height));
+  for (let pass = 0; pass < 8; pass++) {
+    const merged = mergeOverlappingRegions(list);
+    if (merged.length === list.length) return list;
+    list = merged.map(region => alignRegion(region, align, width, height));
+  }
+  return list;
+}
+
+/**
  * Decide how to show the model the screen after an action.
  *
  * kind:
@@ -255,9 +291,10 @@ export function planFrameUpdate(diff, {
   if (!diff.regions.length) return { kind: 'none', reason: 'no_visible_change' };
   if (patchChainLength >= opts.maxPatchChain) return { kind: 'keyframe', reason: 'patch_chain_limit' };
   if (diff.regionAreaRatio > opts.maxPatchAreaRatio) return { kind: 'keyframe', reason: 'large_change' };
-  const regions = mergeOverlappingRegions(
+  let regions = mergeOverlappingRegions(
     diff.regions.map(region => ensureMinimumSize(region, opts.minPatchSide, width, height)),
   );
+  if (opts.align > 1) regions = alignRegions(regions, opts.align, width, height);
   const patchTokens = regions.reduce((sum, region) => sum + estimateTokens(region.width, region.height), 0);
   const frameTokens = estimateTokens(width, height);
   if (frameTokens > 0 && patchTokens >= frameTokens * opts.maxPatchTokenRatio) {

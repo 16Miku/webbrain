@@ -271,6 +271,37 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       assert.match(textOf(zoomMessage), /ZOOM z\d+ of f1 area x 100–300, y 100–200/);
     });
 
+    test(`${label}: a Qwen2.5-VL run gets patches on its 28 px grid, and points in them map 1:1`, async () => {
+      const QWEN = { name: 'openrouter', model: 'qwen/qwen2.5-vl-72b-instruct', config: { category: 'cloud', type: 'openrouter', model: 'qwen/qwen2.5-vl-72b-instruct' } };
+      let patch = null;
+      const { agent, requests, dispatched } = runAgent((step, messages) => {
+        if (step === 1) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+        if (step === 2) {
+          const note = messages.map(textOf).findLast(text => /UNTRUSTED SCREEN UPDATE/.test(text)) || '';
+          const match = /(p\d+) = area x (\d+)–(\d+), y (\d+)–(\d+) of f\d+ \((\d+)x(\d+) px/.exec(note);
+          assert.ok(match, note);
+          patch = { id: match[1], x: Number(match[2]), y: Number(match[4]), width: Number(match[6]), height: Number(match[7]) };
+          return { toolCalls: [call('click_at', { x: Math.round(patch.width / 2), y: Math.round(patch.height / 2), image: patch.id })] };
+        }
+        if (step === 3) return { toolCalls: [call('done', { summary: 'Clicked twice.', outcome: 'success' })] };
+        return { content: 'done' };
+      }, { provider: QWEN, onDispatch: (name, _args, scene) => {
+        if (name === 'click' && scene.rects.length === 1) scene.rects.push({ x: 600, y: 420, w: 50, h: 30, color: [200, 40, 40] });
+      } });
+      const tab = nextTab++;
+      await runLoop(agent, tab, streaming);
+      // 1440x900 CSS -> a 1260x784 frame (multiples of 28) for this profile.
+      assert.match(textOf(visionMessages(requests[0].messages)[0]), /1260x784 image/);
+      assert.ok(patch, 'a patch was sent');
+      assert.equal(patch.width % 28, 0, JSON.stringify(patch));
+      assert.equal(patch.height % 28, 0, JSON.stringify(patch));
+      const clicks = dispatched.filter(entry => entry.name === 'click');
+      assert.equal(clicks.length, 2, JSON.stringify(dispatched.map(entry => entry.name)));
+      const expected = { x: (patch.x + Math.round(patch.width / 2)) * 1440 / 1260, y: (patch.y + Math.round(patch.height / 2)) * 900 / 784 };
+      assert.ok(Math.abs(clicks[1].args.x - expected.x) <= 1 && Math.abs(clicks[1].args.y - expected.y) <= 1,
+        `patch pixels map 1:1 to the frame: ${JSON.stringify({ got: clicks[1].args, expected })}`);
+    });
+
     test(`${label}: vision mode off, or a model without images, keeps the accessibility-tree path`, async () => {
       for (const options of [{ visionMode: 'off' }, { provider: { ...VISION, supportsVision: false } }]) {
         const { agent, requests } = runAgent(step => (step === 1

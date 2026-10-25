@@ -79,6 +79,18 @@ function lower(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+// The host of a configured base URL, compared exactly: a host name that only
+// appears somewhere in the URL (a path, a longer domain) is not that host.
+function urlHost(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  try {
+    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Pick the vision profile for a provider object (or its config). Model ids
  * decide first because routers (OpenRouter, Bedrock, Vertex) serve several
@@ -99,7 +111,7 @@ export function detectVisionProfile(provider = {}) {
   }
   if (/qwen|ui-tars|uitars|holo1|opencua/.test(model)) return VISION_PROFILES.qwen;
   if (/(^|\/)(gpt-|o\d|chatgpt|computer-use)/.test(model) || name === 'openai' || name === 'azure-openai'
-      || baseUrl.includes('api.openai.com')) {
+      || urlHost(baseUrl) === 'api.openai.com') {
     return VISION_PROFILES.openai;
   }
   if (LOCAL_PROVIDER_NAMES.has(name) || category === 'local') return VISION_PROFILES.local;

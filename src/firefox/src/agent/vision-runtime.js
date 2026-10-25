@@ -528,6 +528,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       height: frame.size.height,
       patchChainLength: session.patchChainLength,
       estimateTokens: (w, h) => estimateVisionTokens(w, h, frame.profile),
+      align: frame.profile.align,
     });
     if (plan.kind === 'keyframe') {
       await this._visionPushKeyframe(tabId, messages, onUpdate, { state, frame, reason: plan.reason === 'large_change' ? 'large change' : plan.reason.replace(/_/g, ' ') });

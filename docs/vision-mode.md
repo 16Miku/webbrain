@@ -84,7 +84,7 @@ Screenshot redaction maps element boxes into the captured visual-viewport box (p
 After a batch WebBrain waits until two consecutive captures match (bounded, ~1 s; a micro change between them, a few 16 px cells such as a blinking caret, a clock or a spinner, counts as a match, `isMicroScreenChange`, since it never stops), then compares the new frame with what the model has seen (`vision-diff.js`): 16 px cells, a per-pixel threshold that ignores encoder noise and caret blinks, nearby changes merged, at most 4 padded regions. `planFrameUpdate` sends:
 
 - **nothing but a one-line note** when nothing changed: "no visible change" is also the clearest signal that a click missed;
-- **patches** for local changes (typing, a menu, a toast);
+- **patches** for local changes (typing, a menu, a toast). For a provider with an image grid (28 px for Qwen2/2.5-VL, UI-TARS, GLM-4.xV, InternVL and local servers; 32 px for Qwen3-VL) each patch is grown to multiples of the grid, like frames and zooms, so the server never resizes it and its pixels map 1:1 to the frame;
 - **a new frame** when more than 45% changed, the patch chain is 6 long, patches would cost ≥ 70% of a frame, or the URL, viewport size or DPR changed.
 
 The "seen" buffer copies only patched regions, so changes below the threshold accumulate until they are sent instead of drifting forever.

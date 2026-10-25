@@ -49,6 +49,15 @@ test('profiles: model ids pick the provider family before router names', () => {
   assert.equal(pick('llamacpp', 'gemma-3-12b-it'), 'local');
   assert.equal(pick('ollama', 'llava:13b'), 'local');
   assert.equal(pick('custom', 'pixtral-large', { category: 'cloud' }), 'default');
+  // An OpenAI base URL is recognized by its host, never by a substring of the URL.
+  assert.equal(pick('custom', 'my-model', { baseUrl: 'https://api.openai.com/v1' }), 'openai');
+  assert.equal(pick('custom', 'my-model', { baseUrl: 'api.openai.com/v1' }), 'openai');
+  for (const baseUrl of ['https://proxy.example.test/api.openai.com/v1', 'https://api.openai.com.example.test/v1', 'https://example.test/?u=api.openai.com']) {
+    assert.equal(pick('custom', 'my-model', { baseUrl, category: 'cloud' }), 'default', baseUrl);
+  }
+  for (const build of ['chrome', 'firefox']) {
+    assert.doesNotMatch(read(`src/${build}/src/agent/vision-budget.js`), /\.includes\(['"]api\.openai\.com/);
+  }
   assert.equal(budget.VISION_PROFILES.gemini.coordinates, 'normalized');
   assert.equal(budget.VISION_PROFILES.qwen3.coordinates, 'normalized');
   assert.equal(budget.VISION_PROFILES.anthropic.coordinates, 'pixel');
@@ -186,6 +195,33 @@ test('frame update planning: none, patch, keyframe', () => {
   // A 2px sliver grows to a readable minimum size.
   const sliver = diff.planFrameUpdate({ comparable: true, regions: [{ x: 600, y: 10, width: 2, height: 30 }], regionAreaRatio: 0.0001 }, opts);
   assert.ok(sliver.regions[0].width >= 48 && sliver.regions[0].height >= 48, JSON.stringify(sliver.regions));
+});
+
+test('frame update planning: patches follow the provider\'s image grid', () => {
+  // A Qwen2.5-VL frame for a 1440x900 viewport is 1260x784 (multiples of 28).
+  const width = 1260, height = 784;
+  const opts = { width, height, align: 28, estimateTokens: (w, h) => Math.ceil(w / 28) * Math.ceil(h / 28) + 2 };
+  const changes = [{ x: 517, y: 358, width: 64, height: 48 }, { x: 1200, y: 740, width: 60, height: 44 }, { x: 0, y: 0, width: 50, height: 30 }];
+  for (const change of changes) {
+    const plan = diff.planFrameUpdate({ comparable: true, regions: [change], regionAreaRatio: 0.004 }, opts);
+    assert.equal(plan.kind, 'patch');
+    for (const region of plan.regions) {
+      assert.equal(region.width % 28, 0, JSON.stringify(region));
+      assert.equal(region.height % 28, 0, JSON.stringify(region));
+      assert.ok(region.width >= 56 && region.height >= 56, JSON.stringify(region));
+      assert.ok(region.x >= 0 && region.y >= 0 && region.x + region.width <= width && region.y + region.height <= height, JSON.stringify(region));
+      assert.ok(region.x <= change.x && region.y <= change.y && region.x + region.width >= change.x + change.width
+        && region.y + region.height >= change.y + change.height, `the patch covers the change: ${JSON.stringify({ region, change })}`);
+    }
+  }
+  // Two changes whose aligned patches would overlap become one aligned patch.
+  const close = diff.planFrameUpdate({ comparable: true, regions: [{ x: 100, y: 100, width: 50, height: 40 }, { x: 160, y: 110, width: 40, height: 40 }], regionAreaRatio: 0.004 }, opts);
+  assert.equal(close.regions.length, 1, JSON.stringify(close.regions));
+  assert.equal(close.regions[0].width % 28, 0);
+  assert.equal(close.regions[0].height % 28, 0);
+  // Profiles without a grid keep the exact padded region.
+  const plain = diff.planFrameUpdate({ comparable: true, regions: [{ x: 517, y: 358, width: 64, height: 48 }], regionAreaRatio: 0.004 }, { ...opts, align: 1 });
+  assert.deepEqual(plain.regions.map(({ x, y, width: w, height: h }) => ({ x, y, w, h })), [{ x: 517, y: 358, w: 64, h: 48 }]);
 });
 
 test('copyRegions updates only the patched area of the seen buffer', () => {
