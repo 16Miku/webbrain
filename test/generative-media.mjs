@@ -203,9 +203,17 @@ for (const build of ['chrome', 'firefox']) {
     // A body that takes its prompt inside another field, or is made of parts.
     const content = caps(comfy({ properties: { content: { type: 'array' }, duration: { type: 'integer', minimum: 4, maximum: 6 }, ratio: { enum: ['16:9'] } } }));
     assert.deepEqual([content.inputs, content.supported_durations], [['content', 'duration', 'ratio'], [4, 5, 6]]);
-    const parts = caps(comfy({ allOf: [{ $ref: '#/components/schemas/Base' }, { properties: { duration: { enum: [5] } } }] },
-      { Base: { properties: { prompt: { type: 'string' }, duration: { enum: [10] } } } }));
-    assert.deepEqual([parts.inputs, parts.supported_durations, parts.encoded], [['prompt', 'duration'], [5, 10], [5, 10]]);
+    // allOf parts must all hold: a part narrows the base's range or values.
+    const narrowed = caps(comfy({ allOf: [{ $ref: '#/components/schemas/Base' }, { properties: { duration: { minimum: 5, maximum: 10 } } }] },
+      { Base: { properties: { prompt: { type: 'string' }, duration: { type: 'integer', minimum: 1, maximum: 15 } } } }));
+    assert.deepEqual([narrowed.inputs, narrowed.supported_durations], [['prompt', 'duration'], seconds(5, 10)]);
+    assert.deepEqual(lengths({ allOf: [{ type: 'integer', minimum: 1, maximum: 15 }, { minimum: 5, maximum: 10 }] }), [seconds(5, 10), seconds(5, 10)]);
+    assert.deepEqual(lengths({ allOf: [{ enum: ['5', '10', '15'] }, { enum: ['10', '15', '20'] }] }), [[10, 15], ['10', '15']]);
+    assert.deepEqual(lengths({ allOf: [{ enum: [5, 10] }, { const: 10 }] }), [[10], [10]]);
+    assert.deepEqual(lengths({ type: 'integer', minimum: 1, maximum: 15, anyOf: [{ maximum: 3 }, { enum: [10, 20] }] }), [[1, 2, 3, 10], [1, 2, 3, 10]]);
+    // anyOf or oneOf variants of a body: a length any of them takes.
+    const variants = caps(comfy({ oneOf: [{ properties: { prompt: { type: 'string' }, duration: { enum: [5] } } }, { properties: { prompt: { type: 'string' }, duration: { enum: [10] } } }] }));
+    assert.deepEqual([variants.inputs, variants.supported_durations, variants.encoded], [['prompt', 'duration'], [5, 10], [5, 10]]);
     // Nothing to read: an open body, no paths, an error instead of a document.
     assert.equal(media.videoInputCapabilities(comfy({ type: 'object', additionalProperties: true })), null);
     assert.equal(media.videoInputCapabilities({ openapi: '3.0.4', paths: {} }), null);

@@ -205,23 +205,42 @@ function videoShape(entry, video) {
   return shape;
 }
 
-// The whole seconds a numeric schema allows: within its bounds, exclusive or
-// not, and its whole-number multipleOf; at most an hour. None without an upper bound.
-function wholeSeconds(form) {
-  const types = [].concat(form.type ?? []);
-  if (types.length && !types.some(type => type === 'integer' || type === 'number')) return [];
-  const highs = [];
-  const lows = [1];
-  if (Number.isFinite(form.maximum)) highs.push(form.exclusiveMaximum === true ? Math.ceil(form.maximum) - 1 : Math.floor(form.maximum));
-  if (Number.isFinite(form.exclusiveMaximum)) highs.push(Math.ceil(form.exclusiveMaximum) - 1);
-  if (Number.isFinite(form.minimum)) lows.push(form.exclusiveMinimum === true ? Math.floor(form.minimum) + 1 : Math.ceil(form.minimum));
-  if (Number.isFinite(form.exclusiveMinimum)) lows.push(Math.floor(form.exclusiveMinimum) + 1);
-  if (!highs.length) return [];
-  const step = Number.isInteger(form.multipleOf) && form.multipleOf > 0 ? form.multipleOf : 1;
+// The JSON Schema types a value has.
+const jsonTypes = value => (typeof value === 'number' ? (Number.isInteger(value) ? ['integer', 'number'] : ['number']) : [typeof value]);
+
+// Whether a value meets every schema of a form: their types, listed values,
+// bounds (exclusive or not) and multipleOf. Other keywords are not checked.
+function formAllows(form, value) {
+  return form.every(schema => {
+    const types = [].concat(schema.type ?? []);
+    if (types.length && !jsonTypes(value).some(type => types.includes(type))) return false;
+    if (Array.isArray(schema.enum) && !schema.enum.includes(value)) return false;
+    if (schema.const !== undefined && schema.const !== value) return false;
+    if (typeof value !== 'number') return true;
+    if (Number.isFinite(schema.maximum) && (schema.exclusiveMaximum === true ? value >= schema.maximum : value > schema.maximum)) return false;
+    if (Number.isFinite(schema.exclusiveMaximum) && value >= schema.exclusiveMaximum) return false;
+    if (Number.isFinite(schema.minimum) && (schema.exclusiveMinimum === true ? value <= schema.minimum : value < schema.minimum)) return false;
+    if (Number.isFinite(schema.exclusiveMinimum) && value <= schema.exclusiveMinimum) return false;
+    const step = schema.multipleOf;
+    return !(step > 0) || Math.abs(value / step - Math.round(value / step)) < 1e-9;
+  });
+}
+
+// The values a form lists (enum or const) that all of its schemas allow; null
+// when it lists none.
+function formValues(form) {
+  const lists = form.filter(schema => Array.isArray(schema.enum) || schema.const !== undefined)
+    .map(schema => (schema.const !== undefined ? [schema.const] : schema.enum));
+  if (!lists.length) return null;
+  return lists[0].filter(value => (typeof value === 'string' || typeof value === 'number') && formAllows(form, value));
+}
+
+// The whole seconds a form without listed values allows, up to an hour; none
+// without an upper bound.
+function formSeconds(form) {
+  if (!form.some(schema => Number.isFinite(schema.maximum) || Number.isFinite(schema.exclusiveMaximum))) return [];
   const seconds = [];
-  for (let value = Math.max(...lows), longest = Math.min(...highs, 3600); value <= longest; value++) {
-    if (value % step === 0) seconds.push(value);
-  }
+  for (let value = 1; value <= 3600; value++) if (formAllows(form, value)) seconds.push(value);
   return seconds;
 }
 
@@ -240,19 +259,26 @@ export function videoInputCapabilities(openapi) {
     if (!node || typeof node !== 'object' || depth > 8) return null;
     return typeof node.$ref === 'string' ? resolve(schemas[node.$ref.split('/').pop()], depth + 1) : node;
   };
-  // A body's properties by name, with those of its allOf, anyOf and oneOf
-  // parts; a name in more than one part takes any of their forms.
-  const properties = (node, merged = new Map(), depth = 0) => {
+  // A body's properties by name, with those of its parts. A property in the
+  // body and its allOf parts must meet all their schemas; one in anyOf or
+  // oneOf variants, any of them.
+  const properties = (node, depth = 0) => {
     const body = resolve(node);
+    const merged = new Map();
     if (!body || depth > 8) return merged;
-    const add = (name, schema) => merged.set(name, merged.has(name) ? { anyOf: [merged.get(name), schema] } : schema);
+    const add = (into, name, schema, key) => into.set(name, into.has(name) ? { [key]: [into.get(name), schema] } : schema);
     if (body.properties && typeof body.properties === 'object' && !Array.isArray(body.properties)) {
-      for (const [name, schema] of Object.entries(body.properties)) add(name, schema);
+      for (const [name, schema] of Object.entries(body.properties)) merged.set(name, schema);
     }
-    for (const key of ['allOf', 'anyOf', 'oneOf']) {
+    for (const part of Array.isArray(body.allOf) ? body.allOf : []) {
+      for (const [name, schema] of properties(part, depth + 1)) add(merged, name, schema, 'allOf');
+    }
+    for (const key of ['anyOf', 'oneOf']) {
+      const variants = new Map();
       for (const part of Array.isArray(body[key]) ? body[key] : []) {
-        for (const [name, schema] of properties(part, new Map(), depth + 1)) add(name, schema);
+        for (const [name, schema] of properties(part, depth + 1)) add(variants, name, schema, 'anyOf');
       }
+      for (const [name, schema] of variants) add(merged, name, schema, 'allOf');
     }
     return merged;
   };
@@ -263,33 +289,34 @@ export function videoInputCapabilities(openapi) {
     .filter(body => body.size);
   const input = bodies.find(body => body.has('prompt')) || bodies[0];
   if (!input) return null;
-  // Every form a property can take: its allOf, anyOf and oneOf branches.
+  // The forms a property can take, each a list of schemas that must all hold:
+  // the property's own keywords, every allOf part, and one anyOf or oneOf part.
   const forms = (node, depth = 0) => {
-    const resolved = resolve(node);
-    const branches = ['allOf', 'anyOf', 'oneOf'].flatMap(key => (Array.isArray(resolved?.[key]) ? resolved[key] : []));
-    if (branches.length && depth < 8) return branches.flatMap(branch => forms(branch, depth + 1));
-    return resolved ? [resolved] : [];
+    const schema = resolve(node);
+    if (!schema) return [[]];
+    let result = [[schema]];
+    if (depth >= 8) return result;
+    const all = options => { result = result.flatMap(form => options.map(option => [...form, ...option])).slice(0, 64); };
+    for (const part of Array.isArray(schema.allOf) ? schema.allOf : []) all(forms(part, depth + 1));
+    for (const key of ['anyOf', 'oneOf']) {
+      if (Array.isArray(schema[key]) && schema[key].length) all(schema[key].flatMap(part => forms(part, depth + 1)));
+    }
+    return result;
   };
-  const listedValues = form => [...(Array.isArray(form.enum) ? form.enum : []), ...(form.const !== undefined ? [form.const] : [])]
-    .filter(value => typeof value === 'string' || typeof value === 'number');
   const listed = name => {
     const values = new Map();
-    for (const value of forms(input.get(name)).flatMap(listedValues)) if (!values.has(String(value))) values.set(String(value), value);
+    for (const form of forms(input.get(name))) for (const value of formValues(form) ?? []) if (!values.has(String(value))) values.set(String(value), value);
     return values.size ? [...values.values()] : null;
   };
   const entry = { inputs: [...input.keys()] };
-  // Clip lengths in whole seconds, each with the value the model takes for it.
+  // Clip lengths in whole seconds, each with the value the model takes for it:
+  // a listed value (6, "6", "6.0" or "8s"; "auto" is not a length), or a
+  // second within a range.
   const lengths = new Map();
-  const durationForms = forms(input.get('duration'));
-  for (const value of durationForms.flatMap(listedValues)) {
-    // Listed lengths: 6, "6", "6.0" or "8s". Other values, such as "auto", are not lengths.
+  for (const value of forms(input.get('duration')).flatMap(form => formValues(form) ?? formSeconds(form))) {
     const match = /^(\d+)(?:\.0+)?\s*s?$/i.exec(String(value).trim());
     const seconds = match ? Number(match[1]) : 0;
     if (seconds > 0 && !lengths.has(seconds)) lengths.set(seconds, value);
-  }
-  for (const form of durationForms) {
-    if (listedValues(form).length) continue;
-    for (const seconds of wholeSeconds(form)) if (!lengths.has(seconds)) lengths.set(seconds, seconds);
   }
   if (lengths.size) {
     entry.supported_durations = [...lengths.keys()].sort((a, b) => a - b);

@@ -784,6 +784,12 @@ for (const build of ['chrome', 'firefox']) {
     const broke = fal({ fail: (_index, body) => body.prompt.endsWith('Scene idea 2') && 402 });
     await assert.rejects(runFal(broke), /^Error: Clip 2 of 3 failed: fal\.ai submit failed \(HTTP 402\): the account is out of credit; add credit and try again: .*Exhausted balance/);
     assert.equal(broke.calls.submits.filter(body => body.prompt.endsWith('Scene idea 2')).length, 1, 'tried once');
+    // fal.ai reports an input the model rejects when the result is read; that is not tried again either.
+    const invalid = fal();
+    const rejectInput = async (url, init) => (/\/requests\/req-0$/.test(url) ? json({ detail: [{ msg: 'Input should be at most 10' }] }, 422) : invalid.fetchImpl(url, init));
+    await assert.rejects(media.runMediaGeneration({ prompt: 'Story', video, config: falConfig(h3Max), fetchImpl: rejectInput, pollIntervalMs: 1 }),
+      /^Error: Clip 1 of 3 failed: fal\.ai result fetch failed \(HTTP 422\): .*Input should be at most 10/);
+    assert.equal(invalid.calls.submits.filter(body => body.prompt.endsWith('Scene idea 1')).length, 1, 'a rejected input is tried once');
     const webm = fal({ clip: index => (index === 0 ? new TextEncoder().encode('\x1aE\xdf\xa3 webm') : fixtures['h264-aac-1']) });
     await assert.rejects(runFal(webm), /^Error: Clip 1 of 3 failed: fal\.ai did not return an MP4 video\./);
     assert.equal(webm.calls.submits.filter(body => body.prompt.endsWith('Scene idea 1')).length, 1, 'another format is not tried again');

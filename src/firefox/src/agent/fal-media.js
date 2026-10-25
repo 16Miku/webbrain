@@ -184,7 +184,8 @@ export async function runFalGeneration({
     while (true) {
       await abortableDelay(pollMs, operation.signal);
       const statusRes = await fetchImpl(statusUrl, { headers, signal: operation.signal, redirect: 'error', credentials: 'omit' });
-      if (!statusRes.ok) throw new Error(`fal.ai status check failed (HTTP ${statusRes.status}).`);
+      // HTTP failures keep their status, so a refusal is not tried again.
+      if (!statusRes.ok) throw Object.assign(new Error(`fal.ai status check failed (HTTP ${statusRes.status}).`), { status: statusRes.status });
 
       let statusPayload;
       try {
@@ -195,7 +196,12 @@ export async function runFalGeneration({
       status = String(statusPayload?.status || '').toUpperCase();
       if (status === 'COMPLETED') {
         const resultRes = await fetchImpl(responseUrl, { headers, signal: operation.signal, redirect: 'error', credentials: 'omit' });
-        if (!resultRes.ok) throw new Error(`fal.ai result fetch failed (HTTP ${resultRes.status}).`);
+        if (!resultRes.ok) {
+          // fal.ai reports inputs the model rejects here (HTTP 422), with the reason.
+          let detail = '';
+          try { detail = (await resultRes.text()).slice(0, 300); } catch { /* no body */ }
+          throw Object.assign(new Error(`fal.ai result fetch failed (HTTP ${resultRes.status})${detail ? `: ${detail}` : '.'}`), { status: resultRes.status });
+        }
 
         let payload;
         try {
