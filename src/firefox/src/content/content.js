@@ -2034,12 +2034,46 @@
     return null;
   }
 
-  function _visionScrollable(el, axis) {
-    for (let node = el; node && node.nodeType === 1; node = node.parentElement || node.getRootNode?.()?.host) {
-      const style = node.ownerDocument.defaultView.getComputedStyle(node);
-      const overflow = axis === 'x' ? style.overflowX : style.overflowY;
-      const room = axis === 'x' ? node.scrollWidth - node.clientWidth : node.scrollHeight - node.clientHeight;
-      if (room > 1 && /(auto|scroll|overlay)/.test(overflow)) return node;
+  // Where a wheel delta along `axis` goes, routed as the browser routes it:
+  // the nearest scroll container under the point that can still move that
+  // way (an exhausted one passes the wheel on unless its overscroll-behavior
+  // keeps it), then the document unless its overflow locks it (a page
+  // behind a modal), then the page around a same-origin frame. Null when
+  // nothing would scroll. A programmatic scroll ignores all of this (it
+  // scrolls a locked page too), so it is checked here.
+  function _visionWheelTarget(el, axis, delta) {
+    const x = axis === 'x';
+    const canMove = node => {
+      const max = x ? node.scrollWidth - node.clientWidth : node.scrollHeight - node.clientHeight;
+      const at = Math.abs(x ? node.scrollLeft : node.scrollTop);
+      return max > 1 && (delta < 0 ? at > 0.5 : at < max - 0.5);
+    };
+    const contains = style => /contain|none/.test(String((x ? style.overscrollBehaviorX : style.overscrollBehaviorY) || ''));
+    let node = el;
+    for (let depth = 0; node && depth < 8; depth++) {
+      const doc = node.ownerDocument;
+      const view = doc?.defaultView;
+      if (!view) return null;
+      const root = doc.scrollingElement || doc.documentElement;
+      // The viewport's overflow is the root element's, or the body's when
+      // the root's is visible (the body is then no scroller of its own).
+      const htmlStyle = view.getComputedStyle(doc.documentElement);
+      const htmlOverflow = x ? htmlStyle.overflowX : htmlStyle.overflowY;
+      const bodyIsViewport = !!doc.body && htmlOverflow === 'visible';
+      for (let n = node; n && n.nodeType === 1 && n !== doc.documentElement; n = n.parentElement || n.getRootNode?.()?.host) {
+        if (n === doc.body && bodyIsViewport) break;
+        const style = view.getComputedStyle(n);
+        if (!/(auto|scroll|overlay)/.test(x ? style.overflowX : style.overflowY)) continue;
+        if (canMove(n)) return n;
+        if (contains(style)) return null;
+      }
+      const bodyStyle = bodyIsViewport ? view.getComputedStyle(doc.body) : null;
+      const viewportOverflow = bodyStyle ? (x ? bodyStyle.overflowX : bodyStyle.overflowY) : htmlOverflow;
+      if (!/hidden|clip/.test(viewportOverflow) && root && canMove(root)) return root;
+      if (contains(htmlStyle)) return null;
+      let frame = null;
+      try { frame = view.frameElement; } catch { frame = null; }
+      node = frame;
     }
     return null;
   }
@@ -2307,9 +2341,8 @@
         if (notCancelled) {
           for (const [axis, delta] of [['x', deltaX], ['y', deltaY]]) {
             if (!delta) continue;
-            const scroller = _visionScrollable(el, axis);
-            const scrollingElement = el.ownerDocument.scrollingElement || el.ownerDocument.documentElement;
-            const target = scroller || scrollingElement;
+            const target = _visionWheelTarget(el, axis, delta);
+            if (!target) continue;
             const before = axis === 'x' ? target.scrollLeft : target.scrollTop;
             target.scrollBy({ left: axis === 'x' ? delta : 0, top: axis === 'y' ? delta : 0, behavior: 'instant' });
             const after = axis === 'x' ? target.scrollLeft : target.scrollTop;

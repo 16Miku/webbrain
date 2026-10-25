@@ -500,6 +500,54 @@ test('content-script vision input (Firefox path) moves the pointer off one eleme
   }
 });
 
+test('content-script vision wheel (Firefox path) scrolls what the browser would', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    const pane = (id, left, extra = '') => `<div id="${id}" style="position:fixed;left:${left}px;top:100px;width:300px;height:200px;overflow:auto;${extra}"><div style="height:1000px"></div></div>`;
+    await page.setContent(`<!doctype html><style>body{margin:0}iframe{position:fixed;left:100px;top:400px;width:300px;height:150px;border:0}</style>
+      ${pane('pane', 100)}${pane('kept', 500, 'overscroll-behavior:contain')}<iframe srcdoc="<p>short</p>"></iframe><div style="height:3000px"></div>`);
+    await page.waitForFunction(() => document.querySelector('iframe').contentDocument?.body);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const wheel = (x, y) => page.evaluate(p => window.__visionInput(p), { type: 'wheel', x, y, deltaY: 300 });
+    const state = () => page.evaluate(() => [document.getElementById('pane').scrollTop, document.getElementById('kept').scrollTop, window.scrollY]);
+    const reset = (pane = 0, kept = 0) => page.evaluate(([pane, kept]) => {
+      document.getElementById('pane').scrollTop = pane; document.getElementById('kept').scrollTop = kept; window.scrollTo(0, 0);
+    }, [pane, kept]);
+    // A pane that can still move takes the wheel.
+    assert.equal((await wheel(250, 200)).moved, true);
+    assert.deepEqual(await state(), [300, 0, 0]);
+    // An exhausted pane passes it to the page; one with overscroll-behavior: contain keeps it.
+    await reset(800, 800);
+    assert.equal((await wheel(250, 200)).moved, true);
+    assert.deepEqual(await state(), [800, 800, 300]);
+    await reset(800, 800);
+    assert.equal((await wheel(650, 200)).moved, false);
+    assert.deepEqual(await state(), [800, 800, 0]);
+    // A same-origin frame that cannot scroll passes the wheel to the page around it.
+    await reset();
+    assert.equal((await wheel(250, 450)).moved, true);
+    assert.equal((await state())[2], 300);
+    // A page locked behind a modal (overflow: hidden) does not scroll; a pane on it still does.
+    await reset();
+    await page.evaluate(() => { document.documentElement.style.overflow = 'hidden'; });
+    assert.equal((await wheel(450, 650)).moved, false);
+    assert.equal((await wheel(250, 200)).moved, true);
+    assert.deepEqual(await state(), [300, 0, 0]);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision clicks and drags (Firefox path) leave disabled controls alone', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {
