@@ -346,8 +346,16 @@ unattended run generates nothing. Clips that cannot be joined this way
 (different encodings, edit lists or timing the joined file cannot reproduce, or
 more than 160 MB together) are kept as separate clips and shown in order, and
 the tool result says why (`joinError`), which traces show. The model never sees
-the video, so the tool result gives it the video's real length
-(`durationSeconds`) and `clipCount` to report. Before writing scenes, the agent can load the default Video scenes
+the video, so the tool result gives it the video's measured length
+(`durationSeconds`) and `clipCount` when available. Plans that knowingly fall
+short of `estimated_duration` within the 120-second cap are rejected before
+submission; missing clip-length metadata must not silently fall back to a
+default short clip. Results retain the original estimate (`estimatedSeconds`),
+accepted plan (`plannedSeconds`), and `durationStatus`: `short`, `enough`,
+or `unverified`. A measured shortfall keeps the generated asset and reports
+incomplete delivery; hosted clips without a measured length stay unverified.
+These fields guide reporting, not a hard block on the agent's `done` call.
+Before writing scenes, the agent can load the default Video scenes
 skill (`skills/video-scenes.md`), which asks for a shared cast and set sheet in
 `prompt`, one filmable action per scene, and demonstrations instead of diagrams
 or on-screen text; it is loaded only for such videos.

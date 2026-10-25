@@ -542,7 +542,12 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(media.planVideoClips(scenes(8, 15), grok.supported_durations).total, 120);
     assert.throws(() => media.planVideoClips(scenes(9, 15), grok.supported_durations), /up to 120 s/);
     assert.throws(() => media.planVideoClips(scenes(25, 4), grok.supported_durations), /at most 24/);
-    assert.throws(() => media.planVideoClips(scenes(2, 5), null), /does not list the clip lengths/);
+    assert.throws(() => media.planVideoClips(scenes(2, 5), null), error => {
+      assert.match(error.message, /does not list the clip lengths/);
+      assert.match(error.message, /WebBrain can join scene clips/);
+      assert.doesNotMatch(error.message, /Generate one clip instead/);
+      return true;
+    });
     assert.throws(() => media.planVideoClips([{ prompt: ' ', duration: 5 }], [5]), /Scene 1 needs a prompt/);
   });
 
@@ -584,6 +589,29 @@ for (const build of ['chrome', 'firefox']) {
     const workflow = { '6': { class_type: 'CLIPTextEncode', inputs: { text: '{{prompt}}' } } };
     await assert.rejects(media.runMediaGeneration({ prompt: 'x', video: { duration: 5 }, config: { provider: 'comfyui', workflow },
       fetchImpl: async url => assert.fail(url) }), /do not work with a local ComfyUI workflow/);
+  });
+
+  test(`${build}: video estimates cannot silently become shorter plans`, async () => {
+    const cases = [
+      [{ duration: 10, estimated_duration: 60 }, /A 1:00 video needs more than one clip/],
+      [{ duration: 8, estimated_duration: 10 }, /requested video needs 10 s, but duration specifies only 8 s/],
+      [{ scenes: scenes(1, 10), estimated_duration: 60 }, /scenes provide 10 s, but the requested video needs 60 s/],
+      [{ scenes: scenes(7, 15), estimated_duration: 120 }, /scenes provide 105 s, but the requested video needs 120 s/],
+    ];
+    for (const provider of ['openrouter', 'fal']) for (const [video, pattern] of cases) {
+      const api = provider === 'fal' ? falApi({ model: h3Max.id, schema: h3Max.schema }) : videoApi({ entry: grok });
+      await assert.rejects(media.runMediaGeneration({ prompt: 'Explainer', video,
+        config: provider === 'fal' ? falConfig(h3Max) : config, fetchImpl: api.fetchImpl, pollIntervalMs: 1 }), pattern);
+      assert.equal(api.calls.submits.length, 0, `${provider}: a shorter plan spends nothing`);
+    }
+    for (const provider of ['openrouter', 'fal']) {
+      const api = provider === 'fal' ? falApi({ model: h3Max.id, schema: null })
+        : videoApi({ entry: { ...grok, supported_durations: undefined } });
+      await assert.rejects(media.runMediaGeneration({ prompt: 'Explainer', video: { estimated_duration: 60 },
+        config: provider === 'fal' ? falConfig(h3Max) : config, fetchImpl: api.fetchImpl, pollIntervalMs: 1 }),
+        /cannot determine a supported clip length for the requested 60 s video/);
+      assert.equal(api.calls.submits.length, 0, `${provider}: an unknown length does not use a default clip`);
+    }
   });
 
   test(`${build}: a video of two minutes or less generates without asking`, async () => {
@@ -632,6 +660,15 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(approved.success, true, approved.error);
     assert.equal(api.calls.submits.length, 8);
     assert.equal(approved.clipCount, 8);
+    // The user's approved shorter version need not fill the entire 120 s cap.
+    const shorterApi = videoApi({ entry: grok });
+    const shorter = await media.runMediaGeneration({ prompt: 'Explainer', video: { scenes: scenes(6, 15), estimated_duration: 330 },
+      config, fetchImpl: shorterApi.fetchImpl, confirmVideoLength: async details => {
+        assert.equal(details.totalSeconds, 90);
+        return 'once';
+      } });
+    assert.equal(shorter.clips.length, 6);
+    assert.equal(shorterApi.calls.submits.length, 6);
     const withoutCard = videoApi({ entry: grok });
     const unasked = await generate({ prompt: 'Explainer', scenes: scenes(8, 15), estimated_duration: 330 }, { fetchImpl: withoutCard.fetchImpl });
     assert.equal(unasked.declined, true, 'without a card nothing is generated');
@@ -1131,6 +1168,58 @@ for (const build of ['chrome', 'firefox']) {
       await card.locator('.clarify-option[data-value="deny"]').click();
       assert.deepEqual(await page.evaluate(() => window.answers), [{ clarifyId: 'video_length_1', value: 'deny', source: 'option' }]);
     } finally { await page.close(); }
+  });
+
+  test(`${build}: video delivery preserves the target and reports measured shortfalls without losing assets`, async () => {
+    const api = falApi({ model: h3Max.id, schema: h3Max.schema });
+    const result = await generate({
+      prompt: 'Consistent cast', media: 'video', scenes: scenes(4, 15), estimated_duration: 60,
+    }, { config: falConfig(h3Max), fetchImpl: api.fetchImpl, pollIntervalMs: 1 });
+    assert.equal(result.success, true, result.error);
+    assert.deepEqual([result.estimatedSeconds, result.plannedSeconds, result.durationSeconds, result.durationStatus],
+      [60, 60, 4, 'short'], 'provider fixtures return only one second per requested 15-second clip');
+    assert.equal(api.calls.submits.length, 4, 'no extra paid generation to repair the shortfall');
+    assert.ok((await storedBytes(result.mediaId)).length, 'the generated asset is still downloadable');
+    const agent = new Agent({ getActive: () => chatProvider });
+    const forModel = JSON.parse(agent._limitToolResult(result));
+    assert.match(forModel.note, /planned 60 s/);
+    assert.match(forModel.note, /incomplete/);
+    assert.doesNotMatch(forModel.note, /Tell the user it is ready/);
+    const compacted = journal.compactRunUiData('tool_result', { name: 'generate_image', result });
+    for (const key of ['estimatedSeconds', 'plannedSeconds', 'durationSeconds', 'durationStatus', 'notice']) {
+      assert.equal(compacted.result[key], result[key], key);
+    }
+    const incompatible = falApi({ model: h3Max.id, schema: h3Max.schema,
+      clip: index => fixtures[index ? 'h264-aac-48px' : 'h264-aac-1'] });
+    const separate = await generate({ prompt: 'Story', scenes: scenes(2, 15), estimated_duration: 30 },
+      { config: falConfig(h3Max), fetchImpl: incompatible.fetchImpl, pollIntervalMs: 1 });
+    assert.equal(separate.success, true, separate.error);
+    assert.equal(separate.joined, false);
+    assert.equal(separate.durationStatus, 'short');
+    for (const clip of separate.clips) assert.ok((await storedBytes(clip.mediaId)).length);
+    const separateForModel = JSON.parse(agent._limitToolResult(separate));
+    assert.match(separateForModel.note, /incomplete/);
+    assert.match(separateForModel.note, /could not be joined/);
+  });
+
+  test(`${build}: video delivery distinguishes a measured approved plan from an unmeasured hosted clip`, async () => {
+    const api = videoApi({ entry: { ...grok, supported_durations: [1] } });
+    const approved = await generate({
+      prompt: 'Short version', scenes: scenes(2, 1), estimated_duration: 330,
+    }, { fetchImpl: api.fetchImpl, confirmVideoLength: async () => 'once' });
+    assert.equal(approved.success, true, approved.error);
+    assert.deepEqual([approved.estimatedSeconds, approved.plannedSeconds, approved.durationSeconds, approved.durationStatus],
+      [330, 2, 2, 'enough'], 'delivery is measured against the explicitly approved shorter plan');
+    assert.equal(approved.notice, undefined);
+
+    const fal = falApi({ model: h3Max.id, schema: h3Max.schema });
+    const hosted = await generate({ prompt: 'A short clip', media: 'video', duration: 10, estimated_duration: 10 },
+      { config: falConfig(h3Max), fetchImpl: fal.fetchImpl, pollIntervalMs: 1 });
+    assert.equal(hosted.success, true, hosted.error);
+    assert.deepEqual([hosted.estimatedSeconds, hosted.plannedSeconds, hosted.durationSeconds, hosted.durationStatus],
+      [10, 10, undefined, 'unverified']);
+    assert.match(hosted.notice, /has not been measured/);
+    assert.deepEqual(fal.calls.downloads, [], 'a hosted single clip remains a hosted result');
   });
 
   test(`${build}: the model reports a joined video's length, never its contents`, () => {

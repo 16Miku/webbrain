@@ -39912,9 +39912,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (result?.success && result?.provider && (result.inlineMedia || /^data:(image|video|audio)\//.test(result.url || ''))) {
       const clips = Array.isArray(result.clips)
         ? result.clips.map(({ mediaId: _mediaId, ...clip }) => clip) : undefined;
-      const note = 'Generated media is displayed in the chat with a save link. Tell the user it is ready. You have not seen it: '
+      const note = 'Generated media is displayed in the chat with a save link. Report the generated asset and any remaining duration or joining problem. You have not seen it: '
         + 'describe it only by what you asked for and by its durationSeconds and clipCount when present, never by its contents; '
         + 'do not invent a hosted URL.'
+        + (result.notice ? ` ${result.notice}` : '')
         + (result.joined === false ? ' Its clips could not be joined into one file, so the chat shows them one after another.' : '');
       result = { ...result, url: undefined, mediaId: undefined, clips, inlineMedia: true, note };
     }

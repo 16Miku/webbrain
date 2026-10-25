@@ -344,7 +344,7 @@ function clipLength(entry, clip) {
  */
 export function planVideoClips(scenes, durations, { maxSeconds = MAX_VIDEO_SECONDS, maxClips = MAX_VIDEO_CLIPS } = {}) {
   if (!durations?.length) {
-    throw new Error('This video model does not list the clip lengths it supports, so WebBrain cannot make a video from scenes with it. Generate one clip instead.');
+    throw new Error('This video model does not list the clip lengths it supports. WebBrain can join scene clips, but cannot determine their supported lengths from this model\'s schema. No clips were generated; use a video model with published clip lengths to make the requested video.');
   }
   const longest = durations[durations.length - 1];
   const clips = scenes.map((scene, index) => {
@@ -377,6 +377,9 @@ function planVideo(prompt, video, entry) {
       throw new Error('With scenes, give estimated_duration: how many seconds the requested video needs before fitting it to the 120 s maximum.');
     }
     const { clips, total } = planVideoClips(scenes, durations);
+    if (video.estimated_duration <= MAX_VIDEO_SECONDS && total < video.estimated_duration) {
+      throw new Error(`These scenes provide ${total} s, but the requested video needs ${video.estimated_duration} s. Add or lengthen scenes to cover the requested duration before generating.`);
+    }
     return {
       scenes: true,
       total,
@@ -388,9 +391,16 @@ function planVideo(prompt, video, entry) {
     };
   }
   const longest = durations?.[durations.length - 1];
-  const wanted = video?.duration ?? video?.estimated_duration;
+  const wanted = video?.estimated_duration === undefined
+    ? video?.duration : Math.max(video.estimated_duration, video.duration ?? 0);
   if (wanted !== undefined && longest && wanted > longest) {
     throw new Error(`A ${formatSeconds(wanted)} video needs more than one clip: this model makes clips of up to ${longest} s. Describe it as scenes of up to ${longest} s each, ${MAX_VIDEO_SECONDS} s in total, with estimated_duration.`);
+  }
+  if (video?.duration !== undefined && video?.estimated_duration !== undefined && video.duration < video.estimated_duration) {
+    throw new Error(`The requested video needs ${video.estimated_duration} s, but duration specifies only ${video.duration} s. Increase the clip duration or describe the full video as scenes before generating.`);
+  }
+  if (video?.estimated_duration !== undefined && video?.duration === undefined && !durations) {
+    throw new Error(`WebBrain cannot determine a supported clip length for the requested ${video.estimated_duration} s video from this model's schema. No clip was generated; use a video model with published clip lengths or supply a supported duration explicitly.`);
   }
   let duration;
   if (video?.duration !== undefined) {
@@ -505,7 +515,11 @@ async function mapWithConcurrency(items, limit, signal, task) {
  */
 async function runVideo({ model, entry, text, video, signal, onProgress, confirmVideoLength, single, clip }) {
   const plan = planVideo(text, video, entry);
-  if (!plan.scenes) return { ...(await single(plan.clips[0], plan.shape)), model };
+  if (!plan.scenes) return {
+    ...(await single(plan.clips[0], plan.shape)), model,
+    ...(video?.estimated_duration !== undefined ? { estimatedSeconds: video.estimated_duration } : {}),
+    ...(plan.clips[0].duration !== undefined ? { totalSeconds: plan.clips[0].duration } : {}),
+  };
 
   // The user decides on the card whether a shorter version is worth
   // generating, before anything is submitted. The card is outside the
@@ -738,6 +752,28 @@ export async function readMediaConfig() {
 
 const roundSeconds = seconds => (Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 10) / 10 : undefined);
 
+// Keep the declared target, accepted plan and measured output distinct. Paid
+// assets remain successful results even if the provider delivered too little;
+// the agent must report the shortfall instead of calling the whole task ready.
+function videoDeliveryDetails(result, asset) {
+  const plannedSeconds = roundSeconds(result.totalSeconds);
+  if (!plannedSeconds) return {};
+  const actual = asset.durationSeconds;
+  // Allow a quarter second for container/frame boundary rounding.
+  const durationStatus = Number.isFinite(actual)
+    ? (actual + 0.25 < plannedSeconds ? 'short' : 'enough') : 'unverified';
+  return {
+    estimatedSeconds: roundSeconds(result.estimatedSeconds) || plannedSeconds,
+    plannedSeconds,
+    durationStatus,
+    ...(durationStatus === 'short' ? {
+      notice: `Generated ${actual} s of the planned ${plannedSeconds} s. Keep the generated asset, but report the duration shortfall; the requested video is incomplete. Do not claim it is complete.`,
+    } : durationStatus === 'unverified' ? {
+      notice: 'The output duration has not been measured. Do not report plannedSeconds as the actual video length.',
+    } : {}),
+  };
+}
+
 function declinedVideoMessage({ answer, estimatedSeconds, totalSeconds }) {
   const length = `The video needs about ${formatSeconds(estimatedSeconds)}, and WebBrain makes videos up to ${formatSeconds(MAX_VIDEO_SECONDS)}`;
   if (answer === 'deny') return `${length}. The user chose not to generate the ${formatSeconds(totalSeconds)} version, so nothing was generated. Ask what they would like instead.`;
@@ -792,16 +828,19 @@ export async function generateImage(args, options = {}) {
       return { success: false, declined: true, provider, model: result.model, error: declinedVideoMessage(result) };
     }
     if (Array.isArray(result.clips)) {
-      return { success: true, model: result.model, provider, ...(await storeVideoClips(result.clips, options.onProgress)) };
+      const asset = await storeVideoClips(result.clips, options.onProgress);
+      return { success: true, model: result.model, provider, ...asset, ...videoDeliveryDetails(result, asset) };
     }
     if (result.url.startsWith('data:')) {
       const asset = await storeGeneratedMedia(result.url);
       // A clip's real length, so the agent can say how long the video is.
       const video = asset.mimeType === 'video/mp4' ? dataUrlBytes(result.url) : null;
       const durationSeconds = video ? roundSeconds(mp4DurationSeconds(video.bytes)) : undefined;
-      return { success: true, model: result.model, provider, ...asset, ...(durationSeconds ? { durationSeconds } : {}) };
+      const delivered = { ...asset, ...(durationSeconds ? { durationSeconds } : {}) };
+      return { success: true, model: result.model, provider, ...delivered, ...videoDeliveryDetails(result, delivered) };
     }
-    return { success: true, ...result, provider };
+    const { estimatedSeconds, totalSeconds, ...hosted } = result;
+    return { success: true, ...hosted, provider, ...videoDeliveryDetails(result, hosted) };
   } catch (error) { return { success: false, error: error.message }; }
 }
 

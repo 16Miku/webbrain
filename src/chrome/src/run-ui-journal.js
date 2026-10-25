@@ -101,9 +101,10 @@ function compactRunUiToolResult(result, name) {
       if (typeof source[key] === 'string') compacted[key] = source[key];
     }
     if (source.inlineMedia === true) compacted.inlineMedia = true;
-    for (const key of ['durationSeconds', 'clipCount']) {
+    for (const key of ['durationSeconds', 'clipCount', 'estimatedSeconds', 'plannedSeconds']) {
       if (Number.isFinite(source[key])) compacted[key] = source[key];
     }
+    if (['short', 'enough', 'unverified'].includes(source.durationStatus)) compacted.durationStatus = source.durationStatus;
     // Clips of a video that could not be joined into one file, shown in order.
     if (source.joined === false && Array.isArray(source.clips)) {
       compacted.joined = false;
