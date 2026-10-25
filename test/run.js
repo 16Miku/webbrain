@@ -57642,7 +57642,7 @@ test('sidepanel auto-follow bypasses smooth-scroll lag while messages grow', () 
     );
     assert.match(
       panel,
-      /function scrollToBottom\(\{ force = false \} = \{\}\) \{[\s\S]*?if \(force && chatTurnIsConnected\(\)\) \{[\s\S]*?chatAutoFollow = true;[\s\S]*?chatUserChoseReadingPosition = false;[\s\S]*?if \(!force && chatTurnIsConnected\(\) && !chatAutoFollow[\s\S]*?chatUserChoseReadingPosition \|\| chatTurnIsRunning\(\) \|\| chatTurnNeedsReadingNavigation\(\)[\s\S]*?pinChatToBottom\(container\);[\s\S]*?requestAnimationFrame\(\(\) => \{[\s\S]*?pinChatToBottom\(container\);[\s\S]*?\}\);[\s\S]*?\}/,
+      /function scrollToBottom\(\{ force = false, reveal = null \} = \{\}\) \{[\s\S]*?if \(force && chatTurnIsConnected\(\)\) \{[\s\S]*?chatAutoFollow = true;[\s\S]*?chatUserChoseReadingPosition = false;[\s\S]*?if \(!force && chatTurnIsConnected\(\) && !chatAutoFollow[\s\S]*?chatUserChoseReadingPosition \|\| chatTurnIsRunning\(\) \|\| chatTurnNeedsReadingNavigation\(\)[\s\S]*?pinChatToBottom\(container\);[\s\S]*?requestAnimationFrame\(\(\) => \{[\s\S]*?pinAndReveal\(\);[\s\S]*?\}\);[\s\S]*?\}/,
       `${label}: auto-follow should re-pin after the next layout frame`,
     );
   }
@@ -57795,7 +57795,7 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       compactStepsSource,
-      /latestAnsweredCard[\s\S]*?latestAnsweredCard\.nextElementSibling[\s\S]*?candidate !== textEl[\s\S]*?classList\.contains\('steps-container'\)[\s\S]*?content\.insertBefore\(container, textEl\);/,
+      /latestBoundary[\s\S]*?latestBoundary\.nextElementSibling[\s\S]*?candidate !== textEl[\s\S]*?classList\.contains\('steps-container'\)[\s\S]*?content\.insertBefore\(container, textEl\);/,
       `${label}: compact resumed events should use a steps segment after the latest answered clarification`,
     );
     const compactLifecycleSource = panel.slice(
@@ -57847,18 +57847,18 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.match(
       panel,
-      /function addPersistentSlashMessage\(content\) \{[\s\S]*?addMessage\('system', content, \{ beforeCurrentAssistant: true \}\);[\s\S]*?scrollToBottom\(\{ force: true \}\);[\s\S]*?return msgEl;/,
+      /function addPersistentSlashMessage\(content\) \{[\s\S]*?assistantContent\.insertBefore\(msgEl, textCursor\);[\s\S]*?addMessage\('system', content\);[\s\S]*?scrollToBottom\(\{ force: true, reveal: msgEl \}\);[\s\S]*?return msgEl;/,
       `${label}: persistent slash-command output should override reading-first scroll suppression`,
     );
-    assert.match(
+    assert.doesNotMatch(
       panel,
       /await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);\s*if \(currentTabId === tabId\) \{\s*scrollToBottom\(\{ force: true \}\);/,
-      `${label}: out-of-band slash commands should reveal their output while a run is active`,
+      `${label}: out-of-band slash commands must preserve their targeted output reveal`,
     );
-    assert.match(
+    assert.doesNotMatch(
       panel,
-      /if \(!text\) \{[\s\S]*?scrollToBottom\(\{ force: true \}\);\s*inputEl\.value = '';/,
-      `${label}: fully consumed slash commands should reveal synchronous UI output`,
+      /if \(!text\) \{\s*await releaseOwnedContextMenuClaim\([^\n]+\);\s*scrollToBottom\(\{ force: true \}\);\s*inputEl\.value = '';/,
+      `${label}: fully consumed slash commands must preserve their targeted output reveal`,
     );
     assert.match(
       panel,

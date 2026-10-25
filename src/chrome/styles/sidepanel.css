@@ -1845,7 +1845,8 @@ html[dir="rtl"] .language-picker-menu {
   font-size: 12px;
 }
 
-.message-content {
+.message-content,
+.slash-command-content {
   padding: 10px 14px;
   border-radius: var(--radius);
   line-height: 1.5;
@@ -2001,10 +2002,16 @@ html[dir="rtl"] .language-picker-menu {
   opacity: 0.9;
 }
 
-.message.system .message-content {
+.message.system .message-content,
+.slash-command-content {
   background: var(--accent-dim);
   border: 1px solid rgba(108, 99, 255, 0.2);
   font-size: 12px;
+}
+
+.slash-command-output {
+  margin: 10px 0;
+  cursor: auto;
 }
 
 .screenshot-result {
