@@ -59,6 +59,8 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   strictSecretMode: false,
   strictGuards: false,
   leanMode: 'auto',
+  visionMode: 'on',
+  visionQuality: 'balanced',
   agentAllowLocalNetwork: false,
   scheduledTasksEnabled: true,
   scheduledRequireConsequentialConfirmation: true,
@@ -193,6 +195,8 @@ const STRING_KEYS = new Set([
   'composerDeliveryMode',
   'clarifyTimeoutPolicy',
   'leanMode',
+  'visionMode',
+  'visionQuality',
   'wbLocale',
   'themeMode',
   'autoScreenshot',
@@ -249,6 +253,8 @@ function validSettingValue(key, value) {
   if (key === 'decisionMode') return ['', ...DECISION_MODES].includes(value);
   if (key === 'decisionVisionMode') return ['auto', 'on', 'off'].includes(value);
   if (key === 'leanMode') return ['auto', 'on', 'off'].includes(value);
+  if (key === 'visionMode') return ['on', 'off'].includes(value);
+  if (key === 'visionQuality') return ['economy', 'balanced', 'sharp'].includes(value);
   if (key === 'decisionBaseUrl') {
     if (typeof value !== 'string') return false;
     try { resolveDecisionConfig({ decisionProvider: 'local', decisionBaseUrl: value }); return true; }

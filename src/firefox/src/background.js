@@ -34,6 +34,8 @@ import { firefoxBidi } from './bidi/client.js';
 import { ProviderManager } from './providers/manager.js';
 import { Agent } from './agent/agent.js';
 import { normalizeLeanModeSetting } from './agent/lean-mode.js';
+import { normalizeVisionModeSetting } from './agent/vision-mode.js';
+import { normalizeVisionQuality } from './agent/vision-budget.js';
 import {
   CUSTOM_SKILLS_STORAGE_KEY,
   DEFAULT_SKILL_SOURCES,
@@ -250,6 +252,7 @@ const scheduler = new ScheduledJobManager({
     await clarifyTimeoutReady;
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
+    await visionModeReady;
     await imageGenConfigReady;
     await browserBatchEnabledReady;
     if (providerManager.providers.size === 0) await providerManager.load();
@@ -592,6 +595,15 @@ async function loadStrictSecretMode() {
   agent.leanMode = normalizeLeanModeSetting(stored?.leanMode);
 }
 const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
+
+// Vision mode is on unless the user turned it off (vision-mode.js); the
+// screenshot size defaults to balanced. A running task keeps its decision.
+async function loadVisionMode() {
+  const stored = await browser.storage.local.get(['visionMode', 'visionQuality']).catch(() => ({}));
+  agent.visionMode = normalizeVisionModeSetting(stored?.visionMode);
+  agent.visionQuality = normalizeVisionQuality(stored?.visionQuality);
+}
+const visionModeReady = loadVisionMode().catch(() => {});
 
 async function loadImageGenConfig() {
   const stored = await browser.storage.local.get(IMAGE_GEN_MODEL_KEY).catch(() => ({}));
@@ -1282,6 +1294,14 @@ browser.storage.onChanged.addListener((changes, areaName) => {
   // A running task keeps the mode it started with; the next run uses this.
   if (changes.leanMode) {
     agent.leanMode = normalizeLeanModeSetting(changes.leanMode.newValue);
+  }
+  // Like lean mode, a running task keeps the vision decision it started with.
+  if (changes.visionMode) {
+    agent.visionMode = normalizeVisionModeSetting(changes.visionMode.newValue);
+    agent._refreshSystemPrompts?.();
+  }
+  if (changes.visionQuality) {
+    agent.visionQuality = normalizeVisionQuality(changes.visionQuality.newValue);
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = changes.strictSecretMode.newValue === true;
@@ -3155,6 +3175,7 @@ async function handleMessage(msg, sender) {
     await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady, clarifyTimeoutReady]);
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
+    await visionModeReady;
     await screenshotRedactionReady;
     await imageBudgetReady;
     await researchEscalationReady;
@@ -4382,6 +4403,7 @@ async function handleMessage(msg, sender) {
       if (page !== api.runtime.getURL('src/ui/providers.html') && !fromInstall) return { success: false, error: 'D1 model controls are available only from the extension Providers page.' };
       try {
         await strictSecretModeReady;
+        await visionModeReady;
         if (agent.strictSecretMode && !['dispose', 'reset', 'stop', 'clear', 'status'].includes(msg.command)) throw new Error('D1 is disabled in Strict Secret Mode.');
         if (!['status', 'probe', 'download', 'load', 'stop', 'dispose', 'clear', 'reset', 'consent'].includes(msg.command)) throw new Error('Invalid D1 model command.');
         if (['download', 'load', 'consent'].includes(msg.command)) {
@@ -4400,6 +4422,7 @@ async function handleMessage(msg, sender) {
     }
     case 'list_decision_models': {
       await strictSecretModeReady;
+      await visionModeReady;
       try {
         if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
         // Discovery lists the configured provider's models whatever the mode.
@@ -4409,6 +4432,7 @@ async function handleMessage(msg, sender) {
     }
     case 'test_system_one': {
       await strictSecretModeReady;
+      await visionModeReady;
       try {
         if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
         if (Object.hasOwn(msg, 'localFixture')) {

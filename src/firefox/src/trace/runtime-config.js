@@ -8,6 +8,7 @@ const STRING_ENUMS = Object.freeze({
   image_detail: new Set(['auto', 'low', 'high']),
   selection_scope_policy: new Set(['selection_only', 'selection_context']),
   lean_mode_setting: new Set(['auto', 'on', 'off']),
+  vision_mode_setting: new Set(['on', 'off']),
 });
 
 const BOOLEAN_FIELDS = Object.freeze([
@@ -25,6 +26,7 @@ const BOOLEAN_FIELDS = Object.freeze([
   'lossless_trace',
   'selection_scope_anchor_present',
   'lean_mode',
+  'vision_mode',
 ]);
 
 // Bounds keep the payload sane, not to re-validate settings: each range is a

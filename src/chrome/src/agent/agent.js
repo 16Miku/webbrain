@@ -19,7 +19,10 @@ import { AUTO_MODE, AUTO_MODE_ASK_NOTE, autoModeGenerativeMediaNote, REQUEST_ACT
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticDataComplete, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
-import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
+import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT, getVisionActPrompt } from './tools.js';
+import { installVisionRuntime } from './vision-runtime.js';
+import { VISION_NATIVE_TOOLS } from './vision-tools.js';
+import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
 import { validateToolArguments } from './tool-arguments.js';
@@ -605,6 +608,9 @@ const SOCIAL_POST_SITES = new Set(['twitter', 'bluesky']);
 const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'chat_observe',
   'auto_screenshot',
+  // Vision mode observations (vision-tools.js).
+  'take_screenshot',
+  'zoom',
   'get_accessibility_tree',
   'read_page',
   'read_page_source',
@@ -1036,6 +1042,13 @@ export class Agent extends LoopDetector {
     // resolves it once at its start (_beginLeanRun) and keeps the answer in
     // _leanRuns, so its prompt note and guards agree. See lean-mode.js.
     this.leanMode = 'auto';
+    // Vision mode (vision-mode.js): 'on' | 'off'. The class default keeps
+    // the accessibility-tree path for embedders and the unit suite;
+    // background.js applies the stored setting, whose default is 'on'.
+    this.visionMode = 'off';
+    this.visionQuality = 'balanced';
+    this._visionSessions = new Map();
+    this._visionRunSnapshots = new Map();
     this._leanRuns = new Map();
     // Advisory lists a run's calls carry, by owning tab, so a guard that is
     // handed only the list still knows which run it belongs to.
@@ -8271,6 +8284,9 @@ export class Agent extends LoopDetector {
       screenshot_redaction: this.screenshotRedaction === true,
       strict_secret_mode: this.strictSecretMode === true,
       lean_mode_setting: normalizeLeanModeSetting(this.leanMode),
+      vision_mode_setting: normalizeVisionModeSetting(this.visionMode, 'off'),
+      // Whether this tab's run resolved to vision mode.
+      ...(tabId != null && this._visionRunSnapshots?.has(tabId) ? { vision_mode: this._visionRunState(tabId).active === true } : {}),
       // Whether this tab's run resolved to lean mode (traces show which ran).
       ...(tabId != null && this._leanRuns?.has(tabId) ? { lean_mode: this._leanRunActive(tabId) } : {}),
       plan_before_act_mode: this._normalizePlanBeforeActMode(this.planBeforeActMode),
@@ -9594,6 +9610,8 @@ export class Agent extends LoopDetector {
   }
 
   async _maybeJevFastTurn(tabId, task, messages, mode, allowed, provider, costState, runOptions = {}, recovery = null) {
+    // The fast path proposes tree-ref actions; a vision run has none.
+    if (this._visionRunState(tabId, mode).active) return null;
     if (this._steeringRuns.get(tabId)?.acceptedIds.size || this._pageFeedbackRuns?.get(tabId)?.revision) return null;
     const context = this.systemOneContext(tabId);
     if (!['act', 'dev'].includes(mode) || this._checkAbort(tabId)) return null;
@@ -12613,6 +12631,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return enrichedUserMessage(contextLine + userMessage);
     }
 
+    // Vision mode takes its own first frame right before the model's first
+    // decision (vision-runtime.js); a legacy capture here would only cost
+    // tokens and a second image.
+    if (this._visionRunState(tabId).active) {
+      return enrichedUserMessage(contextLine + userMessage);
+    }
+
     // Determine vision capability: either a dedicated vision model is
     // configured (routes screenshots there, text to main), or the main
     // provider itself supports images. Without either, plain text context.
@@ -15581,6 +15606,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     toolCalls = expandBrowserBatchCalls(toolCalls, {
       enabled: this.browserBatchEnabled !== false, tier: this._resolvePromptTier(provider), allowedToolNames, toolSchemas: batchSchemas,
     });
+    // Vision mode: click_at becomes an ordinary coordinate click here, before
+    // any gate or guard runs (vision-runtime.js).
+    toolCalls = this._visionTranslateToolCalls(tabId, toolCalls);
     const originalUpdate = onUpdate;
     const cancellationState = { active: null };
     // Begin wrapper rows at their execution position, including rejected batches.
@@ -16048,7 +16076,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       const jevPending = this._jevPendingCalls?.get(tc.id);
       const fnName = tc.function?.name || '';
-      if (!allowedToolNames.has(fnName)) {
+      // A translated click_at runs as `click`, which vision runs do not advertise.
+      if (!allowedToolNames.has(fnName) && tc._vision?.internalName !== fnName) {
         if (fnName) {
           // A named but unadvertised tool is a rejection before dispatch, so
           // it goes through loop accounting; otherwise a model can repeat a
@@ -16069,6 +16098,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           content: JSON.stringify({ success: false, denied: true, error }),
         });
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+        continue;
+      }
+      if (tc._vision?.error) {
+        const recovery = await recordPreparationFailure(toolIndex, tc._vision.tool || fnName, this._parseToolCallArgs(tc).args || {}, tc._vision.error);
+        if (recovery) return recovery;
         continue;
       }
       // Where this call's time goes before dispatch (_predispatchTimer), from
@@ -17404,6 +17438,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               {
                 completionBatchStartState,
                 _browserBatch: tc._browserBatch,
+                _vision: tc._vision || null,
                 traceStep: step,
                 jevBinding: jevPending?.call.binding,
                 detectedSubmitAction,
@@ -18475,6 +18510,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // model sees the warning and the new viewport in the same turn.
     this._injectNavNotices(messages, navNotices, onUpdate, tabId);
 
+    // Vision mode shows the model a patch, a new frame or "no visible
+    // change" after every batch instead of the legacy auto-screenshot.
+    if (this._visionRunState(tabId).active) {
+      await this._visionObserveAfterBatch(tabId, messages, onUpdate, { toolCalls });
+      this._persist(tabId);
+      return { action: 'continue' };
+    }
+
     // Auto-screenshot once per batch, debounced 500ms. Capture if either
     // the main provider supports images, or a dedicated vision model is
     // configured to describe them.
@@ -19270,6 +19313,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return shot;
   }
 
+  /**
+   * Clip for a CDP capture of the visible viewport. Clip coordinates are
+   * document coordinates (a clip at 0,0 on a scrolled page captures the
+   * unrendered top of the document: a blank frame), and the output is
+   * clip x scale x devicePixelRatio (scale 1 on a retina screen is twice the
+   * CSS size), so the scale divides the DPR out.
+   */
+  _viewportCaptureClip(probe, cssW, cssH, scale = 1) {
+    const dpr = Math.max(0.25, Number(probe?.dpr) || 1);
+    return {
+      x: Math.max(0, Number(probe?.scrollX) || 0),
+      y: Math.max(0, Number(probe?.scrollY) || 0),
+      width: cssW,
+      height: cssH,
+      scale: scale / dpr,
+    };
+  }
+
   async _captureAutoScreenshot(tabId, { coordAligned = false } = {}) {
     try {
       await cdpClient.attach(tabId);
@@ -19294,7 +19355,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
               format: 'jpeg',
               quality: 60,
-              clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+              clip: this._viewportCaptureClip(probe, cssW, cssH, 1),
             })
           );
           if (!shot?.data) return null;
@@ -19339,7 +19400,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             format: 'jpeg',
             quality: Math.round(budget.initialJpegQuality * 100),
             fromSurface: true,
-            clip: { x: 0, y: 0, width: cssW, height: cssH, scale },
+            clip: this._viewportCaptureClip(probe, cssW, cssH, scale),
           })
         );
         if (!shot?.data) return null;
@@ -19775,7 +19836,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
             format: 'png',
             fromSurface: true,
-            clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+            clip: this._viewportCaptureClip(probe, cssW, cssH, 1),
           })
         );
         if (!shot?.data) return null;
@@ -20518,6 +20579,228 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       converted: true,
       captureId: capture.captureId,
     };
+  }
+
+  // ───────────── Vision mode platform layer (Chrome) ─────────────
+  // vision-runtime.js owns the logic; these methods are the CDP specifics.
+  // Every Input.* command passes cdpClient's page-agent fence, so the page
+  // monitor attributes these events to the agent, not to a person.
+
+  /** CSS viewport, scroll offset, DPR and URL of the tab. */
+  async _visionPlatformProbe(tabId) {
+    await cdpClient.attach(tabId);
+    const [metrics, page] = await Promise.all([
+      cdpClient.sendCommand(tabId, 'Page.getLayoutMetrics').catch(() => null),
+      cdpClient.evaluate(tabId, '({ w: innerWidth, h: innerHeight, sx: scrollX, sy: scrollY, dpr: devicePixelRatio, url: location.href })')
+        .catch(() => null),
+    ]);
+    const value = page?.result?.value || {};
+    const visual = metrics?.cssVisualViewport || null;
+    let url = String(value.url || '');
+    if (!url) {
+      try { url = (await chrome.tabs.get(tabId))?.url || ''; } catch { url = ''; }
+    }
+    // The visual viewport excludes classic scrollbars, so points never land
+    // on one, and its page offset is where CDP clips start (clip coordinates
+    // are document coordinates: a clip at 0,0 on a scrolled page is blank).
+    return {
+      cssWidth: Number(visual?.clientWidth) || Number(value.w) || 0,
+      cssHeight: Number(visual?.clientHeight) || Number(value.h) || 0,
+      scrollX: Number.isFinite(Number(visual?.pageX)) ? Number(visual.pageX) : (Number(value.sx) || 0),
+      scrollY: Number.isFinite(Number(visual?.pageY)) ? Number(visual.pageY) : (Number(value.sy) || 0),
+      devicePixelRatio: Number(value.dpr) || 1,
+      url,
+    };
+  }
+
+  /**
+   * Capture the viewport (or `cssRegion` of it) close to outWidth x
+   * outHeight. The compositor renders clip x scale x device pixel ratio, so
+   * the requested scale divides the DPR out; whatever size actually comes
+   * back is resampled to the plan by the runtime.
+   */
+  async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight }) {
+    await cdpClient.attach(tabId);
+    await cdpClient.sendCommand(tabId, 'Page.enable').catch(() => {});
+    await this._preparePageForCapture(tabId);
+    const region = cssRegion || { x: 0, y: 0, width: probe.cssWidth, height: probe.cssHeight };
+    const dpr = Math.max(0.25, Number(probe?.devicePixelRatio) || 1);
+    const scale = Math.max(0.05, Math.min(4, Number(outWidth) / (Math.max(1, region.width) * dpr)));
+    const shot = await this._withIndicatorsHidden(tabId, () => cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
+      format: 'jpeg',
+      quality: 90,
+      fromSurface: true,
+      clip: {
+        x: (Number(probe?.scrollX) || 0) + region.x,
+        y: (Number(probe?.scrollY) || 0) + region.y,
+        width: Math.max(1, region.width),
+        height: Math.max(1, region.height),
+        scale,
+      },
+    }));
+    return shot?.data ? `data:image/jpeg;base64,${shot.data}` : null;
+  }
+
+  async _visionPlatformWheel(tabId, { x, y, deltaX = 0, deltaY = 0 }) {
+    await cdpClient.attach(tabId);
+    await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 });
+    // Wheel notches of ~100 CSS px, like a mouse; smooth-scroll handlers and
+    // scroll-snapping lists behave as they do for a person.
+    const notches = Math.max(1, Math.min(30, Math.round(Math.max(Math.abs(deltaX), Math.abs(deltaY)) / 100)));
+    for (let i = 0; i < notches; i++) {
+      await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        type: 'mouseWheel', x, y, deltaX: deltaX / notches, deltaY: deltaY / notches, button: 'none', buttons: 0,
+      });
+      await new Promise(resolve => setTimeout(resolve, 16));
+    }
+    return { success: true, dispatched: true, method: 'cdp-wheel' };
+  }
+
+  async _visionPlatformHover(tabId, { x, y }) {
+    await cdpClient.attach(tabId);
+    // Approach from one pixel away so enter/over handlers fire even when the
+    // pointer already rests at the point.
+    await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.max(0, x - 1), y: Math.max(0, y - 1), button: 'none', buttons: 0 });
+    await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 });
+    const hit = await this._visionHitTest(tabId, x, y);
+    return { success: true, dispatched: true, method: 'cdp-hover', ...(hit?.target ? { target: hit.target } : {}) };
+  }
+
+  async _visionPlatformDrag(tabId, { from, to, steps = 12 }) {
+    await cdpClient.attach(tabId);
+    await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x, y: from.y, button: 'none', buttons: 0 });
+    let pressed = false;
+    try {
+      await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1,
+      }, '', options), { onSent: () => { pressed = true; } });
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved', x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t, button: 'left', buttons: 1,
+        });
+        await new Promise(resolve => setTimeout(resolve, 16));
+      }
+    } finally {
+      if (pressed) {
+        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1,
+        }).catch(() => {});
+      }
+    }
+    return { success: true, dispatched: pressed, method: 'cdp-drag' };
+  }
+
+  /** Tag and role under a CSS point (no accessible name: it can identify the signed-in user). */
+  async _visionHitTest(tabId, x, y) {
+    try {
+      const response = await cdpClient.evaluate(tabId, `(() => {
+        let el = document.elementFromPoint(${Number(x)}, ${Number(y)});
+        for (let depth = 0; el?.shadowRoot && depth < 8; depth++) {
+          const inner = el.shadowRoot.elementFromPoint(${Number(x)}, ${Number(y)});
+          if (!inner || inner === el) break;
+          el = inner;
+        }
+        if (!el) return null;
+        const select = el.closest ? el.closest('select') : null;
+        if (select) {
+          select.focus();
+          return { isSelect: true, current: select.options[select.selectedIndex]?.text?.trim() || '',
+            options: Array.from(select.options).slice(0, 60).map(option => option.text.trim()), target: { tag: 'select' } };
+        }
+        const role = el.getAttribute && el.getAttribute('role');
+        return { isSelect: false, target: { tag: String(el.tagName || '').toLowerCase(), ...(role ? { role: role.slice(0, 32) } : {}) } };
+      })()`);
+      return response?.result?.value || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Dispatch a vision click: trusted pointer events at exactly the CSS point
+   * (button and click count as asked), keeping the coordinate path's
+   * dispatch-time protections: native <select> handling, the file-chooser
+   * guard, the recipient binding, target=_blank redirection and progress
+   * annotation. Batch-level gates and guards already ran on this `click`.
+   */
+  async _visionDispatchClick(tabId, args, {
+    vision = null,
+    messageRecipientGuardRequired = false,
+    messageRecipientDispatchBinding = null,
+    throwIfAborted = () => {},
+    markDispatched = () => {},
+    cancelPressedPointer = async () => {},
+  } = {}) {
+    const x = Number(args.x);
+    const y = Number(args.y);
+    const button = ['left', 'right', 'middle'].includes(vision?.button) ? vision.button : 'left';
+    const clickCount = [1, 2, 3].includes(vision?.clickCount) ? vision.clickCount : 1;
+    throwIfAborted();
+    await cdpClient.attach(tabId);
+    throwIfAborted();
+    // A native <select> opens an OS popup no screenshot can show; it is
+    // focused instead so type_text picks the option.
+    const hit = await this._visionHitTest(tabId, x, y);
+    throwIfAborted();
+    if (hit?.isSelect && button === 'left') {
+      return {
+        success: false, dispatched: false, noDispatch: true, nativeSelect: true, tag: 'SELECT', text: hit.current,
+        options: hit.options,
+        error: `That point is a native dropdown (current: "${hit.current}"). It is focused now: choose an option with type_text({text: "<option label>"}). Options: ${hit.options.join(', ')}`,
+      };
+    }
+    const beforeTabIds = new Set((await chrome.tabs.query({})).map(tab => tab.id));
+    const progressBefore = await this._clickProgressSnapshot(tabId);
+    throwIfAborted();
+    this._showAgentTarget(tabId, { x: Math.round(x), y: Math.round(y), w: 1, h: 1 }, 'click_coordinates');
+    await cdpClient.armFileInputClickGuard(tabId);
+    throwIfAborted();
+    await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 });
+    throwIfAborted();
+    if (messageRecipientGuardRequired) {
+      const recipientValidation = await this._consumeMessageRecipientDispatchBinding(
+        tabId,
+        messageRecipientDispatchBinding,
+        { dispatchPoint: { x, y } },
+      );
+      if (recipientValidation?.success !== true) return recipientValidation;
+    }
+    throwIfAborted();
+    const buttons = button === 'right' ? 2 : button === 'middle' ? 4 : 1;
+    let pressed = false;
+    try {
+      for (let count = 1; count <= clickCount; count++) {
+        await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mousePressed', x, y, button, buttons, clickCount: count,
+        }, '', options), { beforeSend: throwIfAborted, onSent: () => { pressed = true; markDispatched(); } });
+        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased', x, y, button, buttons: 0, clickCount: count,
+        });
+        pressed = false;
+      }
+    } catch (error) {
+      if (pressed) await cancelPressedPointer();
+      throw error;
+    }
+    const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
+    if (blockedFileInput?.blocked) {
+      return cdpClient.fileInputClickBlockedResult(blockedFileInput, `The attempted control was at (${x}, ${y}).`);
+    }
+    const redirected = await this._redirectTargetBlankClick(tabId, beforeTabIds);
+    const result = {
+      success: true,
+      dispatched: true,
+      method: 'cdp-vision-pointer',
+      x,
+      y,
+      ...(button !== 'left' ? { button } : {}),
+      ...(clickCount > 1 ? { clicks: clickCount } : {}),
+      ...(hit?.target ? { target: hit.target } : {}),
+      ...(vision?.imageId ? { image: vision.imageId } : {}),
+      ...(redirected?.redirected ? { redirectedFromNewTab: true } : {}),
+    };
+    return this._annotateClickProgress(tabId, 'click', args, result, progressBefore);
   }
 
   _coordinateReconciliationDiagnostic(point, resolution, clickPath, fallbackReason) {
@@ -35988,6 +36271,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Select the appropriate ACT system prompt based on the active provider.
    * Small/local models get a compact prompt to save context budget.
    */
+  _getVisionActPrompt(state, provider = null) {
+    const tier = this._resolvePromptTier(provider);
+    const prompt = getVisionActPrompt({ coordinates: state.coordinates, tier });
+    return tier === 'full'
+      ? `${prompt}\n\n${this.imageGenConfigured ? SYSTEM_PROMPT_GENERATIVE_MEDIA : GENERATIVE_MEDIA_SETUP_NOTE}`
+      : prompt;
+  }
+
   _getActPrompt(provider = null) {
     const tier = this._resolvePromptTier(provider);
     if (tier === 'compact') return SYSTEM_PROMPT_ACT_COMPACT;
@@ -36200,9 +36491,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode (Act only) keeps the tier's prompt and tools. WebBrain skips
     // its quality checks in a lean run, so one note asks the model to check
     // its own work.
-    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK : this._getActPrompt(provider);
+    // Vision mode replaces the tree-centred Act prompt (vision-tools.js).
+    const visionState = mode === 'act' ? this._visionRunState(tabId, mode) : null;
+    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK
+      : (visionState?.active ? this._getVisionActPrompt(visionState, provider) : this._getActPrompt(provider));
     if (this._isActionMode(mode) && this._leanPromptActive(tabId, mode, provider)) prompt += `\n\n${SYSTEM_PROMPT_LEAN_NOTE}`;
-    if (tier !== 'compact' && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
+    if (tier !== 'compact' && !visionState?.active && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
         .some(tool => tool.function.name === 'browser_batch')) prompt += `\n\n${SYSTEM_PROMPT_BATCHING}`;
     const botMemory = tabId == null ? null : this._botMemorySessions.get(tabId);
     if (botMemory) prompt += `\n\n${botMemory.systemNote()}\n\n${this._wrapUntrusted('bot_memory_observe', botMemory.contextData())}`;
@@ -43797,10 +44091,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const stripAllImages = provider && !provider.supportsVision;
     const stripAllDocuments = provider && !provider.supportsDocuments;
     if (stripAllImages) keep = 0;
+    // Vision mode keeps the current frame with its patches and zooms, and
+    // nothing older (vision-runtime.js); those images do not use `keep`.
+    const vision = !stripAllImages && typeof this._visionPruneImages === 'function'
+      ? this._visionPruneImages(messages) : { latestEpoch: 0 };
+    if (vision.latestEpoch) messages = vision.messages;
     let imgsKept = 0;
     const out = new Array(messages.length);
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
+      if (vision.latestEpoch && msg?.webbrainVisionFrame) {
+        out[i] = msg;
+        continue;
+      }
       if (Array.isArray(msg.content)) {
         let inUserAttachmentSection = false;
         const newContent = msg.content.map(block => {
@@ -45786,6 +46089,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
+    // A vision click that follows another action of the same batch is
+    // re-checked against the live screen after every gate, right before it
+    // can dispatch (vision-runtime.js).
+    if (executionContext?._vision?.needsStabilityCheck && executionContext._vision.cssPoint) {
+      const blocked = await this._visionStabilityBlock(tabId, executionContext._vision.cssPoint);
+      if (blocked) return blocked;
+    }
     const memory = this._botMemorySessions.get(tabId);
     if (!memory) return this._executeToolWithLifecycle(tabId, name, args, onUpdate, executionContext);
     // Managed bot context cannot consume the user's profile-wide remote store.
@@ -46030,6 +46340,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'load_skill') {
       return this._loadSkillForRun(tabId, args || {});
     }
+    if (VISION_NATIVE_TOOLS.has(name)) return this._executeVisionTool(tabId, name, args || {}, dispatchContext);
     if (name === 'done_json') {
       const structured = handleDoneJson(this.cloudRunContexts.get(tabId), args);
       if (!structured.done || structured.cloudFailed) return structured;
@@ -47344,7 +47655,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
                   format: 'png',
                   fromSurface: true,
-                  clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+                  clip: this._viewportCaptureClip(probe, cssW, cssH, 1),
                 })
               );
               if (!screenshot?.data) return null;
@@ -47381,7 +47692,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
                   format: 'png',
                   fromSurface: true,
-                  clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+                  // Downloads keep native device pixels (scale 1 is CSS px x DPR).
+                  clip: { ...this._viewportCaptureClip(probe, cssW, cssH), scale: 1 },
                 })
               );
               if (!screenshot?.data) return null;
@@ -47406,7 +47718,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 format: 'jpeg',
                 quality: Math.round(budget.initialJpegQuality * 100),
                 fromSurface: true,
-                clip: { x: 0, y: 0, width: cssW, height: cssH, scale },
+                clip: this._viewportCaptureClip(probe, cssW, cssH, scale),
               })
             );
             if (!screenshot?.data) return null;
@@ -50687,6 +50999,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         throwIfEarlyCdpAborted();
         if (duplicateSubmit) return duplicateSubmit;
 
+        // A vision click lands exactly where the model pointed: no semantic
+        // re-targeting and no nearby-input redirect (vision-runtime.js).
+        if (coordinatePoint && dispatchContext._vision?.tool === 'click_at') {
+          return await this._visionDispatchClick(tabId, args, {
+            vision: dispatchContext._vision,
+            messageRecipientGuardRequired,
+            messageRecipientDispatchBinding,
+            throwIfAborted: throwIfEarlyCdpAborted,
+            markDispatched: markEarlyCdpDispatched,
+            cancelPressedPointer: cancelEarlyCdpPressedPointer,
+          });
+        }
         if (coordinatePoint) {
           const reconciled = await this._reconcileCoordinateClickWithDeadline(tabId, coordinatePoint, {
             messageRecipientGuardRequired,
@@ -55428,6 +55752,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
       }
       messageProcessingStarted = true;
+      this._beginVisionRun(tabId);
       const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, this._effectiveRunMode(tabId, mode), userMessage, result, onUpdate, runOptions);
       return result;
@@ -55448,6 +55773,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
+      this._endVisionRun(tabId);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousRunProviderOverride) this._runProviderOverrides.set(tabId, previousRunProviderOverride);
@@ -56094,6 +56420,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
       autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
+      vision: this._visionToolOptions(tabId, mode),
     });
     // The selected text is already present in the trusted run envelope.
     // Advertising page/network tools would let an injected selection induce a
@@ -56322,6 +56649,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return true;
     };
 
+    // Vision mode: the model's first decision is made on a fresh full frame.
+    if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
+    }
+
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
       if (handoff) await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, handoff);
@@ -56391,6 +56723,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
         autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
+        vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
       if (selectionOnly || standaloneChatRun) tools = [];
@@ -57467,6 +57800,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // Restricted tabs can still use non-CDP tools.
         });
       }
+      this._beginVisionRun(tabId);
       const result = await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
@@ -57487,6 +57821,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
+      this._endVisionRun(tabId);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousRunProviderOverride) this._runProviderOverrides.set(tabId, previousRunProviderOverride);
@@ -57786,6 +58121,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
+      vision: this._visionToolOptions(tabId, mode),
     });
     // Match the non-streaming path: selection-grounded turns are tool-free so
     // page or network content cannot be introduced after the source anchor.
@@ -57845,6 +58181,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     // Past local-only fast paths: the streaming loop below calls the provider.
     shareHadProviderCompletion = true;
+
+    // Vision mode: the model's first decision is made on a fresh full frame.
+    if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
+    }
 
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
@@ -57908,6 +58249,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
+        vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
       if (selectionOnly || standaloneChatRun) tools = [];
@@ -58836,3 +59178,4 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 }
 
 installPageFeedback(Agent);
+installVisionRuntime(Agent, { trace });

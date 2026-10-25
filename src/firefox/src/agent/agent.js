@@ -18,7 +18,10 @@ import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer,
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
-import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
+import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, getVisionActPrompt } from './tools.js';
+import { installVisionRuntime } from './vision-runtime.js';
+import { VISION_NATIVE_TOOLS } from './vision-tools.js';
+import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
 import { validateToolArguments } from './tool-arguments.js';
@@ -431,6 +434,9 @@ const SOCIAL_POST_SITES = new Set(['twitter', 'bluesky']);
 const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'chat_observe',
   'auto_screenshot',
+  // Vision mode observations (vision-tools.js).
+  'take_screenshot',
+  'zoom',
   'get_accessibility_tree',
   'read_page',
   'read_page_source',
@@ -740,6 +746,13 @@ export class Agent extends LoopDetector {
     // resolves it once at its start (_beginLeanRun) and keeps the answer in
     // _leanRuns, so its prompt note and guards agree. See lean-mode.js.
     this.leanMode = 'auto';
+    // Vision mode (vision-mode.js): 'on' | 'off'. The class default keeps
+    // the accessibility-tree path for embedders and the unit suite;
+    // background.js applies the stored setting, whose default is 'on'.
+    this.visionMode = 'off';
+    this.visionQuality = 'balanced';
+    this._visionSessions = new Map();
+    this._visionRunSnapshots = new Map();
     this._leanRuns = new Map();
     // Advisory lists a run's calls carry, by owning tab, so a guard that is
     // handed only the list still knows which run it belongs to.
@@ -8225,6 +8238,9 @@ export class Agent extends LoopDetector {
       screenshot_redaction: this.screenshotRedaction === true,
       strict_secret_mode: this.strictSecretMode === true,
       lean_mode_setting: normalizeLeanModeSetting(this.leanMode),
+      vision_mode_setting: normalizeVisionModeSetting(this.visionMode, 'off'),
+      // Whether this tab's run resolved to vision mode.
+      ...(tabId != null && this._visionRunSnapshots?.has(tabId) ? { vision_mode: this._visionRunState(tabId).active === true } : {}),
       // Whether this tab's run resolved to lean mode (traces show which ran).
       ...(tabId != null && this._leanRuns?.has(tabId) ? { lean_mode: this._leanRunActive(tabId) } : {}),
       plan_before_act_mode: this._normalizePlanBeforeActMode(this.planBeforeActMode),
@@ -9294,6 +9310,8 @@ export class Agent extends LoopDetector {
   }
 
   async _maybeJevFastTurn(tabId, task, messages, mode, allowed, provider, costState, runOptions = {}, recovery = null) {
+    // The fast path proposes tree-ref actions; a vision run has none.
+    if (this._visionRunState(tabId, mode).active) return null;
     if (this._steeringRuns.get(tabId)?.acceptedIds.size || this._pageFeedbackRuns?.get(tabId)?.revision) return null;
     const context = this.systemOneContext(tabId);
     if (!['act', 'dev'].includes(mode) || this._checkAbort(tabId)) return null;
@@ -13822,6 +13840,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     toolCalls = expandBrowserBatchCalls(toolCalls, {
       enabled: this.browserBatchEnabled !== false, tier: this._resolvePromptTier(provider), allowedToolNames, toolSchemas: batchSchemas,
     });
+    // Vision mode: click_at becomes an ordinary coordinate click here, before
+    // any gate or guard runs (vision-runtime.js).
+    toolCalls = this._visionTranslateToolCalls(tabId, toolCalls);
     const originalUpdate = onUpdate;
     const cancellationState = { active: null };
     // Begin wrapper rows at their execution position, including rejected batches.
@@ -14283,7 +14304,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       const jevPending = this._jevPendingCalls?.get(tc.id);
       const fnName = tc.function?.name || '';
-      if (!allowedToolNames.has(fnName)) {
+      // A translated click_at runs as `click`, which vision runs do not advertise.
+      if (!allowedToolNames.has(fnName) && tc._vision?.internalName !== fnName) {
         if (fnName) {
           // A named but unadvertised tool is a rejection before dispatch, so
           // it goes through loop accounting; otherwise a model can repeat a
@@ -14304,6 +14326,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           content: JSON.stringify({ success: false, denied: true, error }),
         });
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+        continue;
+      }
+      if (tc._vision?.error) {
+        const recovery = await recordPreparationFailure(toolIndex, tc._vision.tool || fnName, this._parseToolCallArgs(tc).args || {}, tc._vision.error);
+        if (recovery) return recovery;
         continue;
       }
       // Where this call's time goes before dispatch (_predispatchTimer), from
@@ -15558,6 +15585,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             onUpdate,
             {
               completionBatchStartState,
+              _vision: tc._vision || null,
               traceStep: step,
               jevBinding: jevPending?.call.binding,
               detectedSubmitAction,
@@ -16537,6 +16565,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     this._injectNavNotices(messages, navNotices, onUpdate, tabId);
 
+    // Vision mode shows the model a patch, a new frame or "no visible
+    // change" after every batch instead of the legacy auto-screenshot.
+    if (this._visionRunState(tabId).active) {
+      await this._visionObserveAfterBatch(tabId, messages, onUpdate, { toolCalls });
+      this._persist(tabId);
+      return { action: 'continue' };
+    }
+
     // Auto-screenshot after state change. Capture if either the main
     // provider supports images, or a dedicated vision model is configured
     // to describe them.
@@ -16954,6 +16990,116 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       y: Math.round(y * scale.scaleY),
       converted: true,
       captureId: capture.captureId,
+    };
+  }
+
+  // ───────────── Vision mode platform layer (Firefox) ─────────────
+  // vision-runtime.js owns the logic. Firefox has no CDP: captures use
+  // tabs.captureTab with a render scale, and pointer input is dispatched by
+  // the content script at the exact point (content.js visionInput), behind
+  // the same page-agent fence as every other content action.
+
+  async _visionPlatformProbe(tabId) {
+    const results = await browser.tabs.executeScript(tabId, { code: `(() => ({
+      w: (window.visualViewport && window.visualViewport.width) || document.documentElement.clientWidth || innerWidth,
+      h: (window.visualViewport && window.visualViewport.height) || document.documentElement.clientHeight || innerHeight,
+      sx: (window.visualViewport && window.visualViewport.pageLeft) || scrollX,
+      sy: (window.visualViewport && window.visualViewport.pageTop) || scrollY,
+      dpr: devicePixelRatio,
+      url: location.href,
+    }))()` });
+    const value = Array.isArray(results) ? results[0] || {} : {};
+    let url = String(value.url || '');
+    if (!url) {
+      try { url = (await browser.tabs.get(tabId))?.url || ''; } catch { url = ''; }
+    }
+    return {
+      cssWidth: Number(value.w) || 0,
+      cssHeight: Number(value.h) || 0,
+      scrollX: Number(value.sx) || 0,
+      scrollY: Number(value.sy) || 0,
+      devicePixelRatio: Number(value.dpr) || 1,
+      url,
+    };
+  }
+
+  /**
+   * captureTab renders at `scale` image pixels per CSS pixel (not times the
+   * DPR), so the plan's scale is passed directly. A region is a page-space
+   * rect (captureTab's rect is relative to the document).
+   */
+  async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight }) {
+    const region = cssRegion || { x: 0, y: 0, width: probe.cssWidth, height: probe.cssHeight };
+    const scale = Math.max(0.05, Math.min(4, Number(outWidth) / Math.max(1, region.width)));
+    const options = { format: 'jpeg', quality: 90, scale };
+    if (cssRegion) {
+      options.rect = {
+        x: (Number(probe?.scrollX) || 0) + region.x,
+        y: (Number(probe?.scrollY) || 0) + region.y,
+        width: Math.max(1, region.width),
+        height: Math.max(1, region.height),
+      };
+    }
+    return this._withIndicatorsHidden(tabId, () => browser.tabs.captureTab(tabId, options));
+  }
+
+  async _visionContentInput(tabId, params, kind = 'click') {
+    await beforePageAgentDispatch(browser, tabId, {
+      kind, frameId: 0, navigationCandidate: kind === 'click' && params.type === 'click', fenceOnly: true,
+    });
+    const response = await browser.tabs.sendMessage(tabId, { target: 'content', action: 'vision_input', params }, { frameId: 0 });
+    return response || { success: false, dispatched: false, noDispatch: true, error: 'The page did not answer the vision input.' };
+  }
+
+  async _visionPlatformWheel(tabId, { x, y, deltaX = 0, deltaY = 0 }) {
+    return this._visionContentInput(tabId, { type: 'wheel', x, y, deltaX, deltaY }, 'scroll');
+  }
+
+  async _visionPlatformHover(tabId, { x, y }) {
+    return this._visionContentInput(tabId, { type: 'hover', x, y }, 'click');
+  }
+
+  async _visionPlatformDrag(tabId, { from, to, steps = 12 }) {
+    return this._visionContentInput(tabId, { type: 'drag', x: from.x, y: from.y, toX: to.x, toY: to.y, steps }, 'click');
+  }
+
+  /**
+   * Firefox vision click: a synthetic pointer sequence at exactly the CSS
+   * point. Batch-level gates and guards already ran on this `click`; a
+   * native <select> is focused for type_text instead of opening its popup.
+   */
+  async _visionDispatchClick(tabId, args, { vision = null, abortSignal = null, dispatchState = { started: false } } = {}) {
+    const x = Number(args.x);
+    const y = Number(args.y);
+    this._throwIfAborted(abortSignal);
+    let select = null;
+    try {
+      const results = await browser.tabs.executeScript(tabId, { code: `(() => {
+        const el = document.elementFromPoint(${x}, ${y});
+        const select = el && el.closest ? el.closest('select') : null;
+        if (!select) return null;
+        select.focus();
+        return { current: select.options[select.selectedIndex] ? select.options[select.selectedIndex].text.trim() : '',
+          options: Array.from(select.options).slice(0, 60).map(option => option.text.trim()) };
+      })()` });
+      select = Array.isArray(results) ? results[0] : null;
+    } catch { select = null; }
+    if (select && (vision?.button || 'left') === 'left') {
+      return {
+        success: false, dispatched: false, noDispatch: true, nativeSelect: true, tag: 'SELECT', text: select.current, options: select.options,
+        error: `That point is a native dropdown (current: "${select.current}"). It is focused now: choose an option with type_text({text: "<option label>"}). Options: ${select.options.join(', ')}`,
+      };
+    }
+    this._throwIfAborted(abortSignal);
+    dispatchState.started = true;
+    const response = await this._visionContentInput(tabId, {
+      type: 'click', x, y, button: vision?.button || 'left', clickCount: vision?.clickCount || 1,
+    }, 'click');
+    return {
+      ...response,
+      x,
+      y,
+      ...(vision?.imageId ? { image: vision.imageId } : {}),
     };
   }
 
@@ -18869,6 +19015,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // page title, adapter guidance, a vision description, or raw pixels that a
     // small multimodal model could mistake for the authoritative selection.
     if (selectionScoped || standaloneChat || hasPriorUserTurn) {
+      return enrichedUserMessage(contextLine + userMessage);
+    }
+
+    // Vision mode takes its own first frame right before the model's first
+    // decision (vision-runtime.js); a legacy capture here would only cost
+    // tokens and a second image.
+    if (this._visionRunState(tabId).active) {
       return enrichedUserMessage(contextLine + userMessage);
     }
 
@@ -32778,6 +32931,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Select the appropriate ACT system prompt based on the active provider.
    * Small/local models get a compact prompt to save context budget.
    */
+  _getVisionActPrompt(state, provider = null) {
+    const tier = this._resolvePromptTier(provider);
+    const prompt = getVisionActPrompt({ coordinates: state.coordinates, tier });
+    return tier === 'full'
+      ? `${prompt}\n\n${this.imageGenConfigured ? SYSTEM_PROMPT_GENERATIVE_MEDIA : GENERATIVE_MEDIA_SETUP_NOTE}`
+      : prompt;
+  }
+
   _getActPrompt(provider = null) {
     const tier = this._resolvePromptTier(provider);
     if (tier === 'compact') return SYSTEM_PROMPT_ACT_COMPACT;
@@ -32914,9 +33075,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode (Act only) keeps the tier's prompt and tools. WebBrain skips
     // its quality checks in a lean run, so one note asks the model to check
     // its own work.
-    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK : this._getActPrompt(provider);
+    // Vision mode replaces the tree-centred Act prompt (vision-tools.js).
+    const visionState = mode === 'act' ? this._visionRunState(tabId, mode) : null;
+    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK
+      : (visionState?.active ? this._getVisionActPrompt(visionState, provider) : this._getActPrompt(provider));
     if (this._isActionMode(mode) && this._leanPromptActive(tabId, mode, provider)) prompt += `\n\n${SYSTEM_PROMPT_LEAN_NOTE}`;
-    if (tier !== 'compact' && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
+    if (tier !== 'compact' && !visionState?.active && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
         .some(tool => tool.function.name === 'browser_batch')) prompt += `\n\n${SYSTEM_PROMPT_BATCHING}`;
     const botMemory = tabId == null ? null : this._botMemorySessions.get(tabId);
     if (botMemory) prompt += `\n\n${botMemory.systemNote()}\n\n${this._wrapUntrusted('bot_memory_observe', botMemory.contextData())}`;
@@ -40441,10 +40605,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const stripAllImages = provider && !provider.supportsVision;
     const stripAllDocuments = provider && !provider.supportsDocuments;
     if (stripAllImages) keep = 0;
+    // Vision mode keeps the current frame with its patches and zooms, and
+    // nothing older (vision-runtime.js); those images do not use `keep`.
+    const vision = !stripAllImages && typeof this._visionPruneImages === 'function'
+      ? this._visionPruneImages(messages) : { latestEpoch: 0 };
+    if (vision.latestEpoch) messages = vision.messages;
     let imgsKept = 0;
     const out = new Array(messages.length);
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
+      if (vision.latestEpoch && msg?.webbrainVisionFrame) {
+        out[i] = msg;
+        continue;
+      }
       if (Array.isArray(msg.content)) {
         let inUserAttachmentSection = false;
         const newContent = msg.content.map(block => {
@@ -41659,6 +41832,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
+    // A vision click that follows another action of the same batch is
+    // re-checked against the live screen after every gate, right before it
+    // can dispatch (vision-runtime.js).
+    if (executionContext?._vision?.needsStabilityCheck && executionContext._vision.cssPoint) {
+      const blocked = await this._visionStabilityBlock(tabId, executionContext._vision.cssPoint);
+      if (blocked) return blocked;
+    }
     const memory = this._botMemorySessions.get(tabId);
     if (!memory) return this._executeToolWithLifecycle(tabId, name, args, onUpdate, executionContext);
     // Managed bot context cannot consume the user's profile-wide remote store.
@@ -41818,6 +41998,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'load_skill') {
       return this._loadSkillForRun(tabId, args || {});
     }
+    if (VISION_NATIVE_TOOLS.has(name)) return this._executeVisionTool(tabId, name, args || {}, dispatchContext);
     if (name === 'done_json') {
       const structured = handleDoneJson(this.cloudRunContexts.get(tabId), args);
       if (!structured.done || structured.cloudFailed) return structured;
@@ -46091,6 +46272,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         (text, { read }) => (read ? this._readControlEffect(tabId, text) : this._controlEffectReading(text)),
       );
       if (duplicateSubmit) return duplicateSubmit;
+      // A vision click lands exactly where the model pointed: no semantic
+      // re-targeting (vision-runtime.js). A click bound to a recipient check
+      // keeps the content path, which verifies that binding at dispatch.
+      if (coordinatePoint && !dispatchBinding?.token && !messageRecipientGuardRequired
+          && dispatchContext._vision?.tool === 'click_at') {
+        return await this._visionDispatchClick(tabId, args, {
+          vision: dispatchContext._vision,
+          abortSignal: contentPipelineAbortSignal,
+          dispatchState: contentPipelineDispatchState,
+        });
+      }
       if (coordinatePoint && !dispatchBinding?.token) {
         const reconciled = await this._reconcileCoordinateClickWithDeadline(tabId, coordinatePoint, {
           messageRecipientGuardRequired,
@@ -46911,6 +47103,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } else this._botMemorySessions.delete(tabId);
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
       messageProcessingStarted = true;
+      this._beginVisionRun(tabId);
       const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, this._effectiveRunMode(tabId, mode), userMessage, result, onUpdate, runOptions);
       return result;
@@ -46930,6 +47123,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
+      this._endVisionRun(tabId);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousStandaloneChatRun) this._standaloneChatRunTabs.add(tabId);
@@ -47515,6 +47709,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
       autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
+      vision: this._visionToolOptions(tabId, mode),
     });
     // The selected text is already present in the trusted run envelope.
     // Advertising page/network tools would let an injected selection induce a
@@ -47733,6 +47928,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return true;
     };
 
+    // Vision mode: the model's first decision is made on a fresh full frame.
+    if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
+    }
+
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
       if (handoff) await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, handoff);
@@ -47797,6 +47997,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
         autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
+        vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
       if (selectionOnly || standaloneChatRun) tools = [];
@@ -48743,6 +48944,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._botMemorySessions.set(tabId, botMemorySession);
       } else this._botMemorySessions.delete(tabId);
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
+      this._beginVisionRun(tabId);
       const result = await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
@@ -48762,6 +48964,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
+      this._endVisionRun(tabId);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousStandaloneChatRun) this._standaloneChatRunTabs.add(tabId);
@@ -49011,6 +49214,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
+      vision: this._visionToolOptions(tabId, mode),
     });
     // Match the non-streaming path: selection-grounded turns are tool-free so
     // page or network content cannot be introduced after the source anchor.
@@ -49067,6 +49271,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     // Past local-only fast paths: the streaming loop below calls the provider.
     shareHadProviderCompletion = true;
+
+    // Vision mode: the model's first decision is made on a fresh full frame.
+    if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
+    }
 
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
@@ -49129,6 +49338,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
+        vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
       if (selectionOnly || standaloneChatRun) tools = [];
@@ -49956,3 +50166,4 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 }
 
 installPageFeedback(Agent);
+installVisionRuntime(Agent, { trace });

@@ -136,6 +136,14 @@ export const UNTRUSTED_CONTENT_TOOLS = new Set([
   'screenshot',
   'full_page_screenshot',
   'inspect_viewport',
+  // Vision mode captures and pointer results: images and the element under
+  // the pointer are page-derived.
+  'take_screenshot',
+  'zoom',
+  'scroll_at',
+  'hover_at',
+  'drag_at',
+  'click_at',
   // done: in Act mode the result carries page-derived verification fields
   // (pageTitle, pageUrl, pageState with dialog titles / live-region text) that
   // are persisted as the final tool message and re-read on the next user turn.
@@ -427,6 +435,10 @@ const TOOL_CAPABILITY = {
   set_checked: Capability.CLICK,
   iframe_click: Capability.CLICK,
   drag_drop: Capability.CLICK,
+  // Vision mode (vision-tools.js). click_at is rewritten into `click` before
+  // the gate runs; it is listed so the name alone is never ungated.
+  click_at: Capability.CLICK,
+  drag_at: Capability.CLICK,
   type_text: Capability.TYPE,
   type_ax: Capability.TYPE,
   iframe_type: Capability.TYPE,

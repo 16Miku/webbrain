@@ -1988,6 +1988,177 @@
     return list.slice();
   }
 
+  // ── Vision mode input (vision-runtime.js) ──────────────────────────────
+  // Pointer, wheel and drag input at an exact viewport point, for builds or
+  // pages without trusted CDP input (Firefox). Events carry real client
+  // coordinates, so canvases, sliders and maps see where the model pointed;
+  // the default action of a press (focus) and of a click (activation) is
+  // reproduced the way a browser does it. Same-origin iframes are entered.
+  function _visionTargetAt(x, y) {
+    let doc = document;
+    let view = window;
+    let cx = x;
+    let cy = y;
+    for (let depth = 0; depth < 6; depth++) {
+      let el = doc.elementFromPoint(cx, cy);
+      const seen = new Set();
+      while (el && el.shadowRoot && !seen.has(el)) {
+        seen.add(el);
+        let inner = null;
+        try { inner = el.shadowRoot.elementFromPoint(cx, cy); } catch {}
+        if (!inner || inner === el) break;
+        el = inner;
+      }
+      if (!el) return null;
+      if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+        let inner = null;
+        try { inner = el.contentDocument; } catch { inner = null; }
+        if (inner?.documentElement) {
+          const rect = el.getBoundingClientRect();
+          cx -= rect.left + (el.clientLeft || 0);
+          cy -= rect.top + (el.clientTop || 0);
+          doc = inner;
+          view = inner.defaultView || view;
+          continue;
+        }
+      }
+      return { el, doc, view, cx, cy };
+    }
+    return null;
+  }
+
+  function _visionFocusable(el) {
+    for (let node = el; node && node.nodeType === 1; node = node.parentElement || node.getRootNode?.()?.host) {
+      if (node.matches?.('input:not([disabled]),textarea:not([disabled]),select:not([disabled]),button:not([disabled]),a[href],[tabindex],[contenteditable=""],[contenteditable="true"],summary')) return node;
+    }
+    return null;
+  }
+
+  function _visionScrollable(el, axis) {
+    for (let node = el; node && node.nodeType === 1; node = node.parentElement || node.getRootNode?.()?.host) {
+      const style = node.ownerDocument.defaultView.getComputedStyle(node);
+      const overflow = axis === 'x' ? style.overflowX : style.overflowY;
+      const room = axis === 'x' ? node.scrollWidth - node.clientWidth : node.scrollHeight - node.clientHeight;
+      if (room > 1 && /(auto|scroll|overlay)/.test(overflow)) return node;
+    }
+    return null;
+  }
+
+  function visionInput(params = {}, actionDeadlineExpired = () => false) {
+    const type = String(params.type || 'click');
+    const x = Number(params.x);
+    const y = Number(params.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
+      return { success: false, dispatched: false, noDispatch: true, error: 'The point is outside the viewport.' };
+    }
+    const hit = _visionTargetAt(x, y);
+    if (!hit) return { success: false, dispatched: false, noDispatch: true, error: 'Nothing is rendered at that point.' };
+    if (actionDeadlineExpired()) return { success: false, dispatched: false, noDispatch: true, deadlineExpired: true, error: 'The action deadline expired before dispatch.' };
+    const { el, view, cx, cy } = hit;
+    const button = params.button === 'right' ? 2 : params.button === 'middle' ? 1 : 0;
+    const buttonsMask = button === 2 ? 2 : button === 1 ? 4 : 1;
+    const clicks = Math.min(3, Math.max(1, Math.floor(Number(params.clickCount) || 1)));
+    const init = (extra = {}) => ({
+      bubbles: true, cancelable: true, composed: true, view,
+      clientX: cx, clientY: cy, screenX: cx + (view.screenX || 0), screenY: cy + (view.screenY || 0),
+      ...extra,
+    });
+    const PointerCtor = view.PointerEvent || view.MouseEvent;
+    const pointer = (target, name, extra = {}) => target.dispatchEvent(new PointerCtor(name, init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...extra })));
+    const mouse = (target, name, extra = {}) => target.dispatchEvent(new view.MouseEvent(name, init(extra)));
+    const hover = target => {
+      pointer(target, 'pointerover'); pointer(target, 'pointerenter', { bubbles: false });
+      mouse(target, 'mouseover'); mouse(target, 'mouseenter', { bubbles: false });
+      pointer(target, 'pointermove'); mouse(target, 'mousemove');
+    };
+    const tag = String(el.tagName || '').toLowerCase();
+    const role = el.getAttribute?.('role') || '';
+    const describe = { tag, ...(role ? { role: role.slice(0, 32) } : {}) };
+    return withLocalPageDispatch(() => {
+      if (type === 'hover') {
+        hover(el);
+        return { success: true, dispatched: true, method: 'synthetic-vision-pointer', target: describe };
+      }
+      if (type === 'wheel') {
+        const deltaX = Number(params.deltaX) || 0;
+        const deltaY = Number(params.deltaY) || 0;
+        const notCancelled = el.dispatchEvent(new view.WheelEvent('wheel', init({ deltaX, deltaY, deltaMode: 0 })));
+        let moved = false;
+        if (notCancelled) {
+          for (const [axis, delta] of [['x', deltaX], ['y', deltaY]]) {
+            if (!delta) continue;
+            const scroller = _visionScrollable(el, axis);
+            const scrollingElement = el.ownerDocument.scrollingElement || el.ownerDocument.documentElement;
+            const target = scroller || scrollingElement;
+            const before = axis === 'x' ? target.scrollLeft : target.scrollTop;
+            target.scrollBy({ left: axis === 'x' ? delta : 0, top: axis === 'y' ? delta : 0, behavior: 'instant' });
+            const after = axis === 'x' ? target.scrollLeft : target.scrollTop;
+            moved = moved || Math.abs(after - before) >= 1;
+          }
+        }
+        return { success: true, dispatched: true, method: 'synthetic-vision-wheel', moved, target: describe };
+      }
+      if (type === 'drag') {
+        const toX = Number(params.toX);
+        const toY = Number(params.toY);
+        const steps = Math.min(40, Math.max(2, Math.floor(Number(params.steps) || 12)));
+        hover(el);
+        pointer(el, 'pointerdown', { button: 0, buttons: 1 }); mouse(el, 'mousedown', { button: 0, buttons: 1, detail: 1 });
+        let last = el;
+        for (let i = 1; i <= steps; i++) {
+          const px = x + (toX - x) * (i / steps);
+          const py = y + (toY - y) * (i / steps);
+          const at = _visionTargetAt(px, py);
+          last = at?.el || last;
+          const moveInit = { button: 0, buttons: 1, clientX: at ? at.cx : px, clientY: at ? at.cy : py };
+          last.dispatchEvent(new PointerCtor('pointermove', init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...moveInit })));
+          last.dispatchEvent(new view.MouseEvent('mousemove', init(moveInit)));
+        }
+        const endInit = { button: 0, buttons: 0, clientX: toX, clientY: toY };
+        last.dispatchEvent(new PointerCtor('pointerup', init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...endInit })));
+        last.dispatchEvent(new view.MouseEvent('mouseup', init({ ...endInit, detail: 1 })));
+        return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe };
+      }
+      hover(el);
+      for (let count = 1; count <= clicks; count++) {
+        pointer(el, 'pointerdown', { button, buttons: buttonsMask });
+        const pressAllowed = mouse(el, 'mousedown', { button, buttons: buttonsMask, detail: count });
+        if (count === 1 && button === 0 && pressAllowed) {
+          const focusable = _visionFocusable(el);
+          if (focusable && focusable !== el.ownerDocument.activeElement) focusable.focus({ preventScroll: true });
+          else if (!focusable) el.ownerDocument.activeElement?.blur?.();
+        }
+        pointer(el, 'pointerup', { button, buttons: 0 });
+        mouse(el, 'mouseup', { button, buttons: 0, detail: count });
+        if (button === 0) mouse(el, 'click', { button: 0, buttons: 0, detail: count });
+        else if (button === 1) mouse(el, 'auxclick', { button: 1, buttons: 0, detail: count });
+      }
+      if (button === 0 && clicks >= 2) {
+        mouse(el, 'dblclick', { button: 0, buttons: 0, detail: 2 });
+        // Browsers select a word (two clicks) or the whole line/field
+        // (three) as the default action; synthetic events need it done.
+        try {
+          if (typeof el.select === 'function' && /^(input|textarea)$/.test(tag)) {
+            el.select();
+          } else {
+            const selection = el.ownerDocument.getSelection();
+            if (clicks >= 3) selection.selectAllChildren(el.closest('p,li,td,th,div,section,article,h1,h2,h3,h4,h5,h6') || el);
+            else if (typeof selection.modify === 'function') {
+              const caret = el.ownerDocument.caretPositionFromPoint?.(cx, cy);
+              if (caret?.offsetNode) {
+                selection.collapse(caret.offsetNode, caret.offset);
+                selection.modify('move', 'backward', 'word');
+                selection.modify('extend', 'forward', 'word');
+              }
+            }
+          }
+        } catch { /* selection is best effort */ }
+      }
+      if (button === 2) mouse(el, 'contextmenu', { button: 2, buttons: 0 });
+      return { success: true, dispatched: true, method: 'synthetic-vision-pointer', clicks, target: describe };
+    });
+  }
+
   let _lastClickIdent = null;
   let _lastEditableTarget = null;
 
@@ -8314,6 +8485,7 @@
       'get_interactive_elements_cdp': () => getInteractiveElementsFull(msg.params || {}),
       'get_file_input_targets': () => getFileInputTargets(),
       'click': () => clickElement(msg.params || {}, actionDeadlineExpired),
+      'vision_input': () => visionInput(msg.params || {}, actionDeadlineExpired),
       'consume_file_picker_guard': () => consumeFilePickerGuard(msg.params?.guardId),
       'type': () => typeText(msg.params || {}, actionDeadlineExpired),
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
