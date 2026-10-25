@@ -500,6 +500,89 @@ test('content-script vision input (Firefox path) moves the pointer off one eleme
   }
 });
 
+test('content-script vision input (Firefox path) honours the pointer capture a page takes on the press', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    // Run as here (the page's own world), and as from a Firefox content
+    // script, which reaches the page's prototype through wrappedJSObject and
+    // hands it functions with exportFunction (stood in for here).
+    for (const firefoxContentScript of [false, true]) {
+      const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+      // #handle is a slider thumb whose pointer handlers are on itself; #track
+      // captures the thumb when pressed; #press works like a react-aria button.
+      await page.setContent(`<!doctype html><style>body{margin:0}#track{position:absolute;left:100px;top:100px;width:600px;height:20px;background:#ddd}
+        #handle{position:absolute;left:100px;top:90px;width:40px;height:40px;background:#08f}#press{position:absolute;left:100px;top:300px;width:120px;height:40px}</style>
+        <div id="track"></div><div id="handle"></div><button id="press">Press</button>
+        <script>
+        // As in Firefox, the browser's capture methods know no pointer with the vision pointer's id.
+        for (const name of ['setPointerCapture', 'releasePointerCapture']) {
+          const native = Element.prototype[name];
+          Element.prototype[name] = function (id) { if (id === 1) throw new DOMException('Invalid pointer id', 'NotFoundError'); return native.call(this, id); };
+        }
+        window.own = { set: Element.prototype.setPointerCapture, release: Element.prototype.releasePointerCapture, has: Element.prototype.hasPointerCapture };
+        window.log = [];
+        const handle = document.getElementById('handle');
+        let grab = false;
+        handle.addEventListener('pointerdown', e => { handle.setPointerCapture(e.pointerId); grab = true; log.push(['down', e.clientX]); });
+        handle.addEventListener('pointermove', e => { if (grab) log.push(['move', e.clientX, handle.hasPointerCapture(e.pointerId)]); });
+        handle.addEventListener('pointerup', e => { log.push(['up', e.clientX, e.clientY]); grab = false; handle.releasePointerCapture(e.pointerId); });
+        handle.addEventListener('mouseup', e => log.push(['mouseup', e.clientX]));
+        for (const type of ['gotpointercapture', 'lostpointercapture']) handle.addEventListener(type, e => log.push([type.replace('pointercapture', ''), e.target.id]));
+        document.getElementById('track').addEventListener('pointerdown', e => handle.setPointerCapture(e.pointerId));
+        const press = document.getElementById('press');
+        press.addEventListener('pointerdown', e => {
+          e.target.releasePointerCapture(e.pointerId);
+          try { press.setPointerCapture(7); } catch (error) { log.push(['other id', error.name]); }
+          document.addEventListener('pointerup', () => log.push(['pressed']), { once: true });
+        });
+        </script>`);
+      await page.evaluate(({ code, guardBlock, firefoxContentScript }) => {
+        window.__exported = [];
+        if (firefoxContentScript) Object.defineProperty(window, 'wrappedJSObject', { value: window, configurable: true });
+        const exportFunction = firefoxContentScript ? (fn, scope) => { window.__exported.push(scope === window); return fn; } : undefined;
+        // eslint-disable-next-line no-new-func
+        window.__visionInput = new Function('exportFunction', `function withLocalPageDispatch(callback) { return callback(); }
+          function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+          function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+          ${guardBlock}\n${code}\nreturn visionInput;`)(exportFunction);
+      }, { code: block, guardBlock, firefoxContentScript });
+      const run = params => page.evaluate(p => window.__visionInput(p), params);
+      const take = () => page.evaluate(() => window.log.splice(0));
+      const label = firefoxContentScript ? 'Firefox content script' : 'page world';
+      // The thumb takes capture on the press: every move and the release reach
+      // it, in its document's coordinates, far past its own box.
+      let result = await run({ type: 'drag', x: 120, y: 110, toX: 620, toY: 160, steps: 5 });
+      assert.equal(result.success, true, JSON.stringify(result));
+      assert.deepEqual(await take(), [
+        ['down', 120], ['got', 'handle'], ['move', 220, true], ['move', 320, true], ['move', 420, true], ['move', 520, true], ['move', 620, true],
+        ['up', 620, 160], ['lost', 'handle'], ['mouseup', 620],
+      ], label);
+      // A press on the track that captures the thumb is released on the thumb.
+      result = await run({ type: 'click', x: 400, y: 110 });
+      assert.equal(result.success, true, JSON.stringify(result));
+      assert.deepEqual(await take(), [['got', 'handle'], ['up', 400, 110], ['lost', 'handle'], ['mouseup', 400]], label);
+      // A control that drops the implicit capture first, then waits for the
+      // release, completes its press; other pointer ids stay the page's own.
+      result = await run({ type: 'click', x: 160, y: 320 });
+      assert.equal(result.success, true, JSON.stringify(result));
+      assert.deepEqual(await take(), [['other id', 'NotFoundError'], ['pressed']], label);
+      // The page's own capture methods are back once each sequence ends.
+      assert.equal(await page.evaluate(() => Element.prototype.setPointerCapture === own.set
+        && Element.prototype.releasePointerCapture === own.release && Element.prototype.hasPointerCapture === own.has), true, label);
+      assert.deepEqual(await page.evaluate(() => {
+        try { document.body.setPointerCapture(1); return 'no error'; } catch (error) { return error.name; }
+      }), 'NotFoundError', label);
+      if (firefoxContentScript) assert.deepEqual(await page.evaluate(() => window.__exported), Array(9).fill(true), 'each method of each sequence is exported into the page window');
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision wheel (Firefox path) scrolls what the browser would', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {

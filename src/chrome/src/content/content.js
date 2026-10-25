@@ -2022,6 +2022,92 @@
     return chain;
   }
 
+  // The pointerId of the vision pointer's events (a mouse's in Chrome).
+  const _VISION_POINTER_ID = 1;
+
+  // A slider, canvas or press-and-hold control often calls setPointerCapture
+  // on the pointerdown it gets, then reads the moves and the release from
+  // the capturing element wherever the pointer goes. A synthetic pointer is
+  // no active browser pointer: Firefox throws for its id (a handler that
+  // captures or releases first stops there), and no engine routes its
+  // events. So while a vision click or drag runs, the capture methods of
+  // the press's window answer for the vision pointer here (other ids still
+  // reach the page's own methods, which are put back by end()), and the
+  // sequence sends each later pointer event, with its compatibility mouse
+  // event, to target(): the capturing element, if any. As in the browser,
+  // gotpointercapture comes before the first of those events and
+  // lostpointercapture right after the release; `fire(target, type, init)`
+  // dispatches them.
+  function _visionPointerCapture(view, fire) {
+    let active = true;
+    let pressed = false;
+    let pending = null;
+    let captured = null;
+    const restore = [];
+    let proto = null;
+    let exported = fn => fn;
+    try {
+      // A Firefox content script reaches the page's own prototype through
+      // wrappedJSObject, and hands it functions with exportFunction.
+      const page = view.wrappedJSObject;
+      if (page && typeof exportFunction === 'function') {
+        proto = page.Element?.prototype || null;
+        exported = fn => exportFunction(fn, view);
+      } else {
+        proto = view.Element?.prototype || null;
+      }
+    } catch { proto = null; }
+    const answers = {
+      // As for a mouse: a pressed pointer can be captured, a hovering one not.
+      setPointerCapture: element => { if (pressed) pending = element; },
+      releasePointerCapture: element => { if (pending === element) pending = null; },
+      hasPointerCapture: element => pending === element,
+    };
+    for (const name of Object.keys(answers)) {
+      try {
+        const original = proto?.[name];
+        if (typeof original !== 'function') continue;
+        proto[name] = exported(function (pointerId, ...rest) {
+          // An element out of the document cannot take capture: the page's
+          // method throws for it, as the browser's does.
+          if (active && this?.nodeType === 1 && Math.trunc(Number(pointerId)) === _VISION_POINTER_ID
+            && (name !== 'setPointerCapture' || this.isConnected)) return answers[name](this);
+          return original.call(this, pointerId, ...rest);
+        });
+        restore.push(() => { proto[name] = original; });
+      } catch { /* the page keeps its own method */ }
+    }
+    const settle = init => {
+      // A capturing element taken out of the document loses capture, which
+      // its document is told of.
+      if (captured && !captured.isConnected) {
+        const doc = captured.ownerDocument;
+        if (pending === captured) pending = null;
+        captured = null;
+        if (doc) fire(doc, 'lostpointercapture', init);
+      }
+      if (pending && !pending.isConnected) pending = null;
+      const next = pending;
+      if (captured && captured !== next) fire(captured, 'lostpointercapture', init);
+      if (next && next !== captured) fire(next, 'gotpointercapture', init);
+      captured = next;
+      return captured;
+    };
+    return {
+      press() { pressed = true; },
+      // Before each pointer event after the press: the element it goes to,
+      // or null for the element under the pointer.
+      target: settle,
+      // Right after the pointerup or pointercancel: capture ends.
+      release(init) { pressed = false; pending = null; settle(init); },
+      end() {
+        active = false;
+        pressed = false;
+        for (const undo of restore.splice(0)) { try { undo(); } catch { /* left to the page */ } }
+      },
+    };
+  }
+
   function visionInput(params = {}, actionDeadlineExpired = () => false) {
     const type = String(params.type || 'click');
     const x = Number(params.x);
@@ -2042,7 +2128,7 @@
       ...extra,
     });
     const PointerCtor = view.PointerEvent || view.MouseEvent;
-    const pointer = (target, name, extra = {}) => target.dispatchEvent(new PointerCtor(name, init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...extra })));
+    const pointer = (target, name, extra = {}) => target.dispatchEvent(new PointerCtor(name, init({ pointerId: _VISION_POINTER_ID, pointerType: 'mouse', isPrimary: true, ...extra })));
     const mouse = (target, name, extra = {}) => target.dispatchEvent(new view.MouseEvent(name, init(extra)));
     // The pointer moving onto `target` (with `extra` init, e.g. a drag's
     // point and buttons): out and leave on what it left, over and enter on
@@ -2089,7 +2175,13 @@
         error: `Not dispatched: the ${what} at this point is disabled, so a person's ${type} there would do nothing. Wait until it is enabled, or use another control.`,
       };
     }
-    return withLocalPageDispatch(() => {
+    // A click or drag presses the pointer, which the page may capture
+    // (_visionPointerCapture); its capture methods are the page's own again
+    // once the sequence ends.
+    const capture = type === 'click' || type === 'drag'
+      ? _visionPointerCapture(view, (target, name, extra) => pointer(target, name, { ...extra, cancelable: false, composed: false }))
+      : null;
+    const dispatchSequence = () => {
       if (type === 'hover') {
         hover(el);
         return { success: true, dispatched: true, method: 'synthetic-vision-pointer', target: describe };
@@ -2119,6 +2211,7 @@
         const toY = Number(params.toY);
         const steps = Math.min(40, Math.max(2, Math.floor(Number(params.steps) || 12)));
         hover(el);
+        capture.press();
         pointer(el, 'pointerdown', { button: 0, buttons: 1 });
         const pressAllowed = mouse(el, 'mousedown', { button: 0, buttons: 1, detail: 1 });
         // The press focuses what it lands on, as a click's does, and starts
@@ -2152,6 +2245,10 @@
           if (at) { offsetX = px - at.cx; offsetY = py - at.cy; }
           return { clientX: px - offsetX, clientY: py - offsetY, screenX: px + (window.screenX || 0), screenY: py + (window.screenY || 0) };
         };
+        // An element holding the pointer's capture gets the events wherever
+        // the pointer is, in its own document's coordinates: the press's,
+        // whose window alone answered the capture call.
+        const heldAt = (point, px, py) => ({ ...point, clientX: px - pressOffsetX, clientY: py - pressOffsetY });
         let last = el;
         for (let i = 1; i <= steps; i++) {
           const px = x + (toX - x) * (i / steps);
@@ -2161,16 +2258,24 @@
           const point = pointAt(at, px, py);
           if (html && i === 1) {
             htmlStarted = html.start(point);
-            if (htmlStarted) pointer(el, 'pointercancel', { ...point, buttons: 0, cancelable: false });
+            if (htmlStarted) {
+              const holder = capture.target({ ...heldAt(point, px, py), buttons: 1 });
+              const cancelInit = { ...(holder ? heldAt(point, px, py) : point), buttons: 0, cancelable: false };
+              pointer(holder || el, 'pointercancel', cancelInit);
+              capture.release(cancelInit);
+            }
           }
           if (htmlStarted) { html.move(last, point); continue; }
-          moveOnto(last, { button: 0, buttons: 1, ...point });
+          const holder = capture.target({ button: 0, buttons: 1, ...heldAt(point, px, py) });
+          moveOnto(holder || last, { button: 0, buttons: 1, ...(holder ? heldAt(point, px, py) : point) });
           range?.to(px - pressOffsetX, py - pressOffsetY);
           selection?.to(px - pressOffsetX, py - pressOffsetY);
         }
         const end = _visionTargetAt(toX, toY);
-        const releaseTarget = end?.el || last;
-        const endInit = { button: 0, buttons: 0, ...pointAt(end, toX, toY) };
+        const endPoint = pointAt(end, toX, toY);
+        const holder = htmlStarted ? null : capture.target({ button: 0, buttons: 1, ...heldAt(endPoint, toX, toY) });
+        const releaseTarget = holder || end?.el || last;
+        const endInit = { button: 0, buttons: 0, ...(holder ? heldAt(endPoint, toX, toY) : endPoint) };
         if (htmlStarted) {
           const html5Drag = html.end(endInit);
           _visionPointerOver = releaseTarget;
@@ -2178,6 +2283,7 @@
         }
         if (releaseTarget !== _visionPointerOver) moveOnto(releaseTarget, { ...endInit, buttons: 1 });
         pointer(releaseTarget, 'pointerup', endInit);
+        capture.release(endInit);
         mouse(releaseTarget, 'mouseup', { ...endInit, detail: 1 });
         const rangeValue = range?.release();
         return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe,
@@ -2189,6 +2295,7 @@
       // the guard blocks it, and the agent settles the guard afterwards.
       const filePickerGuard = clickWithoutNativeFilePicker(() => {
         for (let count = 1; count <= clicks; count++) {
+          capture.press();
           pointer(el, 'pointerdown', { button, buttons: buttonsMask });
           const pressAllowed = mouse(el, 'mousedown', { button, buttons: buttonsMask, detail: count });
           if (count === 1 && button === 0 && pressAllowed) {
@@ -2197,8 +2304,11 @@
             else if (!focusable) el.ownerDocument.activeElement?.blur?.();
             if (focusable) _visionPlaceCaret(el, cx, cy);
           }
-          pointer(el, 'pointerup', { button, buttons: 0 });
-          mouse(el, 'mouseup', { button, buttons: 0, detail: count });
+          // A press the page captured is released on the capturing element.
+          const holder = capture.target({ button, buttons: buttonsMask }) || el;
+          pointer(holder, 'pointerup', { button, buttons: 0 });
+          capture.release({ button, buttons: 0 });
+          mouse(holder, 'mouseup', { button, buttons: 0, detail: count });
           if (button === 0) mouse(el, 'click', { button: 0, buttons: 0, detail: count });
           else if (button === 1) mouse(el, 'auxclick', { button: 1, buttons: 0, detail: count });
         }
@@ -2231,7 +2341,12 @@
       if (filePickerGuard.blocked) return { ...filePickerBlockedResponse(filePickerGuard.blocked), target: describe };
       return { success: true, dispatched: true, method: 'synthetic-vision-pointer', clicks, target: describe,
         ...(filePickerGuard.guardId ? { _filePickerGuardId: filePickerGuard.guardId } : {}) };
-    });
+    };
+    try {
+      return withLocalPageDispatch(dispatchSequence);
+    } finally {
+      capture?.end();
+    }
   }
 
   let _lastClickIdent = null;
