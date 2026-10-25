@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ru" dir="ltr" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebBrain Companion: ваши подписки на ИИ в WebBrain</title>
+<meta name="description" content="Небольшое приложение для macOS, Windows и Linux, которое обслуживает ваши подписки Claude, ChatGPT, Google, Grok и Kimi на WebBrain на 127.0.0.1, показывает, сколько осталось каждого плана, и запускает Bonsai 2 27B на вашем компьютере.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#fbf6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a0f18" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://webbrain.one/companion/ru/">
+<link rel="alternate" hreflang="en" href="https://webbrain.one/companion/">
+<link rel="alternate" hreflang="es" href="https://webbrain.one/companion/es/">
+<link rel="alternate" hreflang="fr" href="https://webbrain.one/companion/fr/">
+<link rel="alternate" hreflang="tr" href="https://webbrain.one/companion/tr/">
+<link rel="alternate" hreflang="zh" href="https://webbrain.one/companion/zh/">
+<link rel="alternate" hreflang="ru" href="https://webbrain.one/companion/ru/">
+<link rel="alternate" hreflang="uk" href="https://webbrain.one/companion/uk/">
+<link rel="alternate" hreflang="ar" href="https://webbrain.one/companion/ar/">
+<link rel="alternate" hreflang="ja" href="https://webbrain.one/companion/ja/">
+<link rel="alternate" hreflang="ko" href="https://webbrain.one/companion/ko/">
+<link rel="alternate" hreflang="id" href="https://webbrain.one/companion/id/">
+<link rel="alternate" hreflang="th" href="https://webbrain.one/companion/th/">
+<link rel="alternate" hreflang="ms" href="https://webbrain.one/companion/ms/">
+<link rel="alternate" hreflang="tl" href="https://webbrain.one/companion/tl/">
+<link rel="alternate" hreflang="he" href="https://webbrain.one/companion/he/">
+<link rel="alternate" hreflang="hi" href="https://webbrain.one/companion/hi/">
+<link rel="alternate" hreflang="pt" href="https://webbrain.one/companion/pt/">
+<link rel="alternate" hreflang="vi" href="https://webbrain.one/companion/vi/">
+<link rel="alternate" hreflang="bn" href="https://webbrain.one/companion/bn/">
+<link rel="alternate" hreflang="fa" href="https://webbrain.one/companion/fa/">
+<link rel="alternate" hreflang="nl" href="https://webbrain.one/companion/nl/">
+<link rel="alternate" hreflang="de" href="https://webbrain.one/companion/de/">
+<link rel="alternate" hreflang="x-default" href="https://webbrain.one/companion/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WebBrain">
+<meta property="og:title" content="WebBrain Companion">
+<meta property="og:description" content="Небольшое приложение для macOS, Windows и Linux, которое обслуживает ваши подписки Claude, ChatGPT, Google, Grok и Kimi на WebBrain на 127.0.0.1, показывает, сколько осталось каждого плана, и запускает Bonsai 2 27B на вашем компьютере.">
+<meta property="og:url" content="https://webbrain.one/companion/ru/">
+<meta property="og:image" content="https://webbrain.one/companion/assets/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="../assets/img/favicon.png">
+<link rel="preload" href="../assets/fonts/bricolage-grotesque-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../assets/site.css">
+<script>document.documentElement.classList.replace("no-js", "js")</script>
+<script defer src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Перейти к содержимому</a>
+<header class="wrap site-head">
+  <a class="brand" href="./"><img src="../assets/img/logo-128.png" alt="" width="30" height="30">WebBrain Companion</a>
+  <nav class="site-nav" aria-label="Разделы">
+    <a href="#panel">Панель</a>
+    <a href="#local">Локальная модель</a>
+    <a href="#connect">Подключиться</a>
+    <a href="#download">Скачать</a>
+  </nav>
+  <details class="language-picker">
+    <summary aria-label="Выбрать язык" title="Выбрать язык">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M5 6.5h14M5 17.5h14"/></svg>
+    </summary>
+    <nav class="language-menu" aria-label="Выбрать язык">
+      <a href="../" hreflang="en" lang="en" dir="ltr">English</a>
+      <a href="../es/" hreflang="es" lang="es" dir="ltr">Español</a>
+      <a href="../fr/" hreflang="fr" lang="fr" dir="ltr">Français</a>
+      <a href="../tr/" hreflang="tr" lang="tr" dir="ltr">Türkçe</a>
+      <a href="../zh/" hreflang="zh" lang="zh" dir="ltr">中文</a>
+      <a href="../ru/" hreflang="ru" lang="ru" dir="ltr" aria-current="page">Русский</a>
+      <a href="../uk/" hreflang="uk" lang="uk" dir="ltr">Українська</a>
+      <a href="../ar/" hreflang="ar" lang="ar" dir="rtl">العربية</a>
+      <a href="../ja/" hreflang="ja" lang="ja" dir="ltr">日本語</a>
+      <a href="../ko/" hreflang="ko" lang="ko" dir="ltr">한국어</a>
+      <a href="../id/" hreflang="id" lang="id" dir="ltr">Bahasa Indonesia</a>
+      <a href="../th/" hreflang="th" lang="th" dir="ltr">ไทย</a>
+      <a href="../ms/" hreflang="ms" lang="ms" dir="ltr">Bahasa Melayu</a>
+      <a href="../tl/" hreflang="tl" lang="tl" dir="ltr">Filipino</a>
+      <a href="../he/" hreflang="he" lang="he" dir="rtl">עברית</a>
+      <a href="../hi/" hreflang="hi" lang="hi" dir="ltr">हिन्दी</a>
+      <a href="../pt/" hreflang="pt" lang="pt" dir="ltr">Português</a>
+      <a href="../vi/" hreflang="vi" lang="vi" dir="ltr">Tiếng Việt</a>
+      <a href="../bn/" hreflang="bn" lang="bn" dir="ltr">বাংলা</a>
+      <a href="../fa/" hreflang="fa" lang="fa" dir="rtl">فارسی</a>
+      <a href="../nl/" hreflang="nl" lang="nl" dir="ltr">Nederlands</a>
+      <a href="../de/" hreflang="de" lang="de" dir="ltr">Deutsch</a>
+    </nav>
+  </details>
+</header>
+
+<main id="main">
+<section class="wrap hero">
+  <div>
+    <h1>Ваши подписки на ИИ готовы к работе в WebBrain</h1>
+    <p class="lede">WebBrain Companion живет в строке меню или на панели задач. Войдите в Claude, ChatGPT, Google, Grok или Kimi один раз, и WebBrain достигнет всех из них по одному адресу на вашем компьютере. В трее показано, сколько осталось каждого плана и когда он сбрасывается.</p>
+    <div class="cta">
+      <a class="button primary" id="get" href="#download" data-mac="Скачать для macOS" data-win="Скачать для Windows" data-linux="Скачать для Linux" data-mac-href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip" data-win-href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe" data-linux-href="#download">Скачать</a>
+      <span class="cta-note">Версия 0.1.2 для macOS, Windows и Linux. Бесплатный и с открытым исходным кодом.</span>
+    </div>
+  </div>
+  <div class="desk-wrap">
+    <div class="desk" data-os="mac" role="img" aria-label="Иллюстрация трей-меню Companion: запуск, адрес для копирования и сколько осталось Claude Max, ChatGPT Pro, Google AI Pro и SuperGrok.">
+      <div class="bar" aria-hidden="true"><span class="s s3"></span><span class="s s2"></span><span class="icon"><span class="glyph"></span></span><span class="s s1"></span></div>
+      <div class="menu" aria-hidden="true">
+        <div class="row dim"><span>WebBrain Companion — Работает</span></div>
+        <div class="row"><span>Копировать&nbsp;&nbsp;http://127.0.0.1:8327/v1</span></div>
+        <div class="sep"></div>
+        <div class="row plan"><span>Claude Max</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span>64% · 2 часа 13 минут</span></div>
+        <div class="row plan"><span>ChatGPT Pro</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span>57% · 4д</span></div>
+        <div class="row plan"><span>Google AI Pro</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>71% · 5д</span></div>
+        <div class="row plan"><span>Grok SuperGrok</span><span class="meter"><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>12% · 3д</span></div>
+        <div class="sep"></div>
+        <div class="row"><span>Открыть панель…</span></div>
+        <div class="row"><span>Выйти из WebBrain Companion</span></div>
+      </div>
+    </div>
+    <div class="os-switch"><span id="os-label">Меню включено</span><span class="seg" role="group" aria-labelledby="os-label"><button type="button" data-os="mac" aria-pressed="true">macOS</button><button type="button" data-os="win" aria-pressed="false">Windows</button><button type="button" data-os="linux" aria-pressed="false">Linux</button></span></div>
+  </div>
+</section>
+
+<section class="section" id="panel" aria-labelledby="panel-h">
+  <div class="wrap">
+    <h2 id="panel-h">Все остальное происходит на одной маленькой панели.</h2>
+    <p class="intro">Нажмите на значок, чтобы открыть его. На одной странице содержится адрес WebBrain, все планы с остатками и две локальные модели; нажмите на строку, чтобы просмотреть подробную информацию, или на шестеренку, чтобы перейти к настройкам. Он соответствует вашей светлой или темной обстановке и говорит на английском и турецком языках.</p>
+    <ul class="windows">
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/panel-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/panel-en-light.webp" width="460" height="760" alt="Панель: адрес http://127.0.0.1:8327/v1 с кнопкой «Копировать», счетчики использования для Claude Max, ChatGPT Pro, Google AI Pro и SuperGrok, а также Bonsai 2 27B, работающие рядом с моделью принятия решений d1." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Одна страница</h3><p>Нужен адрес WebBrain, каждый план с лимитом, ближайшим к исчерпанию, и локальные модели со своей основной кнопкой. На этом компьютере нет ключа API.</p></figcaption>
+      </figure></li>
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/add-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/add-en-light.webp" width="460" height="760" alt="В листе добавления подписки указаны Claude, ChatGPT, Google, Grok и Kimi, для каждого из которых указано, как вы входите в систему." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Добавить подписку</h3><p>Авторизуйтесь на собственной странице провайдера. Логин остается на вашем компьютере.</p></figcaption>
+      </figure></li>
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/local-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/local-en-light.webp" width="460" height="760" alt="Подробности о Bonsai 2 27B на панели: запуск на Apple GPU с включенным вводом изображений, 65 536 токенов контекста и его параметры." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Локальные модели</h3><p>Нажмите Bonsai 2 27B, чтобы увидеть, где он работает и подходят ли изображения, а также изменить его параметры. d1 открывается так же.</p></figcaption>
+      </figure></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="local" aria-labelledby="local-h">
+  <div class="wrap">
+    <h2 id="local-h">Bonsai 2 27B, размер соответствует вашей машине</h2>
+    <div class="split">
+      <p class="intro">Ternary Bonsai 2 27B PrismML упаковывает 27 миллиардов параметров в 5,95 ГБ. Компаньон устанавливает его вместе с проектором Q8_0 и сборкой llama.cpp для PrismML или как пакет MLX на Apple Silicon и указывает его рядом с вашими подписками как <code>bonsai-2-27b</code>.</p>
+      <p class="intro">Прежде чем что-либо загружается, выясняется, где работает модель и подходит ли входное изображение. Проектор изображения включается на GPU, когда после модели и ее контекста остается около 1 ГБ памяти GPU, на CPU, когда есть место только в системе RAM, и отключается в противном случае. Вы можете отменить выбор на панели.</p>
+    </div>
+    <table class="machines">
+      <caption>Что подбирает товарищ на типовых машинах</caption>
+      <thead><tr><th scope="col">Машина</th><th scope="col">Работает</th><th scope="col">Ввод изображения</th><th scope="col">Контекст</th></tr></thead>
+      <tbody>
+        <tr><td>MacBook Air, 8 ГБ</td><td data-label="Работает">Apple GPU с Metal. Ему требуется больше памяти, чем у Mac, так что ожидайте замены.</td><td data-label="Ввод изображения"><span class="vis off">Выкл.</span></td><td data-label="Контекст">Токены 8K</td></tr>
+        <tr><td>MacBook Pro, 16 ГБ</td><td data-label="Работает">Apple GPU с Metal</td><td data-label="Ввод изображения"><span class="vis gpu">Включено, GPU</span></td><td data-label="Контекст">Токены 16K</td></tr>
+        <tr><td>Ноутбук с RTX 4060 (8 ГБ) и RAM 16 ГБ</td><td data-label="Работает">CUDA, 57 из 64 слоев на GPU</td><td data-label="Ввод изображения"><span class="vis cpu">Включено, CPU</span></td><td data-label="Контекст">Токены 8K</td></tr>
+        <tr><td>Настольный компьютер с RTX 4090 (24 ГБ) и RAM 64 ГБ</td><td data-label="Работает">CUDA, все на GPU</td><td data-label="Ввод изображения"><span class="vis gpu">Включено, GPU</span></td><td data-label="Контекст">Токены 64K</td></tr>
+        <tr><td>Настольный компьютер с Radeon RX 7600 (8 ГБ) и RAM 32 ГБ</td><td data-label="Работает">Vulkan, 61 из 64 слоев на GPU</td><td data-label="Ввод изображения"><span class="vis cpu">Включено, CPU</span></td><td data-label="Контекст">Токены 8K</td></tr>
+        <tr><td>ПК без видеокарты, 16 ГБ RAM</td><td data-label="Работает">CPU</td><td data-label="Ввод изображения"><span class="vis cpu">Включено, CPU</span></td><td data-label="Контекст">Токены 8K</td></tr>
+        <tr><td>ПК без видеокарты, 8 ГБ RAM</td><td data-label="Работает">CPU, свободного места мало</td><td data-label="Ввод изображения"><span class="vis off">Выкл.</span></td><td data-label="Контекст">Токены 8K</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Разработано планировщиком компаньона из общей и свободной памяти; числа на вашем компьютере во время установки решают. На Apple Silicon пакет MLX имеет собственную обзорную башню, поэтому изображения всегда включены.</p>
+  </div>
+</section>
+
+<section class="section" id="decision" aria-labelledby="d1-h">
+  <div class="wrap">
+    <h2 id="d1-h">Модель принятия решений WebBrain вне браузера</h2>
+    <div class="split">
+      <p class="intro">Модель d1 WebBrain отвечает на вопросы «да/нет», вопросы выбора и оценки о странице и до четырех снимков экрана, например о том, завершена ли задача. Компаньон запускает его на ONNX Runtime и отвечает по HTTP, поэтому вкладка браузера не должна загружать 1,9 ГБ. Его порт Go возвращает те же токены и вероятности, что и адаптер JavaScript WebBrain. Собственный d1 доступен на компьютерах Mac Windows, Linux и Apple Silicon; он недоступен на компьютерах Mac Intel.</p>
+      <div>
+        <p class="code-label">Спросить</p>
+        <pre><code>curl http://127.0.0.1:8327/companion/v1/decide \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;state&quot;: &quot;Order #1042 is confirmed.&quot;,
+       &quot;questions&quot;: {&quot;completion&quot;: {
+         &quot;type&quot;: &quot;choice&quot;,
+         &quot;instructions&quot;: &quot;Did the task finish?&quot;,
+         &quot;criteria&quot;: {&quot;completed&quot;: &quot;Confirmed&quot;,
+                      &quot;not_completed&quot;: &quot;Failed or unfinished&quot;,
+                      &quot;unknown&quot;: &quot;Not established&quot;}}}}&#x27;</code></pre>
+        <p class="code-label">Ответ (273 мс во время выполнения CPU)</p>
+        <pre><code>{&quot;answers&quot;: {&quot;completion&quot;: {
+   &quot;choice&quot;: &quot;completed&quot;,
+   &quot;confidence&quot;: 0.99997,
+   &quot;probabilities&quot;: {&quot;completed&quot;: 0.99997,
+                     &quot;not_completed&quot;: 0.000002,
+                     &quot;unknown&quot;: 0.000033}}},
+ &quot;diagnostics&quot;: {&quot;runtime&quot;: &quot;onnxruntime 1.31.0 (CPU)&quot;, …}}</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="connect" aria-labelledby="connect-h">
+  <div class="wrap">
+    <h2 id="connect-h">Подключить WebBrain</h2>
+    <p class="intro">Вы делаете это один раз. Приложениям на этом компьютере не нужен ключ API.</p>
+    <ol class="steps">
+      <li>Установите компаньона и откройте его. Добавьте подписку в ее панели и завершите вход в браузере.</li>
+      <li>Адрес по умолчанию — <code>http://127.0.0.1:8327/v1</code>. Если порт изменился, скопируйте адрес, указанный в меню панели или лотка.</li>
+      <li>В WebBrain откройте страницу <b>Providers</b> (<b>More…</b> в меню модели боковой панели) и выберите <b>WebBrain Companion</b>. Сохраняйте адрес по умолчанию, если приложение не показывает другой порт. На этом компьютере не требуется ключ API.</li>
+      <li>Нажмите <b>Загрузить модели</b>, выберите модель <b>Сохранить</b> и запустите <b>Test Connection</b> перед активацией карты. Включайте зрение только для модели, которая принимает изображения.</li>
+    </ol>
+    <p class="after-steps">Любой клиент OpenAI, Anthropic или Gemini на этом компьютере может использовать тот же адрес. Чтобы использовать его с другого устройства, включите доступ к сети в настройках панели; этому устройству затем потребуется ключ API, отображаемый на панели.</p>
+  </div>
+</section>
+
+<section class="section" id="download" aria-labelledby="download-h">
+  <div class="wrap">
+    <h2 id="download-h">Скачать</h2>
+    <p class="intro">Версия 0.1.2. Каждый пакет содержит одну программу; ваши настройки и логины хранятся в вашей пользовательской папке.</p>
+    <div class="downloads">
+      <div class="dl" data-os="mac">
+        <div><h3>macOS</h3><p class="req">macOS 12 или новее, Apple Silicon и Intel (для d1 требуется Apple Silicon)</p><span class="yours">Ваша система</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip">Универсальное приложение <small>zip, 36 MB</small></a></li></ul>
+        <p class="how">Переместите WebBrain Companion в Приложения. Сборка не заверена Apple: в первый раз разрешите ее в настройках системы, конфиденциальности и безопасности (все равно открыть). В macOS 14 и более ранних версиях щелкните его, удерживая клавишу Control, и выберите «Открыть».</p>
+      </div>
+      <div class="dl" data-os="win">
+        <div><h3>Windows</h3><p class="req">Windows 10 и 11, x64 и Arm64</p><span class="yours">Ваша система</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe">Установщик <small>setup.exe, 23 MB</small></a></li></ul>
+        <p class="how">Запустите установщик: он установится для вашей учетной записи без приглашения администратора и добавит WebBrain Companion в меню «Пуск». Пока установщик не подписан кодом, SmartScreen может сказать: «Windows защитил ваш компьютер»: выберите «Подробнее», затем «Все равно запустить».</p>
+      </div>
+      <div class="dl" data-os="linux">
+        <div><h3>Linux</h3><p class="req">х64 и Арм64</p><span class="yours">Ваша система</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-x64.tar.gz">x64 <small>tar.gz, 20 MB</small></a></li><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-arm64.tar.gz">Arm64 <small>tar.gz, 18 MB</small></a></li></ul>
+        <p class="how">Распакуйте и запустите webbrain-companion. Для значка требуется лоток StatusNotifierItem: KDE, XFCE или GNOME с расширением AppIndicator.</p>
+      </div>
+    </div>
+    <p class="more-links"><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-SHA256SUMS.txt">Контрольные суммы SHA-256</a><a href="https://github.com/webbrain-one/webbrain/tree/main/webbrain-systray">Исходный код</a><a href="https://github.com/webbrain-one/webbrain/releases">Все выпуски</a></p>
+  </div>
+</section>
+
+<section class="section safety" id="safety" aria-labelledby="safety-h">
+  <div class="wrap">
+    <h2 id="safety-h">Прежде чем войти в систему</h2>
+    <div class="split even">
+      <div>
+        <h3>Что остается на вашем компьютере</h3>
+        <ul class="facts">
+          <li>На этом компьютере ключ API не требуется: компаньон отвечает только на запросы с адреса 127.0.0.1 и отворачивает веб-страницы, поэтому сайт, который вы посещаете, не может потратить ваши планы. Расширения браузера, такие как WebBrain, и приложения на этом компьютере могут использовать его.</li>
+          <li>Другие устройства смогут подключиться только в том случае, если вы включите доступ к сети в настройках панели. Затем он прослушивает 0.0.0.0, и им нужен ключ API, который отображается на панели.</li>
+          <li>Логины хранятся в вашей пользовательской папке и отправляются только тому провайдеру, которому они принадлежат.</li>
+          <li>Аналитики нет. Помимо поставщиков, к которым вы входите в систему, он получает только общедоступный список моделей CLIProxyAPI, а при установке модели — ее файлы из Hugging Face, GitHub и, для MLX, PyPI.</li>
+          <li>Приглашения, отправленные в подписку, по-прежнему передаются этому поставщику. На вашем компьютере работают только Bonsai 2 27B и d1.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Что решит ваш провайдер</h3>
+        <ul class="facts">
+          <li>Подписка, работающая через прокси, отличается от той, которую разрешает провайдер. Потребительские условия Anthropic ограничивают автоматический доступ за пределами ключа API, а условия Gemini CLI Google гласят, что вход в систему не может использоваться со сторонними инструментами.</li>
+          <li>Прежде чем добавлять его, проверьте условия вашего плана и региона. Если учетная запись имеет для вас значение, ключ API провайдера — более безопасный путь.</li>
+          <li>Отключите доступ к сети общедоступного Wi-Fi и никогда не перенаправляйте порт 8327 в Интернет. Ключ API не обеспечивает безопасность интернет-уровня.</li>
+        </ul>
+        <p><a href="https://webbrain.one/docs/providers/#companion">Подключите WebBrain к Companion</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <p>WebBrain Companion является бесплатным программным обеспечением под лицензией GPL-3.0-or-later и включает CLIProxyAPI. Он не связан с Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta или Cognition.</p>
+    <nav aria-label="Подробнее"><a href="https://webbrain.one/">WebBrain</a><a href="https://github.com/webbrain-one/webbrain/tree/main/webbrain-systray">Исходный код</a></nav>
+  </div>
+</footer>
+</body>
+</html>

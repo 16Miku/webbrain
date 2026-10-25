@@ -1,0 +1,162 @@
+{
+  "text": {
+    "title": "WebBrain Companion: WebBrain의 AI 구독",
+    "og_title": "WebBrain Companion",
+    "description": "Claude, ChatGPT, Google, Grok 및 Kimi 구독을 WebBrain에 제공하는 macOS, Windows 및 Linux용 소형 트레이 앱입니다. 127.0.0.1은 각 계획의 남은 양을 보여주고 자신의 컴퓨터에서 Bonsai 2 27B를 실행합니다.",
+    "skip": "콘텐츠로 건너뛰기",
+    "nav_label": "섹션",
+    "nav_panel": "패널",
+    "nav_local": "지역 모델",
+    "nav_connect": "연결하다",
+    "nav_download": "다운로드",
+    "h1": "이미 구독 중인 AI 서비스를 WebBrain에서 사용하세요",
+    "lede": "WebBrain Companion는 메뉴 표시줄이나 시스템 트레이에 있습니다. Claude, ChatGPT, Google, Grok 또는 Kimi에 한 번 로그인하면 WebBrain가 컴퓨터의 한 주소에서 모두 연결됩니다. 트레이에는 각 계획의 남은 양과 재설정 시기가 표시됩니다.",
+    "get": "다운로드",
+    "get_mac": "macOS용 다운로드",
+    "get_win": "Windows용 다운로드",
+    "get_linux": "Linux용 다운로드",
+    "cta_note": "macOS, Windows 및 Linux용 버전 0.1.2. 무료이며 오픈 소스입니다.",
+    "desk_label": "Companion의 트레이 메뉴 그림: 실행 중, 복사할 주소, Claude Max, ChatGPT Pro, Google AI Pro 및 SuperGrok의 남은 양.",
+    "os_label": "메뉴 사용",
+    "panel_h": "다른 모든 작업은 하나의 작은 패널에서 이루어집니다.",
+    "panel_intro": "아이콘을 클릭하여 엽니다. 한 페이지에는 WebBrain의 주소, 남은 모든 계획 및 두 개의 로컬 모델이 포함되어 있습니다. 세부정보를 보려면 행을 클릭하고, 설정을 보려면 기어를 클릭하세요. 밝거나 어두운 설정에 따라 영어와 터키어를 구사합니다.",
+    "shot1_h": "한 페이지",
+    "shot1_p": "WebBrain에 필요한 주소, 한도가 거의 소진되는 각 계획, 메인 버튼이 있는 로컬 모델. 이 컴퓨터에는 API 키가 없습니다.",
+    "shot1_alt": "패널: 복사 버튼이 있는 주소 http://127.0.0.1:8327/v1, Claude Max, ChatGPT Pro, Google AI Pro 및 SuperGrok에 대한 사용량 측정기, d1 결정 모델 옆에서 실행되는 Bonsai 2 27B.",
+    "shot2_h": "구독 추가",
+    "shot2_p": "제공업체의 자체 페이지에 로그인하세요. 로그인은 컴퓨터에 유지됩니다.",
+    "shot2_alt": "Claude, ChatGPT, Google, Grok 및 Kimi가 나열된 구독 추가 시트에는 각각 로그인 방법이 나와 있습니다.",
+    "shot3_h": "현지 모델",
+    "shot3_p": "Bonsai 2 27B를 클릭하면 실행 위치와 이미지가 맞는지 확인하고 옵션을 변경할 수 있습니다. d1도 같은 방식으로 열립니다.",
+    "shot3_alt": "패널에 대한 Bonsai 2 27B 세부 정보: 이미지 입력이 켜져 있는 Apple GPU에서 실행, 65,536개의 컨텍스트 토큰 및 해당 옵션.",
+    "local_h": "귀하의 기계에 맞는 Bonsai 2 27B",
+    "local_p1": "PrismML의 Ternary Bonsai 2 27B는 270억 개의 매개변수를 5.95GB에 담았습니다. 컴패니언은 Q8_0 비전 프로젝터 및 PrismML의 llama.cpp 빌드와 함께 설치하거나 Apple Silicon에 MLX 팩으로 설치하고 구독 옆에 <code>bonsai-2-27b</code>로 나열합니다.",
+    "local_p2": "다운로드하기 전에 모델이 실행되는 위치와 이미지 입력이 적합한지 확인합니다. 비전 프로젝터는 모델과 해당 컨텍스트 뒤에 약 1GB의 GPU 메모리가 남을 때 GPU에서 작동하고, 시스템 RAM에만 공간이 있을 때 CPU에서 작동하고, 그렇지 않으면 꺼집니다. 패널에서 선택 사항을 재정의할 수 있습니다.",
+    "table_caption": "동반자가 일반적인 기계에서 선택하는 것",
+    "th_machine": "기계",
+    "th_runs": "실행 대상",
+    "th_vision": "이미지 입력",
+    "th_context": "맥락",
+    "vis_gpu": "켜짐, GPU",
+    "vis_cpu": "켜짐, CPU",
+    "vis_off": "끄기",
+    "tokens": "{} 토큰",
+    "local_note": "동반자의 플래너가 전체 및 여유 메모리에서 작업했습니다. 설치 시 컴퓨터의 숫자가 결정됩니다. Apple Silicon에서 MLX 팩에는 자체 비전 타워가 있으므로 이미지가 항상 켜져 있습니다.",
+    "d1_h": "WebBrain의 결정 모델, 브라우저 외부",
+    "d1_p": "WebBrain의 d1 모델은 예/아니요, 페이지에 대한 선택 및 점수 질문과 작업 완료 여부와 같은 최대 4개의 스크린샷에 대답합니다. 컴패니언은 ONNX Runtime에서 실행하고 HTTP를 통해 응답하므로 브라우저 탭이 1.9GB를 로드할 필요가 없습니다. Go 포트는 WebBrain의 JavaScript 어댑터와 동일한 토큰 및 확률을 반환합니다. 기본 d1는 Windows, Linux 및 Apple Silicon Mac에서 사용할 수 있습니다. Intel Mac에서는 사용할 수 없습니다.",
+    "d1_ask": "물어보세요",
+    "d1_answer": "답변(CPU 런타임에서 273ms)",
+    "connect_h": "WebBrain 연결",
+    "connect_p": "이 작업을 한 번 수행하십시오. 이 컴퓨터의 앱에는 API 키가 필요하지 않습니다.",
+    "step1": "컴패니언을 설치하고 엽니다. 패널에 구독을 추가하고 브라우저에서 로그인을 완료하세요.",
+    "step2": "기본 주소는 <code>http://127.0.0.1:8327/v1</code>입니다. 포트가 변경된 경우 패널이나 트레이 메뉴에 표시된 주소를 복사하세요.",
+    "step3": "WebBrain에서 <b>Providers</b> 페이지(측면 패널의 모델 메뉴에서 <b>More…</b>)를 열고 <b>WebBrain Companion</b>를 선택합니다. 앱에 다른 포트가 표시되지 않는 한 기본 주소를 유지합니다. 이 컴퓨터에는 API 키가 필요하지 않습니다.",
+    "step4": "카드를 활성화하기 전에 <b>Load Models</b>를 클릭하고 모델 <b>Save</b>를 선택한 다음 <b>Test Connection</b>를 실행하세요. 이미지를 허용하는 모델에 대해서만 비전을 켜십시오.",
+    "after_steps": "이 컴퓨터의 모든 OpenAI, Anthropic 또는 Gemini 클라이언트는 동일한 주소를 사용할 수 있습니다. 다른 장치에서 사용하려면 패널 설정에서 네트워크 액세스를 켜십시오. 그러면 해당 장치에는 패널에 표시되는 API 키가 필요합니다.",
+    "download_h": "다운로드",
+    "download_p": "버전 0.1.2. 각 패키지에는 단일 프로그램이 들어 있습니다. 귀하의 설정과 로그인은 귀하의 사용자 폴더에 있습니다.",
+    "yours": "귀하의 시스템",
+    "mac_req": "macOS 12 이상, Apple Silicon 및 Intel(d1에는 Apple Silicon가 필요함)",
+    "mac_file": "유니버설 앱",
+    "mac_how": "WebBrain Companion를 애플리케이션으로 이동합니다. 빌드는 Apple에서 공증되지 않습니다. 처음에는 시스템 설정, 개인 정보 보호 및 보안(어쨌든 열기)에서 허용합니다. macOS 14 이하에서는 Control 키를 누른 채 클릭하고 열기를 선택합니다.",
+    "win_req": "Windows 10 및 11, x64 및 Arm64",
+    "win_file": "설치자",
+    "win_how": "설치 프로그램을 실행하세요. 관리자 프롬프트 없이 계정에 설치되고 시작 메뉴에 WebBrain Companion가 추가됩니다. 설치 프로그램이 코드 서명될 때까지 SmartScreen는 \"Windows가 PC를 보호했습니다\"라고 말할 수 있습니다. 추가 정보를 선택한 다음 어쨌든 실행을 선택합니다.",
+    "linux_req": "x64 및 Arm64",
+    "linux_how": "포장을 풀고 webbrain-companion을 실행합니다. 아이콘에는 StatusNotifierItem 트레이(KDE, XFCE 또는 AppIndicator 확장이 있는 GNOME)가 필요합니다.",
+    "sums": "SHA-256 체크섬",
+    "source": "소스 코드",
+    "all": "모든 릴리스",
+    "safety_h": "로그인하기 전에",
+    "stays_h": "컴퓨터에 남아 있는 것",
+    "stays": [
+      "이 컴퓨터에는 API 키가 필요하지 않습니다. 컴패니언은 127.0.0.1의 요청에만 응답하고 웹 페이지를 거부하므로 방문하는 사이트에서 계획을 사용할 수 없습니다. WebBrain와 같은 브라우저 확장 프로그램과 이 컴퓨터의 앱에서 사용할 수 있습니다.",
+      "다른 장치는 패널 설정에서 네트워크 액세스를 활성화한 경우에만 연결할 수 있습니다. 그런 다음 0.0.0.0을 수신하며 패널에 표시되는 API 키가 필요합니다.",
+      "로그인 정보는 사용자 폴더에 저장되며 해당 서비스 제공자에게만 전송됩니다.",
+      "분석이 없습니다. 로그인한 제공업체와 별도로 CLIProxyAPI의 공개 모델 목록만 가져오고, 모델을 설치할 때 Hugging Face, GitHub 및 MLX의 경우 PyPI에서 해당 파일을 가져옵니다.",
+      "구독으로 전송된 메시지는 계속해서 해당 공급자에게 전달됩니다. Bonsai 2 27B 및 d1만 시스템에서 실행됩니다."
+    ],
+    "provider_h": "귀하의 서비스 제공자가 결정하는 것",
+    "provider": [
+      "프록시를 통해 작동하는 구독은 공급자가 허용하는 구독과 동일하지 않습니다. Anthropic의 소비자 약관은 API 키 외부의 자동 액세스를 제한하고 Google의 Gemini CLI 약관에는 로그인이 타사 도구와 함께 사용될 수 없다고 명시되어 있습니다.",
+      "추가하기 전에 요금제와 지역의 약관을 확인하세요. 계정이 중요한 경우 공급자 API 키가 더 안전한 경로입니다.",
+      "공용 Wi-Fi에서는 네트워크 액세스를 차단하고 포트 8327을 인터넷에 전달하지 마십시오. API 키는 인터넷 수준의 보안이 아닙니다."
+    ],
+    "guide": "WebBrain를 컴패니언에 연결",
+    "foot": "WebBrain Companion는 GPL-3.0-or-later 라이센스에 따른 무료 소프트웨어이며 CLIProxyAPI를 포함합니다. Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta 또는 Cognition와 관련이 없습니다.",
+    "foot_nav": "더보기"
+  },
+  "menu": {
+    "status": "WebBrain Companion — 실행 중",
+    "copy": "복사",
+    "plans": [
+      [
+        "Claude Max",
+        64,
+        "2시간 13분"
+      ],
+      [
+        "ChatGPT Pro",
+        57,
+        "4d"
+      ],
+      [
+        "Google AI Pro",
+        71,
+        "5d"
+      ],
+      [
+        "Grok SuperGrok",
+        12,
+        "3d"
+      ]
+    ],
+    "open": "패널 열기…",
+    "quit": "WebBrain Companion 종료",
+    "pct": "{}%"
+  },
+  "machines": [
+    [
+      "MacBook Air, 8GB",
+      "Metal가 포함된 Apple GPU. Mac보다 더 많은 메모리가 필요하므로 교체가 필요합니다.",
+      "off",
+      "8K"
+    ],
+    [
+      "MacBook Pro, 16GB",
+      "애플 GPU와 Metal",
+      "gpu",
+      "16K"
+    ],
+    [
+      "RTX 4060(8GB) 및 16GB RAM가 탑재된 노트북",
+      "CUDA, GPU의 64개 레이어 중 57개",
+      "cpu",
+      "8K"
+    ],
+    [
+      "RTX 4090(24GB) 및 64GB RAM가 탑재된 데스크탑",
+      "CUDA, 모두 GPU에 있음",
+      "gpu",
+      "64K"
+    ],
+    [
+      "Radeon RX 7600(8GB) 및 32GB RAM가 포함된 데스크탑",
+      "Vulkan, GPU의 64개 레이어 중 61개",
+      "cpu",
+      "8K"
+    ],
+    [
+      "그래픽 카드가 없는 PC, 16GB RAM",
+      "CPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "그래픽 카드가 없는 PC, 8GB RAM",
+      "여유 공간이 거의 없는 CPU",
+      "off",
+      "8K"
+    ]
+  ]
+}

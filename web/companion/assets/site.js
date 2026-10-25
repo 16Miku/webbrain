@@ -1,6 +1,21 @@
 // WebBrain Companion site: picks the visitor's system for the download button
 // and the tray illustration, and fills the illustration's usage meters once.
 (() => {
+  const languages = document.querySelector('.language-picker');
+  const languageTrigger = languages?.querySelector('summary');
+  document.addEventListener('pointerdown', (event) => {
+    if (languages?.open && !languages.contains(event.target)) languages.open = false;
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && languages?.open) {
+      languages.open = false;
+      languageTrigger.focus();
+    }
+  });
+  // Keep the current section when changing languages.
+  languages?.querySelectorAll('a[hreflang]').forEach((link) => {
+    link.addEventListener('click', () => { link.hash = location.hash; });
+  });
   const desk = document.querySelector(".desk");
   const get = document.getElementById("get");
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;

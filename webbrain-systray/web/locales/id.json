@@ -1,0 +1,162 @@
+{
+  "text": {
+    "title": "WebBrain Companion: langganan AI Anda di WebBrain",
+    "og_title": "WebBrain Companion",
+    "description": "Aplikasi baki kecil untuk macOS, Windows dan Linux yang melayani langganan Claude, ChatGPT, Google, Grok dan Kimi Anda ke WebBrain di 127.0.0.1, menunjukkan berapa banyak sisa paket, dan menjalankan Bonsai 2 27B di mesin Anda sendiri.",
+    "skip": "Lewati ke konten",
+    "nav_label": "Bagian",
+    "nav_panel": "Panel",
+    "nav_local": "Model lokal",
+    "nav_connect": "Hubungkan",
+    "nav_download": "Unduh",
+    "h1": "Langganan AI Anda, siap digunakan di WebBrain",
+    "lede": "WebBrain Companion ada di bilah menu atau baki sistem Anda. Masuk ke Claude, ChatGPT, Google, Grok, atau Kimi satu kali, dan WebBrain menjangkau semuanya di satu alamat di komputer Anda. Baki menunjukkan berapa banyak dari masing-masing paket yang tersisa dan kapan paket tersebut direset.",
+    "get": "Unduh",
+    "get_mac": "Unduh untuk macOS",
+    "get_win": "Unduh untuk Windows",
+    "get_linux": "Unduh untuk Linux",
+    "cta_note": "Versi 0.1.2 untuk macOS, Windows dan Linux. Gratis dan sumber terbuka.",
+    "desk_label": "Ilustrasi menu baki Pendamping: berjalan, alamat yang akan disalin, dan berapa sisa Claude Max, ChatGPT Pro, Google AI Pro, dan SuperGrok.",
+    "os_label": "Tidak bisa",
+    "panel_h": "Segala sesuatu yang lain terjadi dalam satu panel kecil",
+    "panel_intro": "Klik ikon untuk membukanya. Satu halaman berisi alamat WebBrain, setiap paket dengan sisa, dan dua model lokal; klik satu baris untuk mengetahui detailnya, atau klik roda gigi untuk pengaturan. Ini mengikuti pengaturan terang atau gelap Anda dan berbicara bahasa Inggris dan Turki.",
+    "shot1_h": "Satu halaman",
+    "shot1_p": "Alamat yang dibutuhkan WebBrain, setiap paket dengan batas yang hampir habis, dan model lokal dengan tombol utamanya. Tidak ada kunci API di komputer ini.",
+    "shot1_alt": "Panel: alamat http://127.0.0.1:8327/v1 dengan tombol Salin, pengukur penggunaan untuk Claude Max, ChatGPT Pro, Google AI Pro dan SuperGrok, dan Bonsai 2 27B yang dijalankan di sebelah model keputusan d1.",
+    "shot2_h": "Tambahkan langganan",
+    "shot2_p": "Masuk ke halaman penyedia itu sendiri. Login tetap ada di komputer Anda.",
+    "shot2_alt": "Lembar langganan tambahan berisi daftar Claude, ChatGPT, Google, Grok, dan Kimi, masing-masing dengan cara Anda masuk.",
+    "shot3_h": "Model lokal",
+    "shot3_p": "Klik Bonsai 2 27B untuk melihat di mana ia berjalan dan apakah gambarnya cocok, dan untuk mengubah pilihannya. d1 terbuka dengan cara yang sama.",
+    "shot3_alt": "Detail Bonsai 2 27B di panel: berjalan di Apple GPU dengan input gambar aktif, 65.536 token konteks, dan opsinya.",
+    "local_h": "Bonsai 2 27B, disesuaikan dengan ukuran mesin Anda",
+    "local_p1": "Ternary Bonsai 2 27B PrismML mengemas 27 miliar parameter ke dalam 5,95 GB. Pendamping menginstalnya dengan proyektor visi Q8_0 dan versi llama.cpp PrismML, atau sebagai paket MLX di Apple Silicon, dan mencantumkannya di samping langganan Anda sebagai <code>bonsai-2-27b</code>.",
+    "local_p2": "Sebelum mengunduh apa pun, ia mengetahui di mana model dijalankan dan apakah masukan gambar cocok. Proyektor vision akan menyala pada GPU ketika tersisa sekitar 1 GB memori GPU setelah model dan konteksnya, pada CPU ketika hanya sistem RAM yang memiliki ruang, dan sebaliknya tetap mati. Anda dapat mengesampingkan pilihan di panel.",
+    "table_caption": "Apa yang dipilih rekannya pada mesin biasa",
+    "th_machine": "Mesin",
+    "th_runs": "Berjalan terus",
+    "th_vision": "masukan gambar",
+    "th_context": "Konteks",
+    "vis_gpu": "Aktif, GPU",
+    "vis_cpu": "Aktif, CPU",
+    "vis_off": "Mati",
+    "tokens": "Token {}",
+    "local_note": "Dikerjakan oleh perencana pendamping dari memori total dan bebas; nomor-nomor di mesin Anda pada waktu instalasi memutuskan. Pada Apple Silicon, paket MLX dilengkapi menara penglihatannya sendiri, sehingga gambar selalu aktif.",
+    "d1_h": "Model keputusan WebBrain, di luar browser",
+    "d1_p": "Model d1 WebBrain menjawab ya/tidak, pertanyaan pilihan dan skor tentang suatu halaman dan hingga empat tangkapan layar, seperti apakah suatu tugas telah selesai. Pendamping menjalankannya di ONNX Runtime dan menjawab melalui HTTP, sehingga tab browser tidak perlu memuat 1,9 GB. Port Go-nya mengembalikan token dan probabilitas yang sama seperti adaptor JavaScript WebBrain. d1 asli tersedia di Mac Windows, Linux, dan Apple Silicon; itu tidak tersedia di Mac Intel.",
+    "d1_ask": "Tanyakan",
+    "d1_answer": "Jawaban (273 ms pada runtime CPU)",
+    "connect_h": "Hubungkan WebBrain",
+    "connect_p": "Anda melakukan ini sekali. Aplikasi di komputer ini tidak memerlukan kunci API.",
+    "step1": "Instal pendamping dan buka. Tambahkan langganan di panelnya dan selesaikan proses masuk di browser Anda.",
+    "step2": "Alamat defaultnya adalah <code>http://127.0.0.1:8327/v1</code>. Jika port berubah, salin alamat yang ditampilkan di panel atau menu baki.",
+    "step3": "Di WebBrain, buka halaman <b>Providers</b> (<b>Selengkapnya…</b> di menu model panel samping) dan pilih <b>WebBrain Companion</b>. Pertahankan alamat defaultnya kecuali aplikasi menunjukkan port lain. Tidak diperlukan kunci API di komputer ini.",
+    "step4": "Klik <b>Load Models</b>, pilih model, <b>Save</b>, dan jalankan <b>Test Connection</b> sebelum mengaktifkan kartu. Aktifkan visi hanya untuk model yang menerima gambar.",
+    "after_steps": "Klien OpenAI, Anthropic, atau Gemini apa pun di komputer ini dapat menggunakan alamat yang sama. Untuk menggunakannya dari perangkat lain, aktifkan akses jaringan di pengaturan panel; perangkat itu kemudian memerlukan kunci API yang ditampilkan panel.",
+    "download_h": "Unduh",
+    "download_p": "Versi 0.1.2. Setiap paket berisi satu program; pengaturan dan login Anda ada di folder pengguna Anda.",
+    "yours": "Sistem Anda",
+    "mac_req": "macOS 12 atau lebih baru, Apple Silicon dan Intel (d1 memerlukan Apple Silicon)",
+    "mac_file": "Aplikasi universal",
+    "mac_how": "Pindahkan WebBrain Companion ke Aplikasi. Pembuatannya tidak disahkan oleh Apple: pertama kali, izinkan di Pengaturan Sistem, Privasi & Keamanan (Tetap Terbuka). Pada macOS 14 dan versi lebih lama, Control-klik dan pilih Buka.",
+    "win_req": "Windows 10 dan 11, x64 dan Arm64",
+    "win_file": "Pemasang",
+    "win_how": "Jalankan penginstal: penginstal akan menginstal untuk akun Anda, tanpa perintah administrator, dan menambahkan WebBrain Companion ke menu Mulai. Sampai penginstal ditandatangani dengan kode, SmartScreen mungkin mengatakan \"Windows melindungi PC Anda\": pilih Info lebih lanjut, lalu Jalankan saja.",
+    "linux_req": "x64 dan Arm64",
+    "linux_how": "Buka paket dan jalankan webbrain-companion. Ikon memerlukan baki StatusNotifierItem: KDE, XFCE, atau GNOME dengan ekstensi AppIndicator.",
+    "sums": "Checksum SHA-256",
+    "source": "Kode sumber",
+    "all": "Semua rilis",
+    "safety_h": "Sebelum Anda masuk",
+    "stays_h": "Apa yang tersisa di komputer Anda",
+    "stays": [
+      "Di komputer ini tidak diperlukan kunci API: pendamping hanya menjawab permintaan dari 127.0.0.1 dan menolak halaman web, sehingga situs yang Anda kunjungi tidak dapat menghabiskan rencana Anda. Ekstensi browser seperti WebBrain dan aplikasi di komputer ini dapat menggunakannya.",
+      "Perangkat lain hanya dapat terhubung jika Anda mengaktifkan akses jaringan di pengaturan panel. Kemudian mendengarkan pada 0.0.0.0, dan mereka memerlukan kunci API yang ditampilkan panel.",
+      "Login disimpan di folder pengguna Anda dan hanya dikirim ke penyedianya.",
+      "Tidak ada analitik. Selain penyedia tempat Anda masuk, ini hanya mengambil daftar model publik CLIProxyAPI, dan, saat Anda menginstal model, filenya dari Hugging Face, GitHub dan, untuk MLX, PyPI.",
+      "Perintah yang dikirim ke langganan tetap masuk ke penyedia itu. Hanya Bonsai 2 27B dan d1 yang berjalan di mesin Anda."
+    ],
+    "provider_h": "Apa yang diputuskan oleh penyedia Anda",
+    "provider": [
+      "Langganan yang berfungsi melalui proxy tidak sama dengan langganan yang diizinkan oleh penyedia. Persyaratan konsumen Anthropic membatasi akses otomatis di luar kunci API, dan persyaratan Gemini CLI Google menyatakan proses masuknya tidak boleh digunakan dengan alat pihak ketiga.",
+      "Periksa ketentuan paket dan wilayah Anda sebelum Anda menambahkannya. Jika sebuah akun penting bagi Anda, kunci API penyedia adalah rute yang lebih aman.",
+      "Matikan akses jaringan pada Wi-Fi publik, dan jangan pernah meneruskan port 8327 ke internet. Kunci API bukanlah keamanan tingkat internet."
+    ],
+    "guide": "Hubungkan WebBrain ke Pendamping",
+    "foot": "WebBrain Companion adalah perangkat lunak gratis di bawah lisensi GPL-3.0-or-later dan menyematkan CLIProxyAPI. Itu tidak berafiliasi dengan Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta atau Cognition.",
+    "foot_nav": "Lebih lanjut"
+  },
+  "menu": {
+    "status": "WebBrain Companion — Berjalan",
+    "copy": "Salin",
+    "plans": [
+      [
+        "Claude Max",
+        64,
+        "2 jam 13 menit"
+      ],
+      [
+        "ChatGPT Pro",
+        57,
+        "4d"
+      ],
+      [
+        "Google AI Pro",
+        71,
+        "5d"
+      ],
+      [
+        "Grok SuperGrok",
+        12,
+        "3d"
+      ]
+    ],
+    "open": "Buka panel…",
+    "quit": "Keluar dari WebBrain Companion",
+    "pct": "{}%"
+  },
+  "machines": [
+    [
+      "MacBook Air, 8 GB",
+      "Apple GPU dengan Metal. Ini membutuhkan lebih banyak memori daripada yang dimiliki Mac, jadi harap bertukar.",
+      "off",
+      "8K"
+    ],
+    [
+      "MacBook Pro, 16GB",
+      "Apple GPU dengan Metal",
+      "gpu",
+      "16K"
+    ],
+    [
+      "Laptop dengan RTX 4060 (8 GB) dan 16 GB RAM",
+      "CUDA, 57 dari 64 lapisan pada GPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "Desktop dengan RTX 4090 (24 GB) dan 64 GB RAM",
+      "CUDA, semuanya ada di GPU",
+      "gpu",
+      "64K"
+    ],
+    [
+      "Desktop dengan Radeon RX 7600 (8 GB) dan 32 GB RAM",
+      "Vulkan, 61 dari 64 lapisan pada GPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "PC tanpa kartu grafis, 16 GB RAM",
+      "CPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "PC tanpa kartu grafis, 8 GB RAM",
+      "CPU, dengan sedikit ruang tersisa",
+      "off",
+      "8K"
+    ]
+  ]
+}

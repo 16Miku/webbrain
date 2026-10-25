@@ -187,7 +187,7 @@ projector where), the JavaScript-compatible JSON formatting of the d1 port,
 archive extraction and who may use the endpoints (keyless local apps,
 extensions, refused web pages, DNS rebinding, network access with the key).
 
-The product site lives in `web/` (English and Turkish, built by
+The product site lives in `web/` (the main website's 22 languages, built by
 `python3 web/build.py`); see `web/README.md`.
 
 The macOS menu-bar code is a small Cocoa binding on purego

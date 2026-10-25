@@ -1,0 +1,162 @@
+{
+  "text": {
+    "title": "WebBrain Companion: suas assinaturas de IA em WebBrain",
+    "og_title": "WebBrain Companion",
+    "description": "Um pequeno aplicativo de bandeja para macOS, Windows e Linux que atende suas assinaturas Claude, ChatGPT, Google, Grok e Kimi para WebBrain em 127.0.0.1, mostra quanto resta de cada plano e executa Bonsai 2 27B em sua própria máquina.",
+    "skip": "Pular para o conteúdo",
+    "nav_label": "Seções",
+    "nav_panel": "O painel",
+    "nav_local": "Modelo local",
+    "nav_connect": "Conectar",
+    "nav_download": "Baixar",
+    "h1": "As suas assinaturas de IA, prontas para usar no WebBrain",
+    "lede": "WebBrain Companion fica na barra de menu ou na bandeja do sistema. Faça login em Claude, ChatGPT, Google, Grok ou Kimi uma vez e WebBrain alcançará todos eles em um endereço em seu computador. A bandeja mostra quanto resta de cada plano e quando ele é reiniciado.",
+    "get": "Baixar",
+    "get_mac": "Baixar para macOS",
+    "get_win": "Baixar para Windows",
+    "get_linux": "Baixar para Linux",
+    "cta_note": "Versão 0.1.2 para macOS, Windows e Linux. Gratuito e de código aberto.",
+    "desk_label": "Ilustração do menu da bandeja do Companion: em execução, o endereço a ser copiado e quanto resta de Claude Max, ChatGPT Pro, Google AI Pro e SuperGrok.",
+    "os_label": "Menu ativado",
+    "panel_h": "Todo o resto acontece em um pequeno painel",
+    "panel_intro": "Clique no ícone para abri-lo. Uma página contém o endereço WebBrain, cada plano com o que resta e os dois modelos locais; clique em uma linha para ver seus detalhes ou na engrenagem para ver as configurações. Ele segue seu ambiente claro ou escuro e fala inglês e turco.",
+    "shot1_h": "Uma página",
+    "shot1_p": "O endereço que WebBrain precisa, cada plano com o limite mais próximo de esgotar, e os modelos locais com seu botão principal. Nenhuma chave de API neste computador.",
+    "shot1_alt": "O painel: o endereço http://127.0.0.1:8327/v1 com um botão Copiar, medidores de uso para Claude Max, ChatGPT Pro, Google AI Pro e SuperGrok e Bonsai 2 27B rodando próximo ao modelo de decisão d1.",
+    "shot2_h": "Adicionar uma assinatura",
+    "shot2_p": "Faça login na própria página do provedor. O login permanece no seu computador.",
+    "shot2_alt": "A folha de assinatura adicional lista Claude, ChatGPT, Google, Grok e Kimi, cada uma com a forma como você faz login.",
+    "shot3_h": "Modelos locais",
+    "shot3_p": "Clique em Bonsai 2 27B para ver onde ele é executado e se as imagens cabem, e para alterar suas opções. d1 abre da mesma maneira.",
+    "shot3_alt": "Os detalhes do Bonsai 2 27B no painel: rodando no Apple GPU com entrada de imagem ativada, 65.536 tokens de contexto e suas opções.",
+    "local_h": "Bonsai 2 27B, dimensionado para sua máquina",
+    "local_p1": "O Ternary Bonsai 2 27B do PrismML contém 27 bilhões de parâmetros em 5,95 GB. O companheiro o instala com seu projetor de visão Q8_0 e a versão llama.cpp do PrismML, ou como o pacote MLX em Apple Silicon, e o lista ao lado de suas assinaturas como <code>bonsai-2-27b</code>.",
+    "local_p2": "Antes de qualquer download, ele determina onde o modelo é executado e se a entrada da imagem se ajusta. O projetor de visão liga o GPU quando resta cerca de 1 GB de memória do GPU após o modelo e seu contexto, no CPU quando apenas o sistema RAM tem espaço e permanece desligado caso contrário. Você pode substituir a escolha no painel.",
+    "table_caption": "O que o companheiro escolhe em máquinas típicas",
+    "th_machine": "Máquina",
+    "th_runs": "Continua",
+    "th_vision": "Entrada de imagem",
+    "th_context": "Contexto",
+    "vis_gpu": "Ligado, GPU",
+    "vis_cpu": "Ligado, CPU",
+    "vis_off": "Desligado",
+    "tokens": "Tokens {}",
+    "local_note": "Elaborado pelo planner do acompanhante a partir de memória total e livre; os números em sua máquina no momento da instalação decidem. No Apple Silicon, o pacote MLX carrega sua própria torre de visão, portanto as imagens estão sempre ligadas.",
+    "d1_h": "Modelo de decisão de WebBrain, fora do navegador",
+    "d1_p": "O modelo d1 do WebBrain responde sim/não, perguntas de escolha e pontuação sobre uma página e até quatro capturas de tela, como se uma tarefa foi concluída. O companheiro executa em ONNX Runtime e responde por HTTP, portanto, uma guia do navegador não precisa carregar 1,9 GB. Sua porta Go retorna os mesmos tokens e probabilidades do adaptador JavaScript do WebBrain. d1 nativo está disponível em Macs Windows, Linux e Apple Silicon; ele não está disponível em Macs Intel.",
+    "d1_ask": "Pergunte",
+    "d1_answer": "Resposta (273 ms no tempo de execução CPU)",
+    "connect_h": "Conecte WebBrain",
+    "connect_p": "Você faz isso uma vez. Os aplicativos neste computador não precisam de chave de API.",
+    "step1": "Instale o companheiro e abra-o. Adicione uma assinatura em seu painel e finalize o login em seu navegador.",
+    "step2": "O endereço padrão é <code>http://127.0.0.1:8327/v1</code>. Se a porta mudou, copie o endereço mostrado no painel ou no menu da bandeja.",
+    "step3": "Em WebBrain, abra a página <b>Providers</b> (<b>More…</b> no menu de modelo do painel lateral) e escolha <b>WebBrain Companion</b>. Mantenha o endereço padrão, a menos que o aplicativo mostre outra porta. Nenhuma chave de API é necessária neste computador.",
+    "step4": "Clique em <b>Carregar modelos</b>, escolha um modelo, <b>Salvar</b>, e execute <b>Test Connection</b> antes de ativar o cartão. Ative a visão apenas para um modelo que aceite imagens.",
+    "after_steps": "Qualquer cliente OpenAI, Anthropic ou Gemini neste computador pode usar o mesmo endereço. Para utilizá-lo de outro dispositivo, ative o acesso à rede nas configurações do painel; esse dispositivo precisa da chave API que o painel mostra.",
+    "download_h": "Baixar",
+    "download_p": "Versão 0.1.2. Cada pacote contém um único programa; suas configurações e logins ficam na sua pasta de usuário.",
+    "yours": "Seu sistema",
+    "mac_req": "macOS 12 ou posterior, Apple Silicon e Intel (d1 requer Apple Silicon)",
+    "mac_file": "Aplicativo universal",
+    "mac_how": "Mova WebBrain Companion para Aplicativos. A compilação não é autenticada pela Apple: na primeira vez, permita-a em Configurações do sistema, Privacidade e segurança (abrir mesmo assim). No macOS 14 e versões anteriores, clique com a tecla Control pressionada e escolha Abrir.",
+    "win_req": "Windows 10 e 11, x64 e Arm64",
+    "win_file": "Instalador",
+    "win_how": "Execute o instalador: ele é instalado para sua conta, sem solicitação do administrador, e adiciona WebBrain Companion ao menu Iniciar. Até que o instalador seja assinado por código, SmartScreen pode dizer \"Windows protegeu seu PC\": escolha Mais informações e Executar mesmo assim.",
+    "linux_req": "x64 e Arm64",
+    "linux_how": "Descompacte e execute o webbrain-companion. O ícone precisa de uma bandeja StatusNotifierItem: KDE, XFCE ou GNOME com a extensão AppIndicator.",
+    "sums": "Somas de verificação SHA-256",
+    "source": "Código fonte",
+    "all": "Todos os lançamentos",
+    "safety_h": "Antes de fazer login",
+    "stays_h": "O que fica no seu computador",
+    "stays": [
+      "Neste computador nenhuma chave de API é necessária: o companheiro responde apenas às solicitações de 127.0.0.1 e rejeita páginas da web, portanto, um site que você visita não pode gastar seus planos. Extensões de navegador como WebBrain e aplicativos neste computador podem usá-lo.",
+      "Outros dispositivos só poderão se conectar se você ativar o acesso à rede nas configurações do painel. Em seguida, ele escuta em 0.0.0.0 e precisa da chave de API que o painel mostra.",
+      "Os logins são armazenados na sua pasta de usuário e enviados apenas ao provedor ao qual pertencem.",
+      "Não há análises. Além dos provedores nos quais você faz login, ele busca apenas a lista de modelos públicos do CLIProxyAPI e, quando você instala um modelo, seus arquivos de Hugging Face, GitHub e, para MLX, PyPI.",
+      "Os prompts enviados para uma assinatura ainda vão para esse provedor. Somente Bonsai 2 27B e d1 são executados em sua máquina."
+    ],
+    "provider_h": "O que seu provedor decide",
+    "provider": [
+      "Uma assinatura que funciona por meio de um proxy não é a mesma que o provedor permite. Os termos do consumidor do Anthropic restringem o acesso automatizado fora de uma chave de API, e os termos Gemini CLI do Google dizem que seu login não pode ser usado com ferramentas de terceiros.",
+      "Verifique os termos do seu plano e região antes de adicioná-lo. Se uma conta é importante para você, uma chave de API do provedor é o caminho mais seguro.",
+      "Mantenha o acesso à rede desativado em Wi-Fi público e nunca encaminhe a porta 8327 para a Internet. A chave da API não é segurança de nível da Internet."
+    ],
+    "guide": "Conecte WebBrain ao Companion",
+    "foot": "WebBrain Companion é um software gratuito sob a licença GPL-3.0-or-later e incorpora CLIProxyAPI. Não é afiliado a Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta ou Cognition.",
+    "foot_nav": "Mais"
+  },
+  "menu": {
+    "status": "WebBrain Companion – Em execução",
+    "copy": "Copiar",
+    "plans": [
+      [
+        "Claude Max",
+        64,
+        "2h 13m"
+      ],
+      [
+        "ChatGPT Pro",
+        57,
+        "4d"
+      ],
+      [
+        "Google AI Pro",
+        71,
+        "5d"
+      ],
+      [
+        "Grok SuperGrok",
+        12,
+        "3D"
+      ]
+    ],
+    "open": "Abrir painel…",
+    "quit": "Sair do WebBrain Companion",
+    "pct": "{}%"
+  },
+  "machines": [
+    [
+      "MacBook Air, 8GB",
+      "Apple GPU com Metal. Ele precisa de mais memória do que o Mac, então espere a troca.",
+      "off",
+      "8K"
+    ],
+    [
+      "MacBook Pro, 16 GB",
+      "Apple GPU com Metal",
+      "gpu",
+      "16K"
+    ],
+    [
+      "Laptop com RTX 4060 (8 GB) e 16 GB RAM",
+      "CUDA, 57 de 64 camadas no GPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "Desktop com RTX 4090 (24 GB) e 64 GB RAM",
+      "CUDA, tudo no GPU",
+      "gpu",
+      "64K"
+    ],
+    [
+      "Desktop com Radeon RX 7600 (8 GB) e 32 GB RAM",
+      "Vulkan, 61 de 64 camadas no GPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "PC sem placa gráfica, 16 GB RAM",
+      "CPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "PC sem placa gráfica, 8 GB RAM",
+      "CPU, com pouco espaço de sobra",
+      "off",
+      "8K"
+    ]
+  ]
+}

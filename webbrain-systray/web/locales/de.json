@@ -1,0 +1,162 @@
+{
+  "text": {
+    "title": "WebBrain Companion: Ihre KI-Abonnements in WebBrain",
+    "og_title": "WebBrain Companion",
+    "description": "Eine kleine Tray-App für macOS, Windows und Linux, die Ihre Claude-, ChatGPT-, Google-, Grok- und Kimi-Abonnements für WebBrain unter 127.0.0.1 bedient, zeigt an, wie viel von jedem Plan kostet links und führt Bonsai 2 27B auf Ihrem eigenen Computer aus.",
+    "skip": "Zum Inhalt springen",
+    "nav_label": "Abschnitte",
+    "nav_panel": "Das Panel",
+    "nav_local": "Lokales Modell",
+    "nav_connect": "Verbinden",
+    "nav_download": "Herunterladen",
+    "h1": "Ihre bestehenden KI-Abos, bereit für WebBrain",
+    "lede": "WebBrain Companion befindet sich in Ihrer Menüleiste oder Taskleiste. Melden Sie sich einmal bei Claude, ChatGPT, Google, Grok oder Kimi an, und WebBrain erreicht alle unter einer Adresse auf Ihrem Computer. In der Ablage wird angezeigt, wie viel von jedem Plan noch übrig ist und wann er zurückgesetzt wird.",
+    "get": "Herunterladen",
+    "get_mac": "Herunterladen für macOS",
+    "get_win": "Herunterladen für Windows",
+    "get_linux": "Herunterladen für Linux",
+    "cta_note": "Version 0.1.2 für macOS, Windows und Linux. Kostenlos und Open Source.",
+    "desk_label": "Abbildung des Tray-Menüs des Companion: läuft, die zu kopierende Adresse und wie viel von Claude Max, ChatGPT Pro, Google AI Pro und SuperGrok übrig ist.",
+    "os_label": "Menü an",
+    "panel_h": "Alles andere geschieht in einem kleinen Panel",
+    "panel_intro": "Klicken Sie auf das Symbol, um es zu öffnen. Eine Seite enthält die Adresse für WebBrain, jeden Plan mit dem Rest und die beiden lokalen Modelle; Klicken Sie auf eine Zeile, um deren Details anzuzeigen, oder auf das Zahnrad, um die Einstellungen anzuzeigen. Es folgt Ihrer hellen oder dunklen Einstellung und spricht Englisch und Türkisch.",
+    "shot1_h": "Eine Seite",
+    "shot1_p": "Die benötigte Adresse WebBrain, jeder Plan mit dem Limit, das dem Auslaufen am nächsten kommt, und die lokalen Modelle mit ihrer Hauptschaltfläche. Kein API-Schlüssel auf diesem Computer.",
+    "shot1_alt": "Das Panel: die Adresse http://127.0.0.1:8327/v1 mit einer Schaltfläche „Kopieren“, Nutzungszähler für Claude Max, ChatGPT Pro, Google AI Pro und SuperGrok sowie Bonsai 2 27B, das neben dem Entscheidungsmodell d1 läuft.",
+    "shot2_h": "Fügen Sie ein Abonnement hinzu",
+    "shot2_p": "Melden Sie sich auf der eigenen Seite des Anbieters an. Der Login bleibt auf Ihrem Computer.",
+    "shot2_alt": "Das Blatt „Abonnement hinzufügen“ listet Claude, ChatGPT, Google, Grok und Kimi auf, jeweils mit der Art und Weise, wie Sie sich anmelden.",
+    "shot3_h": "Lokale Modelle",
+    "shot3_p": "Klicken Sie auf Bonsai 2 27B, um zu sehen, wo es ausgeführt wird und ob Bilder passen, und um seine Optionen zu ändern. d1 wird auf die gleiche Weise geöffnet.",
+    "shot3_alt": "Die Bonsai 2 27B-Details über das Panel: läuft auf dem Apple GPU mit aktivierter Bildeingabe, 65.536 Kontexttokens und seinen Optionen.",
+    "local_h": "Bonsai 2 27B, passend zu Ihrer Maschine",
+    "local_p1": "Der Ternary Bonsai 2 27B von PrismML packt 27 Milliarden Parameter auf 5,95 GB. Der Begleiter installiert es mit seinem Vision-Projektor Q8_0 und PrismMLs Build von llama.cpp oder als MLX-Paket auf Apple Silicon und listet es neben Ihren Abonnements als <code>bonsai-2-27b</code> auf.",
+    "local_p2": "Bevor etwas heruntergeladen wird, wird ermittelt, wo das Modell ausgeführt wird und ob die Bildeingabe passt. Der Vision-Projektor schaltet sich beim GPU ein, wenn nach dem Modell und seinem Kontext noch etwa 1 GB GPU-Speicher übrig ist, beim CPU, wenn nur das System RAM Platz hat, und bleibt ansonsten ausgeschaltet. Sie können die Auswahl im Panel überschreiben.",
+    "table_caption": "Was der Begleiter auf typischen Maschinen auswählt",
+    "th_machine": "Maschine",
+    "th_runs": "Läuft weiter",
+    "th_vision": "Bildeingabe",
+    "th_context": "Kontext",
+    "vis_gpu": "Ein, GPU",
+    "vis_cpu": "Ein, CPU",
+    "vis_off": "Aus",
+    "tokens": "{}-Token",
+    "local_note": "Vom Begleiterplaner aus Gesamt- und Freispeicher erarbeitet; Die Nummern auf Ihrem Computer zum Zeitpunkt der Installation entscheiden. Beim Apple Silicon verfügt das MLX-Paket über einen eigenen Vision Tower, sodass die Bilder immer eingeschaltet sind.",
+    "d1_h": "Das Entscheidungsmodell von WebBrain außerhalb des Browsers",
+    "d1_p": "Das d1-Modell von WebBrain beantwortet Ja/Nein-, Auswahl- und Bewertungsfragen zu einer Seite und bis zu vier Screenshots, beispielsweise ob eine Aufgabe abgeschlossen ist. Der Begleiter führt es auf ONNX Runtime aus und antwortet über HTTP, sodass ein Browser-Tab nicht 1,9 GB laden muss. Sein Go-Port gibt dieselben Token und Wahrscheinlichkeiten zurück wie der JavaScript-Adapter von WebBrain. Natives d1 ist auf den Macs Windows, Linux und Apple Silicon verfügbar; Es ist auf Intel-Macs nicht verfügbar.",
+    "d1_ask": "Fragen Sie",
+    "d1_answer": "Antwort (273 ms auf der CPU-Laufzeit)",
+    "connect_h": "Verbinden Sie WebBrain",
+    "connect_p": "Das machen Sie einmal. Apps auf diesem Computer benötigen keinen API-Schlüssel.",
+    "step1": "Installieren Sie den Begleiter und öffnen Sie ihn. Fügen Sie in seinem Bereich ein Abonnement hinzu und schließen Sie die Anmeldung in Ihrem Browser ab.",
+    "step2": "Die Standardadresse ist <code>http://127.0.0.1:8327/v1</code>. Wenn sich der Port geändert hat, kopieren Sie die im Panel- oder Tray-Menü angezeigte Adresse.",
+    "step3": "Öffnen Sie in WebBrain die Seite <b>Providers</b> (<b>Mehr…</b> im Modellmenü des Seitenbereichs) und wählen Sie <b>WebBrain Companion</b> aus. Behalten Sie die Standardadresse bei, es sei denn, die App zeigt einen anderen Port an. Auf diesem Computer ist kein API-Schlüssel erforderlich.",
+    "step4": "Klicken Sie auf <b>Modelle laden</b>, wählen Sie ein Modell aus, <b>Speichern</b> und führen Sie <b>Verbindung testen</b> aus, bevor Sie die Karte aktivieren. Aktivieren Sie die Sicht nur für ein Modell, das Bilder akzeptiert.",
+    "after_steps": "Jeder OpenAI-, Anthropic- oder Gemini-Client auf diesem Computer kann dieselbe Adresse verwenden. Um es von einem anderen Gerät aus zu verwenden, aktivieren Sie den Netzwerkzugriff in den Einstellungen des Panels; Dieses Gerät benötigt dann den API-Schlüssel, den das Panel anzeigt.",
+    "download_h": "Herunterladen",
+    "download_p": "Version 0.1.2. Jedes Paket enthält ein einzelnes Programm; Ihre Einstellungen und Anmeldungen befinden sich in Ihrem Benutzerordner.",
+    "yours": "Ihr System",
+    "mac_req": "macOS 12 oder höher, Apple Silicon und Intel (d1 erfordert Apple Silicon)",
+    "mac_file": "Universelle App",
+    "mac_how": "Verschieben Sie WebBrain Companion in „Anwendungen“. Der Build ist nicht von Apple notariell beglaubigt: Erlauben Sie ihn beim ersten Mal in den Systemeinstellungen, Datenschutz und Sicherheit (Trotzdem öffnen). Klicken Sie bei macOS 14 und früher bei gedrückter Ctrl-Taste darauf und wählen Sie „Öffnen“.",
+    "win_req": "Windows 10 und 11, x64 und Arm64",
+    "win_file": "Installateur",
+    "win_how": "Führen Sie das Installationsprogramm aus: Es wird ohne Administratoraufforderung für Ihr Konto installiert und fügt WebBrain Companion zum Startmenü hinzu. Bis das Installationsprogramm mit dem Code signiert ist, sagt SmartScreen möglicherweise „Windows hat Ihren PC geschützt“: Wählen Sie „Weitere Informationen“ und dann „Trotzdem ausführen“.",
+    "linux_req": "x64 und Arm64",
+    "linux_how": "Entpacken Sie Webbrain-Companion und führen Sie es aus. Das Symbol benötigt ein StatusNotifierItem-Fach: KDE, XFCE oder GNOME mit der Erweiterung AppIndicator.",
+    "sums": "SHA-256 Prüfsummen",
+    "source": "Quellcode",
+    "all": "Alle Veröffentlichungen",
+    "safety_h": "Bevor Sie sich anmelden",
+    "stays_h": "Was auf Ihrem Computer bleibt",
+    "stays": [
+      "Auf diesem Computer ist kein API-Schlüssel erforderlich: Der Begleiter beantwortet nur Anfragen von 127.0.0.1 und weist Webseiten ab, sodass eine von Ihnen besuchte Website Ihre Pläne nicht ausgeben kann. Browsererweiterungen wie WebBrain und Apps auf diesem Computer können es verwenden.",
+      "Andere Geräte können nur dann eine Verbindung herstellen, wenn Sie den Netzwerkzugriff in den Einstellungen des Panels aktivieren. Anschließend lauscht es auf 0.0.0.0 und sie benötigen den API-Schlüssel, den das Panel anzeigt.",
+      "Anmeldungen werden in Ihrem Benutzerordner gespeichert und nur an den Anbieter gesendet, zu dem sie gehören.",
+      "Es gibt keine Analysen. Abgesehen von den Anbietern, bei denen Sie sich anmelden, ruft es nur die öffentliche Modellliste von CLIProxyAPI ab und, wenn Sie ein Modell installieren, seine Dateien von Hugging Face, GitHub und, für MLX, PyPI.",
+      "An ein Abonnement gesendete Eingabeaufforderungen gehen weiterhin an diesen Anbieter. Auf Ihrem Computer laufen nur Bonsai 2 27B und d1."
+    ],
+    "provider_h": "Was Ihr Anbieter entscheidet",
+    "provider": [
+      "Ein Abonnement, das über einen Proxy funktioniert, ist nicht dasselbe wie ein Abonnement, das der Anbieter zulässt. Die Verbraucherbedingungen von Anthropic beschränken den automatisierten Zugriff außerhalb eines API-Schlüssels, und die Gemini-CLI-Bedingungen von Google besagen, dass die Anmeldung nicht mit Tools von Drittanbietern verwendet werden darf.",
+      "Überprüfen Sie die Bedingungen Ihres Plans und Ihrer Region, bevor Sie ihn hinzufügen. Wenn Ihnen ein Konto wichtig ist, ist ein Provider-API-Schlüssel der sicherere Weg.",
+      "Halten Sie den Netzwerkzugriff im öffentlichen WLAN ausgeschaltet und leiten Sie Port 8327 niemals an das Internet weiter. Der API-Schlüssel bietet keine Sicherheit auf Internetniveau."
+    ],
+    "guide": "Verbinden Sie WebBrain mit Companion",
+    "foot": "WebBrain Companion ist freie Software unter der GPL-3.0-or-later-Lizenz und integriert CLIProxyAPI. Es ist nicht mit Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta oder Cognition verbunden.",
+    "foot_nav": "Mehr"
+  },
+  "menu": {
+    "status": "WebBrain Companion – Laufen",
+    "copy": "Kopieren",
+    "plans": [
+      [
+        "Claude Max",
+        64,
+        "2h 13m"
+      ],
+      [
+        "ChatGPT Pro",
+        57,
+        "4d"
+      ],
+      [
+        "Google AI Pro",
+        71,
+        "5d"
+      ],
+      [
+        "Grok SuperGrok",
+        12,
+        "3d"
+      ]
+    ],
+    "open": "Panel öffnen…",
+    "quit": "Beenden Sie WebBrain Companion",
+    "pct": "{}%"
+  },
+  "machines": [
+    [
+      "MacBook Air, 8 GB",
+      "Apple GPU mit Metal. Es benötigt mehr Speicher als der Mac, also rechnen Sie mit einem Austausch.",
+      "off",
+      "8K"
+    ],
+    [
+      "MacBook Pro, 16 GB",
+      "Apple GPU mit Metal",
+      "gpu",
+      "16K"
+    ],
+    [
+      "Laptop mit einem RTX 4060 (8 GB) und 16 GB RAM",
+      "CUDA, 57 von 64 Schichten auf dem GPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "Desktop mit einem RTX 4090 (24 GB) und einem 64 GB RAM",
+      "CUDA, alle auf dem GPU",
+      "gpu",
+      "64K"
+    ],
+    [
+      "Desktop mit einem Radeon RX 7600 (8 GB) und 32 GB RAM",
+      "Vulkan, 61 von 64 Schichten auf dem GPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "PC ohne Grafikkarte, 16 GB RAM",
+      "CPU",
+      "cpu",
+      "8K"
+    ],
+    [
+      "PC ohne Grafikkarte, 8 GB RAM",
+      "CPU, mit wenig Platz",
+      "off",
+      "8K"
+    ]
+  ]
+}

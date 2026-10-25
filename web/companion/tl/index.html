@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="tl" dir="ltr" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebBrain Companion: ang iyong mga subscription sa AI sa WebBrain</title>
+<meta name="description" content="Isang maliit na tray app para samacOS, WindowsatLinuxna nagsisilbi sa iyoClaude, ChatGPT, Google, GrokatKimimga subscription saWebBrainsa 127.0.0.1, ipinapakita kung gaano karami sa bawat plano ang natitira, at tumatakboBonsai 2 27Bsa sarili mong makina.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#fbf6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a0f18" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://webbrain.one/companion/tl/">
+<link rel="alternate" hreflang="en" href="https://webbrain.one/companion/">
+<link rel="alternate" hreflang="es" href="https://webbrain.one/companion/es/">
+<link rel="alternate" hreflang="fr" href="https://webbrain.one/companion/fr/">
+<link rel="alternate" hreflang="tr" href="https://webbrain.one/companion/tr/">
+<link rel="alternate" hreflang="zh" href="https://webbrain.one/companion/zh/">
+<link rel="alternate" hreflang="ru" href="https://webbrain.one/companion/ru/">
+<link rel="alternate" hreflang="uk" href="https://webbrain.one/companion/uk/">
+<link rel="alternate" hreflang="ar" href="https://webbrain.one/companion/ar/">
+<link rel="alternate" hreflang="ja" href="https://webbrain.one/companion/ja/">
+<link rel="alternate" hreflang="ko" href="https://webbrain.one/companion/ko/">
+<link rel="alternate" hreflang="id" href="https://webbrain.one/companion/id/">
+<link rel="alternate" hreflang="th" href="https://webbrain.one/companion/th/">
+<link rel="alternate" hreflang="ms" href="https://webbrain.one/companion/ms/">
+<link rel="alternate" hreflang="tl" href="https://webbrain.one/companion/tl/">
+<link rel="alternate" hreflang="he" href="https://webbrain.one/companion/he/">
+<link rel="alternate" hreflang="hi" href="https://webbrain.one/companion/hi/">
+<link rel="alternate" hreflang="pt" href="https://webbrain.one/companion/pt/">
+<link rel="alternate" hreflang="vi" href="https://webbrain.one/companion/vi/">
+<link rel="alternate" hreflang="bn" href="https://webbrain.one/companion/bn/">
+<link rel="alternate" hreflang="fa" href="https://webbrain.one/companion/fa/">
+<link rel="alternate" hreflang="nl" href="https://webbrain.one/companion/nl/">
+<link rel="alternate" hreflang="de" href="https://webbrain.one/companion/de/">
+<link rel="alternate" hreflang="x-default" href="https://webbrain.one/companion/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WebBrain">
+<meta property="og:title" content="WebBrain Companion">
+<meta property="og:description" content="Isang maliit na tray app para samacOS, WindowsatLinuxna nagsisilbi sa iyoClaude, ChatGPT, Google, GrokatKimimga subscription saWebBrainsa 127.0.0.1, ipinapakita kung gaano karami sa bawat plano ang natitira, at tumatakboBonsai 2 27Bsa sarili mong makina.">
+<meta property="og:url" content="https://webbrain.one/companion/tl/">
+<meta property="og:image" content="https://webbrain.one/companion/assets/img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="../assets/img/favicon.png">
+<link rel="preload" href="../assets/fonts/bricolage-grotesque-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../assets/site.css">
+<script>document.documentElement.classList.replace("no-js", "js")</script>
+<script defer src="../assets/site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Lumaktaw sa nilalaman</a>
+<header class="wrap site-head">
+  <a class="brand" href="./"><img src="../assets/img/logo-128.png" alt="" width="30" height="30">WebBrain Companion</a>
+  <nav class="site-nav" aria-label="Mga seksyon">
+    <a href="#panel">Ang panel</a>
+    <a href="#local">Lokal na modelo</a>
+    <a href="#connect">Kumonekta</a>
+    <a href="#download">I-download</a>
+  </nav>
+  <details class="language-picker">
+    <summary aria-label="Pumili ng wika" title="Pumili ng wika">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M5 6.5h14M5 17.5h14"/></svg>
+    </summary>
+    <nav class="language-menu" aria-label="Pumili ng wika">
+      <a href="../" hreflang="en" lang="en" dir="ltr">English</a>
+      <a href="../es/" hreflang="es" lang="es" dir="ltr">Español</a>
+      <a href="../fr/" hreflang="fr" lang="fr" dir="ltr">Français</a>
+      <a href="../tr/" hreflang="tr" lang="tr" dir="ltr">Türkçe</a>
+      <a href="../zh/" hreflang="zh" lang="zh" dir="ltr">中文</a>
+      <a href="../ru/" hreflang="ru" lang="ru" dir="ltr">Русский</a>
+      <a href="../uk/" hreflang="uk" lang="uk" dir="ltr">Українська</a>
+      <a href="../ar/" hreflang="ar" lang="ar" dir="rtl">العربية</a>
+      <a href="../ja/" hreflang="ja" lang="ja" dir="ltr">日本語</a>
+      <a href="../ko/" hreflang="ko" lang="ko" dir="ltr">한국어</a>
+      <a href="../id/" hreflang="id" lang="id" dir="ltr">Bahasa Indonesia</a>
+      <a href="../th/" hreflang="th" lang="th" dir="ltr">ไทย</a>
+      <a href="../ms/" hreflang="ms" lang="ms" dir="ltr">Bahasa Melayu</a>
+      <a href="../tl/" hreflang="tl" lang="tl" dir="ltr" aria-current="page">Filipino</a>
+      <a href="../he/" hreflang="he" lang="he" dir="rtl">עברית</a>
+      <a href="../hi/" hreflang="hi" lang="hi" dir="ltr">हिन्दी</a>
+      <a href="../pt/" hreflang="pt" lang="pt" dir="ltr">Português</a>
+      <a href="../vi/" hreflang="vi" lang="vi" dir="ltr">Tiếng Việt</a>
+      <a href="../bn/" hreflang="bn" lang="bn" dir="ltr">বাংলা</a>
+      <a href="../fa/" hreflang="fa" lang="fa" dir="rtl">فارسی</a>
+      <a href="../nl/" hreflang="nl" lang="nl" dir="ltr">Nederlands</a>
+      <a href="../de/" hreflang="de" lang="de" dir="ltr">Deutsch</a>
+    </nav>
+  </details>
+</header>
+
+<main id="main">
+<section class="wrap hero">
+  <div>
+    <h1>Ang mga AI subscription mo, handa nang gamitin sa WebBrain</h1>
+    <p class="lede">Ang WebBrain Companion ay nakatira sa iyong menu bar o system tray. Mag-sign in sa Claude, ChatGPT, Google, Grok o Kimi nang isang beses, at mararating ng WebBrain ang lahat ng ito sa isang address sa iyong computer. Ipinapakita ng tray kung gaano karami sa bawat plano ang natitira at kung kailan ito nagre-reset.</p>
+    <div class="cta">
+      <a class="button primary" id="get" href="#download" data-mac="I-download para sa macOS" data-win="I-download para sa Windows" data-linux="I-download para sa Linux" data-mac-href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip" data-win-href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe" data-linux-href="#download">I-download</a>
+      <span class="cta-note">Bersyon 0.1.2 para sa macOS, Windows at Linux. Libre at open source.</span>
+    </div>
+  </div>
+  <div class="desk-wrap">
+    <div class="desk" data-os="mac" role="img" aria-label="Ilustrasyon ng menu ng tray ng Kasama: tumatakbo, ang address na kokopyahin, at kung magkano ang natitira sa Claude Max, ChatGPT Pro, Google AI Pro at SuperGrok.">
+      <div class="bar" aria-hidden="true"><span class="s s3"></span><span class="s s2"></span><span class="icon"><span class="glyph"></span></span><span class="s s1"></span></div>
+      <div class="menu" aria-hidden="true">
+        <div class="row dim"><span>WebBrain Companion — Tumatakbo</span></div>
+        <div class="row"><span>Kopyahin&nbsp;&nbsp;http://127.0.0.1:8327/v1</span></div>
+        <div class="sep"></div>
+        <div class="row plan"><span>Claude Max</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span>64% · 2h 13m</span></div>
+        <div class="row plan"><span>ChatGPT Pro</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></span><span>57% · 4d</span></div>
+        <div class="row plan"><span>Google AI Pro</span><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>71% · 5d</span></div>
+        <div class="row plan"><span>Grok SuperGrok</span><span class="meter"><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>12% · 3d</span></div>
+        <div class="sep"></div>
+        <div class="row"><span>Buksan ang panel…</span></div>
+        <div class="row"><span>Ihinto ang WebBrain Companion</span></div>
+      </div>
+    </div>
+    <div class="os-switch"><span id="os-label">Naka-on ang menu</span><span class="seg" role="group" aria-labelledby="os-label"><button type="button" data-os="mac" aria-pressed="true">macOS</button><button type="button" data-os="win" aria-pressed="false">Windows</button><button type="button" data-os="linux" aria-pressed="false">Linux</button></span></div>
+  </div>
+</section>
+
+<section class="section" id="panel" aria-labelledby="panel-h">
+  <div class="wrap">
+    <h2 id="panel-h">Lahat ng iba pa ay nangyayari sa isang maliit na panel</h2>
+    <p class="intro">I-click ang icon para buksan ito. Nasa isang pahina ang address para sa WebBrain, bawat plano kasama ang natitira, at ang dalawang lokal na modelo; i-click ang isang row para sa mga detalye nito, o ang gear para sa mga setting. Sinusundan nito ang iyong liwanag o madilim na setting at nagsasalita ng English at Turkish.</p>
+    <ul class="windows">
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/panel-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/panel-en-light.webp" width="460" height="760" alt="Ang panel: ang address na http://127.0.0.1:8327/v1 na may button na Kopyahin, mga metro ng paggamit para sa Claude Max, ChatGPT Pro, Google AI Pro at SuperGrok, at Bonsai 2 27B na tumatakbo sa tabi ng modelo ng desisyong d1." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Isang pahina</h3><p>Ang address na WebBrain ay kailangan, ang bawat plano ay may limitasyon na pinakamalapit sa pag-ubos, at ang mga lokal na modelo sa kanilang pangunahing button. Walang API key sa computer na ito.</p></figcaption>
+      </figure></li>
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/add-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/add-en-light.webp" width="460" height="760" alt="Ang listahan ng add subscription sheet na Claude, ChatGPT, Google, Grok at Kimi, bawat isa ay kung paano ka magsa-sign in." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Magdagdag ng subscription</h3><p>Mag-sign in sa sariling page ng provider. Ang pag-login ay mananatili sa iyong computer.</p></figcaption>
+      </figure></li>
+      <li><figure>
+        <div class="window"><div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>WebBrain Companion</span></div>
+          <picture><source srcset="../assets/img/local-en-dark.webp" media="(prefers-color-scheme: dark)"><img src="../assets/img/local-en-light.webp" width="460" height="760" alt="Ang mga detalye ng Bonsai 2 27B sa ibabaw ng panel: tumatakbo sa Apple GPU na may naka-on na input ng imahe, 65,536 token ng konteksto, at mga opsyon nito." loading="lazy" decoding="async"></picture></div>
+        <figcaption><h3>Mga lokal na modelo</h3><p>I-click ang Bonsai 2 27B upang makita kung saan ito tumatakbo at kung magkasya ang mga larawan, at upang baguhin ang mga opsyon nito. Ang d1 ay bumubukas sa parehong paraan.</p></figcaption>
+      </figure></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="local" aria-labelledby="local-h">
+  <div class="wrap">
+    <h2 id="local-h">Bonsai 2 27B, sukat sa iyong makina</h2>
+    <div class="split">
+      <p class="intro">Ang Ternary Bonsai 2 27B ng PrismML ay naglalaman ng 27 bilyong parameter sa 5.95 GB. Ini-install ito ng kasama kasama ang Q8_0 vision projector nito at ang build ng PrismML ng llama.cpp, o bilang MLX pack sa Apple Silicon, at inililista ito sa tabi ng iyong mga subscription bilang <code>bonsai-2-27b</code>.</p>
+      <p class="intro">Bago mag-download ang anumang bagay, gagana ito kung saan tumatakbo ang modelo at kung umaangkop ang input ng imahe. Ang vision projector ay napupunta sa GPU kapag humigit-kumulang 1 GB ng GPU na memorya ang natitira pagkatapos ng modelo at ang konteksto nito, sa CPU kapag ang system na RAM lang ang may puwang, at nananatili kung hindi. Maaari mong i-override ang pagpipilian sa panel.</p>
+    </div>
+    <table class="machines">
+      <caption>Ano ang pinipili ng kasama sa mga karaniwang makina</caption>
+      <thead><tr><th scope="col">Makina</th><th scope="col">Tumatakbo sa</th><th scope="col">Input ng larawan</th><th scope="col">Konteksto</th></tr></thead>
+      <tbody>
+        <tr><td>MacBook Air, 8 GB</td><td data-label="Tumatakbo sa">Apple GPU na may Metal. Kailangan nito ng mas maraming memorya kaysa sa Mac, kaya asahan ang pagpapalit.</td><td data-label="Input ng larawan"><span class="vis off">Naka-off</span></td><td data-label="Konteksto">Mga token ng 8K</td></tr>
+        <tr><td>MacBook Pro, 16 GB</td><td data-label="Tumatakbo sa">Apple GPU na may Metal</td><td data-label="Input ng larawan"><span class="vis gpu">Naka-on, GPU</span></td><td data-label="Konteksto">Mga token ng 16K</td></tr>
+        <tr><td>Laptop na may RTX 4060 (8 GB) at 16 GB RAM</td><td data-label="Tumatakbo sa">CUDA, 57 sa 64 na layer sa GPU</td><td data-label="Input ng larawan"><span class="vis cpu">Naka-on, CPU</span></td><td data-label="Konteksto">Mga token ng 8K</td></tr>
+        <tr><td>Desktop na may RTX 4090 (24 GB) at 64 GB RAM</td><td data-label="Tumatakbo sa">CUDA, lahat sa GPU</td><td data-label="Input ng larawan"><span class="vis gpu">Naka-on, GPU</span></td><td data-label="Konteksto">Mga token ng 64K</td></tr>
+        <tr><td>Desktop na may Radeon RX 7600 (8 GB) at 32 GB RAM</td><td data-label="Tumatakbo sa">Vulkan, 61 sa 64 na layer sa GPU</td><td data-label="Input ng larawan"><span class="vis cpu">Naka-on, CPU</span></td><td data-label="Konteksto">Mga token ng 8K</td></tr>
+        <tr><td>PC na walang graphics card, 16 GB RAM</td><td data-label="Tumatakbo sa">CPU</td><td data-label="Input ng larawan"><span class="vis cpu">Naka-on, CPU</span></td><td data-label="Konteksto">Mga token ng 8K</td></tr>
+        <tr><td>PC na walang graphics card, 8 GB RAM</td><td data-label="Tumatakbo sa">CPU, na may maliit na silid na matitira</td><td data-label="Input ng larawan"><span class="vis off">Naka-off</span></td><td data-label="Konteksto">Mga token ng 8K</td></tr>
+      </tbody>
+    </table>
+    <p class="note">Ginawa ng tagaplano ng kasama mula sa kabuuan at libreng memorya; ang mga numero sa iyong makina sa oras ng pag-install ay magpapasya. Sa Apple Silicon ang MLX pack ay nagdadala ng sarili nitong vision tower, kaya laging naka-on ang mga larawan.</p>
+  </div>
+</section>
+
+<section class="section" id="decision" aria-labelledby="d1-h">
+  <div class="wrap">
+    <h2 id="d1-h">Ang modelo ng desisyon ng WebBrain, sa labas ng browser</h2>
+    <div class="split">
+      <p class="intro">Sinasagot ng modelong d1 ng WebBrain ang oo/hindi, mga tanong sa pagpili at marka tungkol sa isang page at hanggang sa apat na screenshot, gaya ng kung tapos na ang isang gawain. Pinapatakbo ito ng kasama sa ONNX Runtime at sumasagot sa HTTP, kaya hindi kailangang mag-load ng 1.9 GB ang tab ng browser. Ang Go port nito ay nagbabalik ng parehong mga token at probabilities bilang JavaScript adapter ng WebBrain. Ang katutubong d1 ay available sa Windows, Linux at Apple Silicon Mac; ito ay hindi magagamit sa Intel Mac.</p>
+      <div>
+        <p class="code-label">Magtanong</p>
+        <pre><code>curl http://127.0.0.1:8327/companion/v1/decide \
+  -H &quot;Content-Type: application/json&quot; \
+  -d &#x27;{&quot;state&quot;: &quot;Order #1042 is confirmed.&quot;,
+       &quot;questions&quot;: {&quot;completion&quot;: {
+         &quot;type&quot;: &quot;choice&quot;,
+         &quot;instructions&quot;: &quot;Did the task finish?&quot;,
+         &quot;criteria&quot;: {&quot;completed&quot;: &quot;Confirmed&quot;,
+                      &quot;not_completed&quot;: &quot;Failed or unfinished&quot;,
+                      &quot;unknown&quot;: &quot;Not established&quot;}}}}&#x27;</code></pre>
+        <p class="code-label">Sagot (273 ms sa CPU runtime)</p>
+        <pre><code>{&quot;answers&quot;: {&quot;completion&quot;: {
+   &quot;choice&quot;: &quot;completed&quot;,
+   &quot;confidence&quot;: 0.99997,
+   &quot;probabilities&quot;: {&quot;completed&quot;: 0.99997,
+                     &quot;not_completed&quot;: 0.000002,
+                     &quot;unknown&quot;: 0.000033}}},
+ &quot;diagnostics&quot;: {&quot;runtime&quot;: &quot;onnxruntime 1.31.0 (CPU)&quot;, …}}</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="connect" aria-labelledby="connect-h">
+  <div class="wrap">
+    <h2 id="connect-h">Ikonekta ang WebBrain</h2>
+    <p class="intro">Gawin mo ito minsan. Ang mga app sa computer na ito ay hindi nangangailangan ng API key.</p>
+    <ol class="steps">
+      <li>I-install ang kasama at buksan ito. Magdagdag ng subscription sa panel nito at tapusin ang pag-sign in sa iyong browser.</li>
+      <li>Ang default na address ay <code>http://127.0.0.1:8327/v1</code>. Kung nagbago ang port, kopyahin ang address na ipinapakita sa panel o tray menu.</li>
+      <li>SaWebBrain, buksan ang<b>Mga tagapagbigay</b>pahina (<b>Higit pa…</b>sa menu ng modelo ng side panel) at piliin<b>WebBrain Companion</b>. Panatilihin ang default na address nito maliban kung nagpapakita ang app ng isa pang port. Walang API key ang kailangan sa computer na ito.</li>
+      <li>I-click ang <b>Mag-load ng Mga Modelo</b>, pumili ng modelo, <b>Save</b>, at patakbuhin ang <b>Test Connection</b> bago i-activate ang card. I-on lang ang vision para sa isang modelong tumatanggap ng mga larawan.</li>
+    </ol>
+    <p class="after-steps">Anumang OpenAI, Anthropic o Gemini client sa computer na ito ay maaaring gumamit ng parehong address. Upang gamitin ito mula sa isa pang device, i-on ang access sa network sa mga setting ng panel; kailangan ng device na iyon ang API key na ipinapakita ng panel.</p>
+  </div>
+</section>
+
+<section class="section" id="download" aria-labelledby="download-h">
+  <div class="wrap">
+    <h2 id="download-h">I-download</h2>
+    <p class="intro">Bersyon 0.1.2. Ang bawat pakete ay mayroong isang programa; ang iyong mga setting at pag-login ay nakatira sa iyong folder ng user.</p>
+    <div class="downloads">
+      <div class="dl" data-os="mac">
+        <div><h3>macOS</h3><p class="req">macOS 12 o mas bago, Apple Silicon at Intel (nangangailangan ng d1 ng Apple Silicon)</p><span class="yours">Ang iyong sistema</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-macos-universal.zip">Pangkalahatang app <small>zip, 36 MB</small></a></li></ul>
+        <p class="how">Ilipat ang WebBrain Companion sa Mga Application. Ang build ay hindi notarized ng Apple: sa unang pagkakataon, payagan ito sa System Settings, Privacy at Security (Buksan Pa Rin). Sa macOS 14 at mas maaga, Control-click ito at piliin ang Buksan.</p>
+      </div>
+      <div class="dl" data-os="win">
+        <div><h3>Windows</h3><p class="req">Windows 10 at 11, x64 at Arm64</p><span class="yours">Ang iyong sistema</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-windows-setup.exe">installer <small>setup.exe, 23 MB</small></a></li></ul>
+        <p class="how">Patakbuhin ang installer: nag-i-install ito para sa iyong account, nang walang prompt ng administrator, at nagdaragdag ng WebBrain Companion sa Start menu. Hanggang sa nalagdaan ng code ang installer, maaaring sabihin ng SmartScreen na &quot;Pinoprotektahan ng Windows ang iyong PC&quot;: piliin ang Higit pang impormasyon, pagkatapos ay Patakbuhin pa rin.</p>
+      </div>
+      <div class="dl" data-os="linux">
+        <div><h3>Linux</h3><p class="req">x64 at Arm64</p><span class="yours">Ang iyong sistema</span></div>
+        <ul class="files"><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-x64.tar.gz">x64 <small>tar.gz, 20 MB</small></a></li><li><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-linux-arm64.tar.gz">Arm64 <small>tar.gz, 18 MB</small></a></li></ul>
+        <p class="how">I-unpack at patakbuhin ang webbrain-companion. Ang icon ay nangangailangan ng tray na StatusNotifierItem: KDE, XFCE, o GNOME na may extension na AppIndicator.</p>
+      </div>
+    </div>
+    <p class="more-links"><a href="https://github.com/webbrain-one/webbrain/releases/download/systray-v0.1.2/WebBrain-Companion-0.1.2-SHA256SUMS.txt">SHA-256 na mga checksum</a><a href="https://github.com/webbrain-one/webbrain/tree/main/webbrain-systray">Source code</a><a href="https://github.com/webbrain-one/webbrain/releases">Lahat ng release</a></p>
+  </div>
+</section>
+
+<section class="section safety" id="safety" aria-labelledby="safety-h">
+  <div class="wrap">
+    <h2 id="safety-h">Bago ka mag-sign in</h2>
+    <div class="split even">
+      <div>
+        <h3>Ano ang nananatili sa iyong computer</h3>
+        <ul class="facts">
+          <li>Sa computer na ito walang API key ang kailangan: ang kasama ay sumasagot lamang ng mga kahilingan mula sa 127.0.0.1 at tinatalikuran ang mga web page, kaya ang isang site na binibisita mo ay hindi maaaring gastusin ang iyong mga plano. Magagamit ito ng mga extension ng browser gaya ng WebBrain at mga app sa computer na ito.</li>
+          <li>Makakakonekta lang ang ibang mga device kung i-on mo ang access sa network sa mga setting ng panel. Pagkatapos ay nakikinig ito sa 0.0.0.0, at kailangan nila ang API key na ipinapakita ng panel.</li>
+          <li>Ang mga pag-login ay nakaimbak sa iyong folder ng user at ipinadala lamang sa provider na kinabibilangan nila.</li>
+          <li>Walang analytics. Bukod sa mga provider kung saan ka nagsa-sign in, kinukuha lang nito ang listahan ng pampublikong modelo ng CLIProxyAPI, at, kapag nag-install ka ng modelo, ang mga file nito mula sa Hugging Face, GitHub at, para sa MLX, PyPI.</li>
+          <li>Ang mga prompt na ipinadala sa isang subscription ay mapupunta pa rin sa provider na iyon. Tanging Bonsai 2 27B at d1 lang ang tumatakbo sa iyong makina.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Kung ano ang desisyon ng iyong provider</h3>
+        <ul class="facts">
+          <li>Ang isang subscription na gumagana sa pamamagitan ng isang proxy ay hindi katulad ng isa na pinapayagan ng provider. Ang mga tuntunin ng consumer ng Anthropic ay naghihigpit sa awtomatikong pag-access sa labas ng isang API key, at ang mga tuntunin ng Gemini CLI ng Google ay nagsasabi na ang pag-sign-in nito ay maaaring hindi gamitin sa mga tool ng third-party.</li>
+          <li>Suriin ang mga tuntunin ng iyong plano at rehiyon bago mo ito idagdag. Kung mahalaga sa iyo ang isang account, ang API key ng provider ay ang mas ligtas na ruta.</li>
+          <li>Panatilihing naka-off ang access sa network sa pampublikong Wi-Fi, at huwag ipasa ang port 8327 sa internet. Ang API key ay hindi internet-grade security.</li>
+        </ul>
+        <p><a href="https://webbrain.one/docs/providers/#companion">Ikonekta ang WebBrain sa Kasama</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <p>Ang WebBrain Companion ay libreng software sa ilalim ng lisensyang GPL-3.0-or-later at naka-embed ng CLIProxyAPI. Hindi ito kaakibat sa Anthropic, OpenAI, Google, xAI, Moonshot AI, Meta o Cognition.</p>
+    <nav aria-label="Higit pa"><a href="https://webbrain.one/">WebBrain</a><a href="https://github.com/webbrain-one/webbrain/tree/main/webbrain-systray">Source code</a></nav>
+  </div>
+</footer>
+</body>
+</html>
