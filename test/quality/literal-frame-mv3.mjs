@@ -311,7 +311,7 @@ try {
       if (event.action === 'agent_update' && ownedRuns[event.requestId]) ownedRuns[event.requestId].events.push({ type: event.type, data: event.data });
     });
     await chrome.storage.local.set({ helpImproveWebBrain: false, planBeforeActMode: 'off', planBeforeAct: false, planReviewMode: 'never',
-      screenshotFallback: false, autoScreenshot: false, maxAgentSteps: 22, systemOneEnabled: false, tracingEnabled: false,
+      screenshotFallback: false, autoScreenshot: false, visionMode: 'off', maxAgentSteps: 22, systemOneEnabled: false, tracingEnabled: false,
       agentAllowLocalNetwork: true, askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false });
   });
   assert.equal((await message('update_provider', { providerId: 'openrouter', config: { apiKey: 'owned-fixture-fake-key', baseUrl: `http://127.0.0.1:${server.address().port}/v1`,

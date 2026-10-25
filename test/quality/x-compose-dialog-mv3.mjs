@@ -364,7 +364,7 @@ try {
     });
     return chrome.storage.local.set({ helpImproveWebBrain: false, tracingEnabled: false,
       autoScreenshot: false, screenshotFallback: false, planBeforeActMode: 'off', planBeforeAct: false,
-      planReviewMode: 'never', maxAgentSteps: 12, systemOneEnabled: false, agentAllowLocalNetwork: true,
+      planReviewMode: 'never', visionMode: 'off', maxAgentSteps: 12, systemOneEnabled: false, agentAllowLocalNetwork: true,
       askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false });
   });
   assert.equal((await message('update_provider', { providerId: 'openrouter', config: { apiKey: 'owned-fixture-fake-key',

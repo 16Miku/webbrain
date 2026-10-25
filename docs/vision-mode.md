@@ -115,6 +115,8 @@ npm run test:vision-mode
 - `test/vision-pipeline-browser.mjs`: Chromium at DPR 1/2/3 on a scrolled page: planned size, exact mapping, trusted clicks, diff regions, WebP vs JPEG; the Firefox content input path.
 - `test/quality/vision-mode-mv3.mjs` (`--dpr=2`, `--zoom=1.25`, combinable): the installed MV3 extension with a loopback model that reads the frame labels and fills and submits a form with `click_at` and `type_text`.
 
+The older MV3 quality fixtures script an accessibility-tree model (they answer with `ref_id`s read from `get_accessibility_tree`) under model names that WebBrain recognizes as vision-capable, so they seed `visionMode: 'off'` with their other settings. A new fixture that scripts tree tools needs the same line.
+
 ## Limits
 
 - File uploads (`upload_file`) and page-resource downloads by selector are not offered in vision mode; switch it off for those tasks.

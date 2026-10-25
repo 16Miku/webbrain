@@ -173,7 +173,7 @@ try {
     chrome.runtime.sendMessage({ target: 'background', action, ...data }), { action, data });
   await settings.evaluate(async () => chrome.storage.local.set({ helpImproveWebBrain: false, planBeforeActMode: 'off',
     planBeforeAct: false, planReviewMode: 'never', screenshotFallback: false, autoScreenshot: false,
-    maxAgentSteps: 10, systemOneEnabled: false, tracingEnabled: false, agentAllowLocalNetwork: true,
+    visionMode: 'off', maxAgentSteps: 10, systemOneEnabled: false, tracingEnabled: false, agentAllowLocalNetwork: true,
     askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false, contextWindowMode: 'full' }));
   assert.equal((await messageFrom(settings, 'update_provider', { providerId: 'openrouter', config: {
     apiKey: 'owned-loopback-fake-key', baseUrl: `${origin}/v1`, model: 'openai/gpt-5.4-mini',

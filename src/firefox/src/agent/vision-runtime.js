@@ -203,10 +203,14 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     return frame;
   };
 
+  // `detail: 'high'` regardless of the Image detail setting: OpenAI's low
+  // detail would shrink the frame to 512 px on the server, and every point
+  // the model returned would be off by that factor. Size is governed by the
+  // vision screenshot size setting instead; other providers ignore detail.
   proto._visionImageMessage = function _visionImageMessage(textNote, images, tag) {
     return visionUserMessage([
       { type: 'text', text: textNote },
-      ...images.map(image => ({ type: 'image_url', image_url: this._withImageDetail({ url: image.dataUrl }) })),
+      ...images.map(image => ({ type: 'image_url', image_url: { url: image.dataUrl, detail: 'high' } })),
     ], tag);
   };
 
