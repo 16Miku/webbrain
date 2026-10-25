@@ -20721,37 +20721,45 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await cdpClient.attach(tabId);
     await cdpClient.sendCommand(tabId, 'Runtime.enable');
     if (!this._visionProbeContexts) this._visionProbeContexts = new Map();
-    let contextId = null;
-    try {
-      await cdpClient.sendCommand(tabId, 'Page.enable');
-      const frame = (await cdpClient.sendCommand(tabId, 'Page.getFrameTree'))?.frameTree?.frame;
-      const cached = this._visionProbeContexts.get(tabId);
-      if (frame?.id && cached?.frameId === frame.id && cached.loaderId === frame.loaderId) {
-        contextId = cached.contextId;
-      } else if (frame?.id) {
-        contextId = (await cdpClient.sendCommand(tabId, 'Page.createIsolatedWorld', {
-          frameId: frame.id, worldName: 'webbrain-vision-probe', grantUniveralAccess: false,
-        }))?.executionContextId || null;
-        if (contextId) this._visionProbeContexts.set(tabId, { frameId: frame.id, loaderId: frame.loaderId, contextId });
+    const expression = visionDomProbeExpression(request);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let contextId = null;
+      let reused = false;
+      try {
+        await cdpClient.sendCommand(tabId, 'Page.enable');
+        const frame = (await cdpClient.sendCommand(tabId, 'Page.getFrameTree'))?.frameTree?.frame;
+        const cached = this._visionProbeContexts.get(tabId);
+        if (frame?.id && cached?.frameId === frame.id && cached.loaderId === frame.loaderId) {
+          contextId = cached.contextId;
+          reused = true;
+        } else if (frame?.id) {
+          contextId = (await cdpClient.sendCommand(tabId, 'Page.createIsolatedWorld', {
+            frameId: frame.id, worldName: 'webbrain-vision-probe', grantUniveralAccess: false,
+          }))?.executionContextId || null;
+          if (contextId) this._visionProbeContexts.set(tabId, { frameId: frame.id, loaderId: frame.loaderId, contextId });
+        }
+      } catch (error) {
+        if (error?.code === 'page_feedback_pending') throw error;
+        contextId = null;
       }
-    } catch (error) {
-      if (error?.code === 'page_feedback_pending') throw error;
-      contextId = null;
+      try {
+        const response = await cdpClient.sendCommand(tabId, 'Runtime.evaluate', {
+          expression,
+          returnByValue: true,
+          ...(contextId ? { contextId } : {}),
+        });
+        if (response?.exceptionDetails) return null;
+        return response?.result?.value || null;
+      } catch (error) {
+        if (error?.code === 'page_feedback_pending') throw error;
+        this._visionProbeContexts.delete(tabId);
+        // A cached world that did not survive (a debugger re-attach on the
+        // same document) is made again once.
+        if (reused && attempt === 0) continue;
+        throw error;
+      }
     }
-    let response;
-    try {
-      response = await cdpClient.sendCommand(tabId, 'Runtime.evaluate', {
-        expression: visionDomProbeExpression(request),
-        returnByValue: true,
-        ...(contextId ? { contextId } : {}),
-      });
-    } catch (error) {
-      // A context that went away with its document is made again next time.
-      this._visionProbeContexts.delete(tabId);
-      throw error;
-    }
-    if (response?.exceptionDetails) return null;
-    return response?.result?.value || null;
+    return null;
   }
 
   /**

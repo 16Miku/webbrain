@@ -206,6 +206,18 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     return session;
   };
 
+  /** The click submit probe at a CSS point: its reading when it is a submit, else null. */
+  proto._visionSubmitAt = async function _visionSubmitAt(tabId, point) {
+    if (typeof this._detectLikelySubmitAction !== 'function') return null;
+    try {
+      const detected = await this._detectLikelySubmitAction(tabId, 'click', { x: point.x, y: point.y, coordinate_space: 'css' });
+      return detected?.isSubmit === true ? detected : null;
+    } catch (error) {
+      if (isControlFlowError(error)) throw error;
+      return null;
+    }
+  };
+
   /** What is under CSS points (vision-dom-probe.js); null when it cannot be read. */
   proto._visionDomProbe = async function _visionDomProbe(tabId, request) {
     if (typeof this._visionPlatformDomProbe !== 'function') return null;
@@ -713,6 +725,12 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       const probe = longEnough ? await this._visionDomProbe(tabId, { points: [from, to], pair: true }) : null;
       const refused = visionDragRefusal(probe, from, to);
       if (refused) return { ...refused, from, to };
+      if (await this._visionSubmitAt(tabId, from)) {
+        return {
+          success: false, dispatched: false, noDispatch: true, visionInputRefused: 'drag_on_submit', from, to,
+          error: 'Not dispatched: the drag starts on a control WebBrain reads as a submit, send, delete or payment action, and a drag never gets the confirmation a click gets. Use click_at on it.',
+        };
+      }
       dispatch.started = true;
       const result = await this._visionPlatformDrag(tabId, { from, to, steps: 12 });
       return { success: result?.success !== false, from, to, ...(result || {}) };

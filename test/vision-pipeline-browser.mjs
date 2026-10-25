@@ -229,7 +229,12 @@ test('the DOM probe behind the dispatch checks reads controls, text fields, focu
       #card{position:absolute;left:100px;top:380px;width:250px;height:100px;display:block;background:#eee}
       #slider{position:absolute;left:400px;top:100px;width:300px;height:30px;background:#ddd}
       #same{position:absolute;left:400px;top:200px;width:300px;height:150px;border:0}
-      #cross{position:absolute;left:400px;top:400px;width:200px;height:100px;border:0}</style>
+      #cross{position:absolute;left:400px;top:400px;width:200px;height:100px;border:0}
+      #divbtn{position:absolute;left:700px;top:100px;width:200px;height:60px;cursor:pointer;background:#cde}
+      #track{position:absolute;left:700px;top:200px;width:250px;height:30px;cursor:pointer;background:#ddd}
+      #knob{position:absolute;left:0;top:0;width:30px;height:30px;cursor:grab;background:#333}
+      #list{position:absolute;left:700px;top:260px;width:250px;cursor:pointer}
+      #list div{height:40px;border:1px solid #999}</style>
       <button id="btn"><span>Send</span></button>
       <label id="lab">Name <input id="txt" type="text" value="hello world"></label>
       <input id="num" type="number" value="10">
@@ -237,7 +242,10 @@ test('the DOM probe behind the dispatch checks reads controls, text fields, focu
       <a id="card" href="#card">Card <span>inner</span></a>
       <div id="slider" role="slider" aria-valuenow="1"><div style="width:20px;height:30px;background:#333"></div></div>
       <iframe id="same" srcdoc="<style>body{margin:0}</style><button style='position:absolute;left:20px;top:20px;width:100px;height:40px'>In frame</button>"></iframe>
-      <iframe id="cross" src="data:text/html,<button>x</button>"></iframe>`);
+      <iframe id="cross" src="data:text/html,<button>x</button>"></iframe>
+      <div id="divbtn"><span>Framework button</span></div>
+      <div id="track"><div id="knob"></div></div>
+      <div id="list"><div draggable="true">One</div><div draggable="true">Two</div></div>`);
     await page.waitForFunction(() => document.getElementById('same').contentDocument?.querySelector('button'));
     const probe = request => page.evaluate(visionDomProbeExpression(request));
     const one = async (x, y, extra = {}) => (await probe({ points: [{ x, y }], ...extra })).points[0];
@@ -268,6 +276,13 @@ test('the DOM probe behind the dispatch checks reads controls, text fields, focu
     assert.deepEqual(await pair({ x: 405, y: 115 }, { x: 650, y: 115 }), { known: true, clickEquivalent: false }, 'a slider drag');
     assert.equal((await pair({ x: 425, y: 225 }, { x: 515, y: 255 })).clickEquivalent, true, 'inside a button in a same-origin frame');
     assert.deepEqual(await pair({ x: 150, y: 125 }, { x: 5000, y: 10 }), { known: false });
+    // A framework button is often a bare <div> with a listener: its pointer
+    // cursor marks it, for repeated clicks and for drags inside it.
+    assert.deepEqual(await one(720, 120), { found: true, tag: 'div', clickable: true, opaqueFrame: false, control: 'clickable element' });
+    assert.equal((await pair({ x: 710, y: 110 }, { x: 890, y: 150 })).clickEquivalent, true);
+    // ...but a handle or draggable item under a pointer cursor still drags.
+    assert.equal((await pair({ x: 715, y: 215 }, { x: 900, y: 215 })).clickEquivalent, false, 'a knob with a grab cursor');
+    assert.equal((await pair({ x: 720, y: 280 }, { x: 720, y: 320 })).clickEquivalent, false, 'draggable list items');
   } finally {
     await browser.close();
   }

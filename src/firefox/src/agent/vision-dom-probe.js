@@ -33,6 +33,11 @@ export function visionDomProbe(request) {
     'input[type="date"]', 'input[type="datetime-local"]', 'input[type="time"]', 'input[type="month"]',
     'input[type="week"]', 'input[type="range"]',
   ].join(',');
+  // Where a press-move-release is the control's own gesture, a pointer
+  // cursor around it does not make the drag a click.
+  const DRAG_AFFORDANCE = '[draggable="true"],[role="slider"],[role="scrollbar"],[role="separator"],input[type="range"]';
+  const DRAG_CURSORS = ['grab', 'grabbing', 'move', 'all-scroll', 'col-resize', 'row-resize', 'ew-resize', 'ns-resize',
+    'nesw-resize', 'nwse-resize', 'e-resize', 'w-resize', 'n-resize', 's-resize', 'ne-resize', 'nw-resize', 'se-resize', 'sw-resize'];
   const req = request && typeof request === 'object' ? request : {};
   // Composed parent: through shadow roots to their host and out of
   // same-origin frames to the frame element.
@@ -75,23 +80,43 @@ export function visionDomProbe(request) {
     }
     return { el: null, opaque: false };
   };
-  const clickableOf = node => {
+  const cursorOf = el => {
+    try {
+      const view = el && el.ownerDocument && el.ownerDocument.defaultView;
+      return view ? String(view.getComputedStyle(el).cursor || '') : '';
+    } catch (e) { return ''; }
+  };
+  // The control a click at `node` activates: a semantic control on its
+  // ancestor chain, nothing inside a text field, otherwise an element drawn
+  // with a pointer cursor (framework buttons are often a bare <div> with a
+  // listener; the cursor is the one sign of that a page script cannot hide
+  // from this world).
+  const controlOf = node => {
     for (let n = node, i = 0; n && i < 256; n = up(n), i++) {
       if (n.nodeType === 1 && typeof n.matches === 'function') {
         try {
-          if (n.matches(CLICKABLE)) return n;
+          if (n.matches(CLICKABLE)) return { el: n, kind: String(n.tagName || '').toLowerCase() };
           if (n.matches(TEXT_ENTRY)) return null;
         } catch (e) { /* invalid in this document */ }
       }
     }
-    return null;
+    return node && node.nodeType === 1 && cursorOf(node) === 'pointer' ? { el: node, kind: 'clickable element' } : null;
+  };
+  const dragAffordance = node => {
+    if (DRAG_CURSORS.includes(cursorOf(node))) return true;
+    for (let n = node, i = 0; n && i < 64; n = up(n), i++) {
+      if (n.nodeType === 1 && typeof n.matches === 'function') {
+        try { if (n.matches(DRAG_AFFORDANCE)) return true; } catch (e) { /* invalid in this document */ }
+      }
+    }
+    return false;
   };
   const points = Array.isArray(req.points) ? req.points.slice(0, 2) : [];
   const found = points.map(point => hit(Number(point && point.x), Number(point && point.y)));
   const infos = found.map((item, index) => {
     const el = item.el;
     if (!el) return { found: false };
-    const control = clickableOf(el);
+    const control = controlOf(el);
     const info = {
       found: true,
       tag: String(el.tagName || '').toLowerCase(),
@@ -100,7 +125,7 @@ export function visionDomProbe(request) {
     };
     const role = el.getAttribute ? el.getAttribute('role') : '';
     if (role) info.role = String(role).slice(0, 32);
-    if (control) info.control = String(control.tagName || '').toLowerCase();
+    if (control) info.control = control.kind;
     if (typeof el.matches === 'function' && el.matches('input[type="number"]')) {
       const root = el.getRootNode ? el.getRootNode() : el.ownerDocument;
       info.focusedNumberInput = !!root && root.activeElement === el;
@@ -130,9 +155,11 @@ export function visionDomProbe(request) {
       for (let n = found[0].el, i = 0; n && i < 256; n = up(n), i++) {
         if (ancestors.has(n)) { common = n; break; }
       }
-      const control = common ? clickableOf(common) : null;
+      let control = common ? controlOf(common) : null;
+      // A pointer cursor alone does not turn a slider or handle drag into a click.
+      if (control && control.kind === 'clickable element' && dragAffordance(found[0].el)) control = null;
       result.pair = { known: true, clickEquivalent: !!control };
-      if (control) result.pair.control = String(control.tagName || '').toLowerCase();
+      if (control) result.pair.control = control.kind;
     }
   }
   return result;

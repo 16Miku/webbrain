@@ -392,6 +392,20 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.ok(ctx.scene.probes.some(request => request.pair === true && request.points.length === 2));
   });
 
+  test(`${build}: a drag that starts on a submit control is refused`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('drag_at', { start_x: 300, start_y: 300, end_x: 500, end_y: 300 })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'No drag.', outcome: 'partial' })] };
+      return { content: 'done' };
+    });
+    const probed = [];
+    ctx.agent._detectLikelySubmitAction = async (_tab, name, args) => { probed.push({ name, args }); return { isSubmit: true }; };
+    await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.platform.filter(entry => entry.kind === 'drag').length, 0);
+    assert.ok(toolTexts(ctx.requests[1]).some(text => /never gets the confirmation a click gets/.test(text)), toolTexts(ctx.requests[1]).join('\n'));
+    assert.deepEqual(probed.at(-1), { name: 'click', args: { x: 333.3, y: 333.3, coordinate_space: 'css' } });
+  });
+
   test(`${build}: scroll_at over a focused number field is refused`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('scroll_at', { direction: 'down', x: 648, y: 405 })] };
