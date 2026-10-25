@@ -333,7 +333,7 @@ scene at a length the model offers (a scene longer than its longest clip is
 refused, so the agent splits it into scenes with their own prompts), generates
 up to three clips at a time with one retry each (none when the provider refuses
 the request, such as for lack of credit, or returns a clip that is not an MP4),
-downloads hosted clips without the API key, and joins them into one MP4
+downloads hosted clips (up to 160 MB each) without the API key, and joins them into one MP4
 without re-encoding (`src/*/src/agent/video-join.js`, which parses
 the clips with the vendored mp4box.js). A clip's sound often ends a little
 before its picture or starts after it; with AAC-LC sound (the usual MP4 audio,

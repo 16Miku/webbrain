@@ -705,6 +705,24 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(single.url, 'https://v3b.fal.media/files/b/clip-0.mp4');
   });
 
+  test(`${build}: a hosted clip larger than 20 MB is kept when it is not joined`, async () => {
+    // A valid clip padded past 20 MB with a top-level free box.
+    const size = 21 * 1024 * 1024;
+    const large = new Uint8Array(fixtures['h264-aac-1'].length + size);
+    large.set(fixtures['h264-aac-1']);
+    new DataView(large.buffer).setUint32(fixtures['h264-aac-1'].length, size);
+    large.set([0x66, 0x72, 0x65, 0x65], fixtures['h264-aac-1'].length + 4);
+    // One scene is stored as it is; two that cannot be joined are stored one by one.
+    for (const [count, clip] of [[1, () => large], [2, index => (index ? fixtures['h264-aac-48px'] : large)]]) {
+      const api = falApi({ model: h3Max.id, schema: h3Max.schema, clip });
+      const result = await generate({ prompt: 'Story', scenes: scenes(count, 10), estimated_duration: 10 * count },
+        { config: falConfig(h3Max), fetchImpl: api.fetchImpl, pollIntervalMs: 1 });
+      assert.equal(result.success, true, result.error);
+      assert.equal(result.clipCount, count);
+      assert.deepEqual(await storedBytes(count === 1 ? result.mediaId : result.clips[0].mediaId), large);
+    }
+  });
+
   test(`${build}: fal.ai lengths are sent the way the model lists them`, async () => {
     const run = async (model, video) => {
       const api = falApi({ model: model.id, schema: model.schema });

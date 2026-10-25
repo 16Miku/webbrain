@@ -763,7 +763,8 @@ async function storeVideoClips(clips, onProgress) {
   }
   const stored = [];
   for (const bytes of clips) {
-    const asset = await storeGeneratedMediaBlob(new Blob([bytes], { type: 'video/mp4' }));
+    // A clip may be as large as a joined video: hosted clips are downloaded up to that size.
+    const asset = await storeGeneratedMediaBlob(new Blob([bytes], { type: 'video/mp4' }), { maxBytes: MAX_JOINED_VIDEO_BYTES });
     stored.push({ mediaId: asset.mediaId, mimeType: asset.mimeType, durationSeconds: roundSeconds(mp4DurationSeconds(bytes)) });
   }
   const durationSeconds = roundSeconds(stored.reduce((sum, clip) => sum + (clip.durationSeconds || 0), 0));
