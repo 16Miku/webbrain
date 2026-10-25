@@ -473,6 +473,12 @@
           && related(op.keyboardClickTarget, el);
         const submitClick = kind === 'click' && event.detail === 0 && op.submitTarget && related(op.submitTarget, el);
         if (op.eventTypes && !op.eventTypes.has(event.type) && !keyboardClick && !submitClick) return null;
+        // Exactly one wheel event per fenced wheel command, in any order.
+        if (event.type === 'wheel' && op.nativeWheel) {
+          if (!(op.pendingWheels > 0)) return null;
+          op.pendingWheels--; matchedEvents.set(event, op);
+          return op;
+        }
         // One native dispatch owns one occurrence of each input phase. A later
         // human action on the same target must not fit that expectation again.
         if (!op.synchronous && event.type !== 'pointermove' && op.seenEvents?.has(event.type)) return null;
@@ -2636,11 +2642,51 @@
   // the previous fence on every uncertain (non-passive) observation.
   function authorityChanged(op) {
     if (!op || lastUserAt > op.userAt) return true;
-    return op.scrollIntent || op.preparedBinding?.model === true
+    return op.scrollIntent || op.preparedBinding?.model === true || visionOperation(op)
       ? op.preparedInterventionRevision !== interventionRevision || interventionUnreported > 0 || pendingDOM?.source === 'user'
       : op.preparedUncertainRevision !== uncertainRevision || uncertainUnreported > 0 || (!!pendingDOM && pendingDOM.source !== 'page');
   }
+  // Vision-mode operations (see rebaseVisionPreparation): a screenshot point,
+  // keyboard input after the agent's own click there, or a wheel at a point.
+  function visionOperation(op) {
+    return op?.visionPoint === true || op?.visionFocusFollowUp === true || op?.visionWheel === true;
+  }
+  // Vision mode (agent vision-runtime.js): a point read from a screenshot,
+  // keyboard input into the text field the agent's own click focused there,
+  // or a mouse wheel has no tree binding. Passive churn elsewhere on the page
+  // does not void it while the element at the point is the one prepared and
+  // has not moved (or the prepared field still has focus); the agent compares
+  // the pixels around the point with the model's frame before dispatch too.
+  function coordinateTargetUnchanged(op) {
+    if (!op?.coordinatePoint) return false;
+    const currentHit = document.elementFromPoint(op.coordinatePoint.x, op.coordinatePoint.y);
+    const initialHit = op.coordinateHit;
+    const sameHit = initialHit && currentHit && (initialHit === currentHit
+      || (initialHit !== document.body && initialHit !== document.documentElement && initialHit.contains?.(currentHit)));
+    if (!sameHit) return false;
+    const target = op.coordinateTarget, previousRect = op.coordinateRect, currentRect = rectFor(target);
+    return !(op.coordinateTargetAtPoint && (!target?.isConnected || !previousRect || !currentRect
+      || ['x', 'y', 'width', 'height'].some(key => Math.abs(previousRect[key] - currentRect[key]) > 2)));
+  }
+  function rebaseVisionPreparation(op, params = {}) {
+    // Like a certified target or a scroll, only a person's intervention is an
+    // authority change here (authorityChanged): DOM churn of unknown origin
+    // elsewhere is not.
+    if (!active || !op || op.allowPassiveRebase !== true || op.layoutInvalidated || op.until < Date.now()
+        || authorityChanged(op) || (params.documentToken && params.documentToken !== documentToken)) return false;
+    if (op.visionPoint === true) {
+      if (!op.coordinateSensitive || !coordinateTargetUnchanged(op)) return false;
+    } else if (op.visionFocusFollowUp === true) {
+      if (!op.focusTarget || deepActiveElement() !== op.focusTarget) return false;
+    }
+    // A wheel binds no element: whatever pane is under the pointer scrolls,
+    // as for a person, and the scroll it causes is attributed to the agent.
+    if (domTimer) flushPendingDOM();
+    op.preparedRevision = revision;
+    return true;
+  }
   function rebasePassivePreparation(op, params = {}) {
+    if (visionOperation(op)) return rebaseVisionPreparation(op, params);
     if (op?.scrollIntent) {
       if (!active || op.allowPassiveRebase !== true || op.until < Date.now() || authorityChanged(op)
           || (params.documentToken && params.documentToken !== documentToken) || !scrollPreparationMatches(op, params)) return false;
@@ -3540,7 +3586,12 @@
       modelBindingReason: proofRequired && !certified ? bindingResult?.reason || 'semantic_binding_changed' : '',
       preparedTargetSignature: operationTarget ? signature(operationTarget) : undefined, kinds: new Set(),
       scrollIntent,
-      preparedBinding: proofRequired ? certified : !scrollIntent && allowPassiveRebase && operationTarget ? preparedBinding(operationTarget) : null,
+      // A vision operation is held by its point or focused field instead
+      // (rebaseVisionPreparation); a coordinate click's fallback target (the
+      // focused element, often <body>) would only track unrelated churn.
+      preparedBinding: proofRequired ? certified
+        : !scrollIntent && !visionOperation(params) && allowPassiveRebase && operationTarget
+          ? preparedBinding(operationTarget) : null,
       // A field certified for keyboard input only (see captureTarget).
       keyboardBound: inherited ? previous.keyboardBound === true : certified?.keyboardOnly === true,
       preparedInterventionRevision: interventionRevision, preparedUncertainRevision: uncertainRevision, localSynthetic: false,
@@ -3567,6 +3618,10 @@
     if (!params.release || !op.seenEvents) op.seenEvents = new Set();
     if (!params.release) op.eventTypes = Array.isArray(params.eventTypes) ? new Set(params.eventTypes) : null;
     op.focused = params.kind === 'input'; op.kind = params.kind;
+    // Each native wheel command owns one wheel event. The browser may deliver
+    // it after the next command of the same action was fenced (a scroll in
+    // several notches), so they are counted instead of reset per command.
+    op.pendingWheels = params.nativeWheel === true ? (op.pendingWheels || 0) + 1 : 0;
     op.nativeWheel = params.nativeWheel === true;
     op.ownedGeometryPhase = null; // A later dispatch ends any owned geometry phase.
     // Only certified, unheld pointer movement is preparation. Once this same

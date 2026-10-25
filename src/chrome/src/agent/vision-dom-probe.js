@@ -9,11 +9,13 @@
 // toString(), so it must stay self-contained: no imports, no outer names.
 
 /**
- * @param {{points: {x:number,y:number}[], pair?: boolean, focusSelect?: boolean}} request
+ * @param {{points: {x:number,y:number}[], pair?: boolean, focusSelect?: boolean, focus?: boolean}} request
  *   points are CSS pixels of the top-level viewport. `pair` asks what a
  *   press at points[0] and a release at points[1] would click. `focusSelect`
  *   focuses a native <select> under points[0] (a click on it is answered
- *   with type_text instead of an OS popup no screenshot can show).
+ *   with type_text instead of an OS popup no screenshot can show). `focus`
+ *   asks whether the focused element is a text field at points[0] (keyboard
+ *   input right after a click there goes where the model clicked).
  */
 export function visionDomProbe(request) {
   const CLICKABLE = [
@@ -143,6 +145,32 @@ export function visionDomProbe(request) {
     return info;
   });
   const result = { points: infos };
+  if (req.focus === true) {
+    // The focused element through shadow roots and same-origin frames.
+    let active = document.activeElement;
+    for (let i = 0; active && i < 16; i++) {
+      const inner = active.shadowRoot && active.shadowRoot.activeElement;
+      if (inner && inner !== active) { active = inner; continue; }
+      const tag = String(active.tagName || '').toUpperCase();
+      if (tag === 'IFRAME' || tag === 'FRAME') {
+        let doc = null;
+        try { doc = active.contentDocument; } catch (e) { doc = null; }
+        if (doc && doc.activeElement && doc.activeElement !== doc.body) { active = doc.activeElement; continue; }
+      }
+      break;
+    }
+    const under = found[0] && found[0].el;
+    const within = (node, ancestor) => {
+      for (let n = node, i = 0; n && i < 256; n = up(n), i++) if (n === ancestor) return true;
+      return false;
+    };
+    let editable = false;
+    try {
+      editable = !!active && active.nodeType === 1 && active !== active.ownerDocument.body
+        && (active.isContentEditable === true || (active.matches(TEXT_ENTRY) && !active.matches('input[type="range"]')));
+    } catch (e) { editable = false; }
+    result.focus = { editable, matchesPoint: !!active && !!under && (within(under, active) || within(active, under)) };
+  }
   if (req.pair === true && found.length === 2) {
     if (!found[0].el || !found[1].el) {
       result.pair = { known: false };

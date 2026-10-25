@@ -321,6 +321,27 @@ TOOLS:
 - clarify only when materially blocked or ambiguous. done({summary, outcome}) after verifying: success only when the task is actually complete.`;
 }
 
+/**
+ * The universal cookie-banner / paywall / PDF guidance (adapters.js) names
+ * element tools; a vision run gets the same rules in terms of its own tools.
+ * Unknown wording passes through unchanged.
+ */
+export function visionUniversalPreamble(preamble) {
+  return String(preamble || '')
+    .replace(/- Priority: click\(\{text: "Reject all"\}\) > "Reject non-essential" \/ "Only necessary"\.[^\n]*/,
+      '- Priority: click_at "Reject all" > "Reject non-essential" / "Only necessary".')
+    .replace('re-screenshot or call read_page before reasoning about the page', 'look at the updated screen before reasoning about the page')
+    .replace(/DO NOT use read_page \/ click \/ get_accessibility_tree \/ get_interactive_elements \/ scroll \/ screenshot — .*?you'll loop\. /s,
+      'do not page through it with screenshots, zoom or scroll_at: its text is exact and far cheaper as text. ');
+}
+
+/**
+ * Site adapter notes are written for the element tools. In a vision run they
+ * come with this line, so the model keeps their facts about the site and
+ * does not reach for tools it does not have.
+ */
+export const VISION_SITE_NOTES_PREFACE = '(Written for WebBrain\'s element tools: click_ax, set_field, type_ax, ref ids, selectors and the accessibility tree are not available in this run. Apply the facts about the site with click_at, type_text, press_keys and scroll_at on what the screenshots show.)';
+
 /** Trusted label placed before a full frame. */
 export function visionKeyframeNote(frame, { coordinates = 'pixel', reason = '' } = {}) {
   const ratio = Math.round((frame.cssPerPxX || 1) * 100) / 100;

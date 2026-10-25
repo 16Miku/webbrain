@@ -21,7 +21,7 @@ import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationCon
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT, getVisionActPrompt } from './tools.js';
 import { installVisionRuntime } from './vision-runtime.js';
-import { VISION_NATIVE_TOOLS } from './vision-tools.js';
+import { VISION_NATIVE_TOOLS, VISION_SITE_NOTES_PREFACE, visionUniversalPreamble } from './vision-tools.js';
 import { visionDomProbeExpression } from './vision-dom-probe.js';
 import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
@@ -372,6 +372,27 @@ function urlWithoutFragment(url) {
   const value = String(url || '');
   const hash = value.indexOf('#');
   return hash < 0 ? value : value.slice(0, hash);
+}
+
+// How long after a vision click a tab it opens is still rerouted into the
+// source tab (checked before the next screen update; see watchOpenedTabs).
+const VISION_LATE_TAB_WATCH_MS = 4000;
+
+// Tabs that `openerTabId` opens from now on (a target=_blank link or
+// window.open after a click), recorded as the browser creates them.
+function watchOpenedTabs(openerTabId) {
+  const watch = { opened: [], listening: false, stop() {} };
+  const listener = tab => { if (tab && tab.openerTabId === openerTabId) watch.opened.push(tab.id); };
+  try {
+    chrome.tabs.onCreated.addListener(listener);
+    watch.listening = true;
+    watch.stop = () => {
+      if (!watch.listening) return;
+      watch.listening = false;
+      try { chrome.tabs.onCreated.removeListener(listener); } catch {}
+    };
+  } catch { /* no tabs events here: the full poll applies */ }
+  return watch;
 }
 
 const EARLY_CDP_ACTION_TOOLS = new Set(['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file']);
@@ -12064,9 +12085,23 @@ export class Agent extends LoopDetector {
    * `tabs.onCreated` fires before the URL has resolved in some flows.
    *
    * Returns { redirected: true, url, closedTabId } on redirect, else null.
+   *
+   * `watch` (watchOpenedTabs, armed before the click) sees new tabs as they
+   * are created: when none appeared within `quietMs` the click opened none,
+   * and it does not wait out the whole poll (vision clicks use this).
    */
-  async _redirectTargetBlankClick(tabId, beforeTabIds) {
+  async _redirectTargetBlankClick(tabId, beforeTabIds, { watch = null, quietMs = 0 } = {}) {
     try {
+      if (watch?.listening && quietMs > 0) {
+        const deadline = Date.now() + quietMs;
+        for (let left = quietMs; !watch.opened.length && left > 0; left = deadline - Date.now()) {
+          await new Promise(r => setTimeout(r, Math.min(50, left)));
+        }
+        if (!watch.opened.length) {
+          const all = await chrome.tabs.query({});
+          if (!all.some(t => t.id !== tabId && t.openerTabId === tabId && !beforeTabIds.has(t.id))) return null;
+        }
+      }
       let newTab = null;
       // Poll for up to ~900ms — the new tab needs a few ticks to appear
       // and for the browser to populate its URL past about:blank/newtab.
@@ -12620,7 +12655,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const heading = adapter.category === 'finance'
           ? `[Site guidance for ${adapter.name} — FINANCE / HIGH-STAKES]`
           : `[Site guidance for ${adapter.name}]`;
-        contextLine += `${heading}\n${adapter.notes.trim()}\n\n`;
+        const visionNote = this._visionRunState(tabId).active ? `${VISION_SITE_NOTES_PREFACE}\n` : '';
+        contextLine += `${heading}\n${visionNote}${adapter.notes.trim()}\n\n`;
       }
       if (adapter) this._queueAdapterMatchTrace(tabId, adapter, !!shouldInjectAdapter);
     }
@@ -13358,9 +13394,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const heading = adapter.category === 'finance'
       ? `[Site context changed → now on ${adapter.name} — FINANCE / HIGH-STAKES. Apply these rules from now on:]`
       : `[Site context changed → now on ${adapter.name}. Apply these notes from now on:]`;
+    const visionNote = this._visionRunState(tabId).active ? `${VISION_SITE_NOTES_PREFACE}\n` : '';
     messages.push({
       role: 'user',
-      content: `${heading}\n${adapter.notes.trim()}`,
+      content: `${heading}\n${visionNote}${adapter.notes.trim()}`,
     });
     this._queueAdapterMatchTrace(tabId, adapter, true);
     return true;
@@ -20661,6 +20698,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return shot?.data ? `data:image/jpeg;base64,${shot.data}` : null;
   }
 
+  /**
+   * A tab the last vision click opened after its quiet window (watchOpenedTabs)
+   * is rerouted into this tab before the next screen update, as one opened at
+   * once would have been. `cancel` drops the watch (a new click or run).
+   */
+  async _visionPlatformLateTab(tabId, { cancel = false } = {}) {
+    const entry = this._visionLateTabWatches?.get(tabId);
+    if (!entry) return null;
+    this._visionLateTabWatches.delete(tabId);
+    clearTimeout(entry.timer);
+    entry.watch.stop();
+    if (cancel || !entry.watch.opened.length) return null;
+    return this._redirectTargetBlankClick(tabId, entry.beforeTabIds);
+  }
+
   async _visionPlatformWheel(tabId, { x, y, deltaX = 0, deltaY = 0 }) {
     await cdpClient.attach(tabId);
     await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 });
@@ -20802,38 +20854,61 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._showAgentTarget(tabId, { x: Math.round(x), y: Math.round(y), w: 1, h: 1 }, 'click_coordinates');
     await cdpClient.armFileInputClickGuard(tabId);
     throwIfAborted();
-    await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 });
-    throwIfAborted();
-    if (messageRecipientGuardRequired) {
-      const recipientValidation = await this._consumeMessageRecipientDispatchBinding(
-        tabId,
-        messageRecipientDispatchBinding,
-        { dispatchPoint: { x, y } },
-      );
-      if (recipientValidation?.success !== true) return recipientValidation;
-    }
-    throwIfAborted();
-    const buttons = button === 'right' ? 2 : button === 'middle' ? 4 : 1;
-    let pressed = false;
+    // A tab the click opens is seen as it is created; a click that opens none
+    // is known to after a short quiet window instead of the full poll.
+    const openedTabs = watchOpenedTabs(tabId);
+    let redirected = null;
     try {
-      for (let count = 1; count <= clickCount; count++) {
-        await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
-          type: 'mousePressed', x, y, button, buttons, clickCount: count,
-        }, '', options), { beforeSend: throwIfAborted, onSent: () => { pressed = true; markDispatched(); } });
-        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
-          type: 'mouseReleased', x, y, button, buttons: 0, clickCount: count,
-        });
-        pressed = false;
+      await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 });
+      throwIfAborted();
+      if (messageRecipientGuardRequired) {
+        const recipientValidation = await this._consumeMessageRecipientDispatchBinding(
+          tabId,
+          messageRecipientDispatchBinding,
+          { dispatchPoint: { x, y } },
+        );
+        if (recipientValidation?.success !== true) return recipientValidation;
       }
-    } catch (error) {
-      if (pressed) await cancelPressedPointer();
-      throw error;
+      throwIfAborted();
+      const buttons = button === 'right' ? 2 : button === 'middle' ? 4 : 1;
+      let pressed = false;
+      try {
+        for (let count = 1; count <= clickCount; count++) {
+          await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+            type: 'mousePressed', x, y, button, buttons, clickCount: count,
+          }, '', options), { beforeSend: throwIfAborted, onSent: () => { pressed = true; markDispatched(); } });
+          await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+            type: 'mouseReleased', x, y, button, buttons: 0, clickCount: count,
+          });
+          pressed = false;
+        }
+      } catch (error) {
+        if (pressed) await cancelPressedPointer();
+        throw error;
+      }
+      const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
+      if (blockedFileInput?.blocked) {
+        return cdpClient.fileInputClickBlockedResult(blockedFileInput, `The attempted control was at (${x}, ${y}).`);
+      }
+      // The file-chooser guard's settle time (above) is already the quiet
+      // window: a click that has opened no tab by now opened none.
+      redirected = await this._redirectTargetBlankClick(tabId, beforeTabIds, { watch: openedTabs, quietMs: 1 });
+      // A tab opened later (window.open after the page's own request) is
+      // still rerouted before the next screen update (_visionPlatformLateTab).
+      // An earlier click's watch ends here; a tab it already saw is carried
+      // over unless this click navigated the tab itself.
+      const previous = this._visionLateTabWatches?.get(tabId);
+      await this._visionPlatformLateTab(tabId, { cancel: true });
+      if (!redirected && openedTabs.listening) {
+        const carried = previous?.watch.opened.length ? previous : null;
+        if (carried) openedTabs.opened.unshift(...carried.watch.opened);
+        this._visionLateTabWatches ??= new Map();
+        this._visionLateTabWatches.set(tabId, { watch: openedTabs, beforeTabIds: carried?.beforeTabIds || beforeTabIds,
+          timer: setTimeout(() => openedTabs.stop(), VISION_LATE_TAB_WATCH_MS) });
+      }
+    } finally {
+      if (this._visionLateTabWatches?.get(tabId)?.watch !== openedTabs) openedTabs.stop();
     }
-    const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
-    if (blockedFileInput?.blocked) {
-      return cdpClient.fileInputClickBlockedResult(blockedFileInput, `The attempted control was at (${x}, ${y}).`);
-    }
-    const redirected = await this._redirectTargetBlankClick(tabId, beforeTabIds);
     const result = {
       success: true,
       dispatched: true,
@@ -36566,7 +36641,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // browsing; cheap enough to carry on chrome:///file:// pages too
     // since it's just a few dozen cached tokens.
     if (this.useSiteAdapters) {
-      prompt += `\n\n${UNIVERSAL_PREAMBLE.trim()}`;
+      prompt += `\n\n${(visionState?.active ? visionUniversalPreamble(UNIVERSAL_PREAMBLE) : UNIVERSAL_PREAMBLE).trim()}`;
     }
 
     if (this._isActionMode(mode) && tabId != null) {
@@ -56702,10 +56777,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return true;
     };
 
-    // Vision mode: the model's first decision is made on a fresh full frame.
+    // Vision mode: the model's first decision is made on a fresh full frame,
+    // taken once a cookie-banner decline in progress has finished (the loop
+    // settles banners before every model call; the frame must not show one
+    // that is about to disappear).
     if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
       await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
     }
+    let visionPromptActive = !!this._visionToolOptions(tabId, mode);
 
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
@@ -56779,6 +56859,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
+      // Vision mode can end mid-run (a site workflow that needs the element
+      // inventory, vision-mode.js); the system prompt follows the tools.
+      const visionPromptNow = !!this._visionToolOptions(tabId, mode);
+      if (visionPromptNow !== visionPromptActive && messages[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(mode, tabId);
+      visionPromptActive = visionPromptNow;
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
         const completionState = this.completionInvariants.get(tabId);
@@ -58236,10 +58321,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Past local-only fast paths: the streaming loop below calls the provider.
     shareHadProviderCompletion = true;
 
-    // Vision mode: the model's first decision is made on a fresh full frame.
+    // Vision mode: the model's first decision is made on a fresh full frame,
+    // taken once a cookie-banner decline in progress has finished (the loop
+    // settles banners before every model call; the frame must not show one
+    // that is about to disappear).
     if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
       await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
     }
+    let visionPromptActive = !!this._visionToolOptions(tabId, mode);
 
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
@@ -58306,6 +58396,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
+      // Vision mode can end mid-run (a site workflow that needs the element
+      // inventory, vision-mode.js); the system prompt follows the tools.
+      const visionPromptNow = !!this._visionToolOptions(tabId, mode);
+      if (visionPromptNow !== visionPromptActive && messages[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(mode, tabId);
+      visionPromptActive = visionPromptNow;
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
         const completionState = this.completionInvariants.get(tabId);

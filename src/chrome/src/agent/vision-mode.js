@@ -33,6 +33,7 @@ export function resolveVisionMode(setting, {
   standalone = false,
   selectionOnly = false,
   quality = 'balanced',
+  ledgerWorkflow = false,
 } = {}) {
   const normalized = normalizeVisionModeSetting(setting);
   const base = { active: false, setting: normalized };
@@ -40,6 +41,10 @@ export function resolveVisionMode(setting, {
   if (mode !== 'act') return { ...base, reason: 'not_act_mode' };
   if (standalone) return { ...base, reason: 'standalone_chat' };
   if (selectionOnly) return { ...base, reason: 'selection_scope' };
+  // A site workflow whose completion is proved against the app-owned element
+  // inventory (adapter-workflow.js requiresLedger) cannot be certified from
+  // screenshots: that run keeps the accessibility-tree path.
+  if (ledgerWorkflow) return { ...base, reason: 'workflow_needs_element_inventory' };
   if (!provider) return { ...base, reason: 'no_provider' };
   const canSee = rawImage == null ? provider.supportsVision === true : rawImage === true;
   if (!canSee) return { ...base, reason: 'model_without_images' };

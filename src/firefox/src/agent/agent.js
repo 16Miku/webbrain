@@ -20,7 +20,7 @@ import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationCon
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, getVisionActPrompt } from './tools.js';
 import { installVisionRuntime } from './vision-runtime.js';
-import { VISION_NATIVE_TOOLS } from './vision-tools.js';
+import { VISION_NATIVE_TOOLS, VISION_SITE_NOTES_PREFACE, visionUniversalPreamble } from './vision-tools.js';
 import { visionDomProbeExpression } from './vision-dom-probe.js';
 import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
@@ -12318,9 +12318,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const heading = adapter.category === 'finance'
       ? `[Site context changed → now on ${adapter.name} — FINANCE / HIGH-STAKES. Apply these rules from now on:]`
       : `[Site context changed → now on ${adapter.name}. Apply these notes from now on:]`;
+    const visionNote = this._visionRunState(tabId).active ? `${VISION_SITE_NOTES_PREFACE}\n` : '';
     messages.push({
       role: 'user',
-      content: `${heading}\n${adapter.notes.trim()}`,
+      content: `${heading}\n${visionNote}${adapter.notes.trim()}`,
     });
     this._queueAdapterMatchTrace(tabId, adapter, true);
     return true;
@@ -19024,7 +19025,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const heading = adapter.category === 'finance'
           ? `[Site guidance for ${adapter.name} — FINANCE / HIGH-STAKES]`
           : `[Site guidance for ${adapter.name}]`;
-        contextLine += `${heading}\n${adapter.notes.trim()}\n\n`;
+        const visionNote = this._visionRunState(tabId).active ? `${VISION_SITE_NOTES_PREFACE}\n` : '';
+        contextLine += `${heading}\n${visionNote}${adapter.notes.trim()}\n\n`;
       }
       if (adapter) this._queueAdapterMatchTrace(tabId, adapter, !!shouldInjectAdapter);
     }
@@ -33113,7 +33115,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       prompt += `\n\n${AUTO_MODE_ASK_NOTE}\n${autoModeGenerativeMediaNote({ configured: this.imageGenConfigured, tier })}`;
     }
     if (this.useSiteAdapters) {
-      prompt += `\n\n${UNIVERSAL_PREAMBLE.trim()}`;
+      prompt += `\n\n${(visionState?.active ? visionUniversalPreamble(UNIVERSAL_PREAMBLE) : UNIVERSAL_PREAMBLE).trim()}`;
     }
 
     if (this._isActionMode(mode) && tabId != null) {
@@ -47953,10 +47955,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return true;
     };
 
-    // Vision mode: the model's first decision is made on a fresh full frame.
+    // Vision mode: the model's first decision is made on a fresh full frame,
+    // taken once a cookie-banner decline in progress has finished (the loop
+    // settles banners before every model call; the frame must not show one
+    // that is about to disappear).
     if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
       await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
     }
+    let visionPromptActive = !!this._visionToolOptions(tabId, mode);
 
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
@@ -48025,6 +48032,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
+      // Vision mode can end mid-run (a site workflow that needs the element
+      // inventory, vision-mode.js); the system prompt follows the tools.
+      const visionPromptNow = !!this._visionToolOptions(tabId, mode);
+      if (visionPromptNow !== visionPromptActive && messages[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(mode, tabId);
+      visionPromptActive = visionPromptNow;
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
         const completionState = this.completionInvariants.get(tabId);
@@ -49298,10 +49310,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Past local-only fast paths: the streaming loop below calls the provider.
     shareHadProviderCompletion = true;
 
-    // Vision mode: the model's first decision is made on a fresh full frame.
+    // Vision mode: the model's first decision is made on a fresh full frame,
+    // taken once a cookie-banner decline in progress has finished (the loop
+    // settles banners before every model call; the frame must not show one
+    // that is about to disappear).
     if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
       await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
     }
+    let visionPromptActive = !!this._visionToolOptions(tabId, mode);
 
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
@@ -49367,6 +49384,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
+      // Vision mode can end mid-run (a site workflow that needs the element
+      // inventory, vision-mode.js); the system prompt follows the tools.
+      const visionPromptNow = !!this._visionToolOptions(tabId, mode);
+      if (visionPromptNow !== visionPromptActive && messages[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(mode, tabId);
+      visionPromptActive = visionPromptNow;
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
         const completionState = this.completionInvariants.get(tabId);

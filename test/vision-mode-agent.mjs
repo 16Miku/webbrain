@@ -145,8 +145,9 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       for (const name of ['click_at', 'scroll_at', 'zoom', 'take_screenshot', 'type_text', 'done']) assert.ok(first.tools.includes(name), `${name} offered`);
       for (const name of ['get_accessibility_tree', 'click_ax', 'set_field', 'click', 'browser_batch']) assert.ok(!first.tools.includes(name), `${name} not offered`);
       assert.match(first.system, /VISION CONTROL/);
-      // Only the universal PDF rule names tree tools (as tools not to use).
-      assert.doesNotMatch(first.system, /click_ax|ref_id|set_field|browser_batch|inspect_viewport/);
+      // No tree tool is named anywhere, the universal cookie/PDF guidance included.
+      assert.doesNotMatch(first.system, /click_ax|ref_id|set_field|browser_batch|inspect_viewport|get_accessibility_tree|click\(\{text/);
+      assert.match(first.system, /click_at "Reject all"/);
       const frames = visionMessages(first.messages);
       assert.equal(frames.length, 1, 'one full frame before the first decision');
       assert.equal(frames[0].webbrainVisionFrame.kind, 'key');
@@ -475,5 +476,185 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     // A text-only provider strips every image, vision frames included.
     const textOnly = agent._pruneOldImages(messages, { supportsVision: false, supportsDocuments: true });
     assert.equal(textOnly.flatMap(message => (Array.isArray(message.content) ? message.content : [])).filter(block => block.type === 'image_url').length, 0);
+  });
+
+  test(`${build}: site notes reach a vision run with a line saying which of their tools it lacks`, async () => {
+    const { agent } = runAgent(() => ({ content: 'done' }));
+    const tab = nextTab++;
+    agent.conversationModes.set(tab, 'act');
+    const api = globalThis.chrome;
+    const get = api.tabs.get;
+    api.tabs.get = async id => ({ id, url: 'https://mastodon.social/home', title: 'Home', status: 'complete' });
+    try {
+      agent.lastSeenAdapter.set(tab, null);
+      const messages = [];
+      // The harness stubs this hook on the instance; the real one runs here.
+      const reinject = (...args) => Agent.prototype._maybeReinjectAdapter.apply(agent, args);
+      assert.equal(await reinject(tab, messages), true);
+      assert.match(messages[0].content, /now on [^\n]*\n\(Written for WebBrain's element tools: click_ax, set_field, type_ax, ref ids, selectors and the accessibility tree are not available in this run\./);
+      agent.visionMode = 'off';
+      agent.lastSeenAdapter.set(tab, null);
+      const legacy = [];
+      assert.equal(await reinject(tab, legacy), true);
+      assert.doesNotMatch(legacy[0].content, /Written for WebBrain's element tools/);
+    } finally {
+      api.tabs.get = get;
+    }
+    for (const file of [`../src/${build}/src/agent/agent.js`]) {
+      const source = (await import('node:fs')).readFileSync(new URL(file, import.meta.url), 'utf8');
+      assert.match(source, /const visionNote = this\._visionRunState\(tabId\)\.active \? `\$\{VISION_SITE_NOTES_PREFACE\}\\n` : '';\s*contextLine \+= `\$\{heading\}\\n\$\{visionNote\}/);
+    }
+  });
+
+  test(`${build}: a site workflow proved against the element inventory switches the run to the tree path`, async () => {
+    let tab;
+    const ctx = runAgent(step => {
+      if (step === 1) {
+        // The planner (or a live adoption) selects a ledger workflow mid-run.
+        ctx.agent._planExecutionGuards.set(tab, { ...(ctx.agent._planExecutionGuards.get(tab) || {}),
+          siteWorkflow: { adapterName: 'Forms', revision: 1, job: { id: 'fill-form', template: 'form', stages: ['fill'], successEvidence: ['saved'], partialEvidence: ['not saved'], requiresLedger: true } } });
+        return { toolCalls: [call('take_screenshot', {})] };
+      }
+      if (step === 2) {
+        reasonAtStep2 = ctx.agent._visionRunState(tab, 'act').reason;
+        return { toolCalls: [call('done', { summary: 'Stopped.', outcome: 'partial' })] };
+      }
+      return { content: 'done' };
+    });
+    let reasonAtStep2 = null;
+    tab = nextTab++;
+    await runLoop(ctx.agent, tab, false);
+    assert.ok(ctx.requests[0].tools.includes('click_at'), 'the run starts in vision mode');
+    assert.ok(ctx.requests[1].tools.includes('get_accessibility_tree'), ctx.requests[1].tools.join(','));
+    assert.ok(!ctx.requests[1].tools.includes('click_at'));
+    assert.doesNotMatch(ctx.requests[1].system, /VISION CONTROL/);
+    assert.equal(reasonAtStep2, 'workflow_needs_element_inventory');
+  });
+
+  if (build === 'chrome') {
+    test('chrome: a vision click that opened no tab is known at once; a tab opened now or later is rerouted', async () => {
+      const agent = new Agent({});
+      const api = globalThis.chrome;
+      const saved = { query: api.tabs.query, remove: api.tabs.remove, update: api.tabs.update };
+      const tabs = [{ id: 1, url: PAGE }];
+      const removed = [], updated = [];
+      Object.assign(api.tabs, {
+        query: async () => tabs.map(tab => ({ ...tab })),
+        remove: async id => { removed.push(id); },
+        update: async (id, props) => { updated.push({ id, ...props }); },
+      });
+      try {
+        const watch = { opened: [], listening: true, stop() { this.listening = false; } };
+        let started = Date.now();
+        assert.equal(await agent._redirectTargetBlankClick(1, new Set([1]), { watch, quietMs: 1 }), null);
+        assert.ok(Date.now() - started < 300, `no new tab is known without the full poll (${Date.now() - started} ms)`);
+        // A tab the click opened at once: rerouted into the source tab.
+        tabs.push({ id: 7, openerTabId: 1, url: 'https://news.example.test/story' });
+        watch.opened.push(7);
+        const redirected = await agent._redirectTargetBlankClick(1, new Set([1]), { watch, quietMs: 1 });
+        assert.deepEqual({ redirected: redirected?.redirected, url: redirected?.url }, { redirected: true, url: 'https://news.example.test/story' });
+        assert.deepEqual(removed, [7]);
+        assert.deepEqual(updated, [{ id: 1, url: 'https://news.example.test/story' }]);
+        // A tab opened after the quiet window is rerouted before the next
+        // screen update; a new click or run cancels the watch instead.
+        tabs.length = 1; removed.length = 0; updated.length = 0;
+        const late = { opened: [], listening: true, stop() { this.listening = false; } };
+        agent._visionLateTabWatches = new Map([[1, { watch: late, beforeTabIds: new Set([1]), timer: null }]]);
+        tabs.push({ id: 9, openerTabId: 1, url: 'https://news.example.test/late' });
+        late.opened.push(9);
+        started = Date.now();
+        const rerouted = await agent._visionPlatformLateTab(1);
+        assert.equal(rerouted?.url, 'https://news.example.test/late');
+        assert.equal(late.listening, false, 'the watch is stopped');
+        assert.equal(agent._visionLateTabWatches.has(1), false);
+        tabs.length = 1;
+        const cancelled = { opened: [11], listening: true, stop() { this.listening = false; } };
+        agent._visionLateTabWatches.set(1, { watch: cancelled, beforeTabIds: new Set([1]), timer: null });
+        assert.equal(await agent._visionPlatformLateTab(1, { cancel: true }), null);
+        assert.equal(cancelled.listening, false);
+        assert.deepEqual(updated, [{ id: 1, url: 'https://news.example.test/late' }], 'a cancelled watch reroutes nothing');
+      } finally {
+        Object.assign(api.tabs, saved);
+      }
+    });
+  }
+
+  // A scene with something that never stops moving: `tick` repaints a block
+  // (image px) in another colour on every capture.
+  function tickingScene(block) {
+    const scene = createScene();
+    const render = scene.render.bind(scene);
+    let frames = 0;
+    scene.render = (width, height) => {
+      const data = render(width, height);
+      if (frames++ % 2) {
+        for (let y = block.y; y < block.y + block.h; y++) for (let x = block.x; x < block.x + block.w; x++) {
+          const i = (y * width + x) * 4;
+          data[i] = 10; data[i + 1] = 10; data[i + 2] = 10;
+        }
+      }
+      return data;
+    };
+    return scene;
+  }
+
+  test(`${build}: the settle wait ends on a caret, clock or spinner, and waits out real motion`, async () => {
+    for (const [block, captures] of [[{ x: 1100, y: 760, w: 40, h: 14 }, 2], [{ x: 300, y: 200, w: 400, h: 300 }, 4]]) {
+      const scene = tickingScene(block);
+      const { agent } = runAgent(() => ({ content: 'done' }), { scene });
+      const tab = nextTab++;
+      const state = agent._visionRunState(tab, 'act');
+      assert.equal(state.active, true);
+      const before = scene.captures;
+      await agent._visionCaptureSettled(tab, state);
+      assert.equal(scene.captures - before, captures, JSON.stringify(block));
+    }
+  });
+
+  test(`${build}: page churn before a decision costs no tree read, and no message or image while the screen stays as seen`, async () => {
+    const treeReads = [];
+    let tab;
+    const queue = item => ctx.agent._queuePageFeedback(tab, { frameId: 0, revision: 1, ...item });
+    const scenario = { dispatch: null, afterObservation: null };
+    const ctx = runAgent(step => {
+      if (step <= 3) return { toolCalls: [call('click_at', { x: 200 + step * 100, y: 150 })] };
+      if (step === 4) return { toolCalls: [call('done', { summary: 'Clicked.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { onDispatch: () => scenario.dispatch?.(), maxSteps: 8 });
+    const execute = ctx.agent.executeTool;
+    ctx.agent.executeTool = function (tabId, name, ...rest) {
+      if (name === 'get_accessibility_tree') treeReads.push(name);
+      return execute.call(this, tabId, name, ...rest);
+    };
+    const observe = ctx.agent._visionObserveAfterBatch;
+    ctx.agent._visionObserveAfterBatch = async function (...args) {
+      const result = await observe.apply(this, args);
+      scenario.afterObservation?.();
+      return result;
+    };
+    // Step 1: a ticker updates while the click runs (automatic churn, screen as seen).
+    // Step 2: the page draws a dialog right after the update was taken.
+    // Step 3: the person clicks the page (never skipped, even with no visible change).
+    let step = 0;
+    scenario.dispatch = () => { step++; queue(step === 3 ? { kind: 'click', source: 'user', target: 'body' } : { kind: 'dom', source: 'page', target: 'div#ticker' }); };
+    scenario.afterObservation = () => {
+      if (step === 2) ctx.scene.rects.push({ x: 400, y: 300, w: 600, h: 300, color: [20, 120, 20] });
+    };
+    tab = nextTab++;
+    await runLoop(ctx.agent, tab, false);
+    assert.deepEqual(treeReads, [], 'a vision run never reads the tree for page feedback');
+    assert.equal(ctx.requests.length, 4, ctx.requests.map(request => request.messages.length).join(','));
+    const browserUpdates = request => request.messages.filter(message => /\[BROWSER STATE UPDATE/.test(textOf(message))).length;
+    const screenUpdates = (request, previous) => visionMessages(request.messages).length - visionMessages(previous.messages).length;
+    // After step 1: one screen update (the click's own), no feedback message.
+    assert.equal(browserUpdates(ctx.requests[1]), 0, 'automatic churn on an unchanged screen adds no message');
+    assert.equal(screenUpdates(ctx.requests[1], ctx.requests[0]), 1, 'and no second image');
+    // After step 2: the dialog drawn after the update is reported and shown.
+    assert.equal(browserUpdates(ctx.requests[2]), 1);
+    assert.equal(screenUpdates(ctx.requests[2], ctx.requests[1]), 2, 'the update after the click, then the dialog');
+    assert.match(textOf(visionMessages(ctx.requests[2].messages).at(-1)), /UNTRUSTED SCREEN|full viewport/);
+    // After step 3: the person's input is always reported with a fresh look.
+    assert.equal(browserUpdates(ctx.requests[3]), 1);
+    assert.equal(screenUpdates(ctx.requests[3], ctx.requests[2]), 2);
   });
 }

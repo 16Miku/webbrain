@@ -51,6 +51,16 @@ const STABILITY_MARGIN_PX = 12;
 const SETTLE_INITIAL_DELAY_MS = 120;
 const SETTLE_POLL_MS = 220;
 const SETTLE_MAX_EXTRA_CAPTURES = 3;
+// A change this small between two captures (a blinking caret, a ticking
+// clock, a spinner: a few 16 px cells) is not the page still reacting to an
+// action, and right after the model looked it is not worth a new image.
+const MICRO_CHANGE_CELL_RATIO = 0.004;
+const MICRO_CHANGE_MIN_CELLS = 6;
+
+export function isMicroScreenChange(diff) {
+  return diff?.comparable === true && Number.isFinite(diff.changedCells)
+    && diff.changedCells <= Math.max(MICRO_CHANGE_MIN_CELLS, Math.round((Number(diff.totalCells) || 0) * MICRO_CHANGE_CELL_RATIO));
+}
 
 function visionFrameTag(message) {
   return message && typeof message === 'object' ? message.webbrainVisionFrame : null;
@@ -150,6 +160,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       provider,
       standalone,
       quality: snapshot ? snapshot.quality : this.visionQuality,
+      ledgerWorkflow: this._planExecutionGuards?.get?.(tabId)?.siteWorkflow?.job?.requiresLedger === true,
     });
   };
 
@@ -171,12 +182,14 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       quality: normalizeVisionQuality(this.visionQuality),
     });
     this._visionSessions?.get(tabId)?.retireKeyframe?.();
+    void this._visionPlatformLateTab?.(tabId, { cancel: true })?.catch?.(() => {});
   };
 
   /** `previous` is the snapshot of an enclosing run on the same tab, if any. */
   proto._endVisionRun = function _endVisionRun(tabId, previous = null) {
     if (previous) this._visionRunSnapshots?.set(tabId, previous);
     else this._visionRunSnapshots?.delete(tabId);
+    void this._visionPlatformLateTab?.(tabId, { cancel: true })?.catch?.(() => {});
   };
 
   /** A closed tab or cleared conversation drops its screen state. */
@@ -303,7 +316,11 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     return encodeCanvasRegion(canvas, region, options);
   };
 
-  /** Capture until two consecutive frames match (bounded). */
+  /**
+   * Capture until two consecutive frames match (bounded). Micro changes (a
+   * caret, a clock, a spinner) count as a match: they never stop, and waiting
+   * for them only cost the full settle time on every step.
+   */
   proto._visionCaptureSettled = async function _visionCaptureSettled(tabId, state) {
     await sleep(SETTLE_INITIAL_DELAY_MS);
     let frame = await this._visionCaptureFrame(tabId, state);
@@ -312,11 +329,33 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       let next;
       try { next = await this._visionCaptureFrame(tabId, state); } catch { break; }
       const sameShape = next.size.width === frame.size.width && next.size.height === frame.size.height;
-      const moving = !sameShape || diffFrames(frame.raster.pixels, next.raster.pixels, next.size.width, next.size.height).regions.length > 0;
+      const moving = !sameShape || !isMicroScreenChange(diffFrames(frame.raster.pixels, next.raster.pixels, next.size.width, next.size.height));
       frame = next;
       if (!moving) break;
     }
     return frame;
+  };
+
+  /**
+   * Page feedback before a decision (page-feedback.js): is the screen still
+   * what the model last saw, give or take a micro change? One capture, no
+   * settling; anything else (another page, another size, a requested frame,
+   * a capture failure) answers false and gets a full observation.
+   */
+  proto._visionScreenUnchanged = async function _visionScreenUnchanged(tabId) {
+    const state = this._visionRunState(tabId);
+    const session = this._visionSessions?.get(tabId);
+    if (!state.active || !session?.keyframe || !session.seenPixels || session.forceKeyframe || session.pendingZooms?.length) return false;
+    let frame;
+    try { frame = await this._visionCaptureFrame(tabId, state); }
+    catch (error) {
+      if (isControlFlowError(error)) throw error;
+      return false;
+    }
+    if (frame.size.width !== session.keyframe.width || frame.size.height !== session.keyframe.height
+        || session.needsKeyframe({ cssWidth: frame.probe.cssWidth, cssHeight: frame.probe.cssHeight,
+          devicePixelRatio: frame.probe.devicePixelRatio, url: frame.probe.url })) return false;
+    return isMicroScreenChange(diffFrames(session.seenPixels, frame.raster.pixels, frame.size.width, frame.size.height));
   };
 
   // `detail: 'high'` regardless of the Image detail setting: OpenAI's low
@@ -426,12 +465,12 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
    * After a tool batch: show the model what changed. `toolCalls` are the
    * calls the batch ran (translated or not).
    */
-  proto._visionObserveAfterBatch = async function _visionObserveAfterBatch(tabId, messages, onUpdate, { toolCalls = [] } = {}) {
+  proto._visionObserveAfterBatch = async function _visionObserveAfterBatch(tabId, messages, onUpdate, { toolCalls = [], force = false } = {}) {
     const state = this._visionRunState(tabId);
     if (!state.active) return null;
     const session = this._visionSessionFor(tabId, state);
     const names = toolCalls.map(call => call?._vision?.tool || call?.function?.name).filter(Boolean);
-    const observe = names.some(name => !VISION_NO_OBSERVE_TOOLS.has(name)) || session.forceKeyframe;
+    const observe = force || names.some(name => !VISION_NO_OBSERVE_TOOLS.has(name)) || session.forceKeyframe;
     const zoomsOnly = !observe && session.pendingZooms?.length;
     if (zoomsOnly) {
       const zooms = this._visionTakePendingZooms(tabId);
@@ -451,6 +490,9 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       this._visionTraceNote(tabId, 'vision_frame_error', { stage, error: errorText(error) });
       return { kind: 'error' };
     };
+    // A tab a click of this batch opened late is rerouted into this tab
+    // first, so the update shows what the click opened (Chrome only).
+    try { await this._visionPlatformLateTab?.(tabId); } catch (error) { if (isControlFlowError(error)) throw error; }
     let frame;
     try {
       frame = await this._visionCaptureSettled(tabId, state);
@@ -542,9 +584,16 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     if (!state.active || !Array.isArray(toolCalls) || !toolCalls.some(call => VISION_TOOL_NAMES.has(call?.function?.name))) return toolCalls;
     const session = this._visionSessionFor(tabId, state);
     let actedBefore = false;
+    // Where the last click_at of this batch landed: type_text / press_keys
+    // after it type into the field that click focused.
+    let clickedAt = null;
     return toolCalls.map(call => {
       const name = call?.function?.name || '';
       let translated = call;
+      // A point is re-checked against the live screen when an earlier action
+      // of the batch ran, or when the page changed while the model decided
+      // (page feedback notes a response it kept despite that).
+      const recheck = actedBefore || (!!call && typeof call === 'object' && this._visionRecheckCalls?.has(call) === true);
       if (VISION_TRANSLATED_TOOLS.has(name) || VISION_NATIVE_TOOLS.has(name)) {
         let args = {};
         try { args = typeof call.function.arguments === 'string' ? JSON.parse(call.function.arguments || '{}') : (call.function.arguments || {}); }
@@ -553,15 +602,39 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
           const result = translateVisionClick(args, session);
           translated = result.ok
             ? { ...call, function: { ...call.function, name: result.name, arguments: JSON.stringify(result.args) },
-              _vision: { ...result.vision, internalName: result.name, needsStabilityCheck: actedBefore } }
+              _vision: { ...result.vision, internalName: result.name, needsStabilityCheck: recheck } }
             : { ...call, _vision: { tool: name, error: result.result } };
+          clickedAt = result.ok && result.vision.button === 'left' ? { ...result.vision.cssPoint } : null;
         } else if (args) {
-          translated = { ...call, _vision: { tool: name, needsStabilityCheck: actedBefore } };
+          translated = { ...call, _vision: { tool: name, needsStabilityCheck: recheck } };
         }
+      } else if ((name === 'type_text' || name === 'press_keys') && clickedAt) {
+        translated = { ...call, _vision: { tool: name, focusFollowUp: { ...clickedAt } } };
       }
-      if (!VISION_NO_OBSERVE_TOOLS.has(name) && name !== 'take_screenshot') actedBefore = true;
+      if (!VISION_NO_OBSERVE_TOOLS.has(name) && name !== 'take_screenshot') {
+        actedBefore = true;
+        if (!['click_at', 'type_text', 'press_keys'].includes(name)) clickedAt = null;
+      }
       return translated;
     });
+  };
+
+  /**
+   * Keyboard input right after a vision click: does the focused element sit
+   * at the clicked point and take text? Then the click's own page effects
+   * (a composer expanding, a hint appearing) do not call for a fresh
+   * observation before typing (page-feedback.js).
+   */
+  proto._visionFocusFollowsClick = async function _visionFocusFollowsClick(tabId, point) {
+    if (!point || !this._visionRunState(tabId).active) return false;
+    const probe = await this._visionDomProbe(tabId, { points: [point], focus: true });
+    return probe?.focus?.editable === true && probe.focus.matchesPoint === true;
+  };
+
+  /** A screen update now (page feedback superseded a decision). */
+  proto._visionObserveNow = async function _visionObserveNow(tabId, messages, onUpdate) {
+    if (!this._visionRunState(tabId).active) return null;
+    return this._visionObserveAfterBatch(tabId, messages, onUpdate, { force: true });
   };
 
   /**
@@ -574,7 +647,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     if (!state.active || !session?.keyframe || !session.seenPixels) return null;
     const refuse = reason => ({
       success: false, dispatched: false, noDispatch: true, visionScreenChanged: true,
-      error: `Not dispatched: ${reason} after your previous action in this turn. Look at the updated screen WebBrain shows next and choose the point again.`,
+      error: `Not dispatched: ${reason}. Look at the updated screen WebBrain shows next and choose the point again.`,
     });
     let frame;
     try { frame = await this._visionCaptureFrame(tabId, state); }
@@ -583,14 +656,14 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       // The point was chosen before the earlier action; without a fresh
       // capture nothing shows it is still right.
       session.forceKeyframe = true;
-      return refuse('WebBrain could not re-check the screen');
+      return refuse('WebBrain could not re-check the screen around this point');
     }
-    if (frame.probe.url !== session.keyframe.url) return refuse('the page navigated');
-    if (frame.size.width !== session.keyframe.width || frame.size.height !== session.keyframe.height) return refuse('the viewport changed');
+    if (frame.probe.url !== session.keyframe.url) return refuse('the page navigated since you read this point');
+    if (frame.size.width !== session.keyframe.width || frame.size.height !== session.keyframe.height) return refuse('the viewport changed since you read this point');
     const d = diffFrames(session.seenPixels, frame.raster.pixels, frame.size.width, frame.size.height);
     const kfPoint = session.cssToKeyframe(cssPoint.x, cssPoint.y);
     if (d.regionAreaRatio > 0.6 || pointTouchesRegions(kfPoint, d.regions, STABILITY_MARGIN_PX)) {
-      return refuse('the screen changed near this point');
+      return refuse('the screen changed near this point since you read it');
     }
     return null;
   };

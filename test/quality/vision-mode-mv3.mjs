@@ -31,6 +31,9 @@ const LAYOUT = {
   // Viewport-fixed and document-positioned markers for the pixel check.
   fixedMarker: { x: 700, y: 60, w: 80, h: 40 },
   pageMarker: { x: 600, y: 230, w: 60, h: 50 },
+  // A viewport-fixed target=_blank link: the tab it opens is rerouted into
+  // this tab, as for any click.
+  link: { x: 60, y: 400, w: 220, h: 32 },
 };
 const body = `<!doctype html><meta charset="utf-8"><title>Vision MV3 fixture</title>
 <style>body{margin:0;font:16px sans-serif}h1{position:absolute;left:60px;top:40px;margin:0}
@@ -40,11 +43,19 @@ const body = `<!doctype html><meta charset="utf-8"><title>Vision MV3 fixture</ti
 label{position:absolute;left:60px;top:112px}
 #fixed-marker{position:fixed;left:${LAYOUT.fixedMarker.x}px;top:${LAYOUT.fixedMarker.y}px;width:${LAYOUT.fixedMarker.w}px;height:${LAYOUT.fixedMarker.h}px;background:rgb(255,0,255)}
 #page-marker{position:absolute;left:${LAYOUT.pageMarker.x}px;top:${LAYOUT.pageMarker.y}px;width:${LAYOUT.pageMarker.w}px;height:${LAYOUT.pageMarker.h}px;background:rgb(0,255,255)}
-#tall{position:absolute;left:0;top:0;width:1px;height:2400px}</style>
-<div id="tall"></div><div id="fixed-marker"></div><div id="page-marker"></div>
+#tall{position:absolute;left:0;top:0;width:1px;height:2400px}
+#hint{position:absolute;left:400px;top:148px;width:200px;height:20px;font:13px sans-serif}
+#ticker{position:fixed;right:20px;bottom:20px;width:160px;height:24px;font:14px monospace}
+#details{position:fixed;left:${LAYOUT.link.x}px;top:${LAYOUT.link.y}px;width:${LAYOUT.link.w}px;height:${LAYOUT.link.h}px;display:block;line-height:32px;font:16px sans-serif;background:#eee}</style>
+<div id="tall"></div><div id="fixed-marker"></div><div id="page-marker"></div><div id="hint"></div><div id="ticker"></div>
+<a id="details" href="/details" target="_blank">Open details</a>
 <h1>Vision form</h1><label for="name">Name</label><input id="name" name="name" autocomplete="off"><button id="submit" type="button">Send name</button><div id="result" role="status"></div>
 <script>// A hostile page cannot blind the dispatch checks: they run in an isolated world.
 Document.prototype.elementFromPoint = function () { return null; };
+// The page reacts to the click's focus, and a ticker keeps it changing while
+// the model thinks (page churn far from the controls).
+document.getElementById('name').addEventListener('focus', () => { document.getElementById('hint').textContent = 'Type your name'; });
+let ticks = 0; setInterval(() => { document.getElementById('ticker').textContent = 'tick ' + (++ticks); }, 250);
 document.getElementById('submit').addEventListener('click', async () => {
   const value = document.getElementById('name').value;
   await fetch('/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: value }) });
@@ -82,11 +93,16 @@ const frames = [];
 let cssViewport = null;
 let actionCalls = 0;
 let keyframe = null;
+// The fixture page, for the scripted model to read the scroll position the
+// wheel left before it clicks the link.
+let livePage = null;
+let scrollBeforeLink = null;
+let valueBeforeLink = null;
 // The "model" converts the fixture's CSS geometry with the ratio the frame
 // label declares, as a model reading the label would.
-const centre = (rect, image) => ({
+const centre = (rect, image, { fixed = false } = {}) => ({
   x: Math.round((rect.x + rect.w / 2) / image.ratio),
-  y: Math.round((rect.y - scroll + rect.h / 2) / image.ratio),
+  y: Math.round((rect.y - (fixed ? 0 : scroll) + rect.h / 2) / image.ratio),
 });
 
 const server = http.createServer(async (request, response) => {
@@ -127,22 +143,32 @@ const server = http.createServer(async (request, response) => {
         .map(item => ({ name: item.function.name, ok: /"success":true/.test(results.get(item.id) || '') }));
       const typedAt = pairs.findLastIndex(pair => pair.name === 'type_text' && pair.ok);
       const submitted = typedAt >= 0 && pairs.slice(typedAt + 1).some(pair => pair.name === 'click_at' && pair.ok);
+      const scrolled = pairs.some(pair => pair.name === 'scroll_at' && pair.ok);
+      const clicked = pairs.filter(pair => pair.name === 'click_at' && pair.ok).length;
       let call;
       if (!keyframe) call = { name: 'take_screenshot', args: {} };
       else if (typedAt < 0) {
         const last = pairs.at(-1);
         call = last?.name === 'click_at' && last.ok
           ? { name: 'type_text', args: { text: 'Vision QA' } }
-          : { name: 'click_at', args: centre(LAYOUT.name, keyframe) };
+          : [{ name: 'click_at', args: centre(LAYOUT.name, keyframe) }, { name: 'type_text', args: { text: 'Vision QA' } }];
       } else if (!submitted) call = { name: 'click_at', args: centre(LAYOUT.submit, keyframe) };
+      // A wheel at the middle of the screen while the ticker keeps changing.
+      else if (!scrolled) call = { name: 'scroll_at', args: { direction: 'down', amount: 3, x: Math.round(keyframe.width / 2), y: Math.round(keyframe.height / 2) } };
+      else if (clicked < 3) {
+        scrollBeforeLink ??= await livePage?.evaluate(() => window.scrollY).catch(() => null);
+        valueBeforeLink ??= await livePage?.evaluate(() => document.getElementById('name').value).catch(() => null);
+        call = { name: 'click_at', args: centre(LAYOUT.link, keyframe, { fixed: true }) };
+      }
       else call = { name: 'done', args: { summary: 'The name was sent.', outcome: 'success' } };
-      completion = { role: 'assistant', content: '', tool_calls: [{ id: `vision-${step}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) } }] };
+      completion = { role: 'assistant', content: '', tool_calls: [call].flat().map((item, index) => ({ id: `vision-${step}-${index}`, type: 'function', function: { name: item.name, arguments: JSON.stringify(item.args) } })) };
     }
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({ id: `completion-${providerCalls.length}`, choices: [{ message: completion, finish_reason: isAction ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 20 } }));
     return;
   }
-  response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); response.end(body);
+  response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  response.end(request.url === '/details' ? '<!doctype html><meta charset="utf-8"><title>Details</title><h1>Details page</h1>' : body);
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const url = `http://127.0.0.1:${server.address().port}/form`;
@@ -169,6 +195,7 @@ try {
   assert.equal((await message('update_provider', { providerId: 'openrouter', config: { apiKey: 'owned-fixture-fake-key', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, model: 'anthropic/claude-sonnet-4.5', contextWindow: 200000, enabled: true, supportsAskStreaming: false, supportsVision: true } })).ok, true);
   assert.equal((await message('set_active_provider', { providerId: 'openrouter' })).ok, true);
   const page = await context.newPage(); await page.goto(url);
+  livePage = page;
   const tabId = await harness.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, url);
   if (zoom !== 1) {
     await harness.evaluate(async ({ tabId, zoom }) => chrome.tabs.setZoom(tabId, zoom), { tabId, zoom });
@@ -184,7 +211,11 @@ try {
   const result = await message('chat', { tabId, text: 'Type Vision QA into the Name field and press Send name.', mode: 'act', requestId: 'vision-mv3', locale: 'en' });
   const elapsedMs = Math.round(performance.now() - started);
   const events = await harness.evaluate(() => events);
-  const value = await page.locator('#name').inputValue();
+  // The form page is gone once the link was followed: its field as it was
+  // right before that click.
+  const value = valueBeforeLink;
+  const finalUrl = page.url();
+  const webPages = context.pages().filter(item => /^http/.test(item.url())).map(item => item.url());
   await fs.writeFile(path.join(out, `evidence-dpr${dpr}-zoom${zoom}-scroll${scroll}.json`), JSON.stringify({ result, value, submissions, frames, cssViewport, elapsedMs, events, providerCalls },
     (_key, item) => typeof item === 'string' && item.startsWith('data:image/') ? `[image ${JSON.stringify(imageSize(item))}]` : item, 2));
 
@@ -244,6 +275,47 @@ try {
   const toolResults = actionRequests.at(-1).messages.filter(message => message.role === 'tool').map(message => String(message.content));
   const clickResults = toolResults.filter(text => /"method":"cdp-vision-pointer"/.test(text));
   assert.ok(clickResults.length >= 2, toolResults.join('\n').slice(0, 2000));
+  // click_at + type_text in one response: the typing went into the field the
+  // click focused although the page reacted to that focus (the hint) and kept
+  // changing (the ticker).
+  const typeResults = actionRequests.flatMap(request => request.messages)
+    .filter(message => message.role === 'tool' && /vision-\d+-1$/.test(message.tool_call_id || ''));
+  const firstType = typeResults[0] ? String(typeResults[0].content) : '';
+  assert.match(firstType, /"success":true/, `type_text after click_at in the same response: ${firstType.slice(0, 400)}`);
+  // No accessibility-tree text reaches a vision run's model.
+  for (const request of actionRequests) {
+    const text = JSON.stringify(request.messages.map(message => (Array.isArray(message.content)
+      ? message.content.filter(block => block.type === 'text') : message.content)));
+    assert.doesNotMatch(text, /pageContent|\[BROWSER STATE: current page observed/, 'tree text in a vision request');
+  }
+  // scroll_at under the same churn: dispatched on the first try, and the page
+  // moved by about the three wheel notches asked for.
+  const history = actionRequests.at(-1).messages;
+  const scrollIds = history.filter(message => message.role === 'assistant').flatMap(message => message.tool_calls || [])
+    .filter(item => item.function.name === 'scroll_at').map(item => item.id);
+  const firstScroll = String(history.find(message => message.role === 'tool' && message.tool_call_id === scrollIds[0])?.content || '');
+  assert.match(firstScroll, /"success":true/, `scroll_at during page churn: ${firstScroll.slice(0, 400)}`);
+  assert.ok(scrollBeforeLink - cssViewport.scrollY >= 150, `the wheel scrolled the page (${cssViewport.scrollY} -> ${scrollBeforeLink})`);
+  // The link's new tab became this tab's page: one web page, now /details.
+  assert.match(finalUrl, /\/details$/, `the tab the link opened was rerouted into the run's tab (${finalUrl})`);
+  assert.deepEqual(webPages, [finalUrl], `no extra tab is left open: ${JSON.stringify(webPages)}`);
+  const linkResult = String(history.find(message => message.role === 'tool' && /"redirectedFromNewTab":true/.test(String(message.content)))?.content || '');
+  assert.ok(linkResult, 'the click result says the new tab was rerouted');
+  // Churn did not make WebBrain throw decisions away: click+type, send,
+  // scroll, link, done.
+  assert.ok(actionRequests.length <= 6, `${actionRequests.length} model calls`);
+  // Until the link navigates: one screen update per step, and no browser-
+  // state message. The ticker and the caret never changed the screen by more
+  // than a micro change between an update and the next decision.
+  const beforeLink = actionRequests.slice(0, 4);
+  const updatesIn = request => request.messages.filter(message => Array.isArray(message.content)
+    && message.content.some(block => block.type === 'text' && /UNTRUSTED SCREEN UPDATE|UNTRUSTED SCREENSHOT f\d+|no visible change/.test(block.text))).length;
+  for (let index = 1; index < beforeLink.length; index++) {
+    assert.equal(updatesIn(beforeLink[index]) - updatesIn(beforeLink[index - 1]), 1, `one screen update before decision ${index + 1}`);
+  }
+  for (const request of beforeLink) {
+    assert.doesNotMatch(JSON.stringify(request.messages), /\[BROWSER STATE UPDATE/, 'page churn alone sends no browser-state message');
+  }
   // The pre-dispatch probe saw the real button although the page replaced
   // elementFromPoint in its own world.
   assert.ok(clickResults.some(text => /"target":\{"tag":"button"\}/.test(text)), clickResults.join('\n'));
@@ -252,9 +324,16 @@ try {
   const laterImages = actionRequests.slice(1).flatMap(call => call.messages.filter(message => Array.isArray(message.content))
     .map(message => message.content.filter(block => block.type === 'text').map(block => block.text).join('\n')));
   assert.ok(laterImages.some(text => /UNTRUSTED SCREEN UPDATE|no visible change/.test(text)), 'incremental updates followed the first frame');
+  // Pruning: every image in the last request belongs to the current frame
+  // (the last full frame and the patches after it); older ones are placeholders.
   const lastRequest = actionRequests.at(-1);
-  const imagesInLast = lastRequest.messages.flatMap(message => (Array.isArray(message.content) ? message.content : [])).filter(block => block.type === 'image_url').length;
-  assert.ok(imagesInLast <= 6, `old images were pruned (${imagesInLast} in the last request)`);
+  const labelOf = message => (Array.isArray(message.content) ? message.content.filter(block => block.type === 'text').map(block => block.text).join('\n') : '');
+  const lastFrameAt = lastRequest.messages.findLastIndex(message => /UNTRUSTED SCREENSHOT f\d+/.test(labelOf(message))
+    && message.content.some(block => block.type === 'image_url'));
+  assert.ok(lastFrameAt >= 0, 'the current frame is in the request');
+  const olderImages = lastRequest.messages.slice(0, lastFrameAt)
+    .flatMap(message => (Array.isArray(message.content) ? message.content : [])).filter(block => block.type === 'image_url').length;
+  assert.equal(olderImages, 0, 'images before the current frame were pruned');
   console.log(JSON.stringify({ passed: true, dpr, zoom, scroll, cssViewport, firstFrame: { ...first, dataUrl: undefined }, markers: boxes, frames: frames.length, actionRequests: actionRequests.length, submitted: submissions.length, elapsedMs }));
 } finally {
   await context?.close(); await new Promise(resolve => server.close(resolve));

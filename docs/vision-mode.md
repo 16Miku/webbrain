@@ -13,6 +13,8 @@ Settings → Advanced:
 
 A run decides once, when it starts (`_beginVisionRun` snapshots both settings), like lean mode. The resolved state is recorded in the trace's runtime config as `vision_mode_setting` and `vision_mode`. The `Agent` class default is `off`, so embedders and unit tests opt in explicitly; `background.js` applies the stored setting, whose default is `on`.
 
+One thing ends vision mode inside a run: a site workflow whose completion is proved against the app-owned element inventory (`requiresLedger` in `adapter-workflow.js`, form and publish jobs of some adapters) cannot be certified from screenshots. Once the planner or a live adoption selects one, `resolveVisionMode` answers `workflow_needs_element_inventory` and the next step gets the tree tools and the tree prompt (the loop rebuilds the system prompt when the vision state flips).
+
 ## Tools
 
 A vision run gets its tier's Act tools with the DOM-targeting ones replaced (`VISION_REMOVED_TOOLS` in `vision-tools.js`):
@@ -33,7 +35,7 @@ A vision run gets its tier's Act tools with the DOM-targeting ones replaced (`VI
 | `take_screenshot()` | A fresh full frame. |
 | `wait({seconds})` | Waits 0.2–10 s; the screen update follows. |
 
-The vision prompt (`buildVisionActPrompt`, used through `getVisionActPrompt` in `tools.js`) replaces the tier's tree-centred Act prompt and reuses the shared sensitive-data and plan-to-execution sections verbatim.
+The vision prompt (`buildVisionActPrompt`, used through `getVisionActPrompt` in `tools.js`) replaces the tier's tree-centred Act prompt and reuses the shared sensitive-data and plan-to-execution sections verbatim. The universal cookie-banner / paywall / PDF guidance is given in vision terms (`visionUniversalPreamble`: `click_at "Reject all"`, look at the updated screen, `read_pdf` instead of paging a PDF with screenshots), and site adapter notes, written for the element tools, arrive with one line saying that `click_ax`, `set_field`, refs, selectors and the tree are not available and their facts about the site apply to `click_at`, `type_text`, `press_keys` and `scroll_at` (`VISION_SITE_NOTES_PREFACE`).
 
 ## Images and coordinates
 
@@ -79,7 +81,7 @@ Screenshot redaction maps element boxes into the captured visual-viewport box (p
 
 ### Diffs
 
-After a batch WebBrain waits until two consecutive captures match (bounded, ~1 s), then compares the new frame with what the model has seen (`vision-diff.js`): 16 px cells, a per-pixel threshold that ignores encoder noise and caret blinks, nearby changes merged, at most 4 padded regions. `planFrameUpdate` sends:
+After a batch WebBrain waits until two consecutive captures match (bounded, ~1 s; a micro change between them, a few 16 px cells such as a blinking caret, a clock or a spinner, counts as a match, `isMicroScreenChange`, since it never stops), then compares the new frame with what the model has seen (`vision-diff.js`): 16 px cells, a per-pixel threshold that ignores encoder noise and caret blinks, nearby changes merged, at most 4 padded regions. `planFrameUpdate` sends:
 
 - **nothing but a one-line note** when nothing changed: "no visible change" is also the clearest signal that a click missed;
 - **patches** for local changes (typing, a menu, a toast);
@@ -91,11 +93,31 @@ Only the current frame, its patches and zooms stay in the model request (`pruneV
 
 A capture, encoding or input failure never ends the run: a screen update that cannot be prepared becomes a one-line note and the next update is a full frame; a vision tool that fails returns a tool error (an unknown outcome once input may have gone out).
 
+## Page feedback in a vision run
+
+The page monitor (`content/page-monitor.js`) and page feedback (`agent/page-feedback.js`) watch the page between decisions as in a tree run. A vision run changes what they show the model and when they set a decision aside:
+
+- **No tree text reaches the model.** The pre-decision capture still binds keyboard input to the focused field, but its tree text is not added to the conversation; feedback messages carry the events and the URL without a page dump, and applying feedback skips the accessibility-tree read altogether.
+- **Page churn does not supersede screenshot points.** `click_at`, `hover_at` and `drag_at` are `vision_point` calls and `scroll_at` a `scroll` call (`page-feedback-policy.js`), so automatic page activity while the model was thinking (a ticker, a live timeline, a spinner) keeps the decision. The pixels around the point are compared with the model's frame right before dispatch (`_visionStabilityBlock`, mandatory once anything changed), and the monitor rebases the prepared operation over passive or unattributed churn only while the element under the point is the prepared one and has not moved (`rebaseVisionPreparation`; a wheel binds no element). A person's input, a navigation or another document still voids it.
+- **Typing rides on its click.** `type_text` and `press_keys` right after a `click_at` of the same response are checked by focus: the element focused at the clicked point must be a text field (`_visionFocusFollowsClick`, the probe's `focus` reading). The page reacting to that focus (a hint, a composer expanding) no longer blocks the typing.
+- **The wheel stays the agent's.** Every CDP wheel notch passes the fence, and the monitor counts the wheel events those commands own, so a notch the browser delivers after the next one was fenced is not taken for a person's scroll.
+- **A set-aside decision is remade on the current screen** (`_visionObserveNow`: a patch, a new frame or "no visible change"), never on tree text.
+- **An unchanged screen is not sent again before a decision.** When the only news is automatic churn, or a viewport change of no known origin (the debugger infobar appearing when a run starts), one capture is compared with what the model last saw; within a micro change no message and no image are added (`_visionScreenUnchanged`), and such a resize does not hold the decision for the idle wait. A person's input is always reported, with a fresh look.
+
+### Latency
+
+With an instant model the MV3 fixture's four steps (click and type, send, scroll, done) took about 15 s before these changes and about 7.5 s after:
+
+- the settle wait ends on micro changes instead of running its full ~1 s on every step with a caret or a clock on screen;
+- the forced re-observation after page churn and the tree read in feedback are gone (one screen update per step);
+- in Chrome the file-chooser guard's 500 ms settle doubles as the quiet window for a new tab (`watchOpenedTabs` sees tabs as they are created) instead of a further 900 ms poll; a tab the click opens later is still rerouted into the run's tab before the next screen update (`_visionPlatformLateTab`);
+- the first frame is taken after a cookie-banner decline in progress has finished, so it does not show a banner about to disappear.
+
 ## Input dispatch and safety
 
 `click_at` is rewritten into an ordinary coordinate `click` (`translateVisionClick`) before the batch pipeline runs, so the permission gate, the submit probe and every hard guard (recipient, deletion, money, credentials, publishing) inspect it like any other click. Only the final dispatch differs:
 
-- **Chrome**: trusted CDP pointer events at exactly the point (`_visionDispatchClick`), with the coordinate path's dispatch-time protections kept: a native `<select>` is focused for `type_text` instead of opening an OS popup no screenshot can show, the file-chooser guard, the recipient dispatch binding, `target=_blank` redirection into the run tab and click-progress annotation. The legacy coordinate path's semantic re-targeting and nearby-input redirect are skipped: a vision click lands where the model pointed. Iframes, including cross-origin ones, receive the events natively.
+- **Chrome**: trusted CDP pointer events at exactly the point (`_visionDispatchClick`), with the coordinate path's dispatch-time protections kept: a native `<select>` is focused for `type_text` instead of opening an OS popup no screenshot can show, the file-chooser guard, the recipient dispatch binding, `target=_blank` redirection into the run tab (also for a tab opened after the click returned, see Latency) and click-progress annotation. The legacy coordinate path's semantic re-targeting and nearby-input redirect are skipped: a vision click lands where the model pointed. Iframes, including cross-origin ones, receive the events natively.
 - **Firefox**: no CDP, so `content.js` `visionInput` dispatches a synthetic pointer sequence at the exact point with real client coordinates, reproducing a press's focus and a click's activation, selecting text for double/triple clicks, and entering same-origin iframes. A click that must pass the recipient binding keeps the content click path. Cross-origin iframes receive the click on the frame element.
 
 Right before input goes out, both builds read what is under the pointer with `visionDomProbe` (`vision-dom-probe.js`), in an isolated world (Chrome, CDP) or the content-script world (Firefox), so page scripts cannot redefine the DOM methods it calls:
@@ -127,10 +149,11 @@ Every CDP input passes `cdpClient`'s page-agent fence and every content action p
 npm run test:vision-mode
 ```
 
-- `test/vision-mode.mjs`: sizing, profiles, token formulas, diffs, sessions, translation, tool surfaces of every tier in both builds, permission classification, prompt.
-- `test/vision-mode-agent.mjs`: the real run loop in both builds (streaming and not) with a scripted vision model and a fake screen: first frame, tool surface, click translation, patches, "no visible change", new frames on navigation, pruning, stale and moved points, native tools, fallback to the tree; a refused click stopping its batch, tool and encoding failures, a failed first capture in a later run, a model switch between runs, drag/wheel/repeated-click refusals, `drag_at` on a protected messaging page.
+- `test/vision-mode.mjs`: sizing, profiles, token formulas, diffs, micro changes, sessions, translation, tool surfaces of every tier in both builds, permission classification, prompt, the page-feedback policy for vision calls and the monitor's vision rebase.
+- `test/vision-mode-agent.mjs`: the real run loop in both builds (streaming and not) with a scripted vision model and a fake screen: first frame, tool surface, click translation, patches, "no visible change", new frames on navigation, pruning, stale and moved points, native tools, fallback to the tree; a refused click stopping its batch, tool and encoding failures, a failed first capture in a later run, a model switch between runs, drag/wheel/repeated-click refusals, `drag_at` on a protected messaging page; the settle wait on a caret or clock versus real motion; page churn before a decision (no tree read, nothing re-sent while the screen stays as seen, a change after the update shown, a person's input always reported); site notes in vision terms; a ledger workflow switching the run to the tree path; in Chrome, a click that opened no tab costing no poll and tabs opened at once or later being rerouted.
+- `test/monitor-vision-wheel.mjs`: the real page monitor in Chromium: two wheel notches fenced before their events arrive stay the agent's (a third, unfenced one is a person's), page churn does not void a prepared wheel, a person's click does.
 - `test/vision-pipeline-browser.mjs`: Chromium at DPR 1/2/3 on a scrolled page: planned size, exact mapping, trusted clicks, diff regions, WebP vs JPEG; the Firefox content input path; the DOM probe on buttons, labelled text fields, focused number fields, selects, link cards, sliders and same-/cross-origin frames.
-- `test/quality/vision-mode-mv3.mjs` (`--dpr=2`, `--zoom=1.25`, `--scroll=100`, combinable): the installed MV3 extension with a loopback model that reads the frame labels and fills and submits a form with `click_at` and `type_text`; two colored markers (viewport-fixed and in the document) must appear in the first frame exactly where the label's scale puts them.
+- `test/quality/vision-mode-mv3.mjs` (`--dpr=2`, `--zoom=1.25`, `--scroll=100`, combinable): the installed MV3 extension with a loopback model that reads the frame labels and fills and submits a form with `click_at` and `type_text` (sent together in one response), scrolls with `scroll_at` and follows a `target=_blank` link; two colored markers (viewport-fixed and in the document) must appear in the first frame exactly where the label's scale puts them. The page reacts to the click's focus and a ticker changes it every 250 ms: typing must land on the first try, the wheel must scroll the page, the link's tab must become the run's tab with no extra tab left, no request may carry tree text, and until the link navigates every decision gets exactly one screen update and no browser-state message.
 
 The older MV3 quality fixtures script an accessibility-tree model (they answer with `ref_id`s read from `get_accessibility_tree`) under model names that WebBrain recognizes as vision-capable, so they seed `visionMode: 'off'` with their other settings. A new fixture that scripts tree tools needs the same line.
 
