@@ -10,6 +10,7 @@ const MAX_INLINE_BYTES = 20 * 1024 * 1024;
 export const MAX_VIDEO_SECONDS = 120;
 export const MAX_VIDEO_CLIPS = 24;
 const VIDEO_CLIP_CONCURRENCY = 3;
+const FALLBACK_VIDEO_CLIP_SECONDS = 8;
 const VIDEO_ARGUMENTS = ['duration', 'aspect_ratio', 'resolution', 'scenes', 'estimated_duration'];
 const INLINE_MEDIA = /^data:(image\/(?:png|jpeg|webp|gif)|audio\/(?:mpeg|wav|ogg)|video\/mp4);base64,[A-Za-z0-9+/=\s]+$/;
 
@@ -313,7 +314,8 @@ export function videoInputCapabilities(openapi) {
   // a listed value (6, "6", "6.0" or "8s"; "auto" is not a length), or a
   // second within a range.
   const lengths = new Map();
-  for (const value of forms(input.get('duration')).flatMap(form => formValues(form) ?? formSeconds(form))) {
+  const durationForms = forms(input.get('duration'));
+  for (const value of durationForms.flatMap(form => formValues(form) ?? formSeconds(form))) {
     const match = /^(\d+)(?:\.0+)?\s*s?$/i.exec(String(value).trim());
     const seconds = match ? Number(match[1]) : 0;
     if (seconds > 0 && !lengths.has(seconds)) lengths.set(seconds, value);
@@ -321,6 +323,30 @@ export function videoInputCapabilities(openapi) {
   if (lengths.size) {
     entry.supported_durations = [...lengths.keys()].sort((a, b) => a - b);
     entry.encodeDuration = seconds => lengths.get(seconds);
+  } else if (input.has('duration')) {
+    // A published default is useful even without a bounded list of lengths.
+    // Preserve that exact value, but do not infer units for other durations.
+    let defaultValue;
+    let defaultSeconds;
+    for (const form of durationForms) {
+      for (const schema of form) {
+        const value = schema.default;
+        const match = /^(\d+)(?:\.0+)?\s*s?$/i.exec(String(value).trim());
+        const seconds = match ? Number(match[1]) : 0;
+        if (Number.isSafeInteger(seconds) && seconds > 0 && formAllows(form, value)) {
+          defaultValue = value;
+          defaultSeconds = seconds;
+          break;
+        }
+      }
+      if (defaultSeconds !== undefined) break;
+    }
+    if (defaultSeconds !== undefined) entry.default_duration = defaultSeconds;
+    const admitsType = (form, allowed) => form.every(schema => schema.type === undefined
+      || [].concat(schema.type).some(type => allowed.includes(type)));
+    const stringOnly = durationForms.some(form => admitsType(form, ['string']))
+      && !durationForms.some(form => admitsType(form, ['integer', 'number']));
+    entry.encodeDuration = seconds => seconds === defaultSeconds ? defaultValue : stringOnly ? String(seconds) : seconds;
   }
   const aspectRatios = listed('aspect_ratio');
   if (aspectRatios) entry.supported_aspect_ratios = aspectRatios;
@@ -331,7 +357,7 @@ export function videoInputCapabilities(openapi) {
 
 // A clip's length as the model takes it, ready to merge into its request.
 function clipLength(entry, clip) {
-  if (clip.duration === undefined) return {};
+  if (clip.duration === undefined || (entry?.inputs && !entry.inputs.includes('duration'))) return {};
   return { duration: entry?.encodeDuration ? entry.encodeDuration(clip.duration) : clip.duration };
 }
 
@@ -342,25 +368,26 @@ function clipLength(entry, clip) {
  * the model would make the same clip twice. Refuses more than `maxSeconds` in
  * total or `maxClips`.
  */
-export function planVideoClips(scenes, durations, { maxSeconds = MAX_VIDEO_SECONDS, maxClips = MAX_VIDEO_CLIPS } = {}) {
-  if (!durations?.length) {
-    throw new Error('This video model does not list the clip lengths it supports. WebBrain can join scene clips, but cannot determine their supported lengths from this model\'s schema. No clips were generated; use a video model with published clip lengths to make the requested video.');
-  }
-  const longest = durations[durations.length - 1];
+export function planVideoClips(scenes, durations, { maxSeconds = MAX_VIDEO_SECONDS, maxClips = MAX_VIDEO_CLIPS, fallbackSeconds = FALLBACK_VIDEO_CLIP_SECONDS } = {}) {
+  const lengths = durations?.length ? durations : [fallbackSeconds];
+  const longest = lengths[lengths.length - 1];
   const clips = scenes.map((scene, index) => {
     const prompt = String(scene?.prompt || '').trim();
     if (!prompt) throw new Error(`Scene ${index + 1} needs a prompt.`);
     if (scene.duration > longest) {
+      if (!durations?.length) {
+        throw new Error(`Scene ${index + 1} is ${scene.duration} s. Published clip lengths are unavailable, so WebBrain is using ${longest} s as a fallback, not a confirmed model limit. Retry with distinct scenes of up to ${longest} s that cover the full requested duration; WebBrain will generate and join them.`);
+      }
       throw new Error(`Scene ${index + 1} is ${scene.duration} s, and this model makes clips of up to ${longest} s. Split it into scenes of up to ${longest} s, each with its own prompt for its part, so no clip repeats another.`);
     }
-    return { prompt, duration: durations.find(value => value >= scene.duration) ?? longest };
+    return { prompt, duration: lengths.find(value => value >= scene.duration) ?? longest };
   });
   const total = clips.reduce((sum, clip) => sum + clip.duration, 0);
   if (clips.length > maxClips) {
     throw new Error(`These scenes need ${clips.length} clips and WebBrain makes at most ${maxClips}. Use fewer, longer scenes.`);
   }
   if (total > maxSeconds) {
-    throw new Error(`These scenes come to ${total} s with this model's clip lengths (${durations.join(', ')} s), and WebBrain makes videos up to ${maxSeconds} s. Shorten or merge scenes.`);
+    throw new Error(`These scenes come to ${total} s with the ${durations?.length ? "model's clip lengths" : 'fallback clip length'} (${lengths.join(', ')} s), and WebBrain makes videos up to ${maxSeconds} s. Shorten or merge scenes.`);
   }
   return { clips, total };
 }
@@ -369,6 +396,8 @@ export function planVideoClips(scenes, durations, { maxSeconds = MAX_VIDEO_SECON
 // clips of its scenes.
 function planVideo(prompt, video, entry) {
   const durations = clipDurations(entry);
+  const fallbackSeconds = entry?.default_duration || FALLBACK_VIDEO_CLIP_SECONDS;
+  const fallback = durations ? {} : { fallbackClipSeconds: fallbackSeconds };
   const shape = videoShape(entry, video);
   const scenes = Array.isArray(video?.scenes) ? video.scenes : null;
   if (scenes?.length) {
@@ -376,12 +405,13 @@ function planVideo(prompt, video, entry) {
     if (video.estimated_duration === undefined) {
       throw new Error('With scenes, give estimated_duration: how many seconds the requested video needs before fitting it to the 120 s maximum.');
     }
-    const { clips, total } = planVideoClips(scenes, durations);
+    const { clips, total } = planVideoClips(scenes, durations, { fallbackSeconds });
     if (video.estimated_duration <= MAX_VIDEO_SECONDS && total < video.estimated_duration) {
       throw new Error(`These scenes provide ${total} s, but the requested video needs ${video.estimated_duration} s. Add or lengthen scenes to cover the requested duration before generating.`);
     }
     return {
       scenes: true,
+      ...fallback,
       total,
       estimated: video.estimated_duration,
       shape,
@@ -390,17 +420,17 @@ function planVideo(prompt, video, entry) {
       clips: clips.map(clip => ({ ...clip, prompt: `${prompt}\n\n${clip.prompt}` })),
     };
   }
-  const longest = durations?.[durations.length - 1];
+  const longest = durations?.[durations.length - 1] ?? fallbackSeconds;
   const wanted = video?.estimated_duration === undefined
     ? video?.duration : Math.max(video.estimated_duration, video.duration ?? 0);
   if (wanted !== undefined && longest && wanted > longest) {
+    if (!durations) {
+      throw new Error(`A ${formatSeconds(wanted)} video needs multiple clips with WebBrain's ${longest} s fallback. Published clip lengths are unavailable. Retry with distinct scenes of up to ${longest} s covering the full requested duration, and keep estimated_duration: ${video?.estimated_duration ?? wanted}. WebBrain will generate and join them.`);
+    }
     throw new Error(`A ${formatSeconds(wanted)} video needs more than one clip: this model makes clips of up to ${longest} s. Describe it as scenes of up to ${longest} s each, ${MAX_VIDEO_SECONDS} s in total, with estimated_duration.`);
   }
   if (video?.duration !== undefined && video?.estimated_duration !== undefined && video.duration < video.estimated_duration) {
     throw new Error(`The requested video needs ${video.estimated_duration} s, but duration specifies only ${video.duration} s. Increase the clip duration or describe the full video as scenes before generating.`);
-  }
-  if (video?.estimated_duration !== undefined && video?.duration === undefined && !durations) {
-    throw new Error(`WebBrain cannot determine a supported clip length for the requested ${video.estimated_duration} s video from this model's schema. No clip was generated; use a video model with published clip lengths or supply a supported duration explicitly.`);
   }
   let duration;
   if (video?.duration !== undefined) {
@@ -409,10 +439,10 @@ function planVideo(prompt, video, entry) {
       throw new Error(`This video model does not make ${video.duration} s clips. Supported: ${durations.join(', ')} s.`);
     }
     duration = video.duration;
-  } else if (wanted !== undefined && durations) {
-    duration = durations.find(value => value >= wanted) ?? longest;
+  } else if (wanted !== undefined) {
+    duration = durations?.find(value => value >= wanted) ?? longest;
   }
-  return { scenes: false, shape, clips: [{ prompt, ...(duration !== undefined ? { duration } : {}) }] };
+  return { scenes: false, shape, ...(duration !== undefined ? fallback : {}), clips: [{ prompt, ...(duration !== undefined ? { duration } : {}) }] };
 }
 
 function videoRequestBody(model, clip, shape) {
@@ -515,10 +545,12 @@ async function mapWithConcurrency(items, limit, signal, task) {
  */
 async function runVideo({ model, entry, text, video, signal, onProgress, confirmVideoLength, single, clip }) {
   const plan = planVideo(text, video, entry);
+  const fallback = plan.fallbackClipSeconds ? { fallbackClipSeconds: plan.fallbackClipSeconds } : {};
   if (!plan.scenes) return {
     ...(await single(plan.clips[0], plan.shape)), model,
     ...(video?.estimated_duration !== undefined ? { estimatedSeconds: video.estimated_duration } : {}),
     ...(plan.clips[0].duration !== undefined ? { totalSeconds: plan.clips[0].duration } : {}),
+    ...fallback,
   };
 
   // The user decides on the card whether a shorter version is worth
@@ -551,7 +583,7 @@ async function runVideo({ model, entry, text, video, signal, onProgress, confirm
       }
     }
   });
-  return { clips, model, ...lengthDetails };
+  return { clips, model, ...lengthDetails, ...fallback };
 }
 
 async function runOpenRouter({ text, media, config, video, fetchImpl, signal, timeoutMs, pollMs, onProgress, confirmVideoLength }) {
@@ -589,23 +621,53 @@ async function runOpenRouter({ text, media, config, video, fetchImpl, signal, ti
 async function modelSchema(url, headers, label, fetchImpl, signal, timeoutMs) {
   const operation = operationSignal(signal, Math.min(timeoutMs, 30000));
   try {
+    operation.signal.throwIfAborted();
     const response = await fetchImpl(url, { headers, signal: operation.signal, redirect: 'error', credentials: 'omit' });
+    operation.signal.throwIfAborted();
     return response.status === 404 ? null : await jsonResponse(response, label);
   } catch (error) { throw operation.signal.aborted ? operation.signal.reason : error; }
   finally { operation.dispose(); }
 }
 
-// What a fal.ai video model accepts ({} when fal.ai publishes no schema for it).
+// Metadata outages do not prevent the caller from using its clip fallback.
+// User cancellation and authenticated API authorization failures still stop
+// the run. A denial from the public schema host is only a metadata failure.
+async function optionalModelSchema(url, headers, label, fetchImpl, signal, timeoutMs) {
+  try { return await modelSchema(url, headers, label, fetchImpl, signal, timeoutMs); }
+  catch (error) {
+    signal?.throwIfAborted?.();
+    const authenticated = headers?.Authorization || headers?.['X-API-Key'];
+    if (error?.name === 'AbortError' || (authenticated && [401, 403].includes(error?.status))) throw error;
+    return null;
+  }
+}
+
+// The catalog can return an expansion_failed object instead of an OpenAPI
+// document. The model page's public Schema endpoint is a second source; it
+// never receives the API key. Both reads share the metadata lookup budget.
 async function falVideoEntry(model, apiKey, fetchImpl, signal, timeoutMs) {
+  const deadline = Date.now() + Math.min(timeoutMs, 30000);
+  const read = async (url, headers) => {
+    signal?.throwIfAborted?.();
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return null;
+    return optionalModelSchema(url, headers, 'fal.ai model schema', fetchImpl, signal, remaining);
+  };
   const query = new URLSearchParams({ endpoint_id: model, expand: 'openapi-3.0' });
-  const listing = await modelSchema(`https://api.fal.ai/v1/models?${query}`, { Authorization: `Key ${apiKey}` }, 'fal.ai model schema', fetchImpl, signal, timeoutMs);
+  const listing = await read(`https://api.fal.ai/v1/models?${query}`, { Authorization: `Key ${apiKey}` });
   const openapi = (Array.isArray(listing?.models) ? listing.models : []).find(item => item?.endpoint_id === model)?.openapi;
-  return videoInputCapabilities(openapi) || {};
+  const entry = videoInputCapabilities(openapi);
+  if (clipDurations(entry)) return entry;
+  const publicQuery = new URLSearchParams({ endpoint_id: model });
+  const fallback = videoInputCapabilities(await read(`https://fal.ai/api/openapi/queue/openapi.json?${publicQuery}`));
+  // An incomplete fallback must not discard constraints or a default from a
+  // usable catalog document. The caller decides how to handle unknown lengths.
+  return clipDurations(fallback) ? fallback : entry || fallback || {};
 }
 
 // What a Comfy Router video model accepts ({} when Comfy Router publishes no schema for it).
 async function comfyRouterVideoEntry(model, apiKey, fetchImpl, signal, timeoutMs) {
-  const openapi = await modelSchema(`https://api.comfy.org/v2/models/${model}/openapi.json`, { 'X-API-Key': apiKey }, 'Comfy Router model schema', fetchImpl, signal, timeoutMs);
+  const openapi = await optionalModelSchema(`https://api.comfy.org/v2/models/${model}/openapi.json`, { 'X-API-Key': apiKey }, 'Comfy Router model schema', fetchImpl, signal, timeoutMs);
   return videoInputCapabilities(openapi) || {};
 }
 
@@ -765,6 +827,7 @@ function videoDeliveryDetails(result, asset) {
   return {
     estimatedSeconds: roundSeconds(result.estimatedSeconds) || plannedSeconds,
     plannedSeconds,
+    ...(result.fallbackClipSeconds ? { fallbackClipSeconds: result.fallbackClipSeconds } : {}),
     durationStatus,
     ...(durationStatus === 'short' ? {
       notice: `Generated ${actual} s of the planned ${plannedSeconds} s. Keep the generated asset, but report the duration shortfall; the requested video is incomplete. Do not claim it is complete.`,

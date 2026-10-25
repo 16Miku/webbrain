@@ -325,8 +325,15 @@ read once per call that sets any of them. From a schema, WebBrain takes the inpu
 body has, its listed clip lengths (sent as listed, such as `6`, `"6"` or
 `"8s"`) or the whole seconds of its length range (sent as numbers), and its
 listed aspect ratios and resolutions (matched without regard to case and sent as
-listed, such as `768P`). Without a schema, a single clip's options are sent as
-given and scenes are refused, since the clip lengths are unknown. A local
+listed, such as `768P`). When fal.ai's catalog has no readable clip lengths,
+WebBrain also tries its public OpenAPI endpoint without credentials. If clip
+lengths remain unavailable, scenes use the schema's stated duration default,
+or an 8-second fallback. A one-minute request can therefore use eight distinct
+8-second scenes, aiming for 64 seconds; the output is measured separately.
+Fallback lengths are attempts, not advertised model limits. String duration
+inputs keep their declared encoding; a schema with no duration field uses the
+provider's default without adding that field. Real submission errors still
+stop the request, while missing metadata alone does not. A local
 ComfyUI workflow sets its own length and shape, so these options are refused
 there. A longer video is passed as `scenes`: WebBrain makes one clip per
 scene at a length the model offers (a scene longer than its longest clip is
@@ -349,8 +356,9 @@ the tool result says why (`joinError`), which traces show. The model never sees
 the video, so the tool result gives it the video's measured length
 (`durationSeconds`) and `clipCount` when available. Plans that knowingly fall
 short of `estimated_duration` within the 120-second cap are rejected before
-submission; missing clip-length metadata must not silently fall back to a
-default short clip. Results retain the original estimate (`estimatedSeconds`),
+submission; missing clip-length metadata uses short scene clips covering the
+full target. Results retain any assumed clip length (`fallbackClipSeconds`),
+the original estimate (`estimatedSeconds`),
 accepted plan (`plannedSeconds`), and `durationStatus`: `short`, `enough`,
 or `unverified`. A measured shortfall keeps the generated asset and reports
 incomplete delivery; hosted clips without a measured length stay unverified.

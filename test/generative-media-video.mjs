@@ -156,6 +156,12 @@ const falConfig = (model, settings = {}) => ({ provider: 'fal', apiKey: 'fal-key
 function falApi({ model, schema, clip = () => fixtures['h264-aac-1'], fail = () => false }) {
   const calls = { schemas: 0, submits: [], downloads: [], cancels: [] };
   const fetchImpl = async (url, init = {}) => {
+    if (url.startsWith('https://fal.ai/api/openapi/queue/openapi.json?')) {
+      assert.equal(init.headers?.Authorization, undefined);
+      assert.equal(init.credentials, 'omit');
+      assert.equal(new URL(url).searchParams.get('endpoint_id'), model);
+      return json({ error: 'No public schema in this fixture' }, 404);
+    }
     if (url.startsWith('https://v3b.fal.media/')) {
       // A hosted clip is downloaded without the key.
       assert.equal(init.headers, undefined);
@@ -542,12 +548,10 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(media.planVideoClips(scenes(8, 15), grok.supported_durations).total, 120);
     assert.throws(() => media.planVideoClips(scenes(9, 15), grok.supported_durations), /up to 120 s/);
     assert.throws(() => media.planVideoClips(scenes(25, 4), grok.supported_durations), /at most 24/);
-    assert.throws(() => media.planVideoClips(scenes(2, 5), null), error => {
-      assert.match(error.message, /does not list the clip lengths/);
-      assert.match(error.message, /WebBrain can join scene clips/);
-      assert.doesNotMatch(error.message, /Generate one clip instead/);
-      return true;
+    assert.deepEqual(media.planVideoClips(scenes(2, 5), null), {
+      clips: scenes(2, 8), total: 16,
     });
+    assert.throws(() => media.planVideoClips(scenes(4, 15), null), /8 s as a fallback, not a confirmed model limit.*Retry with distinct scenes/);
     assert.throws(() => media.planVideoClips([{ prompt: ' ', duration: 5 }], [5]), /Scene 1 needs a prompt/);
   });
 
@@ -609,7 +613,7 @@ for (const build of ['chrome', 'firefox']) {
         : videoApi({ entry: { ...grok, supported_durations: undefined } });
       await assert.rejects(media.runMediaGeneration({ prompt: 'Explainer', video: { estimated_duration: 60 },
         config: provider === 'fal' ? falConfig(h3Max) : config, fetchImpl: api.fetchImpl, pollIntervalMs: 1 }),
-        /cannot determine a supported clip length for the requested 60 s video/);
+        /1:00 video needs multiple clips with WebBrain's 8 s fallback.*keep estimated_duration: 60/);
       assert.equal(api.calls.submits.length, 0, `${provider}: an unknown length does not use a default clip`);
     }
   });
@@ -784,11 +788,6 @@ for (const build of ['chrome', 'firefox']) {
       [h3Max, { resolution: '4K' }, /does not support resolution "4K"\. Supported: 480P, 768P, 1080P/],
       [pro, { duration: 6 }, /This video model does not take duration/],
       [pro, { aspect_ratio: '16:9' }, /This video model does not take aspect_ratio/],
-      [pro, { scenes: scenes(2, 5), estimated_duration: 10 }, /does not list the clip lengths it supports/],
-      // fal.ai publishes no schema for some models, and knows none for an unknown ID.
-      [{ id: 'fal-ai/kling-video/v2.1/standard/text-to-video', schema: null }, { scenes: scenes(2, 5), estimated_duration: 10 }, /does not list the clip lengths/],
-      [{ id: 'fal-ai/unknown', schema: 404 }, { scenes: scenes(2, 5), estimated_duration: 10 }, /does not list the clip lengths/],
-      [{ id: 'fal-ai/busy', schema: 503 }, { duration: 5 }, /fal\.ai model schema failed \(HTTP 503\)/],
     ]) {
       const api = falApi({ model: model.id, schema: model.schema });
       await assert.rejects(media.runMediaGeneration({ prompt: 'Story', video, config: falConfig(model), fetchImpl: api.fetchImpl, pollIntervalMs: 1 }),
@@ -802,12 +801,53 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual(unknown.calls.submits, [{ prompt: 'Story', duration: 5, aspect_ratio: '1:1' }]);
     // Comfy Router: no schema for the model, or a read it refuses.
     const comfyConfig = { provider: 'comfyrouter', apiKey: 'comfy-key', model: 'bfl/flux-2-pro', videoModel: 'minimax/hailuo-02' };
-    for (const [schema, pattern] of [[404, /does not list the clip lengths/], [401, /Comfy Router model schema failed \(HTTP 401\)/]]) {
+    for (const [schema, pattern] of [[401, /Comfy Router model schema failed \(HTTP 401\)/]]) {
       const api = comfyRouterApi({ model: 'minimax/hailuo-02', schema });
       await assert.rejects(media.runMediaGeneration({ prompt: 'Story', video: { scenes: scenes(2, 5), estimated_duration: 10 }, config: comfyConfig,
         fetchImpl: api.fetchImpl, pollIntervalMs: 1 }), pattern);
       assert.deepEqual([api.calls.schemas, api.calls.submits.length], [1, 0]);
     }
+  });
+
+  test(`${build}: missing clip metadata uses eight-second scenes and joins the full requested video`, async () => {
+    const eightSeconds = join.joinMp4Clips(Array(8).fill(fixtures['h264-aac-1'])).bytes;
+    for (const provider of ['fal', 'comfyrouter', 'openrouter']) {
+      const api = provider === 'fal' ? falApi({ model: h3Max.id, schema: null, clip: () => eightSeconds })
+        : provider === 'comfyrouter' ? comfyRouterApi({ model: rayTwo.id, schema: 404, clip: () => eightSeconds })
+          : videoApi({ entry: { ...grok, supported_durations: undefined }, clip: () => eightSeconds });
+      const selected = provider === 'fal' ? falConfig(h3Max)
+        : provider === 'comfyrouter' ? { provider, apiKey: 'comfy-key', videoModel: rayTwo.id } : config;
+      const result = await generate({ prompt: 'Consistent cast', scenes: scenes(8, 8), estimated_duration: 60 },
+        { config: selected, fetchImpl: api.fetchImpl, pollIntervalMs: 1 });
+      assert.equal(result.success, true, `${provider}: ${result.error}`);
+      assert.deepEqual(api.calls.submits.map(body => body.duration), Array(8).fill(8));
+      assert.deepEqual([result.estimatedSeconds, result.plannedSeconds, result.durationSeconds, result.fallbackClipSeconds],
+        [60, 64, 64, 8], provider);
+      assert.equal(result.durationStatus, 'enough');
+      assert.equal(join.mp4DurationSeconds(await storedBytes(result.mediaId)), 64);
+      const replay = journal.compactRunUiData('tool_result', { name: 'generate_image', result });
+      assert.equal(replay.result.fallbackClipSeconds, 8);
+    }
+  });
+
+  test(`${build}: fallback scenes respect published defaults and omit unsupported duration fields`, async () => {
+    for (const [duration, expected] of [[{ type: 'string', default: '6s' }, '6s'], [{ type: 'string' }, '8'], [null, undefined]]) {
+      const model = { id: 'provider/video', schema: falSchema(duration ? { duration } : {}) };
+      const api = falApi({ model: model.id, schema: model.schema });
+      const seconds = duration?.default ? 6 : 8;
+      const result = await generate({ prompt: 'Story', scenes: scenes(2, seconds), estimated_duration: seconds * 2 },
+        { config: falConfig(model), fetchImpl: api.fetchImpl, pollIntervalMs: 1 });
+      assert.equal(result.success, true, result.error);
+      assert.deepEqual(api.calls.submits.map(body => body.duration), [expected, expected]);
+      assert.equal(result.fallbackClipSeconds, seconds);
+    }
+    const rejected = falApi({ model: h3Max.id, schema: null, fail: () => 422 });
+    const failed = await generate({ prompt: 'Story', scenes: scenes(8, 8), estimated_duration: 60 },
+      { config: falConfig(h3Max), fetchImpl: rejected.fetchImpl, pollIntervalMs: 1 });
+    assert.equal(failed.success, false);
+    assert.match(failed.error, /422/);
+    assert.ok(rejected.calls.submits.length <= 3, 'a validation rejection is not retried');
+    assert.deepEqual(rejected.calls.downloads, []);
   });
 
   test(`${build}: Comfy Router scenes take each clip's length over the saved model input`, async () => {

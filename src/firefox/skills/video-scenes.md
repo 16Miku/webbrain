@@ -10,7 +10,7 @@
 
 Use this skill before calling `generate_image` with `scenes`. The video model makes each scene as a separate clip from its text alone, without seeing the other clips; WebBrain then joins the clips into one video.
 
-Keep the user's full requested length in `estimated_duration`. A 60-second video can use four 15-second scenes when the model supports that clip length. The per-clip limit does not limit the whole video, and no separate joining tool is needed. If WebBrain cannot read supported clip lengths, report that capability lookup problem without replacing the requested video with one short default clip.
+Keep the user's full requested length in `estimated_duration`. A 60-second video can use four 15-second scenes when the model supports that clip length. The per-clip limit does not limit the whole video, and no separate joining tool is needed. When clip lengths are unavailable, use the provider's stated default or eight 8-second scenes for about 64 seconds. Continue generation and report the measured result; missing metadata alone is not a blocker. If the tool asks for shorter scenes, split them into distinct prompts while keeping the full target.
 
 ## The shared prompt
 
