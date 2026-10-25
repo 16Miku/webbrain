@@ -455,6 +455,51 @@ third</textarea>
   }
 });
 
+test('content-script vision input (Firefox path) moves the pointer off one element onto the next like a mouse', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    const box = (id, left, top, inner = '') => `<div id="${id}" style="position:absolute;left:${left}px;top:${top}px;width:200px;height:100px;background:#eee">${inner}</div>`;
+    // #menu holds #item (at its top left); #drop is a drop zone right of #source.
+    await page.setContent(`<!doctype html><style>body{margin:0}#item{position:absolute;left:10px;top:10px;width:80px;height:30px;background:#ccc}</style>
+      ${box('menu', 100, 100, '<div id="item"></div>')}${box('other', 400, 100)}${box('drop', 300, 300)}${box('source', 100, 300)}
+      <script>window.log=[];for(const id of ['menu','item','other','drop','source'])for(const t of ['mouseover','mouseout','mouseenter','mouseleave','pointerleave'])
+        document.getElementById(id).addEventListener(t,e=>{if(e.target===e.currentTarget)log.push([id,t,e.relatedTarget?.id||null,e.buttons])});</script>`);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    // Mouse events only (pointer events come first, in the same shape).
+    const take = () => page.evaluate(() => window.log.splice(0).filter(entry => entry[1].startsWith('mouse')).map(entry => entry.slice(0, 3)));
+    await run({ type: 'hover', x: 130, y: 120 });
+    assert.deepEqual(await take(), [['item', 'mouseover', null], ['item', 'mouseenter', null]], 'the first hover arrives on the item');
+    // Item -> its menu: out of the item, over the menu; no leave or enter on the menu.
+    await run({ type: 'hover', x: 250, y: 180 });
+    assert.deepEqual(await take(), [['item', 'mouseout', 'menu'], ['item', 'mouseleave', 'menu'], ['menu', 'mouseover', 'item']]);
+    // Menu -> another element: the menu is left (a hover menu that closes on mouseleave closes).
+    await run({ type: 'hover', x: 500, y: 150 });
+    const away = await take();
+    assert.deepEqual(away.filter(entry => entry[0] === 'menu'), [['menu', 'mouseout', 'other'], ['menu', 'mouseleave', 'other']]);
+    assert.deepEqual(away.filter(entry => entry[0] === 'other'), [['other', 'mouseover', 'menu'], ['other', 'mouseenter', 'menu']]);
+    // A click elsewhere leaves it too, and a drag crosses into the drop zone pressed.
+    await run({ type: 'click', x: 200, y: 350 });
+    assert.ok((await take()).some(entry => entry[0] === 'other' && entry[1] === 'mouseleave'));
+    await run({ type: 'drag', x: 200, y: 350, toX: 450, toY: 350, steps: 6 });
+    const drag = await page.evaluate(() => window.log.splice(0));
+    assert.ok(drag.some(entry => entry[0] === 'source' && entry[1] === 'mouseleave' && entry[2] === 'drop' && entry[3] === 1), JSON.stringify(drag));
+    assert.ok(drag.some(entry => entry[0] === 'drop' && entry[1] === 'mouseover' && entry[2] === 'source' && entry[3] === 1), JSON.stringify(drag));
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision clicks and drags (Firefox path) leave disabled controls alone', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {

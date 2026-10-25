@@ -2213,6 +2213,18 @@
     return [index > 0 ? value.lastIndexOf('\n', index - 1) + 1 : 0, end < 0 ? value.length : end];
   }
 
+  // What the vision pointer was last over, so the next input moves off it
+  // the way a mouse does (out and leave events) instead of appearing on the
+  // new target: a hover menu or tooltip that closes on mouseleave closes.
+  let _visionPointerOver = null;
+
+  // An element and its ancestors, through shadow roots to their hosts.
+  function _visionPointerChain(node) {
+    const chain = [];
+    for (let n = node, depth = 0; n?.nodeType === 1 && depth < 256; n = n.parentElement || n.getRootNode?.()?.host, depth++) chain.push(n);
+    return chain;
+  }
+
   function visionInput(params = {}, actionDeadlineExpired = () => false) {
     const type = String(params.type || 'click');
     const x = Number(params.x);
@@ -2235,11 +2247,36 @@
     const PointerCtor = view.PointerEvent || view.MouseEvent;
     const pointer = (target, name, extra = {}) => target.dispatchEvent(new PointerCtor(name, init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...extra })));
     const mouse = (target, name, extra = {}) => target.dispatchEvent(new view.MouseEvent(name, init(extra)));
-    const hover = target => {
-      pointer(target, 'pointerover'); pointer(target, 'pointerenter', { bubbles: false });
-      mouse(target, 'mouseover'); mouse(target, 'mouseenter', { bubbles: false });
-      pointer(target, 'pointermove'); mouse(target, 'mousemove');
+    // The pointer moving onto `target` (with `extra` init, e.g. a drag's
+    // point and buttons): out and leave on what it left, over and enter on
+    // what it entered (shared ancestors get neither), pointer events before
+    // mouse events, then the move. Arriving with no known previous target,
+    // or again on the same one (`arrive`), over and enter go to the target.
+    const moveOnto = (target, extra = {}, { arrive = false } = {}) => {
+      const last = _visionPointerOver;
+      if (last !== target || arrive) {
+        const previous = last && last !== target && last.isConnected ? last : null;
+        const related = (a, b) => (a && b && a.ownerDocument === b.ownerDocument ? a : null);
+        const targetChain = _visionPointerChain(target);
+        const previousChain = previous ? _visionPointerChain(previous) : [];
+        const kept = new Set(targetChain);
+        const leaving = [];
+        for (const node of previousChain) { if (kept.has(node)) break; leaving.push(node); }
+        const left = new Set(previousChain);
+        const entering = previous ? targetChain.filter(node => !left.has(node)).reverse() : [target];
+        for (const [send, prefix] of [[pointer, 'pointer'], [mouse, 'mouse']]) {
+          if (previous) {
+            send(previous, `${prefix}out`, { ...extra, relatedTarget: related(target, previous) });
+            for (const node of leaving) send(node, `${prefix}leave`, { ...extra, bubbles: false, cancelable: false, relatedTarget: related(target, node) });
+          }
+          send(target, `${prefix}over`, { ...extra, relatedTarget: related(previous, target) });
+          for (const node of entering) send(node, `${prefix}enter`, { ...extra, bubbles: false, cancelable: false, relatedTarget: related(previous, node) });
+        }
+      }
+      pointer(target, 'pointermove', extra); mouse(target, 'mousemove', extra);
+      _visionPointerOver = target;
     };
+    const hover = target => moveOnto(target, {}, { arrive: true });
     const tag = String(el.tagName || '').toLowerCase();
     const role = el.getAttribute?.('role') || '';
     const describe = { tag, ...(role ? { role: role.slice(0, 32) } : {}) };
@@ -2263,6 +2300,8 @@
       if (type === 'wheel') {
         const deltaX = Number(params.deltaX) || 0;
         const deltaY = Number(params.deltaY) || 0;
+        // A wheel turns where the mouse is: it moves there first.
+        hover(el);
         const notCancelled = el.dispatchEvent(new view.WheelEvent('wheel', init({ deltaX, deltaY, deltaMode: 0 })));
         let moved = false;
         if (notCancelled) {
@@ -2318,17 +2357,16 @@
           const py = y + (toY - y) * (i / steps);
           const at = _visionTargetAt(px, py);
           last = at?.el || last;
-          const moveInit = { button: 0, buttons: 1, ...pointAt(at, px, py) };
-          last.dispatchEvent(new PointerCtor('pointermove', init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...moveInit })));
-          last.dispatchEvent(new view.MouseEvent('mousemove', init(moveInit)));
+          moveOnto(last, { button: 0, buttons: 1, ...pointAt(at, px, py) });
           range?.to(px - pressOffsetX, py - pressOffsetY);
           selection?.to(px - pressOffsetX, py - pressOffsetY);
         }
         const end = _visionTargetAt(toX, toY);
         const releaseTarget = end?.el || last;
         const endInit = { button: 0, buttons: 0, ...pointAt(end, toX, toY) };
-        releaseTarget.dispatchEvent(new PointerCtor('pointerup', init({ pointerId: 1, pointerType: 'mouse', isPrimary: true, ...endInit })));
-        releaseTarget.dispatchEvent(new view.MouseEvent('mouseup', init({ ...endInit, detail: 1 })));
+        if (releaseTarget !== _visionPointerOver) moveOnto(releaseTarget, { ...endInit, buttons: 1 });
+        pointer(releaseTarget, 'pointerup', endInit);
+        mouse(releaseTarget, 'mouseup', { ...endInit, detail: 1 });
         const rangeValue = range?.release();
         return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe,
           ...(range ? { rangeValue } : {}), ...(selection ? { selectedChars: selection.selectedChars() } : {}) };
