@@ -226,6 +226,80 @@ test('content-script vision input (Firefox path) clicks, double-clicks, focuses,
   }
 });
 
+test('content-script vision input (Firefox path) honours a pointerdown the page cancels, as a browser does', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.setContent(`<!doctype html><style>body{margin:0;font:20px monospace}
+      #range{position:absolute;left:20px;top:20px;width:300px;height:20px;margin:0}
+      #field{position:absolute;left:20px;top:80px;width:300px;height:30px}
+      #words{position:absolute;left:20px;top:150px;margin:0;white-space:nowrap}
+      #pad{position:absolute;left:20px;top:220px;width:400px;height:60px;background:#ddd}</style>
+      <input id="range" type="range" min="0" max="100" step="5" value="10"><input id="field" value="hello">
+      <p id="words">alpha bravo charlie</p><div id="pad"></div>
+      <script>window.log=[];window.cancel=new Set(['range','field','words','pad']);
+      document.addEventListener('pointerdown',e=>{if(cancel.has(e.target.id))e.preventDefault();},true);
+      for(const t of ['pointerdown','mousedown','pointermove','mousemove','mouseover','pointerup','mouseup','click','dblclick','input','change'])
+        document.addEventListener(t,e=>{if(e.target.id)log.push(t+':'+e.target.id)},true);</script>`);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    const take = () => page.evaluate(() => window.log.splice(0));
+    const bravo = await page.evaluate(() => { const text = document.getElementById('words').firstChild; const r = document.createRange();
+      r.setStart(text, 6); r.setEnd(text, 11); const b = r.getBoundingClientRect(); return { x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 }; });
+
+    // A click on a range track: no thumb moves and no compatibility mouse
+    // events, but the click still fires.
+    let result = await run({ type: 'click', x: 170, y: 30 });
+    assert.equal(result.success, true);
+    assert.equal(result.rangeValue, undefined);
+    assert.equal(await page.evaluate(() => document.getElementById('range').value), '10');
+    let log = await take();
+    assert.ok(log.includes('pointerdown:range') && log.includes('pointerup:range') && log.includes('click:range'), log.join());
+    assert.ok(!log.some(entry => /^(mousedown|mouseup|input|change):/.test(entry)), log.join());
+    // A click in a text field: no focus.
+    await run({ type: 'click', x: 100, y: 95 });
+    assert.notEqual(await page.evaluate(() => document.activeElement.id), 'field');
+    await take();
+    // A double click on a word: dblclick fires, but no word is selected.
+    await page.evaluate(() => getSelection().removeAllRanges());
+    result = await run({ type: 'click', x: bravo.x, y: bravo.y, clickCount: 2 });
+    log = await take();
+    assert.ok(log.includes('dblclick:words'), log.join());
+    assert.equal(await page.evaluate(() => String(getSelection())), '');
+    // A drag: pointer moves and the release go out, no mousemove or mouseup,
+    // the boundary mouseover still does, and no text is selected.
+    result = await run({ type: 'drag', x: 30, y: 250, toX: 380, toY: 250, steps: 4 });
+    log = await take();
+    assert.equal(result.success, true);
+    const pressed = log.slice(log.indexOf('pointerdown:pad'));
+    assert.ok(pressed.filter(entry => entry === 'pointermove:pad').length >= 4, log.join());
+    assert.ok(pressed.includes('pointerup:pad'), log.join());
+    assert.ok(!pressed.some(entry => /^(mousedown|mousemove|mouseup):pad$/.test(entry)), log.join());
+    // The same sequences on presses the page lets through are unchanged.
+    await page.evaluate(() => window.cancel.clear());
+    result = await run({ type: 'click', x: 170, y: 30 });
+    assert.equal(result.rangeValue, '50');
+    log = await take();
+    assert.ok(log.includes('mousedown:range') && log.includes('mouseup:range'), log.join());
+    result = await run({ type: 'drag', x: 30, y: 250, toX: 380, toY: 250, steps: 4 });
+    log = await take();
+    assert.ok(log.includes('mousemove:pad') && log.includes('mouseup:pad'), log.join());
+    await run({ type: 'click', x: bravo.x, y: bravo.y, clickCount: 2 });
+    assert.equal(await page.evaluate(() => String(getSelection())), 'bravo');
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision input (Firefox path) marks the element at the point for trusted input, after its checks', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {

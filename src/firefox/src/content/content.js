@@ -2623,7 +2623,10 @@
     // or again on the same one (`arrive`), over and enter go to the target.
     // Documents and shadow roots whose :hover rules this input read (_visionHoverAt).
     const hoverPrepared = new Set();
-    const moveOnto = (target, extra = {}, { arrive = false } = {}) => {
+    // A press whose pointerdown the page cancelled gets no compatibility
+    // mousemove (`compatMouse` off) until its release; the boundary events
+    // (over, out, enter, leave) still go out, as the Pointer Events spec has it.
+    const moveOnto = (target, extra = {}, { arrive = false, compatMouse = true } = {}) => {
       // :hover follows the pointer before its events go out, as it does for
       // a mouse (_visionHoverAt).
       _visionHoverAt(target, hoverPrepared);
@@ -2647,7 +2650,8 @@
           for (const node of entering) send(node, `${prefix}enter`, { ...extra, bubbles: false, cancelable: false, relatedTarget: related(previous, node) });
         }
       }
-      pointer(target, 'pointermove', extra); mouse(target, 'mousemove', extra);
+      pointer(target, 'pointermove', extra);
+      if (compatMouse) mouse(target, 'mousemove', extra);
       _visionPointerOver = target;
     };
     const hover = target => moveOnto(target, {}, { arrive: true });
@@ -2717,8 +2721,11 @@
         const steps = Math.min(40, Math.max(2, Math.floor(Number(params.steps) || 12)));
         hover(el);
         capture.press();
-        pointer(el, 'pointerdown', { button: 0, buttons: 1 });
-        const pressAllowed = mouse(el, 'mousedown', { button: 0, buttons: 1, detail: 1 });
+        // A page that cancels the pointerdown gets no compatibility mousedown,
+        // mousemove or mouseup for this press, and none of the press's
+        // defaults below, as in a browser.
+        const pointerAllowed = pointer(el, 'pointerdown', { button: 0, buttons: 1 });
+        const pressAllowed = pointerAllowed && mouse(el, 'mousedown', { button: 0, buttons: 1, detail: 1 });
         // The press focuses what it lands on, as a click's does, and starts
         // what a person's press would: on a native range input it takes the
         // thumb (_visionRangeDrag), on selectable text or in a text field a
@@ -2778,7 +2785,7 @@
           }
           if (htmlStarted) { html.move(last, point); continue; }
           const holder = capture.target({ button: 0, buttons: 1, ...heldAt(point, px, py) });
-          moveOnto(holder || last, { button: 0, buttons: 1, ...(holder ? heldAt(point, px, py) : point) });
+          moveOnto(holder || last, { button: 0, buttons: 1, ...(holder ? heldAt(point, px, py) : point) }, { compatMouse: pointerAllowed });
           const local = hit.toDoc(px, py);
           range?.to(local.x, local.y);
           selection?.to(local.x, local.y);
@@ -2793,10 +2800,10 @@
           _visionPointerOver = releaseTarget;
           return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe, html5Drag };
         }
-        if (releaseTarget !== _visionPointerOver) moveOnto(releaseTarget, { ...endInit, buttons: 1 });
+        if (releaseTarget !== _visionPointerOver) moveOnto(releaseTarget, { ...endInit, buttons: 1 }, { compatMouse: pointerAllowed });
         pointer(releaseTarget, 'pointerup', endInit);
         capture.release(endInit);
-        mouse(releaseTarget, 'mouseup', { ...endInit, detail: 1 });
+        if (pointerAllowed) mouse(releaseTarget, 'mouseup', { ...endInit, detail: 1 });
         const rangeValue = range?.release();
         return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe,
           ...(range ? { rangeValue } : {}), ...(selection ? { selectedChars: selection.selectedChars() } : {}) };
@@ -2806,11 +2813,18 @@
       // chooser (a file input, its label, an upload button that clicks one):
       // the guard blocks it, and the agent settles the guard afterwards.
       let rangeValue;
+      // Whether the last press went through to its mousedown: a double or
+      // triple click's selection is that press's default.
+      let lastPressAllowed = true;
       const filePickerGuard = clickWithoutNativeFilePicker(() => {
         for (let count = 1; count <= clicks; count++) {
           capture.press();
-          pointer(el, 'pointerdown', { button, buttons: buttonsMask });
-          const pressAllowed = mouse(el, 'mousedown', { button, buttons: buttonsMask, detail: count });
+          // A page that cancels the pointerdown gets no compatibility
+          // mousedown or mouseup for the press, and none of its defaults
+          // (focus, the caret, a range thumb); its click still fires.
+          const pointerAllowed = pointer(el, 'pointerdown', { button, buttons: buttonsMask });
+          const pressAllowed = pointerAllowed && mouse(el, 'mousedown', { button, buttons: buttonsMask, detail: count });
+          lastPressAllowed = pressAllowed;
           // A primary press on a native range input moves its thumb to the
           // point, as a drag's does (_visionRangeDrag): `input` now, `change`
           // on release.
@@ -2827,7 +2841,7 @@
           const holder = capture.target({ button, buttons: buttonsMask }) || el;
           pointer(holder, 'pointerup', { button, buttons: 0 });
           capture.release({ button, buttons: 0 });
-          mouse(holder, 'mouseup', { button, buttons: 0, detail: count });
+          if (pointerAllowed) mouse(holder, 'mouseup', { button, buttons: 0, detail: count });
           if (range) rangeValue = range.release();
           if (button === 0) mouse(el, 'click', { button: 0, buttons: 0, detail: count });
           else if (button === 1) mouse(el, 'auxclick', { button: 1, buttons: 0, detail: count });
@@ -2835,10 +2849,11 @@
         if (button === 0 && clicks >= 2) {
           mouse(el, 'dblclick', { button: 0, buttons: 0, detail: 2 });
           // Browsers select the word under the pointer (two clicks), or its
-          // line or the whole field (three), as the default action; synthetic
-          // events need it done. A double click never takes a whole field:
-          // the typing that usually follows would replace all of it.
-          try {
+          // line or the whole field (three), as the default action of the
+          // last press; synthetic events need it done. A double click never
+          // takes a whole field: the typing that usually follows would
+          // replace all of it.
+          if (lastPressAllowed) try {
             const caret = _visionCaretAt(el.ownerDocument, cx, cy);
             if (typeof el.setSelectionRange === 'function' && /^(input|textarea)$/.test(tag)) {
               if (clicks >= 3 && tag === 'input') el.select();
