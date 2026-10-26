@@ -772,7 +772,7 @@ export default {
   "st.display.lean_mode.off": "Off",
   "st.display.vision_mode.label": "Vision mode",
   "st.display.vision_mode.desc": "In Act mode the agent sees the page as screenshots and clicks, types and scrolls at screen coordinates instead of reading the accessibility tree. Needs a model that accepts images; other models keep the accessibility tree. After each action only the changed part of the screen is sent. Retina displays and browser zoom are handled automatically.",
-  "st.display.vision_mode.on": "On",
+  "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Off",
   "st.display.vision_quality.label": "Vision screenshot size",
   "st.display.vision_quality.desc": "Size of the screenshots sent in vision mode. Economy uses the fewest tokens and uploads fastest; Sharp keeps the most detail. The agent can always zoom into small text.",

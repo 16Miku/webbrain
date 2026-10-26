@@ -932,7 +932,7 @@ export default {
   "st.display.lean_mode.off": "Naka-off",
   "st.display.vision_mode.label": "Visual mode",
   "st.display.vision_mode.desc": "Sa Act mode, nakikita ng agent ang page bilang mga screenshot at nagki-click, nagta-type at nag-i-scroll sa mga coordinate ng screen sa halip na basahin ang accessibility tree. Kailangan ng modelong tumatanggap ng larawan; ang ibang modelo ay patuloy na gumagamit ng accessibility tree. Pagkatapos ng bawat aksyon, ang nagbagong bahagi lang ng screen ang ipinapadala. Awtomatikong naaayos ang mga Retina display at browser zoom.",
-  "st.display.vision_mode.on": "Naka-on",
+  "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Naka-off",
   "st.display.vision_quality.label": "Laki ng screenshot sa visual mode",
   "st.display.vision_quality.desc": "Laki ng mga screenshot na ipinapadala sa visual mode. Ang Matipid ay gumagamit ng pinakakaunting token at pinakamabilis i-upload; ang Matalas ay nagpapanatili ng pinakamaraming detalye. Laging makakapag-zoom ang agent sa maliit na teksto.",

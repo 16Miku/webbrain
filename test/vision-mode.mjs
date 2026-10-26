@@ -317,28 +317,38 @@ test('click_at translates into a canonical CSS coordinate click', () => {
   assert.equal(bad.result.visionCoordinateError, 'out_of_bounds');
 });
 
-test('settings: on by default, off disables, only Act with an image-capable model qualifies', () => {
+test('settings: Auto by default, off disables, only Act with an image-capable model qualifies', () => {
   const { normalizeVisionModeSetting, resolveVisionMode } = visionMode;
-  assert.equal(normalizeVisionModeSetting(undefined), 'on');
+  assert.equal(normalizeVisionModeSetting(undefined), 'auto');
   assert.equal(normalizeVisionModeSetting('OFF'), 'off');
   assert.equal(normalizeVisionModeSetting(false), 'off');
-  assert.equal(normalizeVisionModeSetting('maybe'), 'on');
+  assert.equal(normalizeVisionModeSetting('maybe'), 'auto');
+  // Auto was called On: a stored 'on' or true reads as Auto, and still applies.
+  assert.equal(normalizeVisionModeSetting('on'), 'auto');
+  assert.equal(normalizeVisionModeSetting(' ON '), 'auto');
+  assert.equal(normalizeVisionModeSetting(true), 'auto');
+  assert.equal(normalizeVisionModeSetting('auto'), 'auto');
+  assert.equal(normalizeVisionModeSetting('maybe', 'off'), 'off');
   const seeing = { name: 'anthropic', supportsVision: true, config: { model: 'claude-sonnet-5' } };
   assert.deepEqual(
+    { ...resolveVisionMode('auto', { mode: 'act', provider: seeing }) },
+    { active: true, setting: 'auto', reason: 'vision_capable_model', profileId: 'anthropic', coordinates: 'pixel', quality: 'balanced' },
+  );
+  assert.deepEqual(
     { ...resolveVisionMode('on', { mode: 'act', provider: seeing }) },
-    { active: true, setting: 'on', reason: 'vision_capable_model', profileId: 'anthropic', coordinates: 'pixel', quality: 'balanced' },
+    { active: true, setting: 'auto', reason: 'vision_capable_model', profileId: 'anthropic', coordinates: 'pixel', quality: 'balanced' },
   );
   assert.equal(resolveVisionMode('off', { mode: 'act', provider: seeing }).reason, 'setting_off');
-  assert.equal(resolveVisionMode('on', { mode: 'ask', provider: seeing }).reason, 'not_act_mode');
-  assert.equal(resolveVisionMode('on', { mode: 'dev', provider: seeing }).reason, 'not_act_mode');
-  assert.equal(resolveVisionMode('on', { mode: 'act', provider: { ...seeing, supportsVision: false } }).reason, 'model_without_images');
+  assert.equal(resolveVisionMode('auto', { mode: 'ask', provider: seeing }).reason, 'not_act_mode');
+  assert.equal(resolveVisionMode('auto', { mode: 'dev', provider: seeing }).reason, 'not_act_mode');
+  assert.equal(resolveVisionMode('auto', { mode: 'act', provider: { ...seeing, supportsVision: false } }).reason, 'model_without_images');
   // A describe-only vision sub-model cannot aim clicks.
-  assert.equal(resolveVisionMode('on', { mode: 'act', provider: seeing, rawImage: false }).reason, 'model_without_images');
-  assert.equal(resolveVisionMode('on', { mode: 'act', provider: seeing, standalone: true }).reason, 'standalone_chat');
-  assert.equal(resolveVisionMode('on', { mode: 'act', provider: { name: 'openrouter', supportsVision: true, config: { model: 'google/gemini-2.5-flash' } } }).coordinates, 'normalized');
+  assert.equal(resolveVisionMode('auto', { mode: 'act', provider: seeing, rawImage: false }).reason, 'model_without_images');
+  assert.equal(resolveVisionMode('auto', { mode: 'act', provider: seeing, standalone: true }).reason, 'standalone_chat');
+  assert.equal(resolveVisionMode('auto', { mode: 'act', provider: { name: 'openrouter', supportsVision: true, config: { model: 'google/gemini-2.5-flash' } } }).coordinates, 'normalized');
   // A site workflow proved against the element inventory keeps the tree path.
-  assert.equal(resolveVisionMode('on', { mode: 'act', provider: seeing, ledgerWorkflow: true }).reason, 'workflow_needs_element_inventory');
-  assert.equal(resolveVisionMode('on', { mode: 'act', provider: seeing, ledgerWorkflow: false }).active, true);
+  assert.equal(resolveVisionMode('auto', { mode: 'act', provider: seeing, ledgerWorkflow: true }).reason, 'workflow_needs_element_inventory');
+  assert.equal(resolveVisionMode('auto', { mode: 'act', provider: seeing, ledgerWorkflow: false }).active, true);
 });
 
 for (const build of ['chrome', 'firefox']) {
@@ -424,24 +434,28 @@ for (const build of ['chrome', 'firefox']) {
     const settings = read(`src/${build}/src/ui/settings.js`);
     const background = read(`src/${build}/src/background.js`);
     const runtime = build === 'chrome' ? 'chrome' : 'browser';
-    assert.match(html, /<select id="select-vision-mode" data-i18n-aria-label="st\.display\.vision_mode\.label">\s*<option value="on" data-i18n="st\.display\.vision_mode\.on"><\/option>\s*<option value="off" data-i18n="st\.display\.vision_mode\.off"><\/option>/);
+    assert.match(html, /<select id="select-vision-mode" data-i18n-aria-label="st\.display\.vision_mode\.label">\s*<option value="auto" data-i18n="st\.display\.vision_mode\.auto"><\/option>\s*<option value="off" data-i18n="st\.display\.vision_mode\.off"><\/option>/);
     assert.match(html, /<select id="select-vision-quality"[\s\S]*?value="economy"[\s\S]*?value="balanced"[\s\S]*?value="sharp"/);
     assert.ok(html.indexOf('select-vision-mode') > html.indexOf('select-lean-mode'), 'next to Lean mode in Advanced');
     assert.match(settings, /visionModeSelect\.value = normalizeVisionModeSetting\(stored\.visionMode\)/);
     assert.match(settings, new RegExp(`await ${runtime}\\.storage\\.local\\.set\\(\\{ visionMode: normalizeVisionModeSetting\\(visionModeSelect\\.value\\) \\}\\)`));
     assert.match(settings, new RegExp(`await ${runtime}\\.storage\\.local\\.set\\(\\{ visionQuality: normalizeVisionQuality\\(visionQualitySelect\\.value\\) \\}\\)`));
-    // Background applies the stored setting (default on) before the first chat.
+    // Background applies the stored setting (default Auto) before the first chat.
     assert.match(background, /agent\.visionMode = normalizeVisionModeSetting\(stored\?\.visionMode\);/);
     assert.match(background, /if \(changes\.visionMode\) \{\s*agent\.visionMode = normalizeVisionModeSetting\(changes\.visionMode\.newValue\);/);
     assert.equal((background.match(/await strictSecretModeReady;/g) || []).length, (background.match(/await visionModeReady;/g) || []).length,
       'every hydration wait also waits for the vision setting');
     const config = await import(`../src/${build}/src/config-transfer.js`);
-    assert.equal(config.DEFAULT_CONFIG_SETTINGS.visionMode, 'on');
+    assert.equal(config.DEFAULT_CONFIG_SETTINGS.visionMode, 'auto');
     assert.equal(config.DEFAULT_CONFIG_SETTINGS.visionQuality, 'balanced');
     assert.ok(config.CONFIG_STORAGE_KEYS.includes('visionMode'));
     assert.ok(config.CONFIG_STORAGE_KEYS.includes('visionQuality'));
     const exported = config.createConfigExport({});
     assert.equal(config.parseConfigImport(JSON.stringify({ ...exported, settings: { ...exported.settings, visionMode: 'off', visionQuality: 'sharp' } })).settings.visionMode, 'off');
+    assert.equal(config.parseConfigImport(JSON.stringify({ ...exported, settings: { ...exported.settings, visionMode: 'auto' } })).settings.visionMode, 'auto');
+    // An export made while Auto was called On imports as Auto, and a stored 'on' exports as Auto.
+    assert.equal(config.parseConfigImport(JSON.stringify({ ...exported, settings: { ...exported.settings, visionMode: 'on' } })).settings.visionMode, 'auto');
+    assert.equal(config.createConfigExport({ visionMode: 'on' }).settings.visionMode, 'auto');
     assert.throws(() => config.parseConfigImport(JSON.stringify({ ...exported, settings: { ...exported.settings, visionMode: 'maybe' } })), /visionMode/);
     assert.throws(() => config.parseConfigImport(JSON.stringify({ ...exported, settings: { ...exported.settings, visionQuality: 'huge' } })), /visionQuality/);
     // Every locale has real, translated copy.
@@ -449,17 +463,20 @@ for (const build of ['chrome', 'firefox']) {
     const english = (await import(`../src/${build}/src/ui/locales/en.js`)).default;
     const locales = fs.readdirSync(dir).filter(name => /^[a-z]{2}\.js$/.test(name));
     assert.equal(locales.length, 23);
-    const keys = ['vision_mode.label', 'vision_mode.desc', 'vision_mode.on', 'vision_mode.off', 'vision_quality.label', 'vision_quality.desc',
+    const keys = ['vision_mode.label', 'vision_mode.desc', 'vision_mode.auto', 'vision_mode.off', 'vision_quality.label', 'vision_quality.desc',
       'vision_quality.economy', 'vision_quality.balanced', 'vision_quality.sharp'];
     for (const file of locales) {
       const dict = (await import(`../src/${build}/src/ui/locales/${file}`)).default;
       for (const key of keys) assert.ok(String(dict[`st.display.${key}`] || '').trim(), `${file}: ${key}`);
       if (file !== 'en.js') assert.notEqual(dict['st.display.vision_mode.desc'], english['st.display.vision_mode.desc'], `${file}: translated description`);
+      // Auto reads as Lean mode's Auto beside it, and On is gone.
+      assert.equal(dict['st.display.vision_mode.auto'], dict['st.display.lean_mode.auto'], `${file}: Auto label`);
+      assert.equal(Object.hasOwn(dict, 'st.display.vision_mode.on'), false, `${file}: no On label`);
     }
     // Traces record the setting and the run's resolved state, nothing else.
     const runtimeConfig = await import(`../src/${build}/src/trace/runtime-config.js`);
-    assert.deepEqual(runtimeConfig.normalizeRuntimeTraceConfig({ vision_mode: true, vision_mode_setting: 'on', token: 'x' }),
-      { schema_version: 1, vision_mode: true, vision_mode_setting: 'on' });
+    assert.deepEqual(runtimeConfig.normalizeRuntimeTraceConfig({ vision_mode: true, vision_mode_setting: 'auto', token: 'x' }),
+      { schema_version: 1, vision_mode: true, vision_mode_setting: 'auto' });
   });
 }
 

@@ -768,7 +768,7 @@ export default {
   "st.display.lean_mode.off": "Aus",
   "st.display.vision_mode.label": "Visueller Modus",
   "st.display.vision_mode.desc": "Im Modus „Handeln“ sieht der Agent die Seite als Screenshots und klickt, tippt und scrollt an Bildschirmkoordinaten, statt den Barrierefreiheitsbaum zu lesen. Erfordert ein Modell, das Bilder annimmt; andere Modelle nutzen weiter den Barrierefreiheitsbaum. Nach jeder Aktion wird nur der geänderte Teil des Bildschirms gesendet. Retina-Displays und Browser-Zoom werden automatisch berücksichtigt.",
-  "st.display.vision_mode.on": "Ein",
+  "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Aus",
   "st.display.vision_quality.label": "Screenshot-Größe im visuellen Modus",
   "st.display.vision_quality.desc": "Größe der im visuellen Modus gesendeten Screenshots. Sparsam verbraucht die wenigsten Tokens und lädt am schnellsten; Scharf behält die meisten Details. Der Agent kann kleine Schrift jederzeit vergrößern.",

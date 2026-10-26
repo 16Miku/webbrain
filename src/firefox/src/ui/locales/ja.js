@@ -932,7 +932,7 @@ export default {
   "st.display.lean_mode.off": "オフ",
   "st.display.vision_mode.label": "ビジョンモード",
   "st.display.vision_mode.desc": "実行モードでは、エージェントはアクセシビリティツリーを読む代わりにページをスクリーンショットとして見て、画面座標でクリック・入力・スクロールします。画像を受け付けるモデルが必要で、それ以外のモデルは引き続きアクセシビリティツリーを使います。各操作の後は画面の変化した部分だけが送信されます。Retina ディスプレイとブラウザのズームは自動で処理されます。",
-  "st.display.vision_mode.on": "オン",
+  "st.display.vision_mode.auto": "自動",
   "st.display.vision_mode.off": "オフ",
   "st.display.vision_quality.label": "ビジョンモードのスクリーンショットサイズ",
   "st.display.vision_quality.desc": "ビジョンモードで送るスクリーンショットのサイズ。エコノミーはトークンが最も少なく最速でアップロードでき、シャープは最も多くの詳細を保ちます。エージェントは小さな文字をいつでもズームできます。",

@@ -698,7 +698,7 @@ async function init() {
   if (strictSecretToggle) strictSecretToggle.checked = stored.strictSecretMode === true; // off by default
   if (strictGuardsToggle) strictGuardsToggle.checked = stored.strictGuards === true; // off by default
   if (leanModeSelect) leanModeSelect.value = normalizeLeanModeSetting(stored.leanMode); // auto by default
-  if (visionModeSelect) visionModeSelect.value = normalizeVisionModeSetting(stored.visionMode); // on by default
+  if (visionModeSelect) visionModeSelect.value = normalizeVisionModeSetting(stored.visionMode); // Auto by default
   if (visionQualitySelect) visionQualitySelect.value = normalizeVisionQuality(stored.visionQuality); // balanced by default
   if (allowLocalNetworkToggle) allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true;
   if (scheduledTasksToggle) scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false;

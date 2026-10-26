@@ -744,7 +744,7 @@ export default {
   "st.display.lean_mode.off": "Uit",
   "st.display.vision_mode.label": "Visuele modus",
   "st.display.vision_mode.desc": "In de modus Handelen ziet de agent de pagina als schermafbeeldingen en klikt, typt en scrolt hij op schermcoördinaten in plaats van de toegankelijkheidsboom te lezen. Vereist een model dat afbeeldingen accepteert; andere modellen blijven de toegankelijkheidsboom gebruiken. Na elke actie wordt alleen het gewijzigde deel van het scherm verzonden. Retina-schermen en browserzoom worden automatisch verwerkt.",
-  "st.display.vision_mode.on": "Aan",
+  "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Uit",
   "st.display.vision_quality.label": "Schermafbeeldingsgrootte in visuele modus",
   "st.display.vision_quality.desc": "Grootte van de schermafbeeldingen in de visuele modus. Zuinig gebruikt de minste tokens en uploadt het snelst; Scherp behoudt de meeste details. De agent kan altijd inzoomen op kleine tekst.",

@@ -932,7 +932,7 @@ export default {
   "st.display.lean_mode.off": "끔",
   "st.display.vision_mode.label": "비전 모드",
   "st.display.vision_mode.desc": "실행 모드에서 에이전트는 접근성 트리를 읽는 대신 페이지를 스크린샷으로 보고 화면 좌표에서 클릭, 입력, 스크롤합니다. 이미지를 받는 모델이 필요하며, 다른 모델은 계속 접근성 트리를 사용합니다. 각 동작 후에는 화면에서 바뀐 부분만 전송됩니다. 레티나 디스플레이와 브라우저 확대/축소는 자동으로 처리됩니다.",
-  "st.display.vision_mode.on": "켜짐",
+  "st.display.vision_mode.auto": "자동",
   "st.display.vision_mode.off": "꺼짐",
   "st.display.vision_quality.label": "비전 모드 스크린샷 크기",
   "st.display.vision_quality.desc": "비전 모드에서 보내는 스크린샷의 크기입니다. 절약은 토큰을 가장 적게 쓰고 가장 빨리 업로드되며, 선명은 세부 정보를 가장 많이 유지합니다. 에이전트는 작은 글자를 언제든 확대할 수 있습니다.",

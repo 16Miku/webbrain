@@ -2,20 +2,23 @@
 // Shared verbatim by the Chrome and Firefox builds (test/vision-mode.mjs).
 //
 // Settings → Advanced → "Vision mode" (storage key `visionMode`):
-//   'on'  — Act runs see the page as screenshots and act with coordinates
-//           whenever the run's model accepts images. This is the default.
-//   'off' — the accessibility-tree path.
+//   'auto' — Act runs see the page as screenshots and act with coordinates
+//            whenever the run's model accepts images. This is the default.
+//            The option was called On before, so a stored 'on' (or true)
+//            reads as 'auto'.
+//   'off'  — the accessibility-tree path.
 // A run decides once, when it starts, and keeps that answer to the end.
 
 import { detectVisionProfile, normalizeVisionQuality } from './vision-budget.js';
 
-export const VISION_MODE_SETTINGS = Object.freeze(['on', 'off']);
-export const DEFAULT_VISION_MODE_SETTING = 'on';
+export const VISION_MODE_SETTINGS = Object.freeze(['auto', 'off']);
+export const DEFAULT_VISION_MODE_SETTING = 'auto';
 
 export function normalizeVisionModeSetting(value, fallback = DEFAULT_VISION_MODE_SETTING) {
-  if (value === true) return 'on';
+  if (value === true) return 'auto';
   if (value === false) return 'off';
   const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'on') return 'auto';
   if (VISION_MODE_SETTINGS.includes(normalized)) return normalized;
   return VISION_MODE_SETTINGS.includes(fallback) ? fallback : DEFAULT_VISION_MODE_SETTING;
 }
@@ -39,7 +42,7 @@ export function resolveVisionMode(setting, {
 } = {}) {
   const normalized = normalizeVisionModeSetting(setting);
   const base = { active: false, setting: normalized };
-  if (normalized !== 'on') return { ...base, reason: 'setting_off' };
+  if (normalized !== 'auto') return { ...base, reason: 'setting_off' };
   if (mode !== 'act') return { ...base, reason: 'not_act_mode' };
   if (standalone) return { ...base, reason: 'standalone_chat' };
   if (selectionOnly) return { ...base, reason: 'selection_scope' };

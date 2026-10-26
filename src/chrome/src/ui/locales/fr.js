@@ -957,7 +957,7 @@ export default {
   "st.display.lean_mode.off": "Désactivé",
   "st.display.vision_mode.label": "Mode visuel",
   "st.display.vision_mode.desc": "En mode Agir, l’agent voit la page sous forme de captures d’écran et clique, tape et fait défiler à des coordonnées de l’écran au lieu de lire l’arbre d’accessibilité. Nécessite un modèle qui accepte les images ; les autres modèles conservent l’arbre d’accessibilité. Après chaque action, seule la partie de l’écran qui a changé est envoyée. Les écrans Retina et le zoom du navigateur sont gérés automatiquement.",
-  "st.display.vision_mode.on": "Activé",
+  "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Désactivé",
   "st.display.vision_quality.label": "Taille des captures en mode visuel",
   "st.display.vision_quality.desc": "Taille des captures envoyées en mode visuel. Économique utilise le moins de jetons et s’envoie le plus vite ; Net conserve le plus de détails. L’agent peut toujours zoomer sur un petit texte.",

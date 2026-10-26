@@ -8,7 +8,7 @@ const STRING_ENUMS = Object.freeze({
   image_detail: new Set(['auto', 'low', 'high']),
   selection_scope_policy: new Set(['selection_only', 'selection_context']),
   lean_mode_setting: new Set(['auto', 'on', 'off']),
-  vision_mode_setting: new Set(['on', 'off']),
+  vision_mode_setting: new Set(['auto', 'off']),
 });
 
 const BOOLEAN_FIELDS = Object.freeze([

@@ -748,9 +748,9 @@ export class Agent extends LoopDetector {
     // resolves it once at its start (_beginLeanRun) and keeps the answer in
     // _leanRuns, so its prompt note and guards agree. See lean-mode.js.
     this.leanMode = 'auto';
-    // Vision mode (vision-mode.js): 'on' | 'off'. The class default keeps
+    // Vision mode (vision-mode.js): 'auto' | 'off'. The class default keeps
     // the accessibility-tree path for embedders and the unit suite;
-    // background.js applies the stored setting, whose default is 'on'.
+    // background.js applies the stored setting, whose default is 'auto'.
     this.visionMode = 'off';
     this.visionQuality = 'balanced';
     this._visionSessions = new Map();

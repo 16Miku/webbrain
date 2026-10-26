@@ -744,7 +744,7 @@ export default {
   "st.display.lean_mode.off": "כבוי",
   "st.display.vision_mode.label": "מצב חזותי",
   "st.display.vision_mode.desc": "במצב פעולה הסוכן רואה את הדף כצילומי מסך ולוחץ, מקליד וגולל בקואורדינטות מסך במקום לקרוא את עץ הנגישות. נדרש מודל שמקבל תמונות; מודלים אחרים ממשיכים להשתמש בעץ הנגישות. אחרי כל פעולה נשלח רק החלק שהשתנה במסך. מסכי Retina והגדלת הדפדפן מטופלים אוטומטית.",
-  "st.display.vision_mode.on": "מופעל",
+  "st.display.vision_mode.auto": "אוטומטי",
   "st.display.vision_mode.off": "כבוי",
   "st.display.vision_quality.label": "גודל צילומי המסך במצב חזותי",
   "st.display.vision_quality.desc": "גודל צילומי המסך שנשלחים במצב חזותי. חסכוני משתמש במעט אסימונים ומועלה מהר; חד שומר על מרב הפרטים. הסוכן תמיד יכול להגדיל טקסט קטן.",

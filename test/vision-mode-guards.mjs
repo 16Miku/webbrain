@@ -330,10 +330,10 @@ for (const build of ['chrome', 'firefox']) {
   };
 
   test(`${build}: a whole-thread read and WhatsApp Web or Telegram keep the tree path; other pages stay in vision`, () => {
-    assert.equal(resolveVisionMode('on', { mode: 'act', provider: seeing, completeThreadRead: true }).reason, 'complete_thread_read');
-    assert.equal(resolveVisionMode('on', { mode: 'act', provider: seeing, nativeChatPage: true }).reason, 'native_chat_needs_element_inventory');
+    assert.equal(resolveVisionMode('auto', { mode: 'act', provider: seeing, completeThreadRead: true }).reason, 'complete_thread_read');
+    assert.equal(resolveVisionMode('auto', { mode: 'act', provider: seeing, nativeChatPage: true }).reason, 'native_chat_needs_element_inventory');
     const agent = agentFor();
-    agent.visionMode = 'on';
+    agent.visionMode = 'auto';
     const tab = 31;
     assert.equal(agent._visionRunState(tab, 'act').active, true);
     agent.readCompletenessStates.set(tab, { required: true, complete: false });

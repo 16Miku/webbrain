@@ -949,7 +949,7 @@ export default {
   "st.display.lean_mode.off": "Wył.",
   "st.display.vision_mode.label": "Tryb wizualny",
   "st.display.vision_mode.desc": "W trybie Działaj agent widzi stronę jako zrzuty ekranu i klika, pisze oraz przewija we współrzędnych ekranu zamiast czytać drzewo dostępności. Wymaga modelu, który przyjmuje obrazy; inne modele nadal używają drzewa dostępności. Po każdej akcji wysyłana jest tylko zmieniona część ekranu. Ekrany Retina i powiększenie przeglądarki są obsługiwane automatycznie.",
-  "st.display.vision_mode.on": "Włączony",
+  "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Wyłączony",
   "st.display.vision_quality.label": "Rozmiar zrzutów w trybie wizualnym",
   "st.display.vision_quality.desc": "Rozmiar zrzutów wysyłanych w trybie wizualnym. Oszczędny zużywa najmniej tokenów i wysyła się najszybciej; Ostry zachowuje najwięcej szczegółów. Agent zawsze może powiększyć drobny tekst.",

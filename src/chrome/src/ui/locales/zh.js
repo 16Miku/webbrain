@@ -957,7 +957,7 @@ export default {
   "st.display.lean_mode.off": "关闭",
   "st.display.vision_mode.label": "视觉模式",
   "st.display.vision_mode.desc": "在执行模式下，智能体以屏幕截图的方式查看页面，并在屏幕坐标处点击、输入和滚动，而不是读取无障碍树。需要能接收图像的模型；其他模型继续使用无障碍树。每次操作后只发送屏幕上发生变化的部分。Retina 屏幕和浏览器缩放会自动处理。",
-  "st.display.vision_mode.on": "开启",
+  "st.display.vision_mode.auto": "自动",
   "st.display.vision_mode.off": "关闭",
   "st.display.vision_quality.label": "视觉模式截图尺寸",
   "st.display.vision_quality.desc": "视觉模式下发送的截图尺寸。经济使用最少的令牌、上传最快；清晰保留最多细节。智能体随时可以放大查看小字。",

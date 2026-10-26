@@ -8,7 +8,7 @@ The accessibility-tree path stays available (Settings → Advanced → **Vision 
 
 Settings → Advanced:
 
-- **Vision mode** (storage key `visionMode`): **On** (default) or **Off**. On applies to Act runs whose model receives screenshots directly (`provider.supportsVision`). A separate describe-only vision model cannot aim clicks, so a text-only model keeps the accessibility tree. Ask and Dev are unchanged.
+- **Vision mode** (storage key `visionMode`): **Auto** (default) or **Off**. Auto applies to Act runs whose model receives screenshots directly (`provider.supportsVision`). A separate describe-only vision model cannot aim clicks, so a text-only model keeps the accessibility tree. Ask and Dev are unchanged. The option was called **On** before; a stored `on` (or `true`), and an exported configuration that carries it, reads as Auto.
 - **Vision screenshot size** (`visionQuality`): **Economy**, **Balanced** (default) or **Sharp**. It caps the model-facing image (Economy: long edge 1024 px / 0.6 MP; Balanced: 1440 px / 1.05 MP; Sharp: the provider's own limit). The model can always `zoom` for detail.
 
 A run decides once, when it starts (`_beginVisionRun` snapshots both settings), like lean mode. The resolved state is recorded in the trace's runtime config as `vision_mode_setting` and `vision_mode`. The `Agent` class default is `off`, so embedders and unit tests opt in explicitly; `background.js` applies the stored setting, whose default is `on`.

@@ -65,7 +65,7 @@ function createScene({ cssWidth = 1440, cssHeight = 900, devicePixelRatio = 2 } 
 for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
 
-  function runAgent(next, { visionMode = 'on', provider = VISION, scene = createScene(), maxSteps = 8, onDispatch = null } = {}) {
+  function runAgent(next, { visionMode = 'auto', provider = VISION, scene = createScene(), maxSteps = 8, onDispatch = null } = {}) {
     const requests = [];
     const scripted = {
       contextWindow: 200000, supportsTools: true, supportsVision: true, promptTier: 'full', ...provider,

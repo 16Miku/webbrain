@@ -771,7 +771,7 @@ export default {
   "st.display.lean_mode.off": "Tắt",
   "st.display.vision_mode.label": "Chế độ hình ảnh",
   "st.display.vision_mode.desc": "Ở chế độ Hành động, tác tử nhìn trang dưới dạng ảnh chụp màn hình và nhấp, gõ, cuộn theo tọa độ màn hình thay vì đọc cây trợ năng. Cần một mô hình nhận được hình ảnh; các mô hình khác vẫn dùng cây trợ năng. Sau mỗi thao tác, chỉ phần màn hình thay đổi được gửi đi. Màn hình Retina và thu phóng trình duyệt được xử lý tự động.",
-  "st.display.vision_mode.on": "Bật",
+  "st.display.vision_mode.auto": "Tự động",
   "st.display.vision_mode.off": "Tắt",
   "st.display.vision_quality.label": "Kích thước ảnh chụp ở chế độ hình ảnh",
   "st.display.vision_quality.desc": "Kích thước ảnh chụp màn hình gửi đi ở chế độ hình ảnh. Tiết kiệm dùng ít token nhất và tải lên nhanh nhất; Sắc nét giữ nhiều chi tiết nhất. Tác tử luôn có thể phóng to chữ nhỏ.",

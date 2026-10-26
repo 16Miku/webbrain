@@ -59,7 +59,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   strictSecretMode: false,
   strictGuards: false,
   leanMode: 'auto',
-  visionMode: 'on',
+  visionMode: 'auto',
   visionQuality: 'balanced',
   agentAllowLocalNetwork: false,
   scheduledTasksEnabled: true,
@@ -253,7 +253,8 @@ function validSettingValue(key, value) {
   if (key === 'decisionMode') return ['', ...DECISION_MODES].includes(value);
   if (key === 'decisionVisionMode') return ['auto', 'on', 'off'].includes(value);
   if (key === 'leanMode') return ['auto', 'on', 'off'].includes(value);
-  if (key === 'visionMode') return ['on', 'off'].includes(value);
+  // 'on' is Auto's name from before the option was renamed (currentSettingValue).
+  if (key === 'visionMode') return ['auto', 'on', 'off'].includes(value);
   if (key === 'visionQuality') return ['economy', 'balanced', 'sharp'].includes(value);
   if (key === 'decisionBaseUrl') {
     if (typeof value !== 'string') return false;
@@ -267,6 +268,13 @@ function validSettingValue(key, value) {
   if (NULLABLE_OBJECT_KEYS.has(key)) return value === null || isPlainObject(value);
   if (key === 'providers' || key === USER_MEMORY_STORAGE_KEY || key === SAFE_SOCIAL_SETTINGS_KEY) return isPlainObject(value);
   return true;
+}
+
+// A value an older export names by a setting's former option: vision mode's
+// Auto was called On ('on').
+function currentSettingValue(key, value) {
+  if (key === 'visionMode' && value === 'on') return 'auto';
+  return value;
 }
 
 function normalizeSettings(source, { strict = false } = {}) {
@@ -295,7 +303,7 @@ function normalizeSettings(source, { strict = false } = {}) {
       if (strict) throw new Error(`Invalid value for configuration setting "${key}".`);
       continue;
     }
-    settings[key] = clone(value);
+    settings[key] = clone(currentSettingValue(key, value));
   }
   settings.providers = sanitizeProviders(settings.providers, { strict });
   if (!Object.hasOwn(source, 'decisionInputRate')) {

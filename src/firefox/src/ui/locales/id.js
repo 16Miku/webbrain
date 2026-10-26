@@ -932,7 +932,7 @@ export default {
   "st.display.lean_mode.off": "Nonaktif",
   "st.display.vision_mode.label": "Mode visual",
   "st.display.vision_mode.desc": "Dalam mode Bertindak, agen melihat halaman sebagai tangkapan layar dan mengklik, mengetik, serta menggulir pada koordinat layar alih-alih membaca pohon aksesibilitas. Memerlukan model yang menerima gambar; model lain tetap memakai pohon aksesibilitas. Setelah setiap tindakan hanya bagian layar yang berubah yang dikirim. Layar Retina dan zoom browser ditangani otomatis.",
-  "st.display.vision_mode.on": "Aktif",
+  "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Nonaktif",
   "st.display.vision_quality.label": "Ukuran tangkapan layar mode visual",
   "st.display.vision_quality.desc": "Ukuran tangkapan layar yang dikirim dalam mode visual. Hemat memakai token paling sedikit dan paling cepat diunggah; Tajam mempertahankan detail terbanyak. Agen selalu dapat memperbesar teks kecil.",
