@@ -101,7 +101,7 @@ function compactRunUiToolResult(result, name) {
       if (typeof source[key] === 'string') compacted[key] = source[key];
     }
     if (source.inlineMedia === true) compacted.inlineMedia = true;
-    for (const key of ['durationSeconds', 'clipCount', 'estimatedSeconds', 'plannedSeconds', 'fallbackClipSeconds']) {
+    for (const key of ['durationSeconds', 'clipCount', 'estimatedSeconds', 'plannedSeconds', 'approvedDurationSeconds', 'fallbackClipSeconds']) {
       if (Number.isFinite(source[key])) compacted[key] = source[key];
     }
     if (['short', 'enough', 'unverified'].includes(source.durationStatus)) compacted.durationStatus = source.durationStatus;

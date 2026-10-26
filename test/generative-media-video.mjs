@@ -1251,6 +1251,8 @@ for (const build of ['chrome', 'firefox']) {
     assert.deepEqual([approved.estimatedSeconds, approved.plannedSeconds, approved.durationSeconds, approved.durationStatus],
       [330, 2, 2, 'enough'], 'delivery is measured against the explicitly approved shorter plan');
     assert.equal(approved.notice, undefined);
+    assert.equal(approved.approvedDurationSeconds, 2);
+    assert.equal(journal.compactRunUiData('tool_result', { name: 'generate_image', result: approved }).result.approvedDurationSeconds, 2);
 
     const fal = falApi({ model: h3Max.id, schema: h3Max.schema });
     const hosted = await generate({ prompt: 'A short clip', media: 'video', duration: 10, estimated_duration: 10 },

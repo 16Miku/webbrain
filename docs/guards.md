@@ -34,7 +34,8 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
     or unfinished progress rows, unread pages of a whole thread the user
     asked for, text that went into a formatting toolbar, an exact table that
     can no longer be delivered, a field read back as another value than was
-    written to it, an arithmetic result claimed before the calculator ran)
+    written to it, an arithmetic result claimed before the calculator ran, or
+    a requested video that is short, unjoined or undelivered)
     ends the run as `partial`, not `success`, whether it ended with `done`, a structured
     Cloud run's `done_json` or a plain answer. Missing evidence alone keeps
     the model's outcome.
