@@ -54,13 +54,13 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   test(`${build}: only an approved shorter runtime result changes the effective target`, () => {
-    const long = { requestedSeconds: 330, status: 'pending' };
+    const long = { requestedSeconds: 330, status: 'pending', videoId: 'explainer' };
     assert.ok(block(receipt(long, delivered(120))));
     const approved = receipt(long, { ...delivered(120), approvedDurationSeconds: 120 });
     assert.equal(approved.requestedSeconds, 330);
     assert.equal(approved.approvedDurationSeconds, 120);
     assert.equal(block(approved), null);
-    assert.equal(pin({ media: 'video', estimated_duration: 5 }, approved).args.estimated_duration, 120);
+    assert.equal(pin({ media: 'video', video_id: 'explainer', estimated_duration: 5 }, approved).args.estimated_duration, 120);
   });
 
   test(`${build}: actual trace retry never dispatches a default short paid clip`, async () => {
@@ -94,16 +94,16 @@ for (const build of ['chrome', 'firefox']) {
     } finally { globalThis.fetch = originalFetch; }
   });
 
-  test(`${build}: short or unverified results cannot bypass done via advisory, lean, JSON or plain text`, async () => {
+  test(`${build}: Strict checks refuse short or unverified results through done, JSON and plain text`, async () => {
     for (const result of [delivered(5), { success: true, url: 'https://media.example/v.mp4' }, { ...delivered(64), joined: false }]) {
       const { agent, tab, guard } = fixture();
       guard.videoDurationContract = receipt(target(), result);
       guard.successfulTaskToolCalls = guard.successfulConsequentialToolCalls = 99;
       guard.evidenceTaskKey = guard.taskKey;
-      agent.strictGuards = false;
-      agent._leanRunActive = () => true;
+      agent.strictGuards = true;
+      agent._leanRunActive = () => false;
       agent._resolveExactTableDone = async () => assert.fail('video guard must precede table and lean completion');
-      assert.ok(agent._completionDoneBlock(tab, 'done', { outcome: 'success' }, null, { skip: new Set(['video_duration_incomplete']) }));
+      assert.ok(agent._completionDoneBlock(tab, 'done', { outcome: 'success' }));
       for (let i = 0; i < 2; i++) {
         const done = await agent._executeToolImpl(tab, 'done', { outcome: 'success', summary: 'The video is ready.' }, () => {});
         assert.equal(done.blockedDone, true);
@@ -113,15 +113,16 @@ for (const build of ['chrome', 'firefox']) {
       const structured = await agent._executeToolImpl(tab, 'done_json', { result: {}, summary: 'Complete.' }, () => {});
       assert.equal(structured.videoDurationIncomplete, true);
       assert.equal(agent._planOnlyTerminalDecision(tab, 'Here is the full minute.').retry, true);
-      assert.equal(agent._planOnlyTerminalDecision(tab, 'Here is the full minute.').status, 'video_duration_incomplete');
+      assert.equal(agent._planOnlyTerminalDecision(tab, 'Here is the full minute.').retry, true);
       agent._resolveExactTableDone = async () => null;
+      agent._leanRunActive = () => true;
       const partial = await agent._executeToolImpl(tab, 'done', { outcome: 'partial', summary: 'Only a short clip is available.' }, () => {});
       assert.equal(partial.done, true);
       assert.equal(partial.outcome, 'partial');
     }
   });
 
-  test(`${build}: a measured sufficient receipt passes the hard check`, async () => {
+  test(`${build}: a measured sufficient receipt passes the duration check`, async () => {
     const { agent, tab, guard } = fixture();
     guard.videoDurationContract = receipt(target(), delivered(64));
     agent._resolveExactTableDone = async () => null;

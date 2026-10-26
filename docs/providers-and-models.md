@@ -362,7 +362,22 @@ the original estimate (`estimatedSeconds`),
 accepted plan (`plannedSeconds`), and `durationStatus`: `short`, `enough`,
 or `unverified`. A measured shortfall keeps the generated asset and reports
 incomplete delivery; hosted clips without a measured length stay unverified.
-These fields guide reporting, not a hard block on the agent's `done` call.
+Each requested video keeps its own duration obligation across retries, Continue,
+and worker restart. For multiple videos, use a distinct `video_id` per deliverable
+and reuse it on retries; a verified intro cannot satisfy a failed outro. Without
+labels, another video requested after a verified result starts a new obligation.
+For local ComfyUI, corrected retries omit unsupported video options while WebBrain
+retains the target separately for verification. The workflow chooses the output
+length; its configured loopback `/view` result is measured without redirects.
+Duration-constrained hosted MP4s use a credential-free read capped at 15 seconds.
+Verification failures keep the asset and report an unverified duration.
+
+Duration completion checks follow the quality-guard policy: by default they
+refuse once, then allow a caveated completion. Known short, unjoined, or undelivered
+videos downgrade that completion to partial; unavailable duration verification
+alone keeps the model's outcome. Strict checks continue refusing until the video
+meets its target or the model reports a partial or failed outcome.
+
 Before writing scenes, the agent can load the default Video scenes
 skill (`skills/video-scenes.md`), which asks for a shared cast and set sheet in
 `prompt`, one filmable action per scene, and demonstrations instead of diagrams

@@ -494,13 +494,17 @@ async function videoBytes(response, label) {
 // A finished clip as MP4 bytes to join: inline media is decoded, a hosted file
 // downloaded within the deadline. No key is sent with the download, so
 // redirects are allowed.
-async function downloadClip(url, { fetchImpl, signal, timeoutMs, label }) {
+async function downloadClip(url, { fetchImpl, signal, timeoutMs, label, localBaseUrl }) {
   let bytes = dataUrlBytes(url)?.bytes;
   if (!bytes) {
-    if (!safeMediaUrl(url)) throw lasting(`${label} returned an unsupported media URL.`);
+    // Only the configured workflow's /view endpoint may use loopback HTTP.
+    // Refuse redirects so a local output cannot turn verification into a read
+    // from another host. Cloud media keeps its ordinary HTTPS URL policy.
+    const localView = localBaseUrl && url.startsWith(`${comfyBaseUrl(localBaseUrl)}/view?`);
+    if (!localView && !safeMediaUrl(url)) throw lasting(`${label} returned an unsupported media URL.`);
     const operation = operationSignal(signal, timeoutMs);
     try {
-      const res = await fetchImpl(url, { signal: operation.signal, credentials: 'omit' });
+      const res = await fetchImpl(url, { signal: operation.signal, credentials: 'omit', ...(localView ? { redirect: 'error' } : {}) });
       if (!res.ok) throw Object.assign(new Error(`${label} clip download failed (HTTP ${res.status}).`), { status: res.status });
       bytes = new Uint8Array(await res.arrayBuffer());
     } catch (error) { throw operation.signal.aborted ? operation.signal.reason : error; }
@@ -820,10 +824,10 @@ const roundSeconds = seconds => (Number.isFinite(seconds) && seconds > 0 ? Math.
 // Keep the declared target, accepted plan and measured output distinct. Paid
 // assets remain successful results even if the provider delivered too little;
 // the agent must report the shortfall instead of calling the whole task ready.
-function videoDeliveryDetails(result, asset) {
+function videoDeliveryDetails(result, asset, targetSeconds) {
   const plannedSeconds = roundSeconds(result.totalSeconds);
-  if (!plannedSeconds) return {};
-  const estimatedSeconds = roundSeconds(result.estimatedSeconds) || plannedSeconds;
+  const estimatedSeconds = roundSeconds(targetSeconds) || roundSeconds(result.estimatedSeconds) || plannedSeconds;
+  if (!estimatedSeconds) return {};
   const approvedDurationSeconds = roundSeconds(result.approvedDurationSeconds);
   const requiredSeconds = approvedDurationSeconds || estimatedSeconds;
   const actual = asset.durationSeconds;
@@ -832,12 +836,12 @@ function videoDeliveryDetails(result, asset) {
     ? (actual + 0.25 < requiredSeconds ? 'short' : 'enough') : 'unverified';
   return {
     estimatedSeconds,
-    plannedSeconds,
+    ...(plannedSeconds ? { plannedSeconds } : {}),
     ...(approvedDurationSeconds ? { approvedDurationSeconds } : {}),
     ...(result.fallbackClipSeconds ? { fallbackClipSeconds: result.fallbackClipSeconds } : {}),
     durationStatus,
     ...(durationStatus === 'short' ? {
-      notice: `Generated ${actual} s of the planned ${plannedSeconds} s. The accepted target is ${requiredSeconds} s. Keep the generated asset, but report the duration shortfall; the requested video is incomplete. Do not claim it is complete.`,
+      notice: `Generated ${actual} s${plannedSeconds ? ` of the planned ${plannedSeconds} s` : ''}. The accepted target is ${requiredSeconds} s. Keep the generated asset, but report the duration shortfall; the requested video is incomplete. Do not claim it is complete.`,
     } : durationStatus === 'unverified' ? {
       notice: 'The output duration has not been measured. Do not report plannedSeconds as the actual video length.',
     } : {}),
@@ -884,7 +888,9 @@ async function storeVideoClips(clips, onProgress) {
  * user when the requested video is longer than WebBrain makes ('once' to go
  * ahead; 'deny', 'unavailable' or null otherwise). `verifyVideoDuration`
  * measures a duration-constrained hosted clip, keeping its URL if verification
- * fails. The additional read is credential-free and limited to 15 seconds.
+ * fails. `videoDurationTarget` is a runtime-only verification target, separate
+ * from provider arguments because local workflows set their own duration.
+ * The additional read is credential-free and limited to 15 seconds.
  */
 export async function generateImage(args, options = {}) {
   const fetchImpl = typeof options === 'function' ? options : options.fetchImpl || fetch;
@@ -892,6 +898,7 @@ export async function generateImage(args, options = {}) {
     const config = Object.hasOwn(options, 'config') ? options.config : await readMediaConfig();
     if (!config) throw new Error('Configure Generative Media in Providers → Generative.');
     const provider = mediaProvider(config);
+    const targetSeconds = roundSeconds(options.videoDurationTarget);
     const result = await runMediaGeneration({
       prompt: args?.prompt, media: args?.media ?? null, video: videoArguments(args), config, fetchImpl, signal: options.signal,
       pollIntervalMs: options.pollIntervalMs, onProgress: options.onProgress, confirmVideoLength: options.confirmVideoLength,
@@ -901,7 +908,7 @@ export async function generateImage(args, options = {}) {
     }
     if (Array.isArray(result.clips)) {
       const asset = await storeVideoClips(result.clips, options.onProgress);
-      return { success: true, model: result.model, provider, ...asset, ...videoDeliveryDetails(result, asset) };
+      return { success: true, model: result.model, provider, ...asset, ...videoDeliveryDetails(result, asset, targetSeconds) };
     }
     if (result.url.startsWith('data:')) {
       const asset = await storeGeneratedMedia(result.url);
@@ -909,15 +916,16 @@ export async function generateImage(args, options = {}) {
       const video = asset.mimeType === 'video/mp4' ? dataUrlBytes(result.url) : null;
       const durationSeconds = video ? roundSeconds(mp4DurationSeconds(video.bytes)) : undefined;
       const delivered = { ...asset, ...(durationSeconds ? { durationSeconds } : {}) };
-      return { success: true, model: result.model, provider, ...delivered, ...videoDeliveryDetails(result, delivered) };
+      return { success: true, model: result.model, provider, ...delivered, ...videoDeliveryDetails(result, delivered, targetSeconds) };
     }
     const { estimatedSeconds, totalSeconds, ...hosted } = result;
     let verificationFailed = false;
-    if (options.verifyVideoDuration === true && roundSeconds(totalSeconds)) {
+    if (options.verifyVideoDuration === true && (targetSeconds || roundSeconds(totalSeconds))) {
       try {
         options.signal?.throwIfAborted?.();
         const bytes = await downloadClip(hosted.url, { fetchImpl, signal: options.signal,
-          timeoutMs: 15000, label: 'Generated video duration verification' });
+          timeoutMs: 15000, label: 'Generated video duration verification',
+          ...(provider === 'comfyui' ? { localBaseUrl: comfyBaseUrl(config.baseUrl) } : {}) });
         hosted.durationSeconds = roundSeconds(mp4DurationSeconds(bytes));
         hosted.mimeType = 'video/mp4';
       } catch {
@@ -926,7 +934,7 @@ export async function generateImage(args, options = {}) {
         verificationFailed = true;
       }
     }
-    const delivery = videoDeliveryDetails(result, hosted);
+    const delivery = videoDeliveryDetails(result, hosted, targetSeconds);
     if (verificationFailed && delivery.durationStatus === 'unverified') {
       delivery.notice = 'The generated asset was kept, but its duration could not be verified. Do not report plannedSeconds as the actual video length or claim the duration requirement is complete.';
     }
