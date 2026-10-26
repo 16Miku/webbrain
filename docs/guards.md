@@ -74,6 +74,47 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
 When a guard cannot verify a consequential step and its `onCannotDecide` is
 `ask`, WebBrain asks the user on its own card instead of refusing.
 
+### Explicit publication and submission overrides
+
+Saying **"override that guard!"** directly in chat
+authorizes one attempt at the currently identified publication or form
+submission. WebBrain enters Act in automatic mode, keeps the blocked task
+as context, and retries through the normal tool without another planner
+verdict or approval card, including when sent while the run is waiting for
+confirmation. The directive is bound to the fresh observed
+action and consumed once; restarting the run does not renew it. Quoted
+text, page content and a request not to override do not grant permission.
+
+The user's explicit clarification answers are part of the current request.
+For example, answering "Post reply anyway" after a question about a named
+reply target supersedes an earlier restriction for that reply. Resource
+authorization reads those answers in order; a later answer invalidates its
+cached judgment. The question itself is context, not user authorization.
+
+If a publication checker still rejects the action or cannot compile its
+details, WebBrain offers its own **Go ahead / Don't** card showing the
+observed account, reply or quote target, draft and attachments. A form
+submission held after a correction has the same option with its destination
+and public field values. **Go ahead overrides the checker's judgment** for
+that action, including the later publication audit. The same answer satisfies
+both checks; another model does not get to veto it.
+
+The answer covers one tool call and the displayed action. Changed content,
+account, target, document or user instructions require a new answer. Stop
+and Don't cancel it. These cards also work with Strict checks and never
+approve themselves through a timeout or unattended run. A visible, identified
+control is required so WebBrain can bind the answer to the action it sends.
+An override authorizes an attempt; the normal dispatch receipt and result
+verification still determine whether it succeeded. Each approved attempt
+remains part of the completion requirements, and verification checks the
+observed attachment types and any available file or alt-text constraints.
+
+A reply modal can show its parent post without exposing a permalink.
+When its parent card, draft and attachments are fully observed, the override
+card shows that parent's text and binds approval to its identity. This lets
+the user approve that visible reply without a URL; it does not make the
+missing relationship evidence count as verified publication.
+
 - **The card.** A question ("Commit this on github.com?"), why the step could
   not be verified, and what the page shows now: the editor or composer text,
   plain text, at most about 1,500 characters. That text is page content: the
@@ -97,7 +138,8 @@ When a guard cannot verify a consequential step and its `onCannotDecide` is
   the timeout policy at once, a hard-class guard refuses.
 - **Authority.** A timeout, Instant or unattended answer is WebBrain's, not the
   user's: it is never recorded as task authority or memory.
-- **Strict checks.** Quality guards keep their refusal and show no card.
+- **Strict checks.** Quality guards keep their refusal and show no quality card.
+  An identified publication can still use the explicit publication override.
   Hard-class asks apply in both modes, because they replace a dead end with
   the user's explicit decision.
 - **After `once`.** The tool result carries a note for the model. A commit or
@@ -112,9 +154,11 @@ When a guard cannot verify a consequential step and its `onCannotDecide` is
 |---|---|---|
 | `github-commit-evidence-binding` | The file editor was replaced but could not be read back exactly (CodeMirror), and path, branch and commit message bind | The editor's text |
 | `github-commit-split-write-required` | A script, Enter or `set_field` submit that may or may not commit, when a commit click would be allowed and the request names no commit message (one is proven only before the commit) | The editor's text |
-| `social-publication-draft-quality` | The X/Bluesky draft's text does not read back as requested or could not be read, when the user asked to publish (the publication audit still runs). Media that does not match and a composer that was not read completely still refuse: the card shows only the text | The composer's text |
+| `social-publication-draft-quality` | The X/Bluesky draft's text does not read back as requested or could not be read, when the user asked to publish (the publication audit still runs). Other mismatches use the hard publication override when the composer is fully observed | The composer's text |
 | `steer-prior-submission-target-unresolved` | After a correction, a submit-capable control the probe could not identify | Nothing (check the page) |
 | `clickax-task-click-lock` (hard, Chrome) | An earlier trusted click on the same target may have landed and was never verified | Nothing (check the page) |
+| `social-publication-authorization-guard` (hard) | A publication's authorization, contract, preflight or audit refuses an identified draft | Account, reply/quote target, draft and attachments |
+| `steer-post-correction-commit-guard` (hard) | A form submission after a correction cannot pass the resource authorization checks | Destination and public field values |
 
 Code: `_promptUnverifiedStepConfirmation` and `_resolveUnverifiedStepConfirmation`
 in `agent.js`, `agent/unverified-step.js` (shared by the agent, scheduler
@@ -133,7 +177,8 @@ of `renderClarifyCard` in `ui/sidepanel.js`. Tests: `test/guard-ask-cards.mjs`.
 
 After a correction, `steer-post-correction-commit-guard` and
 `steer-prior-submission-unreconciled` hold a post, commit or submit until
-WebBrain has matched what the attempt before the correction did. A deletion
+WebBrain has matched what the attempt before the correction did, or the
+user explicitly approves that identified action on the override card. A deletion
 is not held to that, because it cannot repeat that attempt: the latest
 request, or the user on WebBrain's deletion card, decides which item goes. A
 Mastodon post is one WebBrain cannot match after the fact (the home timeline

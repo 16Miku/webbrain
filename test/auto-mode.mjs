@@ -131,6 +131,20 @@ for (const build of BUILDS) {
     ]) assert.equal(acceptModeEscalation(args, request), null, JSON.stringify(args));
   });
 
+  test(`${build}: a direct override enters Act while quotes and protected contexts do not`, () => {
+    const { autoModeHardRoute } = autoMode;
+    for (const text of ['override that guard!', 'bypass that guard']) {
+      assert.deepEqual(autoModeHardRoute({ text }), { mode: 'act', source: 'guard_override' });
+      for (const [key, source] of [
+        ['inBrowserModel', 'in_browser_model'], ['standaloneChat', 'standalone'],
+        ['selectionScoped', 'selection_scope'], ['cloudRun', 'cloud_run'],
+      ]) assert.deepEqual(autoModeHardRoute({ text, [key]: true }), { mode: 'ask', source });
+    }
+    for (const text of ['Do not override that guard!', 'What does "override that guard" mean?', '"override that guard!"']) {
+      assert.equal(autoModeHardRoute({ text }), null, text);
+    }
+  });
+
   test(`${build}: a hand-off needs the page-free run_mode answer to agree`, () => {
     const { confirmedEscalationMode } = autoMode;
     const act = { mode: 'act', evidence: 'book it' }, dev = { mode: 'dev', evidence: 'fix the css' };
@@ -274,6 +288,25 @@ for (const build of BUILDS) {
     assert.ok(!first.tools.includes('click_ax') && !first.tools.includes('click'));
     assert.match(first.messages[0].content, /AUTOMATIC MODE/);
     assert.match(first.messages.findLast(message => message.role === 'user').content, /runtime_mode=ask/);
+  });
+
+  test(`${build}: direct override reaches action tools without another mode or planner veto`, async () => {
+    const f = fixture(Agent, { decide: () => assert.fail('override must not need mode classification') });
+    f.agent.getConversation(f.tab, 'act').push(
+      { role: 'user', content: 'Post the reply.' },
+      { role: 'assistant', content: 'The publication guard held the reply.' },
+    );
+    f.agent._maybeRunPlannerGate = Agent.prototype._maybeRunPlannerGate;
+    f.agent._plannerMode = () => 'strict';
+    f.agent._runPlannerGate = async () => assert.fail('override must not need another plan');
+    f.agent._runPlannerIntentGate = async () => assert.fail('override must not need another intent verdict');
+    fixtureReplies(f, [stopAfterCall(f)]);
+    assert.match(await f.run('override that guard!'), /Stopped/);
+    assert.deepEqual(runModes(f.updates), [{ mode: 'act', source: 'guard_override' }]);
+    assert.ok(f.calls[0].tools.includes('click_ax'));
+    const turn = f.agent.conversations.get(f.tab).findLast(message => message.webbrainUserAuthoredText === 'override that guard!');
+    assert.equal(turn.webbrainTurnKind, 'update', 'keeps the original blocked task as context');
+    assert.match(f.calls[0].messages[0].content, /EXPLICIT GUARD OVERRIDE/);
   });
 
   test(`${build}: without a decision model the turn starts read-only and hands itself to Act`, async () => {

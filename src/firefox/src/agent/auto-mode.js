@@ -27,6 +27,7 @@
 // This file is shared byte for byte by the Chrome and Firefox builds.
 
 import { acceptSemanticAnswer } from './semantic-decisions.js';
+import { isExplicitGuardOverrideRequest } from './guard-override.js';
 import { replaceTrustedRuntimeMode } from './runtime-context.js';
 import { GENERATIVE_MEDIA_SETUP_NOTE, GENERATIVE_MEDIA_TIER_NOTE, imageGenAvailability } from './media-config.js';
 
@@ -64,6 +65,7 @@ export function autoModeHardRoute({
   if (carriesUntrustedText(text)) return { mode: 'ask', source: 'page_text' };
   // Managed Cloud runs always name their mode; an unnamed one stays read-only.
   if (cloudRun) return { mode: 'ask', source: 'cloud_run' };
+  if (isExplicitGuardOverrideRequest(text)) return { mode: 'act', source: 'guard_override' };
   if ((Array.isArray(attachments) ? attachments : []).some(att => att?.kind === 'video')) {
     return { mode: 'act', source: 'attachment' };
   }
