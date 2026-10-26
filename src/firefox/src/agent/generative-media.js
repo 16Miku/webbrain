@@ -557,10 +557,12 @@ async function runVideo({ model, entry, text, video, signal, onProgress, confirm
   // generating, before anything is submitted. The card is outside the
   // generation deadline.
   const lengthDetails = { estimatedSeconds: plan.estimated, totalSeconds: plan.total, clipCount: plan.clips.length, maxSeconds: MAX_VIDEO_SECONDS };
+  let approvedDurationSeconds;
   if (plan.estimated > MAX_VIDEO_SECONDS) {
     const answer = typeof confirmVideoLength === 'function' ? await confirmVideoLength(lengthDetails) : 'unavailable';
     signal?.throwIfAborted?.();
     if (answer !== 'once') return { declined: true, answer: answer || 'cancelled', model, ...lengthDetails };
+    approvedDurationSeconds = plan.total;
   }
   onProgress?.(`Generating ${plan.clips.length} video clips…`);
   let ready = 0;
@@ -583,7 +585,8 @@ async function runVideo({ model, entry, text, video, signal, onProgress, confirm
       }
     }
   });
-  return { clips, model, ...lengthDetails, ...fallback };
+  return { clips, model, ...lengthDetails, ...fallback,
+    ...(approvedDurationSeconds !== undefined ? { approvedDurationSeconds } : {}) };
 }
 
 async function runOpenRouter({ text, media, config, video, fetchImpl, signal, timeoutMs, pollMs, onProgress, confirmVideoLength }) {
@@ -820,17 +823,21 @@ const roundSeconds = seconds => (Number.isFinite(seconds) && seconds > 0 ? Math.
 function videoDeliveryDetails(result, asset) {
   const plannedSeconds = roundSeconds(result.totalSeconds);
   if (!plannedSeconds) return {};
+  const estimatedSeconds = roundSeconds(result.estimatedSeconds) || plannedSeconds;
+  const approvedDurationSeconds = roundSeconds(result.approvedDurationSeconds);
+  const requiredSeconds = approvedDurationSeconds || estimatedSeconds;
   const actual = asset.durationSeconds;
   // Allow a quarter second for container/frame boundary rounding.
   const durationStatus = Number.isFinite(actual)
-    ? (actual + 0.25 < plannedSeconds ? 'short' : 'enough') : 'unverified';
+    ? (actual + 0.25 < requiredSeconds ? 'short' : 'enough') : 'unverified';
   return {
-    estimatedSeconds: roundSeconds(result.estimatedSeconds) || plannedSeconds,
+    estimatedSeconds,
     plannedSeconds,
+    ...(approvedDurationSeconds ? { approvedDurationSeconds } : {}),
     ...(result.fallbackClipSeconds ? { fallbackClipSeconds: result.fallbackClipSeconds } : {}),
     durationStatus,
     ...(durationStatus === 'short' ? {
-      notice: `Generated ${actual} s of the planned ${plannedSeconds} s. Keep the generated asset, but report the duration shortfall; the requested video is incomplete. Do not claim it is complete.`,
+      notice: `Generated ${actual} s of the planned ${plannedSeconds} s. The accepted target is ${requiredSeconds} s. Keep the generated asset, but report the duration shortfall; the requested video is incomplete. Do not claim it is complete.`,
     } : durationStatus === 'unverified' ? {
       notice: 'The output duration has not been measured. Do not report plannedSeconds as the actual video length.',
     } : {}),
@@ -875,7 +882,9 @@ async function storeVideoClips(clips, onProgress) {
  * The generate_image tool. `options.onProgress(message)` reports progress of
  * a video made of scenes, and `options.confirmVideoLength(details)` asks the
  * user when the requested video is longer than WebBrain makes ('once' to go
- * ahead; 'deny', 'unavailable' or null otherwise).
+ * ahead; 'deny', 'unavailable' or null otherwise). `verifyVideoDuration`
+ * measures a duration-constrained hosted clip, keeping its URL if verification
+ * fails. The additional read is credential-free and limited to 15 seconds.
  */
 export async function generateImage(args, options = {}) {
   const fetchImpl = typeof options === 'function' ? options : options.fetchImpl || fetch;
@@ -903,7 +912,25 @@ export async function generateImage(args, options = {}) {
       return { success: true, model: result.model, provider, ...delivered, ...videoDeliveryDetails(result, delivered) };
     }
     const { estimatedSeconds, totalSeconds, ...hosted } = result;
-    return { success: true, ...hosted, provider, ...videoDeliveryDetails(result, hosted) };
+    let verificationFailed = false;
+    if (options.verifyVideoDuration === true && roundSeconds(totalSeconds)) {
+      try {
+        options.signal?.throwIfAborted?.();
+        const bytes = await downloadClip(hosted.url, { fetchImpl, signal: options.signal,
+          timeoutMs: 15000, label: 'Generated video duration verification' });
+        hosted.durationSeconds = roundSeconds(mp4DurationSeconds(bytes));
+        hosted.mimeType = 'video/mp4';
+      } catch {
+        // Generation already succeeded. A failed verification must not hide
+        // the paid asset or turn into another generation request.
+        verificationFailed = true;
+      }
+    }
+    const delivery = videoDeliveryDetails(result, hosted);
+    if (verificationFailed && delivery.durationStatus === 'unverified') {
+      delivery.notice = 'The generated asset was kept, but its duration could not be verified. Do not report plannedSeconds as the actual video length or claim the duration requirement is complete.';
+    }
+    return { success: true, ...hosted, provider, ...delivery };
   } catch (error) { return { success: false, error: error.message }; }
 }
 
