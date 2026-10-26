@@ -5,6 +5,7 @@ import { DECISION_SETTINGS_KEYS, decisionFeatureEnabled } from './decision-confi
 import { resolveCurrentDecisionConfig } from './decision-availability.js';
 import { completionStopError, withCompletionTimeout } from './completion-verifier.js';
 import { incompleteCompletionBlock } from './incomplete-completion.js';
+import { normalizeVideoDurationContract, pinVideoDurationTarget, recordVideoDurationResult, approveVideoDurationTarget, videoDurationRequiredSeconds, videoDurationCompletionBlock } from './video-duration-contract.js';
 import { COMPLETION_DOCUMENT_STAMP_SCRIPT, COMPLETION_DOCUMENT_IDENTITY_SCRIPT } from './completion-document.js';
 import { completionFrameSnapshot } from './completion-frame.js';
 import { completionResultSnapshot, completionResultPixelRect } from './completion-result.js';
@@ -164,7 +165,7 @@ import {
 } from '../providers/provider-compatibility.js';
 import { resolveMaxOutputTokens } from '../providers/context-windows.js';
 import { generateImage, readMediaConfig } from './generative-media.js';
-import { GENERATIVE_MEDIA_SETUP_NOTE, imageGenAvailability, isImageGenConfigured, mediaPermissionUrl, validateMediaConfig } from './media-config.js';
+import { GENERATIVE_MEDIA_SETUP_NOTE, imageGenAvailability, isImageGenConfigured, mediaPermissionUrl, mediaProvider, validateMediaConfig } from './media-config.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, repairClarifyText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
 import { clarifyQuestionIsHard, clarifyTimedAnswer, clarifyTimeoutChoice, normalizeClarifyConsequence, normalizeClarifyTimeoutPolicy } from './clarify-timeout.js';
@@ -859,7 +860,7 @@ export class Agent extends LoopDetector {
     this._pendingPlans = new Map();
     this._planExecutionGuards = new Map(); // tabId → current run's plan-only terminal recovery state
     this._unverifiedStepScopes = new Map(); // tabId → { used: Set } 'once' answers the current tool call relies on
-    this._continuationExecutionEvidence = new Map(); // tabId → app-owned evidence carried only by continueProcessing()
+    this._continuationExecutionEvidence = new Map(); // tabId → app-owned evidence and pending media obligations carried only by continueProcessing()
     this._continuationResponseLanguagePolicies = new Map(); // tabId -> trusted policy carried only by continueProcessing()
     // Strict secret-handling mode — see chrome/agent.js for rationale.
     // Defaults to true at extension runtime via background.js and Settings.
@@ -2425,10 +2426,23 @@ export class Agent extends LoopDetector {
       pageUrl, currentUrl: submit.currentUrl }, text => this._sha256TextSync(text));
   }
 
+  _currentVideoDurationGuard(tabId) {
+    const guard = this._planExecutionGuards.get(tabId);
+    return guard?.enabled && !guard.taskDrifted
+      && guard.taskKey === this._progressTaskKeyHash(tabId)
+      && guard.conversationId === this.conversationIds.get(tabId) ? guard : null;
+  }
+
+  _videoDurationDoneBlock(tabId, outcome = 'success') {
+    return videoDurationCompletionBlock(this._currentVideoDurationGuard(tabId)?.videoDurationContract, outcome);
+  }
+
   _completionDoneBlock(tabId, name, args, batchStartState = null, { skip = null } = {}) {
     const mode = this._effectiveRunMode(tabId);
     if (!this._isActionMode(mode)) return null;
     const outcome = name === 'done_json' ? 'success' : String(args?.outcome || '').trim().toLowerCase();
+    const videoBlock = this._videoDurationDoneBlock(tabId, outcome);
+    if (videoBlock && skip?.has?.('video_duration_incomplete') !== true) return videoBlock;
     const toolbarObligation = this._richTextToolbarGuard.completionAction(tabId);
     if (outcome === 'success' && toolbarObligation && skip?.has?.('rich_text_toolbar_target_unresolved') !== true) {
       return {
@@ -5394,7 +5408,22 @@ export class Agent extends LoopDetector {
 
   // The guard behind a completion-invariant refusal, with the sentence the
   // user sees when a completion is accepted over it.
-  _completionInvariantGuard(tabId, reason) {
+  _completionInvariantGuard(tabId, reason, block = null) {
+    if (reason === 'video_duration_incomplete') {
+      const detail = block || this._videoDurationDoneBlock(tabId);
+      const requiredSeconds = detail?.requiredSeconds;
+      const status = detail?.durationStatus;
+      const videoLabel = detail?.videoId ? `video (${detail.videoId})` : 'video';
+      const decided = status !== 'unverified';
+      return { id: 'done-video-duration', decided, downgrade: decided,
+        caveat: status === 'short'
+          ? `The generated ${videoLabel} is ${detail.durationSeconds} seconds long; ${requiredSeconds} seconds were requested.`
+          : status === 'unjoined'
+            ? `The generated clips were not joined into the requested ${requiredSeconds}-second ${videoLabel}.`
+            : status === 'unverified'
+              ? `The generated ${videoLabel}'s requested ${requiredSeconds}-second duration could not be verified.`
+              : `The requested ${requiredSeconds}-second ${videoLabel} was not delivered.` };
+    }
     if (reason === 'rich_text_toolbar_target_unresolved') {
       return { id: 'done-rich-text-toolbar-obligation', decided: true,
         caveat: 'The last text may have gone into a formatting toolbar instead of the editor.' };
@@ -5425,8 +5454,8 @@ export class Agent extends LoopDetector {
   }
 
   _completionInvariantRefuses(tabId, block) {
-    const guard = this._completionInvariantGuard(tabId, block?.reason);
-    return !guard || this._guardRefusesOnce(tabId, guard.id, { decided: guard.decided, caveat: guard.caveat });
+    const guard = this._completionInvariantGuard(tabId, block?.reason, block);
+    return !guard || this._guardRefusesOnce(tabId, guard.id, { decided: guard.decided, caveat: guard.caveat, downgrade: guard.downgrade });
   }
 
   // A plain final in an Act/Dev run that acted. The "end with done, not
@@ -7773,6 +7802,23 @@ export class Agent extends LoopDetector {
         }
         this._restorePersistedRichTextToolbarAudit(tabId, entry.richTextToolbarAudit);
         this._restoreTaskAttemptLedger(tabId, entry.taskAttemptLedger, attemptStored?.[attemptKey]);
+        const savedVideoObligation = entry.videoDurationObligation;
+        const videoDurationContract = normalizeVideoDurationContract(savedVideoObligation?.contract);
+        if (videoDurationContract && typeof entry.conversationId === 'string' && entry.conversationId
+            && entry.conversationId.length <= 256
+            && savedVideoObligation.conversationId === entry.conversationId
+            && typeof savedVideoObligation.taskKey === 'string' && savedVideoObligation.taskKey
+            && savedVideoObligation.taskKey.length <= 128
+            && savedVideoObligation.taskKey === this._progressTaskKeyHash(tabId)) {
+          // Restore only this app-owned obligation. Serialized tool messages and
+          // scratchpad text never become successful execution evidence.
+          this._continuationExecutionEvidence.set(tabId, {
+            requestKind: 'execute',
+            taskKey: savedVideoObligation.taskKey,
+            conversationId: entry.conversationId,
+            videoDurationContract,
+          });
+        }
         const savedDispatch = entry.nativeCaptchaDispatch;
         const rootDocument = Array.isArray(savedDispatch?.documents)
           ? savedDispatch.documents.find(document => document?.frameId === 0) : null;
@@ -7843,6 +7889,19 @@ export class Agent extends LoopDetector {
     } catch (e) { /* session storage may be unavailable */ }
   }
 
+  _persistedVideoDurationObligation(tabId) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const source = guard || this._continuationExecutionEvidence.get(tabId);
+    const conversationId = this.conversationIds.get(tabId);
+    if ((guard && (!guard.enabled || guard.taskDrifted)) || source?.requestKind !== 'execute'
+        || typeof conversationId !== 'string' || !conversationId || conversationId.length > 256
+        || source.conversationId !== conversationId
+        || typeof source.taskKey !== 'string' || !source.taskKey || source.taskKey.length > 128
+        || source.taskKey !== this._progressTaskKeyHash(tabId)) return null;
+    const contract = normalizeVideoDurationContract(source.videoDurationContract);
+    return contract ? { taskKey: source.taskKey, conversationId, contract } : null;
+  }
+
   _conversationStorageEntry(tabId, options = {}) {
     const messages = foldBrowserBatchMessages(this.conversations.get(tabId), { repairPending: true });
     const chatWorkflow = this.chatSessions.get(tabId);
@@ -7907,6 +7966,7 @@ export class Agent extends LoopDetector {
       sessionSnapshotBytes: serialized.bytes,
       conversationId,
       chatWorkflow: chatWorkflow ? serializeChatSession(chatWorkflow) : null,
+      videoDurationObligation: this._persistedVideoDurationObligation(tabId),
       // A bounded receipt records the task/thread/body digest and latest send
       // proved by done. Hydration never turns this receipt into authorization.
       nativeChatDeliveryEvidence: this._planExecutionGuards.get(tabId)?.nativeChatDeliveryEvidence
@@ -34292,6 +34352,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.selectionGroundingRestorationPendingTabs.delete(tabId);
     this.responseLanguagePolicies.delete(tabId);
     this._continuationResponseLanguagePolicies.delete(tabId);
+    this._continuationExecutionEvidence.delete(tabId);
+    const clearedExecutionGuard = this._planExecutionGuards.get(tabId);
+    if (clearedExecutionGuard) clearedExecutionGuard.videoDurationContract = null;
     this.mastodonStates.delete(tabId);
     this.conversationModes.delete(tabId);
     this.conversationIds.delete(tabId);
@@ -38250,6 +38313,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._progressTaskAnchorText(tabId) || this._latestTaskText(tabId) || this._originalTaskText(tabId),
     ).slice(0, 1600);
     const taskKey = this._progressTaskKeyHash(tabId);
+    const conversationId = this.conversationIds.get(tabId) || null;
     const gateApprovedPlanAnchor = this._approvedExecutionPlanAnchor(gateOutcome?.approvedScratchpadText);
     const carried = runOptions?.trustedContinuation === true
       ? this._continuationExecutionEvidence.get(tabId)
@@ -38269,6 +38333,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && JSON.stringify(carried.conditionalSiteWorkflow || null) === JSON.stringify(gateOutcome.conditionalSiteWorkflow || null)
       && carried.conversationId === (this.conversationIds.get(tabId) || null);
     const carryScopeMatches = carryScopeCompatible && carried.taskKey === taskKey;
+    // A failed first media call still owes its duration. This obligation is
+    // task/conversation scoped, independent of success counters and a later
+    // planner changing unrelated mutation/submission flags on Continue.
+    const carriedVideoDurationContract = enabled && conversationId
+      && carried?.requestKind === 'execute'
+      && carried.taskKey === taskKey && carried.conversationId === conversationId
+      ? normalizeVideoDurationContract(carried.videoDurationContract) : null;
     const carrySocialRetryAuthorization = carryScopeCompatible
       && requiresSubmission === true && requiresStateChange === true
       && carried.socialPublication?.retryAuthorizationTaskKey === taskKey
@@ -38321,6 +38392,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       conditionalSiteWorkflow: gateOutcome.conditionalSiteWorkflow || null,
       conditionalMutationBlocked: carryMatches && carried.conditionalMutationBlocked === true,
       taskKey,
+      conversationId,
+      videoDurationContract: carriedVideoDurationContract,
       taskText,
       approvedPlanAnchor,
       approvedPlanText,
@@ -38831,11 +38904,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _storeContinuationExecutionEvidence(tabId) {
     const guard = this._planExecutionGuards.get(tabId);
+    const videoDurationContract = this._persistedVideoDurationObligation(tabId)?.contract || null;
     const hasRecipientAuthorization = guard?.requiresSubmission === true && guard?.requiresStateChange === true
       && !!normalizeMessageTarget(guard.messaging)
       && (guard.messageRecipientApprovedAll === true || (guard.approvedRecipients || []).length > 0);
     if (guard?.enabled && !guard.taskDrifted && (
       hasRecipientAuthorization
+      || !!videoDurationContract
       || guard.socialPublication?.contract?.status === 'ready'
       || guard.multipleDeliverables === true
       || (guard.deliverables || []).length > 1
@@ -38861,6 +38936,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const submit = this._completionSubmitStates.get(tabId);
       this._continuationExecutionEvidence.set(tabId, {
         requestKind: guard.requestKind,
+        videoDurationContract,
         requiresStateChange: guard.requiresStateChange,
         requiresSubmission: guard.requiresSubmission,
         messaging: guard.messaging,
@@ -39134,6 +39210,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _planOnlyTerminalDecision(tabId, content, { viaDone = false, outcome = null, summaryKind = null } = {}) {
     const state = this._planExecutionGuards.get(tabId);
     if (!state?.enabled) return null;
+    const videoBlock = this._videoDurationDoneBlock(tabId, viaDone ? outcome : 'success');
+    if (videoBlock && this._completionInvariantRefuses(tabId, videoBlock)) {
+      // Share the same one-refusal policy with done, including when a model
+      // switches between a tool completion and plain text after the note.
+      return { retry: true, retryAssistantContent: null, nudge: videoBlock.error };
+    }
     // The bracketed diagnostic stays in tool results and traces; the chat
     // shows a plain-language account of what happened.
     const terminal = (kind, failure, status, facts = {}) => ({ failure, status,
@@ -40243,9 +40325,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (result?.success && result?.provider && (result.inlineMedia || /^data:(image|video|audio)\//.test(result.url || ''))) {
       const clips = Array.isArray(result.clips)
         ? result.clips.map(({ mediaId: _mediaId, ...clip }) => clip) : undefined;
-      const note = 'Generated media is displayed in the chat with a save link. Tell the user it is ready. You have not seen it: '
+      const note = 'Generated media is displayed in the chat with a save link. Report the generated asset and any remaining duration or joining problem. You have not seen it: '
         + 'describe it only by what you asked for and by its durationSeconds and clipCount when present, never by its contents; '
         + 'do not invent a hosted URL.'
+        + (result.notice ? ` ${result.notice}` : '')
         + (result.joined === false ? ' Its clips could not be joined into one file, so the chat shows them one after another.' : '');
       result = { ...result, url: undefined, mediaId: undefined, clips, inlineMedia: true, note };
     }
@@ -43518,6 +43601,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     if (name === 'done') {
+      const videoBlock = this._videoDurationDoneBlock(tabId, normalizeDoneOutcome(args?.outcome));
+      if (videoBlock && this._completionInvariantRefuses(tabId, videoBlock)) return videoBlock;
       const doneStartedAt = Date.now();
       const tableBlock = await this._resolveExactTableDone(tabId, args, onUpdate);
       if (tableBlock) return tableBlock;
@@ -43911,7 +43996,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // messages are only ever the agent's own readings, never page data.
           // By default the incomplete-task judge redirects an honest partial or
           // failed ending once per run; later endings are not judged again.
-          const incompleteBlock = this._guardHasAdvised(tabId, 'incomplete-task-redirect') ? null : await incompleteCompletionBlock(this, tabId, {
+          // A paid asset with a short, unjoined or unverified result may be
+          // reported honestly without the generic judge forcing regeneration.
+          const mediaDeliveryLimited = ['short', 'unjoined', 'unverified'].includes(this._videoDurationDoneBlock(tabId)?.durationStatus);
+          const incompleteBlock = mediaDeliveryLimited || this._guardHasAdvised(tabId, 'incomplete-task-redirect') ? null : await incompleteCompletionBlock(this, tabId, {
             terminalOnly: Number.isFinite(executionContext?.traceStep) && executionContext.traceStep >= this.maxSteps,
             outcome, summary: args.summary, pageState, pageUrl: pageState?.url || '',
           });
@@ -44137,12 +44225,57 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await this._restrictedDomainScreenshotFallback(tabId, name, args.url, result);
     }
     if (name === 'generate_image') {
-      return await generateImage(args, {
+      const guard = this._currentVideoDurationGuard(tabId);
+      const pinned = pinVideoDurationTarget(args, guard?.videoDurationContract);
+      if (pinned.error) return { success: false, dispatched: false, error: pinned.error };
+      const trackVideo = pinned.trackDuration && guard && pinned.contract;
+      const deliverableId = pinned.contract?.deliverableId;
+      if (trackVideo) {
+        // Save before dispatch, including when the first attempt will fail
+        // validation. Otherwise a worker restart can lose the user's target.
+        guard.videoDurationContract = pinned.contract;
+        const saved = await this._persistNow(tabId);
+        if (saved !== true && saved?.ok !== true) return { success: false, dispatched: false,
+          error: 'The requested video duration could not be saved. Retry when session storage is available; no video was submitted.' };
+        if (this._currentVideoDurationGuard(tabId) !== guard || this._hasPendingSteering(tabId)
+            || this._checkAbort(tabId) || executionContext?._contentActionAbortSignal?.aborted) return { success: false, dispatched: false,
+          error: 'The task changed or stopped before video generation. Reconsider the current request.' };
+      }
+      const config = executionContext?.imageGenConfig || (trackVideo ? await readMediaConfig() : undefined);
+      if (trackVideo && (this._currentVideoDurationGuard(tabId) !== guard || this._hasPendingSteering(tabId)
+          || this._checkAbort(tabId) || executionContext?._contentActionAbortSignal?.aborted)) return { success: false, dispatched: false,
+        error: 'The task changed or stopped before video generation. Reconsider the current request.' };
+      // Local workflows set their own length. Keep the obligation for output
+      // verification without reinserting options the provider asked to omit.
+      const providerArgs = trackVideo
+        ? mediaProvider(config) === 'comfyui' ? { ...args, media: 'video' } : pinned.args
+        : args;
+      const result = await generateImage(providerArgs, {
         signal: executionContext?._contentActionAbortSignal,
-        ...(executionContext?.imageGenConfig ? { config: executionContext.imageGenConfig } : {}),
+        ...(config !== undefined ? { config } : {}),
+        verifyVideoDuration: !!trackVideo,
+        ...(trackVideo ? { videoDurationTarget: videoDurationRequiredSeconds(pinned.contract) } : {}),
         onProgress: message => onUpdate?.('tool_progress', { name, message }),
-        confirmVideoLength: details => this._promptVideoLengthConfirmation(tabId, details, onUpdate),
+        confirmVideoLength: async details => {
+          const answer = await this._promptVideoLengthConfirmation(tabId, details, onUpdate);
+          if (answer !== 'once' || !trackVideo) return answer;
+          if (this._currentVideoDurationGuard(tabId) !== guard || this._hasPendingSteering(tabId)
+              || this._checkAbort(tabId)) return 'unavailable';
+          // The user's accepted shorter target survives a provider failure or
+          // restart too. Model-written arguments never supply this approval.
+          guard.videoDurationContract = approveVideoDurationTarget(guard.videoDurationContract, details.totalSeconds, deliverableId);
+          const saved = await this._persistNow(tabId);
+          return (saved === true || saved?.ok === true) && this._currentVideoDurationGuard(tabId) === guard
+            && !this._hasPendingSteering(tabId) && !this._checkAbort(tabId) ? answer : 'unavailable';
+        },
       });
+      if (trackVideo && this._currentVideoDurationGuard(tabId) === guard) {
+        guard.videoDurationContract = recordVideoDurationResult(guard.videoDurationContract, result, deliverableId);
+        // The generated asset must still reach the chat if saving its receipt
+        // fails; the pre-dispatch obligation remains durable for recovery.
+        try { await this._persistNow(tabId); } catch {}
+      }
+      return result;
     }
     if (name === 'read_page_source') {
       const result = await readPageSource(args.url, args, { tabId, signal: executionContext?._contentActionAbortSignal });
@@ -47411,7 +47544,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (previousStandaloneChatRun) this._standaloneChatRunTabs.add(tabId);
       else this._standaloneChatRunTabs.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
-      if (continuationResponseLanguagePolicyStored) {
+      if (continuationResponseLanguagePolicyStored || this._persistedVideoDurationObligation(tabId)) {
         try { await this._persistNow(tabId); } catch {}
       }
       this._resetActiveSkillsForRun(tabId);
@@ -49263,7 +49396,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (previousStandaloneChatRun) this._standaloneChatRunTabs.add(tabId);
       else this._standaloneChatRunTabs.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
-      if (continuationResponseLanguagePolicyStored) {
+      if (continuationResponseLanguagePolicyStored || this._persistedVideoDurationObligation(tabId)) {
         try { await this._persistNow(tabId); } catch {}
       }
       this._resetActiveSkillsForRun(tabId);

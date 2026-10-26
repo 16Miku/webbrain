@@ -113,7 +113,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     const end = source.indexOf("  if (command.value === '/export' && action === 'conversation') {", start);
     assert.ok(start >= 0 && end > start);
     const harness = `export async function run(response, full = true) {
-      const tabId = 1, command = { value: '/export' }, action = 'traces', optionValues = new Set(full ? ['--full'] : []);
+      const tabId = 1, currentTabId = tabId, command = { value: '/export' }, action = 'traces', optionValues = new Set(full ? ['--full'] : []);
       const sendToBackground = async () => response === undefined ? globalThis.backgroundExport() : response;
       const t = key => key, addPersistentSlashMessage = message => globalThis.exportMessages.push(message);
       ${source.slice(start, end)}

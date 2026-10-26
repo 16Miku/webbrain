@@ -37,7 +37,8 @@ const DONE_REQUIRED_WITH_OUTCOME = ['summary', 'outcome'];
 
 export const SYSTEM_PROMPT_GENERATIVE_MEDIA = `GENERATIVE MEDIA:
 - generate_image: Create an image, or with media "video" a video, directly from a text prompt through the user's configured image and video models. When the user asks to GENERATE media ("generate an image of a red apple", "make a logo", "create a video clip"), call this tool — do NOT navigate to third-party image sites (Midjourney, DALL·E, Bing Images, etc.). Not available in Ask mode.
-- Videos: set media to "video" and estimate how long the requested video should run. One that needs more than one clip (an explainer, a story) is one call with scenes, at most 120 s in total, and estimated_duration set to the full length it needs; WebBrain joins the clips into one video and asks the user first when that estimate is longer than 120 s. You never see the result: report its length and clip count from the tool result, not its contents.`;
+- Videos: set media to "video" and estimate how long the requested video should run. One that needs more than one clip (an explainer, a story) is one call with scenes, at most 120 s in total, and estimated_duration set to the full length it needs; WebBrain joins the clips into one video and asks the user first when that estimate is longer than 120 s. You never see the result: report its length and clip count from the tool result, not its contents.
+- A model's clip limit applies to each scene. Joining is built into generate_image; no separate joining tool is needed. For a one-minute request keep estimated_duration:60 and plan scenes covering 60 seconds, for example four 15-second scenes when supported. If clip lengths are unavailable, use the provider's default or eight 8-second scenes (about 64 seconds), and continue generation. If the tool requests shorter scenes, split them into distinct prompts and retry while keeping the full target. A fallback length is an attempt, not a confirmed model limit; report actual provider rejections rather than claiming missing metadata prevents videos. Report any durationStatus "short" or "unverified", or joined:false result as incomplete, preserving the generated assets. WebBrain retains each video’s requested duration across retries. For multiple videos, use a distinct video_id for each deliverable and reuse it on retries. Local ComfyUI workflows set their own length: omit unsupported video options on corrected retries; WebBrain retains the verification target. Use done outcome partial or failed if the requested duration cannot be delivered or verified.`;
 
 export const SYSTEM_PROMPT_BATCHING = `BATCHING:
 - Use browser_batch for predictable steps on the current page with targets you already observed, such as filling known fields or opening a menu and choosing a known item. A navigation followed by a page read can also share one batch.
@@ -1350,13 +1351,14 @@ export const AGENT_TOOLS = [
         properties: {
           prompt: { type: 'string', description: 'Text prompt describing the media to generate. With scenes: the look, subject and style every clip shares.' },
           media: { type: 'string', enum: ['image', 'video'], description: '"image" (default) uses the image model; "video" uses the video model. The video options below imply "video".' },
-          estimated_duration: { type: 'integer', minimum: 1, description: 'Video only: seconds the requested video needs, estimated before fitting it to the 120 s maximum. Required with scenes.' },
+          video_id: { type: 'string', maxLength: 80, pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$', description: 'Video only: stable label for this deliverable, such as intro or outro. For multiple videos use distinct labels; reuse the same label and full target on retries. For a new label give estimated_duration or duration.' },
+          estimated_duration: { type: 'integer', minimum: 1, description: 'Video only: full seconds the user requested, or an estimate when unspecified, before fitting it to the 120 s maximum. Keep this target when retrying; never replace it with the per-clip limit. Required with scenes.' },
           duration: { type: 'integer', minimum: 1, description: 'Video only: seconds for a single clip.' },
           aspect_ratio: { type: 'string', description: 'Video only, for example "16:9" or "9:16".' },
           resolution: { type: 'string', description: 'Video only, for example "720p".' },
           scenes: {
             type: 'array',
-            description: 'Video only: the scenes of a video longer than one clip, in order, at most 120 seconds in total. Load the video-scenes skill first when it is listed.',
+            description: 'Video only: scenes in order covering the requested duration, at most 120 seconds in total. This tool generates and joins the clips automatically; no separate join tool is needed. Load the video-scenes skill first when it is listed.',
             items: {
               type: 'object',
               properties: {

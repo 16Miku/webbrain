@@ -41,10 +41,18 @@ them in sync — the test suite asserts the pure modules are byte-identical.
      switch "Ask before consequential actions"). The warning button in the side panel's
      composer toolbar toggles the same master switch; it never answers a pending
      permission card.
-4. **Output sanitizer (Layer 4).** Model output is HTML-escaped and only
-   `[label](url)` markdown becomes an allowlisted (http/https/mailto) link — no
-   auto-loading images, no bare-URL linkification.
-   - Code: `ui/markdown-link.js`.
+4. **Output sanitizer (Layer 4).** Model output is HTML-escaped. Markdown links
+   use an http/https/mailto allowlist; plain HTTP(S) URLs become links outside
+   code and existing anchors. Links open a new tab with `noopener noreferrer`.
+   Formatter placeholders use a source-collision-free namespace and are restored
+   in one pass, so source text cannot expand into generated HTML attributes.
+   Markdown images, including unfinished streaming syntax, never load an image
+   or trigger a favicon lookup. Chat link
+   icons come only from a fixed favicon service using a validated public
+   hostname, without URL paths, query strings, credentials or a referrer.
+   Responses are bounded raster images rendered through local blob URLs;
+   failed lookups keep a local globe icon.
+   - Code: `ui/markdown-link.js`, `ui/markdown-render.js`, `ui/chat-link-icons.js`.
 
 ---
 

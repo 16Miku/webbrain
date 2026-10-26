@@ -50,6 +50,37 @@ export function escapeCodeHtml(value) {
   }[character]));
 }
 
+// Pick a namespace absent from the source, and restore only the tokens that
+// existed before this pass. Model text must never name or recursively expand
+// one of the renderer's HTML fragments.
+export function createMarkdownPlaceholders(source) {
+  const occupied = new Set([...String(source).matchAll(/WBMD(\d+)TOKEN/g)].map(match => match[1]));
+  let namespace = 0;
+  while (occupied.has(String(namespace))) namespace++;
+  const prefix = `WBMD${namespace}TOKEN`;
+  const tokenPattern = new RegExp(`${prefix}(\\d+)END`, 'g');
+  const htmlPattern = new RegExp(`<[^>]*>|${prefix}(\\d+)END`, 'g');
+  const fragments = [];
+  const restore = value => String(value).replace(htmlPattern, (match, index) => {
+    if (index !== undefined) return fragments[Number(index)]?.html ?? match;
+    // Inline code can occur inside a Markdown destination. It is attribute
+    // text there, never HTML, even when the same fragment is markup in a label.
+    return match.replace(tokenPattern, (token, id) => {
+      const fragment = fragments[Number(id)];
+      return fragment ? escapeCodeHtml(fragment.text) : token;
+    });
+  });
+  return {
+    restore,
+    add(html, text = '') {
+      const rendered = restore(html);
+      const token = `${prefix}${fragments.length}END`;
+      fragments.push({ html: rendered, text });
+      return token;
+    },
+  };
+}
+
 export function normalizeCodeLanguage(language) {
   return LANGUAGE_ALIASES[String(language || '').trim().toLowerCase()] || '';
 }

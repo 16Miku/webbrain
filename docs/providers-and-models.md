@@ -325,8 +325,20 @@ read once per call that sets any of them. From a schema, WebBrain takes the inpu
 body has, its listed clip lengths (sent as listed, such as `6`, `"6"` or
 `"8s"`) or the whole seconds of its length range (sent as numbers), and its
 listed aspect ratios and resolutions (matched without regard to case and sent as
-listed, such as `768P`). Without a schema, a single clip's options are sent as
-given and scenes are refused, since the clip lengths are unknown. A local
+listed, such as `768P`). When fal.ai's catalog has no readable clip lengths,
+WebBrain also tries its public OpenAPI endpoint without credentials. If clip
+lengths remain unavailable, an unspecified clip length uses the schema's valid
+duration default, or a whole-second fallback starting at 8 seconds that meets
+the published minimum, maximum and step size. A one-minute request can use eight distinct
+8-second scenes, aiming for 64 seconds; the output is measured separately.
+Fallback lengths are attempts, not advertised model limits. Explicit clip and
+scene lengths can exceed the default or fallback when the published constraints
+allow them; scene lengths round up as needed to satisfy those constraints.
+When no valid whole-second length fits the 120-second cap, the request fails
+before generation with an actionable error. String duration
+inputs keep their declared encoding; a schema with no duration field uses the
+provider's default without adding that field. Real submission errors still
+stop the request, while missing metadata alone does not. A local
 ComfyUI workflow sets its own length and shape, so these options are refused
 there. A longer video is passed as `scenes`: WebBrain makes one clip per
 scene at a length the model offers (a scene longer than its longest clip is
@@ -346,8 +358,32 @@ unattended run generates nothing. Clips that cannot be joined this way
 (different encodings, edit lists or timing the joined file cannot reproduce, or
 more than 160 MB together) are kept as separate clips and shown in order, and
 the tool result says why (`joinError`), which traces show. The model never sees
-the video, so the tool result gives it the video's real length
-(`durationSeconds`) and `clipCount` to report. Before writing scenes, the agent can load the default Video scenes
+the video, so the tool result gives it the video's measured length
+(`durationSeconds`) and `clipCount` when available. Plans that knowingly fall
+short of `estimated_duration` within the 120-second cap are rejected before
+submission; missing clip-length metadata uses short scene clips covering the
+full target. Results retain any assumed clip length (`fallbackClipSeconds`),
+the original estimate (`estimatedSeconds`),
+accepted plan (`plannedSeconds`), and `durationStatus`: `short`, `enough`,
+or `unverified`. A measured shortfall keeps the generated asset and reports
+incomplete delivery; hosted clips without a measured length stay unverified.
+Each requested video keeps its own duration obligation across retries, Continue,
+and worker restart. For multiple videos, use a distinct `video_id` per deliverable
+and reuse it on retries; a verified intro cannot satisfy a failed outro. Without
+labels, another video requested after a verified result starts a new obligation.
+For local ComfyUI, corrected retries omit unsupported video options while WebBrain
+retains the target separately for verification. The workflow chooses the output
+length; its configured loopback `/view` result is measured without redirects.
+Duration-constrained hosted MP4s use a credential-free read capped at 15 seconds.
+Verification failures keep the asset and report an unverified duration.
+
+Duration completion checks follow the quality-guard policy: by default they
+refuse once, then allow a caveated completion. Known short, unjoined, or undelivered
+videos downgrade that completion to partial; unavailable duration verification
+alone keeps the model's outcome. Strict checks continue refusing until the video
+meets its target or the model reports a partial or failed outcome.
+
+Before writing scenes, the agent can load the default Video scenes
 skill (`skills/video-scenes.md`), which asks for a shared cast and set sheet in
 `prompt`, one filmable action per scene, and demonstrations instead of diagrams
 or on-screen text; it is loaded only for such videos.

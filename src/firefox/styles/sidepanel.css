@@ -1677,7 +1677,8 @@ html[dir="rtl"] .language-picker-menu {
   font-size: 12px;
 }
 
-.message-content {
+.message-content,
+.slash-command-content {
   padding: 10px 14px;
   border-radius: var(--radius);
   line-height: 1.5;
@@ -1833,10 +1834,16 @@ html[dir="rtl"] .language-picker-menu {
   opacity: 0.9;
 }
 
-.message.system .message-content {
+.message.system .message-content,
+.slash-command-content {
   background: var(--accent-dim);
   border: 1px solid rgba(108, 99, 255, 0.2);
   font-size: 12px;
+}
+
+.slash-command-output {
+  margin: 10px 0;
+  cursor: auto;
 }
 
 .screenshot-result {
@@ -2203,6 +2210,47 @@ html[dir="rtl"] .language-picker-menu {
 
 .message-content p:last-child {
   margin-bottom: 0;
+}
+
+.message-content a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+  overflow-wrap: anywhere;
+}
+
+.message.user .message-content a {
+  color: inherit;
+}
+
+.message-content a.chat-link::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-inline-end: 0.35em;
+  vertical-align: -0.1em;
+  background-color: currentColor;
+  opacity: 0.75;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cellipse cx='12' cy='12' rx='4' ry='9'/%3E%3Cpath d='M3 12h18'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.message-content a.chat-link-icon-ready::before {
+  display: none;
+}
+
+.message-content .chat-link-icon {
+  display: none;
+  width: 14px;
+  height: 14px;
+  margin-inline-end: 0.35em;
+  vertical-align: -0.1em;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
+.message-content .chat-link-icon-ready > .chat-link-icon {
+  display: inline-block;
 }
 
 .hint {
@@ -3351,13 +3399,21 @@ html[data-ui-scale="175"] .conversation-action-label {
   padding: 4px 4px 4px 5px;
 }
 
-/* In the composer the picker is an engine icon: the model's name is its
-   tooltip and accessible name, so a long name never crowds the toolbar. */
+/* Keep the model logo and engine fallback the same size, so switching
+   providers never moves the connection badge or crowds the toolbar. */
 .provider-picker-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
 }
 
-/* The connection dot is a badge on the engine's lower corner, inside the
+.provider-picker-logo.hidden,
+.provider-picker-icon.has-logo .provider-picker-fallback {
+  display: none;
+}
+
+/* The connection dot is a badge on the logo's lower corner, inside the
    button: it reads as the model's status, and clicking it opens the menu like
    the rest of the button. A ring in the button's background keeps it clear of
    the icon's strokes. */

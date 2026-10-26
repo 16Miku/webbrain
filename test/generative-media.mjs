@@ -221,6 +221,41 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(media.videoInputCapabilities(null), null);
   });
 
+  test(`${build}: unbounded video duration schemas preserve valid defaults and input types`, () => {
+    const entryFor = duration => media.videoInputCapabilities({
+      openapi: '3.0.4', paths: { '/model': { post: { requestBody: { content: { 'application/json': { schema: {
+        type: 'object', properties: { prompt: { type: 'string' }, duration },
+      } } } } } } },
+    });
+    for (const [duration, expected, encoded] of [
+      [{ type: 'integer', default: 5 }, 5, 5],
+      [{ type: 'number', default: 6 }, 6, 6],
+      [{ type: 'string', default: '5s' }, 5, '5s'],
+      [{ type: 'string', default: '6.0' }, 6, '6.0'],
+      [{ allOf: [{ type: 'integer', default: 6 }, { minimum: 5, multipleOf: 2 }] }, 6, 6],
+    ]) {
+      const entry = entryFor(duration);
+      assert.equal(entry.supported_durations, undefined);
+      assert.equal(entry.default_duration, expected);
+      assert.equal(entry.encodeDuration(expected), encoded);
+    }
+    for (const duration of [
+      { type: 'integer', default: 0 }, { type: 'number', default: -5 }, { type: 'number', default: 5.5 },
+      { type: 'integer', default: '5' }, { type: 'string', default: 5 }, { type: 'string', default: 'auto' },
+      { type: 'integer', default: 5, minimum: 6 }, { type: 'integer', default: 5, multipleOf: 2 },
+      { type: 'integer', default: Number.MAX_SAFE_INTEGER + 1 },
+    ]) assert.equal(entryFor(duration).default_duration, undefined, JSON.stringify(duration));
+    assert.equal(entryFor({ type: 'string' }).encodeDuration(8), '8');
+    assert.equal(entryFor({ type: ['string', 'null'] }).encodeDuration(8), '8');
+    assert.equal(entryFor({ anyOf: [{ type: 'string' }, { type: 'null' }] }).encodeDuration(8), '8');
+    assert.equal(entryFor({ type: 'integer' }).encodeDuration(8), 8);
+    assert.equal(entryFor({ anyOf: [{ type: 'string' }, { type: 'number' }] }).encodeDuration(8), 8);
+    assert.equal(entryFor({ type: 'string', default: '5s' }).encodeDuration(8), '8', 'no units are invented');
+    const bounded = entryFor({ type: 'integer', minimum: 5, maximum: 6, default: 5 });
+    assert.deepEqual(bounded.supported_durations, [5, 6]);
+    assert.equal(bounded.default_duration, undefined, 'bounded durations remain authoritative');
+  });
+
   test(`${build}: OpenRouter Image API returns inline media without a chat request`, async () => {
     const calls = [];
     const result = await media.runMediaGeneration({ prompt: 'red apple', config: { provider: 'openrouter', apiKey: 'or-key', model: 'google/gemini-2.5-flash-image' }, fetchImpl: async (url, init) => {
