@@ -2554,6 +2554,31 @@
     };
   }
 
+  // Trusted input (the Firefox companion, bidi/client.js visionInput) takes
+  // the element the top document shows at a viewport point, the one the page
+  // monitor prepared there, and marks it for the companion, which moves (and
+  // for a click presses) the real pointer there itself; the monitor knows
+  // that input by the mark. A point over an embedded frame, or inside an open
+  // shadow root (the monitor binds its host, but sees the events come from
+  // inside, where it cannot tell them from a person's), stays with the
+  // synthetic sequence, which reaches into both.
+  function _visionBidiPrepare(x, y, token) {
+    if (!/^[a-f0-9-]{36}$/.test(String(token || ''))) {
+      return { success: false, dispatched: false, noDispatch: true, error: 'Invalid trusted-input target.' };
+    }
+    const el = document.elementFromPoint(x, y);
+    if (!el) return { success: false, dispatched: false, noDispatch: true, error: 'Nothing is rendered at that point.' };
+    const inner = el.shadowRoot?.elementFromPoint?.(x, y);
+    if (/^(IFRAME|FRAME|OBJECT|EMBED)$/i.test(String(el.tagName || '')) || (inner && inner !== el)) {
+      return { bidiUnavailable: true, success: false, dispatched: false, noDispatch: true };
+    }
+    el.setAttribute('data-webbrain-bidi', token);
+    setTimeout(() => { if (el.getAttribute('data-webbrain-bidi') === token) el.removeAttribute('data-webbrain-bidi'); }, 10000);
+    // The companion takes whole CSS pixels.
+    return { bidiPrepared: true, success: false, dispatched: false, noDispatch: true, url: location.href,
+      point: { x: Math.min(Math.round(x), Math.max(0, innerWidth - 1)), y: Math.min(Math.round(y), Math.max(0, innerHeight - 1)) } };
+  }
+
   function visionInput(params = {}, actionDeadlineExpired = () => false) {
     const type = String(params.type || 'click');
     const x = Number(params.x);
@@ -2644,6 +2669,20 @@
         success: false, dispatched: false, noDispatch: true, visionInputRefused: 'disabled_control', target: { ...describe, disabled: what },
         error: `Not dispatched: the ${what} at this point is disabled, so a person's ${type} there would do nothing. Wait until it is enabled, or use another control.`,
       };
+    }
+    if (params._bidiPrepare) {
+      if (type !== 'click' && type !== 'hover') {
+        return { success: false, dispatched: false, noDispatch: true, error: `Trusted vision input does not send a ${type}.` };
+      }
+      const prepared = _visionBidiPrepare(x, y, params._bidiPrepare);
+      if (!prepared.bidiPrepared) return prepared;
+      // The real pointer is there after this; a later synthetic sequence
+      // starts as one arriving from elsewhere.
+      _visionPointerOver = null;
+      // A click runs inside the native file-chooser guard, as the synthetic
+      // click does (settled by the agent like that one).
+      return { ...prepared, target: describe,
+        ...(type === 'click' ? { _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId } : {}) };
     }
     // A click or drag presses the pointer, which the page may capture
     // (_visionPointerCapture); its capture methods are the page's own again

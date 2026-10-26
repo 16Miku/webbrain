@@ -181,6 +181,13 @@ function unpackRemoteObjectValue(value) {
   }));
 }
 
+// What this companion can do beyond the first protocol, reported by
+// `connect`. point_input: vision mode's click_at and hover_at, trusted input
+// at a viewport point of the run's top document.
+export const COMPANION_CAPABILITIES = Object.freeze(['point_input']);
+// Vision mode's point actions (point_input).
+const POINT_ACTIONS = new Set(['click_at', 'hover_at']);
+
 export class BidiSession {
   constructor(WebSocketImpl = WebSocket) {
     this.WebSocketImpl = WebSocketImpl;
@@ -194,7 +201,7 @@ export class BidiSession {
   }
   async connectSession(port) {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid local Firefox port');
-    if (this.socket?.readyState === 1) return { connected: true };
+    if (this.socket?.readyState === 1) return { connected: true, capabilities: [...COMPANION_CAPABILITIES] };
     const socket = this.socket = new this.WebSocketImpl(`ws://127.0.0.1:${port}/session`);
     socket.addEventListener('message', event => this.receive(JSON.parse(event.data)));
     socket.addEventListener('close', () => {
@@ -208,7 +215,7 @@ export class BidiSession {
     });
     await this.send('session.new', { capabilities: { alwaysMatch: { unhandledPromptBehavior: { default: 'ignore' } } } });
     await this.send('session.subscribe', { events: ['browsingContext.userPromptOpened', 'browsingContext.userPromptClosed', 'browsingContext.contextDestroyed'] });
-    return { connected: true };
+    return { connected: true, capabilities: [...COMPANION_CAPABILITIES] };
   }
   send(method, params) {
     if (this.socket?.readyState !== 1) return Promise.reject(new Error('Firefox BiDi is disconnected'));
@@ -388,7 +395,7 @@ export class BidiSession {
     }
   }
   async performAction(id, action, payload, dispatch, validatePageDispatch = null) {
-    if (!['navigate', 'click', 'hover', 'type', 'field', 'key', 'upload'].includes(action)) throw new Error('Unsupported BiDi action');
+    if (!['navigate', 'click', 'hover', 'type', 'field', 'key', 'upload', ...POINT_ACTIONS].includes(action)) throw new Error('Unsupported BiDi action');
     if (payload.modifiers) throw new Error('Key modifiers are not supported by this tool');
     const run = this.runs.get(id); if (!run) throw new Error('Run stopped or disconnected');
     const assertLive = () => {
@@ -410,8 +417,15 @@ export class BidiSession {
       finally { run.navigation = false; }
       return { success: true, dispatched: true };
     }
+    const pointAction = POINT_ACTIONS.has(action);
+    if (pointAction) {
+      // A vision point is in the top document's viewport, so the element the
+      // extension marked there is one of that document (content.js).
+      if (!Number.isInteger(payload.point?.x) || !Number.isInteger(payload.point?.y)) throw new Error('Invalid point coordinates');
+    }
     const match = await this.locate(payload.token, payload.url, run.context);
     assertLive();
+    if (pointAction && match.context !== run.context) throw new Error('Point input targets the top document; no input sent');
     let nativeSequence = 0;
     const markNativeDispatch = async (kind, { rebindFocus = false, domDispatch = false } = {}) => {
       assertLive();
@@ -471,7 +485,7 @@ export class BidiSession {
         }`, [{ type: 'string', value: marker }, { type: 'string', value: action }]);
       } catch { /* The document may have navigated or the monitor already consumed the marker. */ }
     };
-    const point = action === 'click' && payload.point != null ? payload.point : null;
+    const point = (action === 'click' && payload.point != null) || pointAction ? payload.point : null;
     if (point && (!Number.isInteger(point.x) || !Number.isInteger(point.y))) throw new Error('Invalid click coordinates');
     const focusGuard = payload.pageFeedbackGuard;
     if (['type', 'field', 'key'].includes(action) && focusGuard
@@ -482,10 +496,12 @@ export class BidiSession {
     }
     assertLive();
     const check = await this.call(match, `(el, token, action, x, y) => {
-      if (!el.isConnected || el.getAttribute('data-webbrain-bidi') !== token || el.disabled) return false;
+      // A pointer may rest on a disabled control.
+      if (!el.isConnected || el.getAttribute('data-webbrain-bidi') !== token
+          || (el.disabled && action !== 'hover_at')) return false;
       el.removeAttribute('data-webbrain-bidi');
       if (action === 'upload') return el.tagName === 'INPUT' && el.type === 'file';
-      if (action === 'click' || action === 'hover') {
+      if (action === 'click' || action === 'hover' || action === 'click_at' || action === 'hover_at') {
         const r = el.getBoundingClientRect();
         const px = x === null ? r.x+r.width/2 : x;
         const py = y === null ? r.y+r.height/2 : y;
@@ -588,11 +604,12 @@ export class BidiSession {
       finally { await this.send('input.releaseActions', { context: match.context }).catch(() => {}); }
       assertLive();
     };
-    if (action === 'click' || action === 'hover') {
+    if (action === 'click' || action === 'hover' || action === 'click_at' || action === 'hover_at') {
+      const pressing = action === 'click' || action === 'click_at';
       const source = { type: 'pointer', id: 'webbrain-pointer', parameters: { pointerType: 'mouse' }, actions: [
         point ? { type: 'pointerMove', x: point.x, y: point.y, origin: 'viewport' }
           : { type: 'pointerMove', x: 0, y: 0, origin: { type: 'element', element: { sharedId: match.node.sharedId } } },
-        ...(action === 'click' ? [{ type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }] : []),
+        ...(pressing ? [{ type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }] : []),
       ] };
       assertLive();
       const marker = await markNativeDispatch('click');

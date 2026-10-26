@@ -30,6 +30,17 @@ function trustedTypingReadback(readback, fieldMeta) {
   return { unverified: { reason: readback.reason === 'element_replaced' ? 'element_replaced' : 'readback_unavailable', reader: 'none' },
     readbackExact: false };
 }
+// Vision mode's input that goes out as trusted input at a point
+// (visionInput): a left click and a hover. A double, triple, right or middle
+// click, a drag and a wheel stay synthetic (content.js visionInput). A BiDi
+// wheel scrolls only the window's selected tab, and a run's tab may be in
+// the background.
+function trustedVisionAction(params = {}) {
+  if (params.type === 'hover') return 'hover_at';
+  if (params.type === 'click' && (params.button == null || params.button === 'left')
+      && (params.clickCount == null || Number(params.clickCount) === 1)) return 'click_at';
+  return null;
+}
 export class FirefoxBidiClient {
   constructor(api) { this.apiOverride = api; this.pending = new Map(); this.runs = new Map(); this.captures = new Map(); this.sequence = 0; this.connectionEpoch = 0; }
   get api() { return this.apiOverride || globalThis.browser; }
@@ -189,16 +200,20 @@ export class FirefoxBidiClient {
       if (!owner || owner.signal?.aborted || owner.disconnected) throw new Error('No connected Firefox BiDi run; restart the task after reconnecting');
       await this.bindRun(tabId, owner);
       if (this.runs.get(tabId) !== owner || owner.disconnected || owner.signal?.aborted) throw new Error('Run stopped');
-      pageFeedbackGuard = await beforePageAgentDispatch(this.api, tabId, {
-        kind: action === 'navigate' ? 'navigate' : action === 'scroll' ? 'scroll'
-          : ['type', 'field', 'key', 'upload'].includes(action) ? 'input' : 'click',
-        ...(payload.point ? { x: payload.point.x, y: payload.point.y } : {}),
-        selector: payload.selector, ref_id: payload.ref_id, frameId: payload.frameId || 0,
-        tool: action, prepareMonitor: true,
-        navigationCandidate: ['click', 'checked'].includes(action),
-        fenceOnly: true,
-        url: action === 'navigate' ? payload.url : undefined,
-      });
+      pageFeedbackGuard = await beforePageAgentDispatch(this.api, tabId, action === 'click_at' || action === 'hover_at'
+        // The run already prepared the monitor at this vision point
+        // (page-feedback.js); like the synthetic sequence, only fence it.
+        ? { kind: 'click', frameId: 0, navigationCandidate: action === 'click_at', fenceOnly: true }
+        : {
+          kind: action === 'navigate' ? 'navigate' : action === 'scroll' ? 'scroll'
+            : ['type', 'field', 'key', 'upload'].includes(action) ? 'input' : 'click',
+          ...(payload.point ? { x: payload.point.x, y: payload.point.y } : {}),
+          selector: payload.selector, ref_id: payload.ref_id, frameId: payload.frameId || 0,
+          tool: action, prepareMonitor: true,
+          navigationCandidate: ['click', 'checked'].includes(action),
+          fenceOnly: true,
+          url: action === 'navigate' ? payload.url : undefined,
+        });
       if (!owner.bound && (action !== 'navigate' || !/^https?:\/\//.test(payload.url || ''))) throw new Error('Navigate to a web page before trusted input');
       onDispatch?.();
     } catch (error) { throw notSent(error); }
@@ -207,6 +222,42 @@ export class FirefoxBidiClient {
       return { success: true, dispatched: true, bindingDeferred: true };
     }
     return this.request('perform', { runId: owner.runId, action, payload: { ...payload, pageFeedbackGuard } });
+  }
+  // Vision mode's point input as trusted input. The content script runs every
+  // check of its synthetic sequence (content.js visionInput) and marks the
+  // element the top document shows at the point; the companion then moves
+  // the real pointer there and, for a click, presses it. null: this run has
+  // no trusted input, its companion has no point input, the input is one
+  // that stays synthetic (trustedVisionAction) or the point is over an
+  // embedded frame. Nothing was sent, and the caller sends it synthetically.
+  async visionInput(tabId, params = {}) {
+    const action = trustedVisionAction(params);
+    const owner = this.runs.get(tabId);
+    if (!owner || !action) return null;
+    if (owner.disconnected || owner.signal?.aborted) return { success: false, dispatched: false, noDispatch: true, retryable: false, error: 'Firefox connection stopped; restart the task.' };
+    const connection = await this.connect();
+    if (!Array.isArray(connection?.capabilities) || !connection.capabilities.includes('point_input')) return null;
+    await this.bindRun(tabId, owner);
+    if (!owner.bound) return { success: false, dispatched: false, noDispatch: true, error: 'Navigate to a web page before trusted input.' };
+    const token = crypto.randomUUID();
+    const prepared = await this.api.tabs.sendMessage(tabId, { target: 'content', action: 'vision_input',
+      params: { ...params, _bidiPrepare: token } }, { frameId: 0 });
+    if (prepared?.bidiUnavailable === true) return null;
+    if (!prepared?.bidiPrepared) return prepared || { success: false, dispatched: false, noDispatch: true, error: 'The page did not answer the vision input.' };
+    if (this.runs.get(tabId) !== owner || owner.disconnected || owner.signal?.aborted) return { success: false, dispatched: false, noDispatch: true, retryable: false, error: 'Run stopped before trusted input.' };
+    const evidence = { ...(prepared.target ? { target: prepared.target } : {}),
+      ...(prepared._filePickerGuardId ? { _filePickerGuardId: prepared._filePickerGuardId } : {}) };
+    try {
+      const performed = await this.perform(tabId, action, { token, url: prepared.url, point: prepared.point });
+      return { ...performed, ...evidence, method: 'firefox-bidi' };
+    } catch (error) {
+      if (error?.name === 'AbortError' && isBidiRequestNotSentError(error)) throw error;
+      if (error?.code === 'page_feedback_pending') return { ...evidence, success: false, dispatched: false,
+        noDispatch: true, pageFeedbackPending: true, error: error.message };
+      if (isBidiRequestNotSentError(error)) return { ...evidence, success: false, dispatched: false, noDispatch: true,
+        outcomeUnknown: false, retryable: false, error: error.message };
+      return { ...evidence, success: false, dispatched: true, outcomeUnknown: true, retryable: false, ...(error.dispatchState || {}), error: error.message };
+    }
   }
   // `onDispatch` marks the transport boundary of whichever route is taken: the
   // content message, or the native request after its preparation and fence.
