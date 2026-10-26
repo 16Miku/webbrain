@@ -15,8 +15,9 @@ import { createComposerModePins } from './composer-mode-pin.js';
 import { reportSidePanelPresence } from '../sidepanel-presence.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
-import { sanitizeMarkdownLinks } from './markdown-link.js';
-import { codeFenceLanguage, highlightCode, renderMarkdownBlockquotes, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
+import { sanitizeMarkdownLinks, linkifyPlainUrls } from './markdown-link.js';
+import { installChatLinkIcons } from './chat-link-icons.js';
+import { codeFenceLanguage, createMarkdownPlaceholders, highlightCode, renderMarkdownBlockquotes, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
 import { applyMode, loadMode, watch } from './theme.js';
 import {
   UI_SCALE_LEVELS,
@@ -692,6 +693,14 @@ const pinCoachmarkDismissed = (async function initPinCoachmark() {
 })();
 
 const messagesEl = document.getElementById('messages');
+const disposeChatLinkIcons = installChatLinkIcons(messagesEl, {
+  fetchImpl: async (url, options) => {
+    const { strictSecretMode } = await chrome.storage.local.get('strictSecretMode');
+    if (strictSecretMode === true) throw new Error('Remote chat icons are disabled in Strict Secret Mode.');
+    return fetch(url, options);
+  },
+});
+window.addEventListener('pagehide', disposeChatLinkIcons, { once: true });
 const chatContainerEl = document.getElementById('chat-container');
 const chatNavigationEl = document.getElementById('chat-navigation');
 const chatNavigationActionEl = document.getElementById('chat-navigation-action');
@@ -5198,6 +5207,8 @@ async function exportSavedWorkflow(id, tabId = currentTabId) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
     link.download = savedWorkflowDownloadFilename(res.workflow.name);
     document.body.appendChild(link);
     try {
@@ -9898,6 +9909,8 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
       a.download = `webbrain-config-${Date.now()}.json`;
       document.body.appendChild(a);
       try {
@@ -9944,6 +9957,8 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
     a.download = `webbrain-traces-${Date.now()}.${res.json ? 'json' : 'md'}`;
     document.body.appendChild(a);
     try {
@@ -9988,6 +10003,8 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
     a.download = `webbrain-chat-${Date.now()}.md`;
     document.body.appendChild(a);
     try {
@@ -14807,21 +14824,27 @@ function formatMarkdown(text, options = {}) {
   const enhance = options.enhance !== false;
   const streaming = options.recoverNestedMarkdown === true;
 
+  const placeholders = createMarkdownPlaceholders(text);
+
   // 1. Extract fenced code blocks BEFORE escaping HTML
   const codeBlocks = [];
   text = replaceMarkdownCodeFences(text, (info, code) => {
     const lang = codeFenceLanguage(info);
-    const id = `__CODEBLOCK_${codeBlocks.length}__`;
+    const index = codeBlocks.length;
     codeBlocks.push({ lang: lang || '', code });
-    return id;
+    const highlighted = enhance ? highlightCode(code, lang) : escapeHtml(code);
+    const langLabel = lang ? `<span class="code-lang">${escapeHtml(lang)}</span>` : '';
+    const copyBtn = enhance
+      ? `<button class="code-copy-btn" data-code-index="${index}" title="${escapeHtml(t('sp.copy.code.title'))}">${escapeHtml(t('sp.copy'))}</button>`
+      : '';
+    const header = langLabel || copyBtn ? `<div class="code-block-header">${langLabel}${copyBtn}</div>` : '';
+    return placeholders.add(`<div class="code-block-wrapper">${header}<pre><code>${highlighted}</code></pre></div>`, code);
   }, { streaming });
 
   // 2. Extract inline code before escaping
-  const inlineCodes = [];
   text = text.replace(/`([^`\n]+)`/g, (_match, code) => {
-    const id = `__INLINE_${inlineCodes.length}__`;
-    inlineCodes.push(code);
-    return id;
+    const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return placeholders.add(`<code>${escaped}</code>`, code);
   });
 
   // 3. Escape HTML in the remaining text
@@ -14838,38 +14861,15 @@ function formatMarkdown(text, options = {}) {
   text = renderMarkdownTables(text);
   text = renderMarkdownBlockquotes(text);
   text = renderMarkdownHeadings(text);
-  text = text
+  const emphasis = value => value
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>');
-  text = sanitizeMarkdownLinks(text);
-  text = text.replace(/\n/g, '<br>');
-
-  // 5. Restore inline code
-  inlineCodes.forEach((code, i) => {
-    const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    // Function replacer: a string replacement would interpret `$&`, `$\``, etc.
-    // in code that contains literal `$` sequences (shell, jQuery, regex), mangling it.
-    text = text.replace(`__INLINE_${i}__`, () => `<code>${escaped}</code>`);
-  });
-
-  // 6. Restore fenced code blocks with copy button
-  codeBlocks.forEach((block, i) => {
-    // Re-highlighting every accumulated token is expensive and can visibly
-    // flicker. Keep live code escaped/plain, then highlight it once when the
-    // authoritative terminal response arrives.
-    const highlighted = enhance ? highlightCode(block.code, block.lang) : escapeHtml(block.code);
-    const langLabel = block.lang ? `<span class="code-lang">${escapeHtml(block.lang)}</span>` : '';
-    const copyBtn = enhance
-      ? `<button class="code-copy-btn" data-code-index="${i}" title="${escapeHtml(t('sp.copy.code.title'))}">${escapeHtml(t('sp.copy'))}</button>`
-      : '';
-    const header = langLabel || copyBtn
-      ? `<div class="code-block-header">${langLabel}${copyBtn}</div>`
-      : '';
-    text = text.replace(
-      `__CODEBLOCK_${i}__`,
-      () => `<div class="code-block-wrapper">${header}<pre><code>${highlighted}</code></pre></div>`
-    );
-  });
+  // Protect destinations from emphasis (a URL can itself contain '*').
+  text = linkifyPlainUrls(sanitizeMarkdownLinks(text)).replace(/(<a\b[^>]*>)([\s\S]*?)(<\/a>)/g, (_match, open, label, close) => (
+    placeholders.add(`${open}${/^https?:\/\/\S+$/i.test(label) ? label : emphasis(label)}${close}`)
+  ));
+  text = emphasis(text).replace(/\n/g, '<br>');
+  text = placeholders.restore(text);
 
   // Schedule KaTeX rendering of any math expressions in the messages area.
   // auto-render walks text nodes and replaces $...$, $$...$$, \(...\), \[...\]

@@ -26,12 +26,12 @@ const preContents = (html) => [...html.matchAll(/<pre><code>([\s\S]*?)<\/code><\
 
 for (const build of ['chrome', 'firefox']) {
   const helpers = await import(`../src/${build}/src/ui/markdown-render.js`);
-  const { sanitizeMarkdownLinks } = await import(`../src/${build}/src/ui/markdown-link.js`);
+  const { sanitizeMarkdownLinks, linkifyPlainUrls } = await import(`../src/${build}/src/ui/markdown-link.js`);
   const { escapeHtml } = await import(`../src/${build}/src/ui/utils.js`);
   const { renderSkillMarkdown } = await import(`../src/${build}/src/ui/skill-markdown.js`);
   const { historyTextFromElement } = await import(`../src/${build}/src/ui/history-text.js`);
   const formatMarkdown = vm.runInNewContext(`(${panelFormatter(build)})`, {
-    ...helpers, sanitizeMarkdownLinks, escapeHtml, t: key => key,
+    ...helpers, sanitizeMarkdownLinks, linkifyPlainUrls, escapeHtml, t: key => key,
     scheduleMathRender() {}, setTimeout() {},
   });
 
@@ -694,11 +694,11 @@ for (const build of ['chrome', 'firefox']) {
       await page.addStyleTag({ content: fs.readFileSync(new URL(`../src/${build}/styles/sidepanel.css`, import.meta.url), 'utf8') });
       const result = await page.evaluate(async ({ formatter, terminalRenderer, source, expected }) => {
         const helpers = await import('/markdown-render.js');
-        const { sanitizeMarkdownLinks } = await import('/markdown-link.js');
+        const { sanitizeMarkdownLinks, linkifyPlainUrls } = await import('/markdown-link.js');
         const { escapeHtml } = await import('/utils.js');
         const { historyTextFromElement } = await import('/history-text.js');
         const { renderSkillMarkdown } = await import('/skill-markdown.js');
-        const dependencies = { ...helpers, sanitizeMarkdownLinks, escapeHtml, t: key => key, scheduleMathRender() {} };
+        const dependencies = { ...helpers, sanitizeMarkdownLinks, linkifyPlainUrls, escapeHtml, t: key => key, scheduleMathRender() {} };
         const format = new Function(...Object.keys(dependencies), `return (${formatter})`)(...Object.values(dependencies));
         let copied = null;
         Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => { copied = text; } } });
@@ -719,7 +719,8 @@ for (const build of ['chrome', 'firefox']) {
           document,
         };
         const renderTerminal = new Function(...Object.keys(updateDependencies), `return (${terminalRenderer})`)(...Object.values(updateDependencies));
-        const assistantEl = { querySelector: selector => selector === '.message-text' ? message : {} };
+        message.classList.add('message-text');
+        const assistantEl = message.closest('.message');
         renderTerminal(assistantEl, source);
         const terminalBlocks = message.querySelectorAll('pre').length;
         renderTerminal(assistantEl, source, { replace: true });

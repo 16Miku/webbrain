@@ -55,5 +55,105 @@ export function sanitizeLink(label, href) {
  * sanitizeLink. Non-link text is passed through unchanged.
  */
 export function sanitizeMarkdownLinks(text) {
-  return String(text == null ? '' : text).replace(MD_LINK_RE, (_m, label, href) => sanitizeLink(label, href));
+  return String(text == null ? '' : text).replace(MD_LINK_RE, (_m, label, href, offset, source) => {
+    const link = sanitizeLink(label, href);
+    // Markdown images stay links, without even an indirect favicon request.
+    if (source[offset - 1] !== '!') return link;
+    return link.startsWith('<a ') ? link.replace(/^<a /, '<a data-no-favicon="true" ')
+      : `<span data-no-favicon="true">${label}</span>`;
+  });
+}
+
+// Image syntax is inert even before streaming has supplied its closing bracket
+// or parenthesis. Track balanced delimiters instead of assuming a URL following
+// an unfinished image is ordinary prose. Ranges include labels as well as URLs.
+export function markdownImageRanges(text) {
+  const source = String(text ?? '');
+  const ranges = [];
+  let cursor = 0;
+  const balancedEnd = (start, open, close) => {
+    let depth = 1;
+    for (let index = start + 1; index < source.length; index++) {
+      if (source[index] === '\\') { index++; continue; }
+      if (source[index] === open) depth++;
+      else if (source[index] === close && --depth === 0) return index + 1;
+    }
+    return source.length;
+  };
+  while ((cursor = source.indexOf('![', cursor)) !== -1) {
+    const start = cursor;
+    let end = balancedEnd(cursor + 1, '[', ']');
+    if (source[end] === '(') end = balancedEnd(end, '(', ')');
+    else if (source[end] === '[') end = balancedEnd(end, '[', ']');
+    ranges.push([start, end]);
+    cursor = Math.max(end, start + 2);
+  }
+  return ranges;
+}
+
+// Input is already HTML-escaped, with fixed Markdown markup added. Only text
+// nodes are linkified: existing anchors, code and generated attributes stay intact.
+export function linkifyPlainUrls(html, precedingText = '') {
+  const source = String(html ?? '');
+  const protectedTags = new Set(['a', 'code', 'pre']);
+  let protectedDepth = 0;
+  // Ignore generated tags while retaining offsets and syntax across inline
+  // formatting. Literal code or existing links cannot start image syntax in
+  // adjacent prose. Restored DOM text supplies earlier siblings as context.
+  const imageContext = source.replace(/<[^>]*>|[^<]+|</g, token => {
+    if (token.startsWith('<')) {
+      const tag = /^<(\/?)([a-z][\w-]*)\b/i.exec(token);
+      if (tag && protectedTags.has(tag[2].toLowerCase())) {
+        protectedDepth = Math.max(0, protectedDepth + (tag[1] ? -1 : 1));
+      }
+      return ' '.repeat(token.length);
+    }
+    return protectedDepth ? ' '.repeat(token.length) : token;
+  });
+  const imageRanges = markdownImageRanges(precedingText + imageContext);
+  protectedDepth = 0;
+  return source.replace(/<[^>]*>|[^<]+|</g, (token, tokenOffset) => {
+    if (token.startsWith('<')) {
+      const tag = /^<(\/?)([a-z][\w-]*)\b/i.exec(token);
+      if (tag && protectedTags.has(tag[2].toLowerCase())) {
+        protectedDepth = Math.max(0, protectedDepth + (tag[1] ? -1 : 1));
+      }
+      return token;
+    }
+    if (protectedDepth) return token;
+    return token.replace(/\bhttps?:\/\/(?:(?!&(?:lt|gt|quot|apos|#39|#34);)[^\s<>"'`])+/gi, (candidate, offset, source) => {
+      const absoluteOffset = precedingText.length + tokenOffset + offset;
+      if (imageRanges.some(([start, end]) => absoluteOffset >= start && absoluteOffset < end)) return candidate;
+      // Do not turn a URL embedded in another scheme or word into a new link.
+      if (offset && /[\w@:/]/.test(source[offset - 1])) return candidate;
+      let end = candidate.length;
+      const emphasis = /(?:^|[\s(\[{>])(\*{1,3})(?=\S|$)[^*\n]*$/.exec(source.slice(0, offset))?.[1];
+      let closedEmphasis = false;
+      const pairs = { ')': '(', ']': '[', '}': '{' };
+      const balance = { '(': 0, '[': 0, '{': 0 };
+      for (const character of candidate) {
+        if (Object.hasOwn(balance, character)) balance[character]++;
+        else if (pairs[character]) balance[pairs[character]]--;
+      }
+      while (end) {
+        const last = candidate[end - 1];
+        if (!closedEmphasis && emphasis && candidate.slice(0, end).endsWith(emphasis)) {
+          end -= emphasis.length;
+          closedEmphasis = true;
+          continue;
+        }
+        if (last === ';' && /&(?:amp|#\d+|#x[\da-f]+);$/i.test(candidate.slice(0, end))) break;
+        if (/[.,!?;:]/.test(last)) { end--; continue; }
+        const opening = pairs[last];
+        if (opening && balance[opening] < 0) { balance[opening]++; end--; continue; }
+        break;
+      }
+      const href = candidate.slice(0, end);
+      try {
+        const parsed = new URL(href.replace(/&amp;/g, '&'));
+        if (!parsed.hostname || !['http:', 'https:'].includes(parsed.protocol)) return candidate;
+      } catch { return candidate; }
+      return sanitizeLink(href, href) + candidate.slice(end);
+    });
+  });
 }

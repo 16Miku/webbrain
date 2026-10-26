@@ -4,8 +4,8 @@
  */
 
 import { escapeHtml } from './utils.js';
-import { sanitizeMarkdownLinks } from './markdown-link.js';
-import { renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
+import { sanitizeMarkdownLinks, linkifyPlainUrls } from './markdown-link.js';
+import { createMarkdownPlaceholders, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
 
 function renderEmphasis(text) {
   return text
@@ -13,84 +13,47 @@ function renderEmphasis(text) {
     .replace(/\*(.+?)\*/g, '<em>$1</em>');
 }
 
-function renderInlineMarkdown(value) {
+function renderInlineMarkdown(value, placeholders) {
   let text = sanitizeMarkdownLinks(value);
-  const links = [];
+  text = linkifyPlainUrls(text);
 
   // Link destinations can legitimately contain `*`. Protect the complete
   // sanitized anchor while applying emphasis only to its visible label.
   text = text.replace(
-    /(<a href="[^"]*" target="_blank" rel="noopener noreferrer">)([\s\S]*?)(<\/a>)/g,
-    (_match, open, label, close) => {
-      const placeholder = `__SKILL_LINK_${links.length}__`;
-      links.push(`${open}${renderEmphasis(label)}${close}`);
-      return placeholder;
-    },
+    /(<a\b[^>]*>)([\s\S]*?)(<\/a>)/g,
+    (_match, open, label, close) => placeholders.add(`${open}${/^https?:\/\/\S+$/i.test(label) ? label : renderEmphasis(label)}${close}`),
   );
 
-  text = renderEmphasis(text);
-  links.forEach((link, index) => {
-    text = text.replace(`__SKILL_LINK_${index}__`, () => link);
-  });
-  return text;
+  return renderEmphasis(text);
 }
 
 export function renderSkillMarkdown(content) {
   let text = String(content || '');
-  const codeBlocks = [];
-  text = replaceMarkdownCodeFences(text, (_info, code) => {
-    const placeholder = `__SKILL_CODE_BLOCK_${codeBlocks.length}__`;
-    codeBlocks.push(code);
-    return placeholder;
-  });
-  const inlineCodes = [];
-  text = text.replace(/`([^`\n]+)`/g, (_match, code) => {
-    const placeholder = `__SKILL_INLINE_CODE_${inlineCodes.length}__`;
-    inlineCodes.push(code);
-    return placeholder;
-  });
+  const placeholders = createMarkdownPlaceholders(text);
+  text = replaceMarkdownCodeFences(text, (_info, code) => placeholders.add(`<pre><code>${escapeHtml(code)}</code></pre>`, code));
+  text = text.replace(/`([^`\n]+)`/g, (_match, code) => placeholders.add(`<code>${escapeHtml(code)}</code>`, code));
 
   text = escapeHtml(text);
 
   text = renderMarkdownTables(text);
 
-  const quoteBlocks = [];
   text = text.replace(/(?:^[ \t]*&gt;[^\r\n]*(?:\r?\n|$))+/gm, (block) => {
-    const placeholder = `__SKILL_QUOTE_BLOCK_${quoteBlocks.length}__`;
-    quoteBlocks.push(block.trimEnd().split(/\r?\n/)
+    const quote = block.trimEnd().split(/\r?\n/)
       .map((line) => line.replace(/^[ \t]*&gt;[ \t]?/, ''))
-      .join('\n'));
-    return `${placeholder}\n`;
+      .join('\n');
+    return `${placeholders.add(`<blockquote>${renderInlineMarkdown(quote, placeholders).replace(/\n/g, '<br>')}</blockquote>`)}\n`;
   });
 
   // Pull list markers out before parsing emphasis so a `*` bullet cannot be
   // paired with an emphasis marker later in the same item.
-  const listBlocks = [];
   const extractLists = (input, pattern, tag, markerPattern) => input.replace(pattern, (block) => {
-    const placeholder = `__SKILL_LIST_BLOCK_${listBlocks.length}__`;
     const items = block.trimEnd().split(/\r?\n/)
       .map((line) => line.replace(markerPattern, '').trim());
-    listBlocks.push({ tag, items });
-    return `${placeholder}\n`;
+    return `${placeholders.add(`<${tag}>${items.map((item) => `<li>${renderInlineMarkdown(item, placeholders)}</li>`).join('')}</${tag}>`)}\n`;
   });
   text = extractLists(text, /(?:^[ \t]*[-+*][ \t]+[^\r\n]*(?:\r?\n|$))+/gm, 'ul', /^[ \t]*[-+*][ \t]+/);
   text = extractLists(text, /(?:^[ \t]*\d+\.[ \t]+[^\r\n]*(?:\r?\n|$))+/gm, 'ol', /^[ \t]*\d+\.[ \t]+/);
 
-  text = renderInlineMarkdown(renderMarkdownHeadings(text)).replace(/\n/g, '<br>');
-
-  listBlocks.forEach(({ tag, items }, index) => {
-    const block = `<${tag}>${items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${tag}>`;
-    text = text.replace(`__SKILL_LIST_BLOCK_${index}__`, () => block);
-  });
-  quoteBlocks.forEach((quote, index) => {
-    const block = `<blockquote>${renderInlineMarkdown(quote).replace(/\n/g, '<br>')}</blockquote>`;
-    text = text.replace(`__SKILL_QUOTE_BLOCK_${index}__`, () => block);
-  });
-  inlineCodes.forEach((code, index) => {
-    text = text.replace(`__SKILL_INLINE_CODE_${index}__`, () => `<code>${escapeHtml(code)}</code>`);
-  });
-  codeBlocks.forEach((code, index) => {
-    text = text.replace(`__SKILL_CODE_BLOCK_${index}__`, () => `<pre><code>${escapeHtml(code)}</code></pre>`);
-  });
-  return text;
+  text = renderInlineMarkdown(renderMarkdownHeadings(text), placeholders).replace(/\n/g, '<br>');
+  return placeholders.restore(text);
 }
