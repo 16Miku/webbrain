@@ -51,7 +51,7 @@ export class RichTextToolbarProbe {
         try {
           await browser.tabs.executeScript(tabId, {
             frameId: frame.frameId,
-            file: 'src/content/redaction-regions.js',
+            file: '/src/content/redaction-regions.js',
           });
           payload = await collect();
         } catch {
@@ -438,15 +438,15 @@ export class RichTextToolbarProbe {
       try {
         await browser.tabs.executeScript(tabId, {
           frameId: frame.frameId,
-          file: 'src/content/rich-text-toolbar-heuristic.js',
+          file: '/src/content/rich-text-toolbar-heuristic.js',
         });
         await browser.tabs.executeScript(tabId, {
           frameId: frame.frameId,
-          file: 'src/content/accessibility-tree.js',
+          file: '/src/content/accessibility-tree.js',
         });
         await browser.tabs.executeScript(tabId, {
           frameId: frame.frameId,
-          file: 'src/content/content.js',
+          file: '/src/content/content.js',
         });
         probe = await request();
       } catch {
@@ -537,15 +537,15 @@ export class RichTextToolbarProbe {
           try {
             await browser.tabs.executeScript(tabId, {
               frameId: child.frameId,
-              file: 'src/content/rich-text-toolbar-heuristic.js',
+              file: '/src/content/rich-text-toolbar-heuristic.js',
             });
             await browser.tabs.executeScript(tabId, {
               frameId: child.frameId,
-              file: 'src/content/accessibility-tree.js',
+              file: '/src/content/accessibility-tree.js',
             });
             await browser.tabs.executeScript(tabId, {
               frameId: child.frameId,
-              file: 'src/content/content.js',
+              file: '/src/content/content.js',
             });
             await announce();
           } catch {}

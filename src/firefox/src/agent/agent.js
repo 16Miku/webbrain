@@ -12300,7 +12300,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       `;
       let elements = (await browser.tabs.executeScript(tabId, { code }))?.[0];
       if (elements === null) {
-        await browser.tabs.executeScript(tabId, { file: 'src/content/accessibility-tree.js' });
+        await browser.tabs.executeScript(tabId, { file: '/src/content/accessibility-tree.js' });
         elements = (await browser.tabs.executeScript(tabId, { code }))?.[0];
       }
       return Array.isArray(elements) ? elements : [];
@@ -45136,7 +45136,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // which subsequent executeScript calls in the same tab can reach.
         // Idempotent across reinjection.
         await browser.tabs.executeScript(tabId, {
-          file: 'src/agent/social-media-downloader.js',
+          file: '/src/agent/social-media-downloader.js',
         });
         const bulkSocialDownload = !!toolArgs.scroll || toolArgs.mode === 'all';
         const opts = {
@@ -46629,10 +46629,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _injectCoreContentScripts(tabId) {
-    await browser.tabs.executeScript(tabId, { file: 'src/content/page-monitor-shadow-loader.js' });
-    await browser.tabs.executeScript(tabId, { file: 'src/content/page-monitor.js' });
+    await browser.tabs.executeScript(tabId, { file: '/src/content/page-monitor-shadow-loader.js' });
+    await browser.tabs.executeScript(tabId, { file: '/src/content/page-monitor.js' });
     await browser.tabs.executeScript(tabId, {
-      file: 'src/content/file-picker-guard-loader.js',
+      file: '/src/content/file-picker-guard-loader.js',
     });
     // The loader fetches a web-accessible extension script into the page's
     // main world. Give that local load a brief head start before content.js
@@ -46640,21 +46640,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // shared DOM for the bridge to pick up if the load completes slightly
     // later.
     await new Promise(resolve => setTimeout(resolve, 50));
-    await browser.tabs.executeScript(tabId, { file: 'src/content/file-upload-policy.js' });
+    await browser.tabs.executeScript(tabId, { file: '/src/content/file-upload-policy.js' });
     await browser.tabs.executeScript(tabId, {
-      file: 'src/content/rich-text-toolbar-heuristic.js',
+      file: '/src/content/rich-text-toolbar-heuristic.js',
     });
     await browser.tabs.executeScript(tabId, {
-      file: 'src/content/accessibility-tree.js',
+      file: '/src/content/accessibility-tree.js',
     });
     await browser.tabs.executeScript(tabId, {
-      file: 'src/content/chat-observation.js',
+      file: '/src/content/chat-observation.js',
     });
     await browser.tabs.executeScript(tabId, {
-      file: 'src/content/content.js',
+      file: '/src/content/content.js',
     });
     await browser.tabs.executeScript(tabId, {
-      file: 'src/content/agent-visual-indicator.js',
+      file: '/src/content/agent-visual-indicator.js',
     });
   }
 
