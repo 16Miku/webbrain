@@ -329,6 +329,42 @@ test('content-script vision drag (Firefox path) moves a native range input like 
   }
 });
 
+test('content-script vision click (Firefox path) moves a native range input\'s thumb to the point', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    const range = (id, top, extra = '') => `<input id="${id}" type="range" ${extra} style="position:absolute;left:100px;top:${top}px;width:300px;height:20px;margin:0">`;
+    await page.setContent(`<!doctype html><style>body{margin:0}</style>
+      ${range('volume', 100, 'min="0" max="100" step="5" value="10"')}${range('held', 160, 'min="0" max="100" value="20"')}
+      <script>window.events=[];for(const id of ['volume','held'])for(const t of ['input','change'])document.getElementById(id).addEventListener(t,e=>events.push([id,t,e.target.value]));
+      document.getElementById('held').addEventListener('mousedown',e=>e.preventDefault());</script>`);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    // The middle of the track (the thumb's centre spans x 108-392): 50, an `input` then a `change`.
+    let result = await run({ type: 'click', x: 250, y: 110 });
+    assert.equal(result.rangeValue, '50', JSON.stringify(result));
+    assert.deepEqual(await page.evaluate(() => window.events.splice(0)), [['volume', 'input', '50'], ['volume', 'change', '50']]);
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'volume');
+    // A press the page cancels moves nothing, and neither does a right click.
+    result = await run({ type: 'click', x: 300, y: 170 });
+    assert.equal(result.rangeValue, undefined, JSON.stringify(result));
+    result = await run({ type: 'click', x: 350, y: 110, button: 'right' });
+    assert.equal(result.rangeValue, undefined, JSON.stringify(result));
+    assert.deepEqual(await page.evaluate(() => [window.events.splice(0), document.getElementById('volume').value, document.getElementById('held').value]), [[], '50', '20']);
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision drag (Firefox path) selects text like a person\'s drag', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {

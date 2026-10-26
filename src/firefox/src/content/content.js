@@ -2766,22 +2766,30 @@
       // Like any agent click, a vision click must not open a native file
       // chooser (a file input, its label, an upload button that clicks one):
       // the guard blocks it, and the agent settles the guard afterwards.
+      let rangeValue;
       const filePickerGuard = clickWithoutNativeFilePicker(() => {
         for (let count = 1; count <= clicks; count++) {
           capture.press();
           pointer(el, 'pointerdown', { button, buttons: buttonsMask });
           const pressAllowed = mouse(el, 'mousedown', { button, buttons: buttonsMask, detail: count });
+          // A primary press on a native range input moves its thumb to the
+          // point, as a drag's does (_visionRangeDrag): `input` now, `change`
+          // on release.
+          let range = null;
           if (count === 1 && button === 0 && pressAllowed) {
             const focusable = _visionFocusable(el);
             if (focusable && focusable !== el.ownerDocument.activeElement) focusable.focus({ preventScroll: true });
             else if (!focusable) el.ownerDocument.activeElement?.blur?.();
             if (focusable) _visionPlaceCaret(el, cx, cy);
+            range = _visionRangeDrag(el);
+            range?.to(cx, cy);
           }
           // A press the page captured is released on the capturing element.
           const holder = capture.target({ button, buttons: buttonsMask }) || el;
           pointer(holder, 'pointerup', { button, buttons: 0 });
           capture.release({ button, buttons: 0 });
           mouse(holder, 'mouseup', { button, buttons: 0, detail: count });
+          if (range) rangeValue = range.release();
           if (button === 0) mouse(el, 'click', { button: 0, buttons: 0, detail: count });
           else if (button === 1) mouse(el, 'auxclick', { button: 1, buttons: 0, detail: count });
         }
@@ -2813,6 +2821,7 @@
       });
       if (filePickerGuard.blocked) return { ...filePickerBlockedResponse(filePickerGuard.blocked), target: describe };
       return { success: true, dispatched: true, method: 'synthetic-vision-pointer', clicks, target: describe,
+        ...(rangeValue !== undefined ? { rangeValue } : {}),
         ...(filePickerGuard.guardId ? { _filePickerGuardId: filePickerGuard.guardId } : {}) };
     };
     try {
