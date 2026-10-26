@@ -17153,7 +17153,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // vision-runtime.js owns the logic. Firefox has no CDP: captures use
   // tabs.captureTab with a render scale, and pointer input is dispatched by
   // the content script at the exact point (content.js visionInput), behind
-  // the same page-agent fence as every other content action.
+  // the same page-agent fence as every other content action. With the local
+  // companion (Settings → Advanced), a left click and a hover go out as
+  // trusted input at the point instead (bidi/client.js visionInput).
 
   async _visionPlatformProbe(tabId) {
     const results = await browser.tabs.executeScript(tabId, { code: `(() => ({
@@ -17213,6 +17215,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _visionContentInput(tabId, params, kind = 'click') {
+    if (firefoxBidi.runs.has(tabId)) {
+      let trusted;
+      try {
+        trusted = await firefoxBidi.visionInput(tabId, params);
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        // Binding the run's document and preparing the point send nothing.
+        const message = String(error?.message || error).slice(0, 160);
+        return { success: false, dispatched: false, noDispatch: true, error: `The page could not take trusted input yet (${message}). Take a screenshot and try again.` };
+      }
+      if (trusted) return trusted;
+    }
     await beforePageAgentDispatch(browser, tabId, {
       kind, frameId: 0, navigationCandidate: kind === 'click' && params.type === 'click', fenceOnly: true,
     });

@@ -305,6 +305,75 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     } finally { await browser.close(); }
   });
 
+  test(`${build}: a vision point's trusted click and hover through the companion belong to the agent`, { timeout: 60000 }, async t => {
+    const browser = await engine.launch({ headless: true });
+    // As the run prepares a vision point (page-feedback.js) and the companion
+    // validates and marks before trusted input (firefox-companion/session.mjs),
+    // with the element content.js _visionBidiPrepare marks: the one
+    // document.elementFromPoint gives for the point.
+    const trusted = async (page, { x, y, kind = 'click', mark = null }) => {
+      const prepared = await message(page, 'page_monitor_prepare', { operationId: 'vision', tool: 'click', allowPassiveRebase: true, visionPoint: true, x, y });
+      assert.equal(prepared.ready, true);
+      const fence = await message(page, 'page_monitor_dispatch', { operationId: 'vision', kind: 'click', frameId: 0, navigationCandidate: kind === 'click', fenceOnly: true });
+      assert.equal(fence.ready, true, JSON.stringify(fence));
+      const validation = await message(page, 'page_monitor_validate', { ...fence.guard, kind: 'click', rebindFocus: false });
+      assert.equal(validation.ready, true, JSON.stringify(validation));
+      const marker = createNativeActionMarker({ ...fence.guard, revision: validation.revision }, 'click', 1);
+      await page.evaluate(({ x, y, marker, mark }) => {
+        const el = mark ? eval(mark) : document.elementFromPoint(x, y);
+        el.setAttribute('data-webbrain-native-action', marker);
+      }, { x, y, marker, mark });
+      if (kind === 'click') await page.mouse.click(x, y);
+      else await page.mouse.move(x, y, { steps: 2 });
+      await message(page, 'page_monitor_finish', { operationId: 'vision' });
+      await settle(page);
+      return sources(page);
+    };
+    const shadowHost = page => page.evaluate(() => {
+      const host = document.createElement('div');
+      host.id = 'shadow-host';
+      host.style.cssText = 'position:absolute;left:600px;top:300px;width:200px;height:60px';
+      document.body.append(host);
+      const root = host.attachShadow({ mode: 'open' });
+      root.innerHTML = '<button id="inner" style="width:200px;height:60px">Inner</button>';
+      window.innerClicks = 0;
+      root.getElementById('inner').addEventListener('click', () => { window.innerClicks++; });
+    }).then(() => settle(page)).then(() => page.evaluate(() => { feedback = []; delivered = []; }));
+    try {
+      await t.test('a trusted click on the marked element is no user input', async () => {
+        const { context, page } = await fixture(browser, build);
+        try {
+          const box = await page.locator('#toggle').boundingBox();
+          const events = await trusted(page, { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) });
+          assert.equal(await page.evaluate(() => document.getElementById('hidden-switch').checked), true, 'the click landed');
+          assert.equal(events.some(event => event.endsWith('/user')), false, `the trusted click is the agent's: ${events}`);
+        } finally { await context.close(); }
+      });
+      await t.test('a trusted hover on the marked element is no user input', async () => {
+        const { context, page } = await fixture(browser, build);
+        try {
+          const box = await page.locator('#send').boundingBox();
+          const events = await trusted(page, { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2), kind: 'hover' });
+          assert.equal(events.some(event => event.endsWith('/user')), false, `the trusted hover is the agent's: ${events}`);
+        } finally { await context.close(); }
+      });
+      // Why content.js leaves a point inside an open shadow root synthetic: the
+      // monitor binds the host there, and neither a mark on the host nor one on
+      // the element inside covers the trusted events, which come from inside.
+      for (const [name, mark] of [['the host', null], ['the element inside', "document.getElementById('shadow-host').shadowRoot.getElementById('inner')"]]) {
+        await t.test(`inside an open shadow root a mark on ${name} does not cover a trusted click`, async () => {
+          const { context, page } = await fixture(browser, build);
+          try {
+            await shadowHost(page);
+            const events = await trusted(page, { x: 700, y: 330, mark });
+            assert.equal(await page.evaluate(() => window.innerClicks), 1);
+            assert.ok(events.some(event => event.endsWith('/user')), `the click is not shown as the agent's: ${events}`);
+          } finally { await context.close(); }
+        });
+      }
+    } finally { await browser.close(); }
+  });
+
   test(`${build}: finishing an operation delivers its own pending reactions first`, { timeout: 60000 }, async t => {
     const browser = await engine.launch({ headless: true });
     try {

@@ -226,6 +226,79 @@ test('content-script vision input (Firefox path) clicks, double-clicks, focuses,
   }
 });
 
+test('content-script vision input (Firefox path) marks the element at the point for trusted input, after its checks', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    await page.setContent(`<!doctype html><style>body{margin:0}button,iframe,#host{position:absolute;margin:0;border:0}
+      #go{left:100px;top:100px;width:200px;height:60px}#off{left:400px;top:100px;width:200px;height:60px}
+      #frame{left:100px;top:300px;width:300px;height:150px}#host{left:500px;top:300px;width:200px;height:80px}</style>
+      <button id="go">Go</button><button id="off" disabled>Off</button>
+      <iframe id="frame" srcdoc="<button style='width:100%;height:100%'>Inside</button>"></iframe><div id="host"></div>
+      <script>window.log=[];for(const t of ['pointerover','pointerdown','mousedown','mouseup','click','wheel'])document.addEventListener(t,e=>log.push(t),true);
+      const root=document.getElementById('host').attachShadow({mode:'open'});root.innerHTML='<span id="inner" style="display:block;width:200px;height:80px">In</span>';</script>`);
+    await page.waitForFunction(() => document.getElementById('frame').contentDocument?.querySelector('button'));
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const token = '0b8d6f43-6c3a-4c43-9d0e-5b5b0f7f4c21';
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    const marked = () => page.evaluate(t => [...document.querySelectorAll(`[data-webbrain-bidi="${t}"]`)].map(el => el.id), token);
+    const clear = () => page.evaluate(() => { for (const el of document.querySelectorAll('[data-webbrain-bidi]')) el.removeAttribute('data-webbrain-bidi'); window.log.length = 0; });
+
+    // A click: the element at the point is marked, the guard armed, and nothing synthetic is sent.
+    let result = await run({ type: 'click', x: 150.6, y: 120.2, _bidiPrepare: token });
+    assert.equal(result.bidiPrepared, true);
+    assert.equal(result.noDispatch, true);
+    assert.deepEqual(result.point, { x: 151, y: 120 });
+    assert.deepEqual(result.target, { tag: 'button' });
+    assert.match(result._filePickerGuardId, /^fpg_/);
+    assert.equal(result.url, await page.evaluate(() => location.href));
+    assert.deepEqual(await marked(), ['go']);
+    assert.deepEqual(await page.evaluate(() => window.log), [], 'no synthetic event');
+    await clear();
+    // A hover is marked too, and arms no file-chooser guard.
+    result = await run({ type: 'hover', x: 150, y: 120, _bidiPrepare: token });
+    assert.equal(result.bidiPrepared, true);
+    assert.equal(result._filePickerGuardId, undefined);
+    await clear();
+    // A point inside an open shadow root stays with the synthetic sequence:
+    // the monitor binds the host, but the events come from inside it.
+    result = await run({ type: 'click', x: 600, y: 340, _bidiPrepare: token });
+    assert.equal(result.bidiUnavailable, true);
+    assert.deepEqual(await page.evaluate(() => document.querySelectorAll('[data-webbrain-bidi]').length
+      + document.getElementById('host').shadowRoot.querySelectorAll('[data-webbrain-bidi]').length), 0);
+    await clear();
+    // The synthetic sequence's checks come first: a disabled control is refused.
+    result = await run({ type: 'click', x: 500, y: 120, _bidiPrepare: token });
+    assert.equal(result.visionInputRefused, 'disabled_control');
+    assert.deepEqual(await marked(), []);
+    // A point over an embedded frame stays with the synthetic sequence.
+    result = await run({ type: 'click', x: 250, y: 375, _bidiPrepare: token });
+    assert.equal(result.bidiUnavailable, true);
+    assert.deepEqual(await marked(), []);
+    // A drag or a wheel is never prepared, and a malformed binding marks nothing.
+    for (const params of [{ type: 'drag', x: 150, y: 120, toX: 250, toY: 120 }, { type: 'wheel', x: 150, y: 120, deltaY: 100 }]) {
+      result = await run({ ...params, _bidiPrepare: token });
+      assert.equal(result.noDispatch, true, params.type);
+      assert.equal(result.bidiPrepared, undefined, params.type);
+    }
+    result = await run({ type: 'click', x: 150, y: 120, _bidiPrepare: 'not-a-token' });
+    assert.equal(result.noDispatch, true);
+    assert.deepEqual(await page.evaluate(() => document.querySelectorAll('[data-webbrain-bidi]').length), 0);
+    assert.deepEqual(await page.evaluate(() => window.log), [], 'still no synthetic event');
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision drag (Firefox path) moves and releases in a same-origin frame\'s own coordinates', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {

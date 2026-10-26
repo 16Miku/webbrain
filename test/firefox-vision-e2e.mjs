@@ -2,6 +2,8 @@
 // isolated headless Firefox over WebDriver BiDi, opens a local fixture and
 // sends `vision_input` to the real content script (its Xray world,
 // wrappedJSObject and exportFunction included), then reads what the page saw.
+// Trusted input (point_input: a click and a hover) runs through the
+// production companion session on the element the real content script marked.
 // Set FIREFOX_BINARY if Firefox is not on PATH or in the macOS default place.
 //
 //   npm run test:firefox-vision:e2e
@@ -30,6 +32,7 @@ await writeFile(join(profile, 'user.js'), 'user_pref("ui.prefersReducedMotion", 
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const results = [];
+let locatedByScript = false;
 const check = (name, ok, detail = '') => {
   results.push({ name, ok: !!ok, ...(ok ? {} : { detail: String(detail).slice(0, 800) }) });
 };
@@ -48,13 +51,14 @@ const page = port => `<!doctype html><meta charset="utf-8"><title>vision in Fire
 #volume{position:absolute;left:20px;top:280px;width:300px;height:20px;margin:0}
 #words{position:absolute;left:20px;top:330px;margin:0;font:20px monospace;white-space:nowrap}
 #scroller{position:absolute;left:20px;top:380px;width:200px;height:100px;overflow:auto;background:#f4f4f4}
+#trust{position:absolute;left:700px;top:250px;width:120px;height:40px}
 #scaled{position:absolute;left:400px;top:300px;width:400px;height:300px;border:3px solid #000;transform:scale(0.5);transform-origin:0 0}
 #cross{position:absolute;left:700px;top:100px;width:200px;height:100px;border:0}</style>
 <div id="menu">Menu<div class="submenu">Item</div></div><div class="save" id="save">Save</div>
 <div id="track"></div><div id="handle"></div><button id="press">Press</button>
 <input id="volume" type="range" min="0" max="100" step="5" value="10">
 <p id="words">alpha bravo charlie</p>
-<div id="scroller"><div style="height:1000px"></div></div>
+<div id="scroller"><div style="height:1000px"></div></div><button id="trust">Trust</button>
 <iframe id="scaled" srcdoc="${scaledFrame.replace(/"/g, '&quot;')}"></iframe>
 <iframe id="cross" src="http://localhost:${port}/cross"></iframe>
 <script>
@@ -68,6 +72,7 @@ const press=document.getElementById('press');
 press.addEventListener('pointerdown',e=>{e.target.releasePointerCapture(e.pointerId);document.addEventListener('pointerup',()=>log.push(['pressed']),{once:true});});
 for(const t of ['input','change'])document.getElementById('volume').addEventListener(t,e=>log.push([t,e.target.value]));
 window.nativeCapture=Element.prototype.setPointerCapture;
+window.trusted=[];for(const t of ['pointerdown','click'])document.addEventListener(t,e=>trusted.push([t,e.isTrusted,Math.round(e.clientX),Math.round(e.clientY),e.target.id||e.target.tagName]),true);
 // The centre of a word of #words, from the layout this Firefox drew.
 window.wordPoint=(word,edge)=>{const text=document.getElementById('words').firstChild;const start=text.nodeValue.indexOf(word);
 const range=document.createRange();range.setStart(text,start);range.setEnd(text,start+word.length);const r=range.getBoundingClientRect();
@@ -216,6 +221,67 @@ try {
   result = await vision({ type: 'click', x: 800, y: 150 });
   check('a click on a cross-origin frame is refused',
     result?.visionInputRefused === 'opaque_frame' && result?.noDispatch === true, JSON.stringify(result));
+
+  // 9. Trusted input: the content script marks the element at the point and
+  // the companion session moves (and for a click presses) the real pointer there.
+  // Playwright's Firefox build answers browsingContext.locateNodes with no
+  // node at all. There the marked node is found by script instead, exactly
+  // one in the frames at the binding's URL as BidiSession.locate requires;
+  // every other step is the production session's.
+  const locator = await session.send('browsingContext.locateNodes', { context, locator: { type: 'css', value: 'html' } });
+  if (!locator.nodes?.length) {
+    locatedByScript = true;
+    session.locate = async (token, targetUrl, root = null) => {
+      if (!/^[a-f0-9-]{36}$/.test(token) || !/^https?:\/\//.test(targetUrl)) throw new Error('Invalid tab binding');
+      const tree = await session.send('browsingContext.getTree', root ? { root } : {});
+      const contexts = [];
+      const visit = nodes => { for (const node of nodes || []) { contexts.push(node); visit(node.children); } };
+      visit(tree.contexts);
+      const matches = [];
+      for (const frame of contexts) {
+        if (frame.url !== targetUrl) continue;
+        const found = await session.send('script.evaluate', { target: { context: frame.context }, awaitPromise: false,
+          expression: `(() => { const nodes = document.querySelectorAll('[data-webbrain-bidi="${token}"]'); return nodes.length === 1 ? nodes[0] : nodes.length; })()` });
+        if (found.result?.sharedId) matches.push({ context: frame.context, node: { sharedId: found.result.sharedId } });
+        else if (found.result?.value > 1) matches.push(null, null);
+      }
+      if (matches.length !== 1) throw new Error('Tab or element binding is stale or ambiguous; re-read the page');
+      return matches[0];
+    };
+  }
+  const bindToken = crypto.randomUUID();
+  await evaluate(`document.documentElement.setAttribute('data-webbrain-bidi', ${JSON.stringify(bindToken)})`);
+  const runId = crypto.randomUUID();
+  await session.openRun(runId, bindToken, url);
+  const trustedLog = async () => evaluateJson('window.trusted.splice(0)');
+  const perform = (action, payload) => session.perform(runId, action, payload)
+    .catch(error => ({ success: false, error: error.message, ...error.dispatchState }));
+  await trustedLog();
+  const markedToken = () => evaluate(`document.querySelector('[data-webbrain-bidi]')?.getAttribute('data-webbrain-bidi') || null`);
+  let prepared = await vision({ type: 'click', x: 760.4, y: 269.6, _bidiPrepare: crypto.randomUUID() });
+  const clickToken = await evaluate(`document.getElementById('trust').getAttribute('data-webbrain-bidi')`);
+  check('the content script marks the element at a trusted click point', prepared?.bidiPrepared === true && prepared?.noDispatch === true
+    && JSON.stringify(prepared.point) === JSON.stringify({ x: 760, y: 270 }) && typeof clickToken === 'string' && /^fpg_/.test(prepared._filePickerGuardId || ''), JSON.stringify({ prepared, clickToken }));
+  check('preparing sends nothing to the page', (await trustedLog()).length === 0);
+  result = await perform('click_at', { token: clickToken, url: prepared.url, point: prepared.point });
+  const clicked = await trustedLog();
+  check('click_at is one trusted press and click at the point', result?.success === true
+    && JSON.stringify(clicked) === JSON.stringify([['pointerdown', true, 760, 270, 'trust'], ['click', true, 760, 270, 'trust']]), JSON.stringify({ result, clicked }));
+  // The companion checks the marked element is still the one at the point.
+  prepared = await vision({ type: 'click', x: 760, y: 270, _bidiPrepare: crypto.randomUUID() });
+  const staleToken = await markedToken();
+  const refusal = await perform('click_at', { token: staleToken, url: prepared.url, point: { x: 120, y: 40 } });
+  check('a point that no longer hits the marked element sends nothing', refusal?.success === false && refusal.noDispatch === true
+    && (await trustedLog()).length === 0, JSON.stringify(refusal));
+  // A trusted hover is the browser's own :hover, with no emulation.
+  prepared = await vision({ type: 'hover', x: 120, y: 40, _bidiPrepare: crypto.randomUUID() });
+  const hoverToken = await markedToken();
+  result = await perform('hover_at', { token: hoverToken, url: prepared.url, point: prepared.point });
+  const realHover = await evaluateJson(`({ submenu: getComputedStyle(document.querySelector('#menu .submenu')).display,
+    emulated: document.querySelectorAll('[data-webbrain-hover]').length, matches: document.getElementById('menu').matches(':hover') })`);
+  check('hover_at opens a CSS :hover menu through the real :hover', result?.success === true && realHover.submenu === 'block'
+    && realHover.emulated === 0 && realHover.matches === true, JSON.stringify({ result, realHover }));
+  await session.closeRun(runId);
 } catch (error) {
   check('harness', false, error?.stack || error);
 } finally {
@@ -238,5 +304,5 @@ if (failed.length) {
   console.error(`FAIL: ${failed.length} of ${results.length} Firefox vision input checks`);
   process.exitCode = 1;
 } else {
-  console.log(`PASS: ${results.length} Firefox vision input checks (CSS :hover and its restore, pointer capture, react-aria press, range track click, word and drag text selection, wheel, scaled frame click, cross-origin frame refusal)`);
+  console.log(`PASS: ${results.length} Firefox vision input checks (CSS :hover and its restore, pointer capture, react-aria press, range track click, word and drag text selection, wheel, scaled frame click, cross-origin frame refusal; trusted click_at and hover_at through the companion session${locatedByScript ? ', its marked node found by script' : ''})`);
 }

@@ -708,3 +708,207 @@ test('release workflows run the full suite on the companion runtime', async () =
     assert.ok(main.includes(`          - ${shard.replace('test:shard:','')}`),`main.yml matrix should run ${shard}`);
   }
 });
+
+// ── Vision mode's point input (point_input) ────────────────────────────────
+
+test('the companion reports point input when it connects', async () => {
+  const { COMPANION_CAPABILITIES } = await import('../firefox-companion/session.mjs');
+  assert.deepEqual([...COMPANION_CAPABILITIES], ['point_input']);
+  const session = new BidiSession();
+  session.socket = { readyState: 1 };
+  assert.deepEqual(await session.connectSession(9222), { connected: true, capabilities: ['point_input'] });
+});
+
+function pointSession({ context = 'tab', disabled = false, validate = async () => true } = {}) {
+  const session = new BidiSession(), runId = id(), token = id(), sent = [], checks = [], markers = [];
+  const el = {
+    isConnected: true, disabled, tagName: 'DIV', attributes: new Map([['data-webbrain-bidi', token]]),
+    getAttribute(name) { return this.attributes.get(name) ?? null; },
+    setAttribute(name, value) { this.attributes.set(name, value); if (name === 'data-webbrain-native-action') markers.push(JSON.parse(value).kind); },
+    removeAttribute(name) { this.attributes.delete(name); },
+    getBoundingClientRect: () => ({ x: 0, y: 0, width: 200, height: 100 }),
+    getRootNode: () => ({ activeElement: null }),
+  };
+  session.runs.set(runId, { context: 'tab' });
+  session.locate = async () => ({ context, node: { sharedId: 'marked' } });
+  session.call = async (_match, declaration, args = []) => {
+    checks.push(declaration);
+    const document = { elementFromPoint: () => el, documentElement: { getAttribute: () => 'point-document:0' } };
+    return { result: { value: vm.runInNewContext(`(${declaration})`, { document, innerWidth: 1000, innerHeight: 700 })(el, ...args.map(arg => arg.value)) } };
+  };
+  session.send = async (method, params) => { if (method === 'input.performActions') sent.push(params.actions[0]); return {}; };
+  return { session, runId, token, sent, checks, markers, el, url: 'https://example.com/', guard: { documentToken: 'point-document', revision: 0, operationId: 'vision', nativeSecret: 'secret' }, validate };
+}
+
+test('click_at presses the left button once at the point, under a click marker', async () => {
+  const run = pointSession();
+  const result = await run.session.perform(run.runId, 'click_at', { token: run.token, url: run.url, point: { x: 120, y: 40 }, pageFeedbackGuard: run.guard }, async () => true);
+  assert.equal(result.success, true);
+  assert.equal(result.method, 'firefox-bidi');
+  assert.deepEqual(run.sent, [{ type: 'pointer', id: 'webbrain-pointer', parameters: { pointerType: 'mouse' }, actions: [
+    { type: 'pointerMove', x: 120, y: 40, origin: 'viewport' }, { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }] }]);
+  assert.deepEqual(run.markers, ['click']);
+  assert.equal(run.el.getAttribute('data-webbrain-bidi'), null, 'the binding is used once');
+});
+
+test('hover_at moves the pointer to the point and may rest on a disabled control', async () => {
+  const run = pointSession({ disabled: true });
+  assert.equal((await run.session.perform(run.runId, 'hover_at', { token: run.token, url: run.url, point: { x: 30, y: 60 } })).success, true);
+  assert.deepEqual(run.sent[0].actions, [{ type: 'pointerMove', x: 30, y: 60, origin: 'viewport' }]);
+  const pressed = pointSession({ disabled: true });
+  await assert.rejects(pressed.session.perform(pressed.runId, 'click_at', { token: pressed.token, url: pressed.url, point: { x: 30, y: 60 } }), /covered/);
+  assert.deepEqual(pressed.sent, []);
+});
+
+test('point input refuses a fractional or missing point, a wheel and a frame target before any input', async () => {
+  for (const [action, payload, pattern] of [
+    ['click_at', { point: { x: 10.5, y: 4 } }, /Invalid point/],
+    ['hover_at', {}, /Invalid point/],
+    ['scroll_at', { point: { x: 1, y: 1 }, deltaY: 100 }, /Unsupported BiDi action/],
+  ]) {
+    const run = pointSession();
+    await assert.rejects(run.session.perform(run.runId, action, { token: run.token, url: run.url, ...payload }),
+      error => pattern.test(error.message) && error.dispatchState.noDispatch === true, `${action} ${JSON.stringify(payload)}`);
+    assert.deepEqual(run.sent, []);
+  }
+  const framed = pointSession({ context: 'child-frame' });
+  await assert.rejects(framed.session.perform(framed.runId, 'click_at', { token: framed.token, url: framed.url, point: { x: 5, y: 5 } }), /top document/);
+  assert.deepEqual(framed.sent, []);
+});
+
+function visionClient({ prepared = null, capabilities = ['point_input'], perform = null, sendMessage = null } = {}) {
+  const messages = [];
+  const client = new FirefoxBidiClient({ tabs: { sendMessage: sendMessage || (async (_tab, message, options) => {
+    messages.push({ message, options });
+    return prepared ? prepared(message) : { bidiPrepared: true, success: false, dispatched: false, noDispatch: true,
+      url: 'https://example.com/', point: { x: 120, y: 40 }, target: { tag: 'button' }, _filePickerGuardId: 'fpg_1' };
+  }) } });
+  client.connect = async () => (capabilities ? { connected: true, capabilities } : { connected: true });
+  client.runs.set(1, { runId: id(), bound: true });
+  const performed = [];
+  client.perform = perform || (async (_tab, action, payload) => { performed.push({ action, payload }); return { success: true, dispatched: true, method: 'firefox-bidi' }; });
+  return { client, messages, performed };
+}
+
+test('trusted vision input: a left click is prepared by the content script and pressed by the companion', async () => {
+  const { client, messages, performed } = visionClient();
+  const result = await client.visionInput(1, { type: 'click', x: 120.4, y: 39.6, button: 'left', clickCount: 1 });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].message.action, 'vision_input');
+  assert.equal(messages[0].options.frameId, 0);
+  assert.match(messages[0].message.params._bidiPrepare, /^[a-f0-9-]{36}$/);
+  assert.equal(performed.length, 1);
+  assert.equal(performed[0].action, 'click_at');
+  assert.deepEqual(performed[0].payload, { token: messages[0].message.params._bidiPrepare, url: 'https://example.com/', point: { x: 120, y: 40 } });
+  assert.deepEqual(result, { success: true, dispatched: true, method: 'firefox-bidi', target: { tag: 'button' }, _filePickerGuardId: 'fpg_1' });
+});
+
+test('trusted vision input: a hover goes to the companion at its prepared point', async () => {
+  const { client, messages, performed } = visionClient();
+  await client.visionInput(1, { type: 'hover', x: 10, y: 10 });
+  assert.deepEqual(performed.map(entry => entry.action), ['hover_at']);
+  assert.deepEqual(performed[0].payload, { token: messages[0].message.params._bidiPrepare, url: 'https://example.com/', point: { x: 120, y: 40 } });
+});
+
+test('trusted vision input leaves synthetic what it does not send, and sends nothing for it', async () => {
+  // A BiDi wheel scrolls only the window's selected tab; a run's tab can be in the background.
+  for (const params of [{ type: 'drag', x: 1, y: 1, toX: 50, toY: 1 }, { type: 'click', x: 1, y: 1, clickCount: 2 },
+    { type: 'click', x: 1, y: 1, button: 'right' }, { type: 'click', x: 1, y: 1, button: 'middle' },
+    { type: 'wheel', x: 1, y: 1, deltaY: 300 }]) {
+    const { client, messages, performed } = visionClient();
+    assert.equal(await client.visionInput(1, params), null, JSON.stringify(params));
+    assert.equal(messages.length + performed.length, 0);
+  }
+  const older = visionClient({ capabilities: null });
+  assert.equal(await older.client.visionInput(1, { type: 'click', x: 1, y: 1 }), null, 'a companion without point input');
+  assert.equal(older.messages.length, 0);
+  const noRun = visionClient();
+  noRun.client.runs.clear();
+  assert.equal(await noRun.client.visionInput(1, { type: 'click', x: 1, y: 1 }), null, 'a run without trusted input');
+  const framed = visionClient({ prepared: () => ({ bidiUnavailable: true, success: false, dispatched: false, noDispatch: true }) });
+  assert.equal(await framed.client.visionInput(1, { type: 'click', x: 1, y: 1 }), null, 'a point over an embedded frame');
+  assert.equal(framed.performed.length, 0);
+});
+
+test('trusted vision input returns the content refusal and never falls back after a disconnect', async () => {
+  const refusal = { success: false, dispatched: false, noDispatch: true, visionInputRefused: 'disabled_control', error: 'disabled' };
+  const refused = visionClient({ prepared: () => refusal });
+  assert.deepEqual(await refused.client.visionInput(1, { type: 'click', x: 1, y: 1 }), refusal);
+  assert.equal(refused.performed.length, 0);
+  const lost = visionClient();
+  lost.client.runs.get(1).disconnected = true;
+  const result = await lost.client.visionInput(1, { type: 'click', x: 1, y: 1 });
+  assert.equal(result.noDispatch, true);
+  assert.equal(result.retryable, false);
+  assert.equal(lost.messages.length, 0);
+});
+
+test('trusted vision input keeps no-dispatch and uncertain outcomes apart', async () => {
+  const vetoed = visionClient({ perform: async () => { const error = new Error('Page changed'); error.code = 'page_feedback_pending'; throw error; } });
+  const pending = await vetoed.client.visionInput(1, { type: 'click', x: 1, y: 1 });
+  assert.equal(pending.noDispatch, true);
+  assert.equal(pending.pageFeedbackPending, true);
+  assert.equal(pending._filePickerGuardId, 'fpg_1', 'the armed file-chooser guard is still settled');
+  const uncertain = visionClient({ perform: async () => { throw new Error('Firefox companion timed out'); } });
+  const unknown = await uncertain.client.visionInput(1, { type: 'click', x: 1, y: 1 });
+  assert.equal(unknown.dispatched, true);
+  assert.equal(unknown.outcomeUnknown, true);
+  assert.equal(unknown.retryable, false);
+});
+
+test('trusted vision input fences its click or hover like the synthetic sequence', async () => {
+  for (const [action, expected] of [
+    ['click_at', { kind: 'click', fenceOnly: true, navigationCandidate: true }],
+    ['hover_at', { kind: 'click', fenceOnly: true, navigationCandidate: false }],
+  ]) {
+    const tab = 957, owner = { ...pageFeedbackMethods, isRunning: () => true, _checkAbort: () => false };
+    const registrations = [];
+    const client = new FirefoxBidiClient({ tabs: { sendMessage: async (_tab, message) => {
+      registrations.push(message);
+      return { ready: true, guard: { documentToken: 'd', revision: 0, operationId: 'o' } };
+    } } });
+    client.runs.set(tab, { runId: id(), bound: true });
+    client.request = async (_command, args) => { assert.equal(args.action, action); return { success: true }; };
+    await owner._beginPageFeedbackRun(tab, 'interactive');
+    try {
+      await client.perform(tab, action, { token: id(), url: 'https://example.com/', point: { x: 5, y: 6 } });
+      assert.deepEqual(registrations.map(message => message.action), ['page_monitor_dispatch'], `${action}: no second preparation of the vision point`);
+      const params = registrations[0].params;
+      for (const [key, value] of Object.entries(expected)) assert.deepEqual(params[key], value, `${action}: ${key}`);
+      assert.equal(params.x, undefined, `${action}: the prepared point stands`);
+      assert.equal(params.prepareMonitor, undefined);
+    } finally { owner._finishPageFeedbackRun(tab); }
+  }
+});
+
+test('Firefox vision input goes through the companion when the run has one, and stays synthetic otherwise', async () => {
+  const { Agent } = await import('../src/firefox/src/agent/agent.js');
+  const { firefoxBidi } = await import('../src/firefox/src/bidi/client.js');
+  const originalBrowser = globalThis.browser, originalVisionInput = firefoxBidi.visionInput;
+  const contentMessages = [];
+  globalThis.browser = { tabs: { sendMessage: async (_tab, message) => { contentMessages.push(message); return { success: true, dispatched: true, method: 'synthetic-vision-pointer' }; } } };
+  const agent = Object.create(Agent.prototype);
+  try {
+    firefoxBidi.runs.set(31, { runId: id(), bound: true });
+    firefoxBidi.visionInput = async () => ({ success: true, dispatched: true, method: 'firefox-bidi' });
+    assert.equal((await agent._visionContentInput(31, { type: 'click', x: 5, y: 5 })).method, 'firefox-bidi');
+    assert.equal(contentMessages.length, 0);
+    firefoxBidi.visionInput = async () => null;
+    assert.equal((await agent._visionContentInput(31, { type: 'drag', x: 5, y: 5, toX: 50, toY: 5 }, 'click')).method, 'synthetic-vision-pointer');
+    assert.equal(contentMessages.at(-1).action, 'vision_input');
+    firefoxBidi.visionInput = async () => { throw new Error('Tab or element binding is stale'); };
+    const failed = await agent._visionContentInput(31, { type: 'hover', x: 5, y: 5 });
+    assert.equal(failed.noDispatch, true);
+    assert.equal(contentMessages.length, 1, 'a failed preparation is not retried synthetically');
+    firefoxBidi.visionInput = async () => { const error = new Error('stopped'); error.name = 'AbortError'; throw error; };
+    await assert.rejects(agent._visionContentInput(31, { type: 'hover', x: 5, y: 5 }), /stopped/);
+    firefoxBidi.runs.delete(31);
+    firefoxBidi.visionInput = async () => { throw new Error('a run without trusted input never asks'); };
+    assert.equal((await agent._visionContentInput(31, { type: 'click', x: 5, y: 5 })).method, 'synthetic-vision-pointer');
+  } finally {
+    firefoxBidi.runs.delete(31);
+    firefoxBidi.visionInput = originalVisionInput;
+    if (originalBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = originalBrowser;
+  }
+});
