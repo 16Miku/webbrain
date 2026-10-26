@@ -44,9 +44,9 @@ export function createFeedbackHandoff(api) {
     inflight.add(tabId);
     try {
       if (api.scripting?.executeScript) await api.scripting.executeScript({
-        target: { tabId, frameIds: [0] }, files: ['src/content/feedback-attachment.js'],
+        target: { tabId, frameIds: [0] }, files: ['/src/content/feedback-attachment.js'],
       });
-      else await api.tabs.executeScript(tabId, { file: 'src/content/feedback-attachment.js', frameId: 0 });
+      else await api.tabs.executeScript(tabId, { file: '/src/content/feedback-attachment.js', frameId: 0 });
     } finally { inflight.delete(tabId); }
   }
 

@@ -62212,13 +62212,13 @@ test('the rich-text toolbar heuristic has exactly one implementation', () => {
     );
   }
 
-  const firefoxContentInjections = [...firefoxAgent.matchAll(/file: 'src\/content\/content\.js'/g)];
+  const firefoxContentInjections = [...firefoxAgent.matchAll(/file: '\/src\/content\/content\.js'/g)];
   assert.ok(firefoxContentInjections.length > 0, 'Firefox must have content-script recovery paths');
   let previousContentIndex = 0;
   for (const match of firefoxContentInjections) {
     const injectionSequence = firefoxAgent.slice(previousContentIndex, match.index);
-    const heuristicIndex = injectionSequence.lastIndexOf("file: 'src/content/rich-text-toolbar-heuristic.js'");
-    const accessibilityIndex = injectionSequence.lastIndexOf("file: 'src/content/accessibility-tree.js'");
+    const heuristicIndex = injectionSequence.lastIndexOf("file: '/src/content/rich-text-toolbar-heuristic.js'");
+    const accessibilityIndex = injectionSequence.lastIndexOf("file: '/src/content/accessibility-tree.js'");
     assert.ok(
       heuristicIndex >= 0 && accessibilityIndex > heuristicIndex,
       'every Firefox content-script recovery path must inject the heuristic before accessibility-tree.js and content.js',
@@ -111583,15 +111583,15 @@ test('Chrome click paths suppress native file choosers and redirect to upload_fi
     const agent = Object.create(AgentFx.prototype);
     await agent._injectCoreContentScripts(43);
     assert.deepEqual(firefoxInjections.map(injection => injection.file), [
-      'src/content/page-monitor-shadow-loader.js',
-      'src/content/page-monitor.js',
-      'src/content/file-picker-guard-loader.js',
-      'src/content/file-upload-policy.js',
-      'src/content/rich-text-toolbar-heuristic.js',
-      'src/content/accessibility-tree.js',
-      'src/content/chat-observation.js',
-      'src/content/content.js',
-      'src/content/agent-visual-indicator.js',
+      '/src/content/page-monitor-shadow-loader.js',
+      '/src/content/page-monitor.js',
+      '/src/content/file-picker-guard-loader.js',
+      '/src/content/file-upload-policy.js',
+      '/src/content/rich-text-toolbar-heuristic.js',
+      '/src/content/accessibility-tree.js',
+      '/src/content/chat-observation.js',
+      '/src/content/content.js',
+      '/src/content/agent-visual-indicator.js',
     ]);
   } finally {
     if (previousBrowser === undefined) delete globalThis.browser;
@@ -111656,6 +111656,35 @@ test('Chrome click paths suppress native file choosers and redirect to upload_fi
       else globalThis[apiName] = previousApi;
     }
   }
+});
+
+test('Firefox injects extension scripts by root-absolute paths', () => {
+  // Firefox resolves a relative tabs.executeScript or scripting.executeScript
+  // file against the calling page (src/background.html), not the extension
+  // root, so 'src/content/content.js' would load src/src/content/content.js.
+  const relative = [];
+  const missing = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!/\.m?js$/.test(entry.name)) continue;
+      const source = fs.readFileSync(full, 'utf8');
+      for (const property of source.matchAll(/\bfiles?:\s*(\[[^\]]*\]|'[^']*'|"[^"]*")/g)) {
+        for (const literal of property[1].matchAll(/['"]([^'"]+\.(?:js|css))['"]/g)) {
+          const where = `${path.relative(ROOT, full)}: ${literal[1]}`;
+          if (!literal[1].startsWith('/')) relative.push(where);
+          else if (!fs.existsSync(path.join(ROOT, 'src/firefox', literal[1]))) missing.push(where);
+        }
+      }
+    }
+  };
+  walk(path.join(ROOT, 'src/firefox/src'));
+  assert.deepEqual(relative, [], 'Firefox script injections must start at the extension root');
+  assert.deepEqual(missing, [], 'Firefox script injections must name files the extension ships');
 });
 
 test('upload_file prefers a valid downloadId and falls back to filePath for an invalid id (chrome)', async () => {
