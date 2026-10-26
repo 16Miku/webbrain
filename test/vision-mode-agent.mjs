@@ -795,6 +795,44 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     }
   });
 
+  test(`${build}: a requested frame verifies an action only once it was captured`, async () => {
+    let failing = false;
+    const ctx = runAgent(step => {
+      if (step === 1) { failing = true; return { toolCalls: [call('click_at', { x: 300, y: 200 })] }; }
+      // The screen update after the click could not be captured. Asking for a
+      // frame and finishing in the same batch is not a verified finish.
+      if (step === 2) { failing = false; return { toolCalls: [call('take_screenshot', {}), call('done', { summary: 'Saved.', outcome: 'success' })] }; }
+      // The frame asked for was captured after that batch: now it is.
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Saved.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { maxSteps: 8 });
+    // The completion check advises here (lean mode skips it).
+    ctx.agent.leanMode = 'off';
+    const capture = ctx.agent._visionPlatformCapture;
+    ctx.agent._visionPlatformCapture = async (...args) => {
+      if (failing) throw new Error('The browser returned no screenshot.');
+      return capture(...args);
+    };
+    const result = await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.requests.length, 3, JSON.stringify(result).slice(0, 300));
+    assert.deepEqual(ctx.dispatched.map(entry => entry.name), ['click', 'take_screenshot', 'done']);
+    assert.ok(toolTexts(ctx.requests[2]).some(text => /not been verified by a successful page observation/.test(text)), toolTexts(ctx.requests[2]).join('\n').slice(0, 2000));
+    assert.doesNotMatch(String(result?.content ?? result), /could not verify/i, 'the finish after the captured frame carries no caveat');
+  });
+
+  test(`${build}: a drag finished in the same batch is not a verified finish`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('drag_at', { start_x: 300, start_y: 300, end_x: 600, end_y: 300 }), call('done', { summary: 'Moved the slider.', outcome: 'success' })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'Moved the slider.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { maxSteps: 8 });
+    ctx.agent.leanMode = 'off';
+    const result = await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.requests.length, 2, JSON.stringify(result).slice(0, 300));
+    assert.deepEqual(ctx.dispatched.map(entry => entry.name), ['drag_at', 'done']);
+    assert.ok(toolTexts(ctx.requests[1]).some(text => /verification|verified|result was seen|same step/i.test(text) && /blockedDone/.test(text)), toolTexts(ctx.requests[1]).join('\n').slice(0, 2000));
+  });
+
   test(`${build}: a window resized while the model decides gets a fresh full frame before any point is used`, async () => {
     let tab;
     const ctx = runAgent(step => {

@@ -2412,6 +2412,11 @@
   }
 
   // Adopt (or refresh) the copy of `root`'s :hover rules.
+  // A sheet's copies are read again only when its rule count changes (a
+  // page adding or removing rules), so a large site is read once.
+  const _visionHoverSheetCopies = new WeakMap();
+  const _visionHoverSheetTexts = new WeakMap();
+
   function _visionHoverAdopt(root) {
     const view = (root.ownerDocument || root).defaultView;
     if (!view || typeof view.CSSStyleSheet !== 'function' || !root.adoptedStyleSheets) return;
@@ -2421,11 +2426,20 @@
       if (sheet === ours) continue;
       let rules = null;
       try { rules = sheet.cssRules; } catch { rules = null; }
-      copies.push(..._visionHoverCopies(rules));
+      if (!rules) continue;
+      const cached = _visionHoverSheetCopies.get(sheet);
+      if (cached && cached.length === rules.length) { copies.push(...cached.copies); continue; }
+      const own = _visionHoverCopies(rules);
+      _visionHoverSheetCopies.set(sheet, { length: rules.length, copies: own });
+      copies.push(...own);
     }
     if (!copies.length) { _visionHoverDrop(root); return; }
     const sheet = ours || new view.CSSStyleSheet();
-    try { sheet.replaceSync(copies.join('\n')); } catch { return; }
+    const text = copies.join('\n');
+    if (_visionHoverSheetTexts.get(sheet) !== text) {
+      try { sheet.replaceSync(text); } catch { return; }
+      _visionHoverSheetTexts.set(sheet, text);
+    }
     if (!Array.from(root.adoptedStyleSheets).includes(sheet)) root.adoptedStyleSheets = [...Array.from(root.adoptedStyleSheets), sheet];
     _visionHoverSheets.set(root, sheet);
   }

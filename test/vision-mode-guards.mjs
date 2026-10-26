@@ -351,12 +351,21 @@ for (const build of ['chrome', 'firefox']) {
     assert.ok(names.includes('click_at') && names.includes('gmail_count_results'), names.join(','));
   });
 
-  test(`${build}: after a vision action a zoom or a fresh frame is the observation, and the refusal names what the run has`, () => {
+  test(`${build}: after a vision action a zoom or a captured frame is the observation, and the refusal names what the run has`, () => {
     const acted = recordCompletionToolResult(createCompletionInvariantState('run-1'), 'click',
       { x: 40, y: 60, coordinate_space: 'css' }, { success: true, dispatched: true, method: 'cdp-vision-pointer' });
     assert.equal(acted.verificationDebt, true);
     assert.equal(recordCompletionToolResult(acted, 'zoom', { x: 0, y: 0, width: 50, height: 40 }, { success: true, image: 'z1' }).verificationDebt, false);
-    assert.equal(recordCompletionToolResult(acted, 'take_screenshot', {}, { success: true }).verificationDebt, false);
+    // take_screenshot only asks for a frame: the capture after the batch,
+    // recorded as auto_screenshot when it succeeds, is the observation.
+    const asked = recordCompletionToolResult(acted, 'take_screenshot', {}, { success: true, note: 'A fresh full frame follows this result.' });
+    assert.equal(asked.verificationDebt, true, 'a requested frame that was never captured verifies nothing');
+    assert.equal(recordCompletionToolResult(asked, 'auto_screenshot', {}, { success: true, method: 'image_attach', _attachImage: true }).verificationDebt, false);
+    // A drag is a consequential action like the drag_drop it replaces.
+    const dragged = recordCompletionToolResult(createCompletionInvariantState('run-2'), 'drag_at',
+      { start_x: 10, start_y: 10, end_x: 200, end_y: 10 }, { success: true, dispatched: true, method: 'synthetic-vision-drag' });
+    assert.equal(dragged.verificationDebt, true);
+    assert.equal(dragged.lastAction?.name, 'drag_at');
     const agent = agentFor();
     const tab = 33;
     agent._effectiveRunMode = () => 'act';

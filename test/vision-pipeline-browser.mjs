@@ -553,6 +553,10 @@ test('content-script vision hover (Firefox path) reveals what CSS :hover reveals
     // A shadow root's :host(:hover) rule applies inside it.
     await run({ type: 'hover', x: 750, y: 120 });
     assert.equal((await state()).tip, 'block');
+    // A rule the page adds later is read on the next input.
+    await page.evaluate(() => document.styleSheets[0].insertRule('#away:hover { color: rgb(0, 128, 0) }', document.styleSheets[0].cssRules.length));
+    await run({ type: 'hover', x: 150, y: 420 });
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('away')).color), 'rgb(0, 128, 0)');
     // A click leaves the pointer, and :hover, where it clicked.
     await run({ type: 'click', x: 150, y: 120 });
     assert.equal((await state()).submenu, 'block');
