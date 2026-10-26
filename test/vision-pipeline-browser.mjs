@@ -506,17 +506,23 @@ test('content-script vision hover (Firefox path) reveals what CSS :hover reveals
   const browser = await chromium.launch({ channel: 'chromium' });
   try {
     const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
-    // A CSS-only menu, a rule inside @media, a web component styled by
-    // :host(:hover) in its shadow root, and a rule from another origin's
-    // style sheet, which cannot be read.
+    // A CSS-only menu; a :hover selector listed with another (`, .save`) that
+    // a later rule overrides; a later rule of equal specificity that wins
+    // over :hover; a rule inside @media; a web component styled by
+    // :host(:hover) in its shadow root.
     await page.setContent(`<!doctype html><style>body{margin:0}
       #menu{position:absolute;left:100px;top:100px;width:200px;height:40px;background:#ddd}
       #menu .submenu{display:none;position:absolute;left:0;top:40px;width:200px;height:120px;background:#bbb}
-      #menu:hover .submenu{display:block}
+      #menu:hover .submenu, .save{display:block}
+      .save{position:absolute;left:400px;top:300px;width:100px;height:30px;display:none}
+      .btn{position:absolute;left:400px;top:400px;width:100px;height:30px;color:rgb(0, 0, 0)}
+      .btn:hover{color:rgb(255, 0, 0)}
+      .btn.on{color:rgb(0, 0, 255)}
       #wide{position:absolute;left:400px;top:100px;width:200px;height:40px;background:#ddd}
       @media (min-width: 600px) { #wide:hover { outline: 3px solid rgb(255, 0, 0); } }
       #away{position:absolute;left:100px;top:400px;width:200px;height:40px}</style>
       <div id="menu">Menu<div class="submenu"><a id="item" href="#item">Item</a></div></div>
+      <div class="save" id="save">Save</div><div class="btn on" id="btn">Button</div>
       <div id="wide">Wide</div><x-tip style="position:absolute;left:700px;top:100px;width:200px;height:40px;display:block"></x-tip>
       <div id="away">Away</div>
       <script>customElements.define('x-tip', class extends HTMLElement {
@@ -531,25 +537,33 @@ test('content-script vision hover (Firefox path) reveals what CSS :hover reveals
         function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
         function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
         ${guardBlock}\n${code}\nreturn visionInput;`)();
+      window.__selectors = () => [...document.styleSheets[0].cssRules].flatMap(rule => [rule.selectorText, ...[...(rule.cssRules || [])].map(inner => inner.selectorText)]).filter(Boolean);
     }, { code: block, guardBlock });
     const run = params => page.evaluate(p => window.__visionInput(p), params);
     const state = () => page.evaluate(() => ({
       submenu: getComputedStyle(document.querySelector('#menu .submenu')).display,
+      save: getComputedStyle(document.getElementById('save')).display,
       outline: getComputedStyle(document.getElementById('wide')).outlineColor,
       tip: getComputedStyle(document.querySelector('x-tip').shadowRoot.querySelector('.tip')).display,
       marked: document.querySelectorAll('[data-webbrain-hover]').length,
-      adopted: document.adoptedStyleSheets.length,
+      rewritten: window.__selectors().filter(selector => selector.includes('data-webbrain-hover')).length,
     }));
-    assert.deepEqual(await state(), { submenu: 'none', outline: 'rgb(0, 0, 0)', tip: 'none', marked: 0, adopted: 0 });
-    // Hovering the menu opens it; the pointer can then go down into it.
+    const original = await page.evaluate(() => window.__selectors());
+    assert.deepEqual(await state(), { submenu: 'none', save: 'none', outline: 'rgb(0, 0, 0)', tip: 'none', marked: 0, rewritten: 0 });
+    // Hovering the menu opens it; the pointer can then go down into it. The
+    // selector listed beside its :hover keeps its own cascade: Save stays hidden.
     let result = await run({ type: 'hover', x: 150, y: 120 });
     assert.equal(result.success, true, JSON.stringify(result));
-    assert.equal((await state()).submenu, 'block');
+    assert.deepEqual({ ...(await state()), marked: undefined }, { submenu: 'block', save: 'none', outline: 'rgb(0, 0, 0)', tip: 'none', marked: undefined, rewritten: 3 });
     await run({ type: 'hover', x: 150, y: 170 });
     assert.equal((await state()).submenu, 'block', 'still open over its own submenu');
-    // The rule inside @media applies; the menu closes behind the pointer.
+    // A later rule of equal specificity still wins over the hover, as it does for a mouse.
+    await run({ type: 'hover', x: 450, y: 415 });
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('btn')).color), 'rgb(0, 0, 255)');
+    assert.equal((await state()).submenu, 'none', 'the menu closed behind the pointer');
+    // The rule inside @media applies.
     await run({ type: 'hover', x: 450, y: 120 });
-    assert.deepEqual({ ...(await state()), marked: undefined }, { submenu: 'none', outline: 'rgb(255, 0, 0)', tip: 'none', marked: undefined, adopted: 1 });
+    assert.equal((await state()).outline, 'rgb(255, 0, 0)');
     // A shadow root's :host(:hover) rule applies inside it.
     await run({ type: 'hover', x: 750, y: 120 });
     assert.equal((await state()).tip, 'block');
@@ -560,10 +574,12 @@ test('content-script vision hover (Firefox path) reveals what CSS :hover reveals
     // A click leaves the pointer, and :hover, where it clicked.
     await run({ type: 'click', x: 150, y: 120 });
     assert.equal((await state()).submenu, 'block');
-    // A person's own pointer moving ends the emulation, leaving nothing behind.
-    await page.mouse.move(150, 420);
+    // A person's own pointer moving ends the emulation and puts the page's selectors back.
+    await page.mouse.move(150, 600);
     await page.waitForFunction(() => !document.querySelector('[data-webbrain-hover]'));
-    assert.deepEqual(await state(), { submenu: 'none', outline: 'rgb(0, 0, 0)', tip: 'none', marked: 0, adopted: 0 });
+    assert.deepEqual(await state(), { submenu: 'none', save: 'none', outline: 'rgb(0, 0, 0)', tip: 'none', marked: 0, rewritten: 0 });
+    assert.deepEqual((await page.evaluate(() => window.__selectors())).slice(0, original.length), original);
+    assert.equal(await page.evaluate(() => document.querySelector('x-tip').shadowRoot.styleSheets[0].cssRules[1].selectorText), ':host(:hover) .tip');
   } finally {
     await browser.close();
   }

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defaultDecide, installModelStub } from './semantic-decision-stub.mjs';
 import { cdpClient } from '../src/chrome/src/cdp/cdp-client.js';
+import { isChromeProtectedPageDomTool, chromeProtectedPageFailure } from '../src/chrome/src/chrome-protected-pages.js';
 
 const pageUrl = 'https://social.example/@me';
 const documentIdentity = `${pageUrl}|1700000000000.5`;
@@ -472,4 +473,13 @@ test('chrome: a vision click result is not judged by a DOM text snapshot', async
     Object.assign(cdpClient, { attach: saved.attach, sendCommand: saved.sendCommand, armFileInputClickGuard: saved.arm, consumeFileInputClickGuard: saved.consume });
     if (savedTabs) globalThis.chrome.tabs = savedTabs;
   }
+});
+
+test('chrome: on a protected Chrome Web Store page vision input and zooms stop with the protected-page result', () => {
+  for (const name of ['hover_at', 'drag_at', 'scroll_at', 'zoom', 'click']) assert.equal(isChromeProtectedPageDomTool(name), true, name);
+  // take_screenshot sends nothing to the page, and wait reads nothing.
+  for (const name of ['take_screenshot', 'wait']) assert.equal(isChromeProtectedPageDomTool(name), false, name);
+  const failure = chromeProtectedPageFailure('https://chrome.google.com/webstore/devconsole/abc', 'drag_at');
+  assert.equal(failure?.errorCode, 'chrome_protected_page');
+  assert.equal(failure.noDispatch, true);
 });

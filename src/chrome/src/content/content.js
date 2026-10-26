@@ -2073,95 +2073,69 @@
   // so a menu or tooltip only CSS reveals (`.menu:hover .submenu`) would stay
   // hidden. While the vision pointer rests on an element, that element and
   // its ancestors (through shadow roots and out of same-origin frames) carry
-  // an attribute, and a copy of each :hover rule this world can read, keyed
-  // to the attribute (`.menu[data-webbrain-hover] .submenu`), is adopted by
-  // the document or shadow root the rule is in. The pointer moving elsewhere
-  // moves the attribute; a person's own pointer moving ends the emulation, as
-  // the real :hover then follows them. Another origin's style sheets cannot
-  // be read, so their :hover rules stay unmatched.
+  // an attribute, and every :hover in the selectors of the style rules this
+  // world can read also accepts that attribute, in place:
+  // `.menu:hover .submenu, .save` reads
+  // `.menu:is(:hover, [data-webbrain-hover]) .submenu, .save`. Each rule keeps
+  // its place in the cascade, its specificity (:is takes its argument's),
+  // its conditions (@media, @supports, @layer, @container, nesting) and the
+  // other selectors of its list; `:not(:hover)` stays its negation. The
+  // pointer moving on moves the attribute; a person's own pointer moving
+  // ends the emulation (the real :hover then follows them) and puts the
+  // page's selectors back. Another origin's style sheets cannot be read, so
+  // their :hover rules stay unmatched.
   const _VISION_HOVER_ATTRIBUTE = 'data-webbrain-hover';
+  const _VISION_HOVER_MATCH = `:is(:hover, [${_VISION_HOVER_ATTRIBUTE}])`;
   let _visionHoverChain = [];
-  const _visionHoverSheets = new Map();
+  // rule -> { original, rewritten } selector text, to put back.
+  const _visionHoverRewritten = new Map();
+  // A sheet is read again only when its rule count changed since.
+  let _visionHoverScanned = new WeakMap();
   let _visionHoverListening = false;
 
-  // The rules of `rules` that :hover decides, as CSS text keyed to the
-  // attribute, keeping the conditions around them (@media, @supports,
-  // @layer, @container, an @import's media, nesting).
-  function _visionHoverCopies(rules, depth = 0) {
-    const copies = [];
-    if (!rules || depth > 12) return copies;
-    const hover = /:hover(?![\w-])/gi;
+  function _visionHoverRewrite(rules, depth = 0) {
+    if (!rules || depth > 12) return;
     for (const rule of Array.from(rules)) {
       try {
-        const text = String(rule.cssText || '');
-        if (typeof rule.selectorText === 'string') {
-          const selector = rule.selectorText;
-          if (new RegExp(hover.source, 'i').test(selector)) {
-            const open = text.indexOf('{');
-            if (open > 0) copies.push(`${selector.replace(hover, `[${_VISION_HOVER_ATTRIBUTE}]`)} ${text.slice(open)}`);
-          } else if (rule.cssRules?.length) {
-            const inner = _visionHoverCopies(rule.cssRules, depth + 1);
-            if (inner.length) copies.push(`${selector} { ${inner.join(' ')} }`);
-          }
-        } else if (rule.styleSheet) {
-          const inner = _visionHoverCopies(rule.styleSheet.cssRules, depth + 1);
-          const media = String(rule.media?.mediaText || '');
-          if (inner.length) copies.push(media && media !== 'all' ? `@media ${media} { ${inner.join(' ')} }` : inner.join(' '));
-        } else if (rule.cssRules?.length) {
-          const inner = _visionHoverCopies(rule.cssRules, depth + 1);
-          const open = text.indexOf('{');
-          if (inner.length && open > 0) copies.push(`${text.slice(0, open).trim()} { ${inner.join(' ')} }`);
+        const original = typeof rule.selectorText === 'string' ? rule.selectorText : '';
+        if (original && !_visionHoverRewritten.has(rule) && /:hover(?![\w-])/i.test(original) && !original.includes(_VISION_HOVER_ATTRIBUTE)) {
+          // A selector the result would not parse in is left as it was.
+          rule.selectorText = original.replace(/:hover(?![\w-])/gi, _VISION_HOVER_MATCH);
+          const rewritten = rule.selectorText;
+          if (rewritten !== original) _visionHoverRewritten.set(rule, { original, rewritten });
         }
-      } catch { /* a rule this world cannot read */ }
+        if (rule.styleSheet) {
+          let imported = null;
+          try { imported = rule.styleSheet.cssRules; } catch { imported = null; }
+          _visionHoverRewrite(imported, depth + 1);
+        } else if (rule.cssRules?.length) {
+          _visionHoverRewrite(rule.cssRules, depth + 1);
+        }
+      } catch { /* a rule this world cannot read or change */ }
     }
-    return copies;
   }
 
-  // Adopt (or refresh) the copy of `root`'s :hover rules.
-  // A sheet's copies are read again only when its rule count changes (a
-  // page adding or removing rules), so a large site is read once.
-  const _visionHoverSheetCopies = new WeakMap();
-  const _visionHoverSheetTexts = new WeakMap();
-
-  function _visionHoverAdopt(root) {
-    const view = (root.ownerDocument || root).defaultView;
-    if (!view || typeof view.CSSStyleSheet !== 'function' || !root.adoptedStyleSheets) return;
-    const ours = _visionHoverSheets.get(root);
-    const copies = [];
+  function _visionHoverPrepare(root) {
     for (const sheet of [...Array.from(root.styleSheets || []), ...Array.from(root.adoptedStyleSheets || [])]) {
-      if (sheet === ours) continue;
       let rules = null;
       try { rules = sheet.cssRules; } catch { rules = null; }
-      if (!rules) continue;
-      const cached = _visionHoverSheetCopies.get(sheet);
-      if (cached && cached.length === rules.length) { copies.push(...cached.copies); continue; }
-      const own = _visionHoverCopies(rules);
-      _visionHoverSheetCopies.set(sheet, { length: rules.length, copies: own });
-      copies.push(...own);
+      if (!rules || _visionHoverScanned.get(sheet) === rules.length) continue;
+      _visionHoverRewrite(rules);
+      _visionHoverScanned.set(sheet, rules.length);
     }
-    if (!copies.length) { _visionHoverDrop(root); return; }
-    const sheet = ours || new view.CSSStyleSheet();
-    const text = copies.join('\n');
-    if (_visionHoverSheetTexts.get(sheet) !== text) {
-      try { sheet.replaceSync(text); } catch { return; }
-      _visionHoverSheetTexts.set(sheet, text);
-    }
-    if (!Array.from(root.adoptedStyleSheets).includes(sheet)) root.adoptedStyleSheets = [...Array.from(root.adoptedStyleSheets), sheet];
-    _visionHoverSheets.set(root, sheet);
   }
 
-  function _visionHoverDrop(root) {
-    const sheet = _visionHoverSheets.get(root);
-    _visionHoverSheets.delete(root);
-    try {
-      if (sheet && root.adoptedStyleSheets) root.adoptedStyleSheets = Array.from(root.adoptedStyleSheets).filter(item => item !== sheet);
-    } catch { /* the page replaced its sheets */ }
+  function _visionHoverRestore() {
+    for (const [rule, { original, rewritten }] of _visionHoverRewritten) {
+      try { if (rule.selectorText === rewritten) rule.selectorText = original; } catch { /* gone */ }
+    }
+    _visionHoverRewritten.clear();
+    _visionHoverScanned = new WeakMap();
   }
 
-  // Rest the emulated :hover on `target` (null ends it). `adopted` collects
-  // the roots already refreshed by this input, so a drag's moves read the
-  // style sheets once.
-  function _visionHoverAt(target, adopted = new Set()) {
+  // Rest the emulated :hover on `target` (null ends it). `prepared` collects
+  // the roots this input already read, so a drag's moves read them once.
+  function _visionHoverAt(target, prepared = new Set()) {
     const next = [];
     for (let node = target, depth = 0; node?.nodeType === 1 && depth < 512; depth++) {
       next.push(node);
@@ -2173,20 +2147,16 @@
     }
     // The rules that can see these elements hovered: their documents' and
     // shadow roots', and the :host rules of the shadow roots they host.
-    const roots = new Set();
     for (const element of next) {
       for (const root of [element.getRootNode?.(), element.shadowRoot || element.openOrClosedShadowRoot]) {
-        if (root?.nodeType === 9 || root?.nodeType === 11) roots.add(root);
+        if ((root?.nodeType === 9 || root?.nodeType === 11) && !prepared.has(root)) {
+          prepared.add(root);
+          try { _visionHoverPrepare(root); } catch { /* left as the page wrote it */ }
+        }
       }
     }
-    for (const root of [..._visionHoverSheets.keys()]) if (!roots.has(root)) _visionHoverDrop(root);
-    for (const root of roots) {
-      if (adopted.has(root)) continue;
-      adopted.add(root);
-      try { _visionHoverAdopt(root); } catch { /* left without the copy */ }
-    }
     // Elements are marked only where some :hover rule could be read.
-    const marked = _visionHoverSheets.size ? next : [];
+    const marked = _visionHoverRewritten.size ? next : [];
     const kept = new Set(marked);
     for (const element of _visionHoverChain) {
       if (!kept.has(element)) { try { element.removeAttribute(_VISION_HOVER_ATTRIBUTE); } catch { /* gone */ } }
@@ -2195,10 +2165,11 @@
       try { if (!element.hasAttribute(_VISION_HOVER_ATTRIBUTE)) element.setAttribute(_VISION_HOVER_ATTRIBUTE, ''); } catch { /* not settable */ }
     }
     _visionHoverChain = marked;
+    if (!marked.length) _visionHoverRestore();
     if (marked.length && !_visionHoverListening) {
       _visionHoverListening = true;
       window.addEventListener('pointermove', event => {
-        if (event.isTrusted && (_visionHoverChain.length || _visionHoverSheets.size)) _visionHoverAt(null);
+        if (event.isTrusted && (_visionHoverChain.length || _visionHoverRewritten.size)) _visionHoverAt(null);
       }, true);
     }
   }
@@ -2331,12 +2302,12 @@
     // what it entered (shared ancestors get neither), pointer events before
     // mouse events, then the move. Arriving with no known previous target,
     // or again on the same one (`arrive`), over and enter go to the target.
-    // Style sheets whose :hover copy this input refreshed (_visionHoverAt).
-    const hoverAdopted = new Set();
+    // Documents and shadow roots whose :hover rules this input read (_visionHoverAt).
+    const hoverPrepared = new Set();
     const moveOnto = (target, extra = {}, { arrive = false } = {}) => {
       // :hover follows the pointer before its events go out, as it does for
       // a mouse (_visionHoverAt).
-      _visionHoverAt(target, hoverAdopted);
+      _visionHoverAt(target, hoverPrepared);
       const last = _visionPointerOver;
       if (last !== target || arrive) {
         const previous = last && last !== target && last.isConnected ? last : null;
