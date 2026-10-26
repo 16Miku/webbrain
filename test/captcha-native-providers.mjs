@@ -42,7 +42,7 @@ for (const browser of ['chrome','firefox']) {
   const native=await import(`../src/${browser}/src/agent/captcha-native-providers.js`);
   const {CAPTCHA_CATALOG:catalog}=await import(`../src/${browser}/src/agent/captcha-catalog.js`);
   const apply=await import(`../src/${browser}/src/agent/captcha-solution-application.js`);
-  const providers=['capsolver','2captcha','capmonster','solvecaptcha','anti-captcha','nopecha','nonecap'].map((id,index)=>({id,apiKey:`secret-${id}`,weight:100-index}));
+  const providers=['capsolver','2captcha','capmonster','solvecaptcha','anti-captcha','nopecha','nonecap','solvecha'].map((id,index)=>({id,apiKey:`secret-${id}`,weight:100-index}));
   for (const [provider,method,parameters,expected] of fixtures) test(`${browser}: native ${provider}/${method} matches its wire contract`,()=>{
     assert.deepEqual(native.buildNativeCaptchaTask({provider,method,parameters}).task,expected);
   });
@@ -109,14 +109,14 @@ for (const browser of ['chrome','firefox']) {
       if(id==='bills_audio')assert.equal(task.metadata.PayloadType,'Audio');
     }
   });
-  test(`${browser}: catalogs cover seven vendors without resurrecting draft hCaptcha methods`,()=>{
-    assert.equal(catalog.length,198);
+  test(`${browser}: catalogs cover eight vendors without resurrecting draft hCaptcha methods`,()=>{
+    assert.equal(catalog.length,203);
     for(const provider of providers) assert.ok(catalog.some(c=>c.provider===provider.id));
     assert.deepEqual([...new Set(catalog.filter(c=>c.family==='hcaptcha').map(c=>c.provider))].sort(),['nonecap','nopecha']);
     const cm=new Set(catalog.filter(c=>c.provider==='capmonster').map(c=>c.family));
     for(const family of ['recaptcha_v2','recaptcha_v3','recaptcha_v2_enterprise','recaptcha_v3_enterprise','geetest','turnstile','cloudflare_challenge','cloudflare_waiting_room','datadome','tencent','aws_waf','basilisk','imperva','prosopo','image_to_text','yidun','mtcaptcha','altcha','funcaptcha','tspd','hunt','alibaba','friendly','complex_image','binance','recaptcha_recognition']) assert.ok(cm.has(family),family);
     const discovery=native.getCaptchaCapabilities(providers);
-    assert.equal(discovery.providers.length,7);assert.equal(JSON.stringify(discovery).includes('secret-'),false);
+    assert.equal(discovery.providers.length,8);assert.equal(JSON.stringify(discovery).includes('secret-'),false);
     assert.equal(native.getCaptchaCapabilities([{id:'capsolver',useCloudBroker:true}]).providers.length,0);
   });
   test(`${browser}: validation prevents spend on malformed, unsupported, disabled, duplicated, or incompatible tasks`,()=>{
@@ -317,6 +317,23 @@ for (const browser of ['chrome','firefox']) {
     const result=await native.solveNativeCaptchaTasks(native.prepareNativeCaptchaTasks(providers,[{provider:'nopecha',method:'recognition/recaptcha',parameters:{task:'cars',grid:'3x3',image_data:['base64']}}]));
     assert.deepEqual(result.solution,[false,false,false]);assert.equal(calls[0].url.pathname,'/v1/recognition/recaptcha');assert.equal(calls[1].options.method,'GET');assert.equal(calls[0].options.headers.Authorization,'Basic secret-nopecha');
     assert.equal(calls.some(c=>c.url.href.includes('secret-')),false);
+  });
+  test(`${browser}: Solvecha recognition uses Bearer auth and the NopeCHA-compatible lifecycle`,async t=>{
+    const calls=mockApi(t,(c,n)=>c.options.method==='POST'?{data:'job'}:n===2?{error:14}:{data:[true,false]});
+    const prepared=native.prepareNativeCaptchaTasks(providers,[{provider:'solvecha',method:'recognition/recaptcha',parameters:{task:'cars',grid:'3x3',image_data:['base64']}}]);
+    const result=await native.solveNativeCaptchaTasks(prepared);
+    assert.equal(result.provider,'solvecha');assert.deepEqual(result.solution,[true,false]);
+    assert.equal(calls[0].url.href,'https://api.solvecha.com/v1/recognition/recaptcha');
+    assert.equal(calls[0].options.headers.Authorization,'Bearer secret-solvecha');
+    assert.equal(calls.length,3);assert.equal(calls[1].url.search,'?id=job');
+    assert.equal(calls.some(c=>c.url.href.includes('secret-')),false);
+  });
+  test(`${browser}: Solvecha offers recognition methods only, never token tasks`,()=>{
+    const methods=catalog.filter(c=>c.provider==='solvecha').map(c=>c.method).sort();
+    assert.deepEqual(methods,['recognition/funcaptcha','recognition/funcaptcha_match','recognition/geetest','recognition/recaptcha','recognition/textcaptcha']);
+    assert.throws(()=>native.buildNativeCaptchaTask({provider:'solvecha',method:'token/recaptcha2',parameters:{sitekey:'site',url}}));
+    assert.throws(()=>native.buildNativeCaptchaTask({provider:'solvecha',method:'recognition/textcaptcha',parameters:{image_data:['a','b']}}),/exactly one input/);
+    assert.throws(()=>native.buildNativeCaptchaTask({provider:'solvecha',method:'recognition/recaptcha',parameters:{task:'cars',grid:'5x5',image_data:['a']}}),/Invalid reCAPTCHA recognition grid/);
   });
   test(`${browser}: SolveCaptcha form polling decodes object results, without flattening them into token strings`,async t=>{
     const calls=mockApi(t,c=>c.url.pathname==='/in.php'?{status:1,request:'123'}:{status:1,request:'{"captcha_id":"id","lot_number":"lot"}'});

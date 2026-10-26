@@ -159,10 +159,10 @@ export function buildNativeCaptchaTask(entry) {
   if (entry.provider === 'nopecha' && object(task.proxy)) {
     if (!['http','https','socks4','socks5'].includes(task.proxy.scheme) || !task.proxy.host || !task.proxy.port) throw new Error('NopeCHA proxy requires scheme, host, and port.');
   }
-  if (entry.provider === 'nopecha' && ['recognition/awscaptcha','recognition/funcaptcha','recognition/textcaptcha'].includes(entry.method)) {
+  if (['nopecha', 'solvecha'].includes(entry.provider) && ['recognition/awscaptcha','recognition/funcaptcha','recognition/textcaptcha'].includes(entry.method)) {
     if ((task.audio_data || task.image_data)?.length !== 1) throw new Error(`${entry.method} requires exactly one input.`);
   }
-  if (entry.provider === 'nopecha' && entry.method === 'recognition/recaptcha' && ![null,'1x1','3x3','4x4'].includes(task.grid)) throw new Error('Invalid reCAPTCHA recognition grid.');
+  if (['nopecha', 'solvecha'].includes(entry.provider) && entry.method === 'recognition/recaptcha' && ![null,'1x1','3x3','4x4'].includes(task.grid)) throw new Error('Invalid reCAPTCHA recognition grid.');
   return { contract, task, family: effectiveCaptchaFamily(contract, task) };
 }
 
@@ -538,7 +538,7 @@ export async function solveNativeCaptchaTasks(prepared, { onAttempt } = {}) {
       const result = JSON_BASES[provider.id]
         ? await solveJsonCaptcha(JSON_BASES[provider.id], provider.id, provider.apiKey, task,
           provider.id === 'capsolver' ? { pendingStatuses: ['idle', 'processing'] } : {})
-        : provider.id === 'nopecha' ? await solveNopechaTask(provider.apiKey, contract.path, task)
+        : ['nopecha', 'solvecha'].includes(provider.id) ? await solveNopechaTask(provider.apiKey, contract.path, task, provider.id)
         : provider.id === 'nonecap' ? await solveNonecapTask(provider.apiKey, task)
         : await solveForm(provider.apiKey, contract, task);
       if (!usable(result.solution)) throw new Error('No usable answer returned.');

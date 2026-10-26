@@ -2,7 +2,7 @@
 
 Initial catalog audit: **2026-09-29**. Integration contracts rechecked against first-party documentation on **2026-10-01**. Chrome and Firefox share the provider catalog, request validation, transports, and result handling; their browser execution adapters remain platform-specific.
 
-This integration exposes **seven providers and 198 catalog method variants**. A method variant can be a proxy/proxyless route, an Enterprise option, a recognition model, or a separate response mode. It is not a claim that there are 198 CAPTCHA products.
+This integration exposes **eight providers and 203 catalog method variants**. A method variant can be a proxy/proxyless route, an Enterprise option, a recognition model, or a separate response mode. It is not a claim that there are 198 CAPTCHA products.
 
 “Integrated” means WebBrain can validate the method's input, submit its documented request, poll when needed, and preserve its answer. It does **not** mean every website exposes the required parameters, that a token is accepted, or that authenticated live success rates have been measured. This implementation was checked with provider-contract fixtures and browser tests; no paid live solves were performed.
 
@@ -38,6 +38,7 @@ Open the provider's collapsed **Advanced** section to change its weight. Any num
 | Anti-Captcha | 96 | `antiCaptchaApiKey` | `antiCaptchaEnabled` | Provider account balance |
 | NopeCHA | 95 | `nopechaApiKey` | `nopechaEnabled` | Credits |
 | NoneCap | 94 | `nonecapApiKey` | `nonecapEnabled` | Credits |
+| Solvecha | 93 | `solvechaApiKey` | `solvechaEnabled` | Provider account balance |
 
 CAPTCHA discovery, solving, and application tools are available only in **Act/Dev with Mid or Full tiers**. Ask never exposes these tools or receives solving instructions. Compact asks for manual completion and permits `done({outcome:"partial"})` for blocked work; Dev itself requires Mid or Full.
 
@@ -56,6 +57,7 @@ All families below have a callable native route. The [complete method reference]
 | **[Anti-Captcha](https://anti-captcha.com/apidoc)** | reCAPTCHA v2/v3 and Enterprise; Turnstile; GeeTest v3/v4; FunCaptcha; AWS WAF; Altcha; Friendly Captcha; Prosopo; image text; image coordinates; AntiGate template tasks. |
 | **[NopeCHA](https://nopecha.com/api-reference/)** | hCaptcha, reCAPTCHA v2/v3 (including Enterprise metadata), and Turnstile tokens; AWS audio, FunCaptcha tiles/matching, GeeTest, hCaptcha binary/area/drag-drop, Lemin, reCAPTCHA, and image-text recognition. |
 | **[NoneCap](https://nonecap.com/api-reference/)** | hCaptcha and hCaptcha Enterprise tokens; `rqdata`, proxy input, returned response key and solver User-Agent. |
+| **[Solvecha](https://solvecha.com/docs)** | Image-based recognition only: image-text CAPTCHAs, plus reCAPTCHA, FunCaptcha, FunCaptcha matching and GeeTest image recognition. No token tasks (reCAPTCHA, hCaptcha, Turnstile, GeeTest, FunCaptcha tokens). Uses the NopeCHA-compatible `/v1/recognition/*` routes with Bearer authentication; image-text also works through the automatic route. |
 
 CapMonster's ten ComplexImage models are `bills_audio`, `shein`, `bls`, `baidu`, `betpunch_3x3_rotate`, `oocl_rotate_double_new`, `oocl_rotate_new`, `dli_ensemble`, `mathsum`, and `portugal_text_find_icon`. Their `metadata.Task` values and recognition class are assigned by the adapter. The DLI, MathSum, and BLS methods send `dli`, `MathSum`, and `bls_3x3` respectively; audio sends `PayloadType: "Audio"`. CapSolver VisionEngine accepts the provider's documented module field, including slider, rotation, BotDeflector, Shein, and GIF OCR modes. Modules requiring a second image must receive it.
 
@@ -255,9 +257,9 @@ The CAPTCHA gate permits `done` with `outcome: "failed"` or `"partial"` in every
 Both browser trees contain:
 
 - `src/agent/captcha-provider-config.js`: key formats, consent, default weights, automatic and native coverage.
-- `src/agent/captcha-catalog.js`: the 198 method contracts and primary documentation links.
+- `src/agent/captcha-catalog.js`: the 203 method contracts and primary documentation links.
 - `src/agent/captcha-native-providers.js`: discovery, preflight, fixed-value mapping, native fallback, and structured results.
-- `src/agent/captcha-hcaptcha-providers.js`: NopeCHA/NoneCap v1 transports and automatic hCaptcha mapping.
+- `src/agent/captcha-hcaptcha-providers.js`: NopeCHA/NoneCap v1 transports (the NopeCHA-compatible recognition lifecycle is shared with Solvecha) and automatic hCaptcha mapping.
 - `src/agent/captcha-solver.js`, `captcha-additional-providers.js`, `two-captcha.js`, `captcha-json-api.js`: automatic routes and shared request/poll lifecycles.
 - `src/agent/captcha-solution-application.js`: bound answer application, browser-specific execution, and cookie-store scoping.
 - `src/ui/captcha-settings.js` and `src/ui/locales/captcha-copy.mjs`: consent/weight controls, coverage text, balance display, and localized UI copy.
