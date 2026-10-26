@@ -185,6 +185,26 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       assert.equal(assistant.tool_calls[0].function.name, 'click_at');
     });
 
+    test(`${label}: a turn that does not offer click_at does not run one as a click`, async () => {
+      const { agent, requests, dispatched } = runAgent(step => {
+        if (step === 1) return { toolCalls: [call('click_at', { x: 648, y: 405 })] };
+        if (step === 2) return { toolCalls: [call('done', { summary: 'Checked.', outcome: 'partial' })] };
+        return { content: 'done' };
+      });
+      // A completion recovery turn that offers only observation and done.
+      let policyCalls = 0;
+      agent._completionRecoveryPolicy = (_tab, tools) => (++policyCalls === 1
+        ? { kind: 'restricted', tools: tools.filter(tool => ['take_screenshot', 'done'].includes(tool.function.name)), toolChoice: null }
+        : null);
+      const tab = nextTab++;
+      await runLoop(agent, tab, streaming);
+      assert.deepEqual(requests[0].tools.sort(), ['done', 'take_screenshot']);
+      assert.equal(dispatched.some(entry => entry.name === 'click'), false, JSON.stringify(dispatched));
+      const assistant = requests[1].messages.find(message => message.role === 'assistant' && message.tool_calls?.[0]?.function?.name === 'click_at');
+      const refusal = requests[1].messages.find(message => message.role === 'tool' && message.tool_call_id === assistant?.tool_calls[0].id);
+      assert.match(String(refusal?.content), /Tool click_at is not available/, String(refusal?.content));
+    });
+
     test(`${label}: no visible change is reported in one line, without an image`, async () => {
       const { agent, requests } = runAgent(step => {
         if (step === 1) return { toolCalls: [call('click_at', { x: 10, y: 10 })] };

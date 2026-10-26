@@ -16238,18 +16238,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       const jevPending = this._jevPendingCalls?.get(tc.id);
       const fnName = tc.function?.name || '';
-      // A translated click_at runs as `click`, which vision runs do not advertise.
-      if (!allowedToolNames.has(fnName) && tc._vision?.internalName !== fnName) {
+      // A translated click_at runs as `click`, which vision runs do not
+      // advertise: it may run only while click_at itself is offered (a
+      // completion recovery turn that offers observation and done does not).
+      const translatedTool = tc._vision?.internalName && tc._vision.internalName === fnName ? tc._vision.tool || '' : '';
+      if (!allowedToolNames.has(fnName) && !(translatedTool && allowedToolNames.has(translatedTool))) {
         if (fnName) {
           // A named but unadvertised tool is a rejection before dispatch, so
           // it goes through loop accounting; otherwise a model can repeat a
           // retired screenshot call for the whole run. The detector counts it
           // by name alone (see _checkUnavailableToolLoop), so varying the
-          // arguments does not evade it, and never as progress.
-          const result = this._unavailableToolResult(fnName, tabId);
-          const recovery = await recordPreparationFailure(toolIndex, fnName, {}, result, result.error);
+          // arguments does not evade it, and never as progress. A translated
+          // call is named as the model called it.
+          const calledName = translatedTool || fnName;
+          const result = this._unavailableToolResult(calledName, tabId);
+          const recovery = await recordPreparationFailure(toolIndex, calledName, {}, result, result.error);
           if (recovery) return recovery;
-          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          if (interruptFailedBrowserAction(toolIndex, calledName)) { navNotices.length = 0; break; }
           continue;
         }
         const error = 'Tool call is missing a function name.';
