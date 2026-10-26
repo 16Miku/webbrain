@@ -2362,6 +2362,127 @@
     return chain;
   }
 
+  // ── :hover for the synthetic pointer ──
+  // Synthetic events run a page's hover listeners but give nothing :hover,
+  // so a menu or tooltip only CSS reveals (`.menu:hover .submenu`) would stay
+  // hidden. While the vision pointer rests on an element, that element and
+  // its ancestors (through shadow roots and out of same-origin frames) carry
+  // an attribute, and a copy of each :hover rule this world can read, keyed
+  // to the attribute (`.menu[data-webbrain-hover] .submenu`), is adopted by
+  // the document or shadow root the rule is in. The pointer moving elsewhere
+  // moves the attribute; a person's own pointer moving ends the emulation, as
+  // the real :hover then follows them. Another origin's style sheets cannot
+  // be read, so their :hover rules stay unmatched.
+  const _VISION_HOVER_ATTRIBUTE = 'data-webbrain-hover';
+  let _visionHoverChain = [];
+  const _visionHoverSheets = new Map();
+  let _visionHoverListening = false;
+
+  // The rules of `rules` that :hover decides, as CSS text keyed to the
+  // attribute, keeping the conditions around them (@media, @supports,
+  // @layer, @container, an @import's media, nesting).
+  function _visionHoverCopies(rules, depth = 0) {
+    const copies = [];
+    if (!rules || depth > 12) return copies;
+    const hover = /:hover(?![\w-])/gi;
+    for (const rule of Array.from(rules)) {
+      try {
+        const text = String(rule.cssText || '');
+        if (typeof rule.selectorText === 'string') {
+          const selector = rule.selectorText;
+          if (new RegExp(hover.source, 'i').test(selector)) {
+            const open = text.indexOf('{');
+            if (open > 0) copies.push(`${selector.replace(hover, `[${_VISION_HOVER_ATTRIBUTE}]`)} ${text.slice(open)}`);
+          } else if (rule.cssRules?.length) {
+            const inner = _visionHoverCopies(rule.cssRules, depth + 1);
+            if (inner.length) copies.push(`${selector} { ${inner.join(' ')} }`);
+          }
+        } else if (rule.styleSheet) {
+          const inner = _visionHoverCopies(rule.styleSheet.cssRules, depth + 1);
+          const media = String(rule.media?.mediaText || '');
+          if (inner.length) copies.push(media && media !== 'all' ? `@media ${media} { ${inner.join(' ')} }` : inner.join(' '));
+        } else if (rule.cssRules?.length) {
+          const inner = _visionHoverCopies(rule.cssRules, depth + 1);
+          const open = text.indexOf('{');
+          if (inner.length && open > 0) copies.push(`${text.slice(0, open).trim()} { ${inner.join(' ')} }`);
+        }
+      } catch { /* a rule this world cannot read */ }
+    }
+    return copies;
+  }
+
+  // Adopt (or refresh) the copy of `root`'s :hover rules.
+  function _visionHoverAdopt(root) {
+    const view = (root.ownerDocument || root).defaultView;
+    if (!view || typeof view.CSSStyleSheet !== 'function' || !root.adoptedStyleSheets) return;
+    const ours = _visionHoverSheets.get(root);
+    const copies = [];
+    for (const sheet of [...Array.from(root.styleSheets || []), ...Array.from(root.adoptedStyleSheets || [])]) {
+      if (sheet === ours) continue;
+      let rules = null;
+      try { rules = sheet.cssRules; } catch { rules = null; }
+      copies.push(..._visionHoverCopies(rules));
+    }
+    if (!copies.length) { _visionHoverDrop(root); return; }
+    const sheet = ours || new view.CSSStyleSheet();
+    try { sheet.replaceSync(copies.join('\n')); } catch { return; }
+    if (!Array.from(root.adoptedStyleSheets).includes(sheet)) root.adoptedStyleSheets = [...Array.from(root.adoptedStyleSheets), sheet];
+    _visionHoverSheets.set(root, sheet);
+  }
+
+  function _visionHoverDrop(root) {
+    const sheet = _visionHoverSheets.get(root);
+    _visionHoverSheets.delete(root);
+    try {
+      if (sheet && root.adoptedStyleSheets) root.adoptedStyleSheets = Array.from(root.adoptedStyleSheets).filter(item => item !== sheet);
+    } catch { /* the page replaced its sheets */ }
+  }
+
+  // Rest the emulated :hover on `target` (null ends it). `adopted` collects
+  // the roots already refreshed by this input, so a drag's moves read the
+  // style sheets once.
+  function _visionHoverAt(target, adopted = new Set()) {
+    const next = [];
+    for (let node = target, depth = 0; node?.nodeType === 1 && depth < 512; depth++) {
+      next.push(node);
+      let frame = null;
+      if (!node.parentElement && !node.getRootNode?.()?.host) {
+        try { frame = node.ownerDocument?.defaultView?.frameElement || null; } catch { frame = null; }
+      }
+      node = node.parentElement || node.getRootNode?.()?.host || frame;
+    }
+    // The rules that can see these elements hovered: their documents' and
+    // shadow roots', and the :host rules of the shadow roots they host.
+    const roots = new Set();
+    for (const element of next) {
+      for (const root of [element.getRootNode?.(), element.shadowRoot || element.openOrClosedShadowRoot]) {
+        if (root?.nodeType === 9 || root?.nodeType === 11) roots.add(root);
+      }
+    }
+    for (const root of [..._visionHoverSheets.keys()]) if (!roots.has(root)) _visionHoverDrop(root);
+    for (const root of roots) {
+      if (adopted.has(root)) continue;
+      adopted.add(root);
+      try { _visionHoverAdopt(root); } catch { /* left without the copy */ }
+    }
+    // Elements are marked only where some :hover rule could be read.
+    const marked = _visionHoverSheets.size ? next : [];
+    const kept = new Set(marked);
+    for (const element of _visionHoverChain) {
+      if (!kept.has(element)) { try { element.removeAttribute(_VISION_HOVER_ATTRIBUTE); } catch { /* gone */ } }
+    }
+    for (const element of marked) {
+      try { if (!element.hasAttribute(_VISION_HOVER_ATTRIBUTE)) element.setAttribute(_VISION_HOVER_ATTRIBUTE, ''); } catch { /* not settable */ }
+    }
+    _visionHoverChain = marked;
+    if (marked.length && !_visionHoverListening) {
+      _visionHoverListening = true;
+      window.addEventListener('pointermove', event => {
+        if (event.isTrusted && (_visionHoverChain.length || _visionHoverSheets.size)) _visionHoverAt(null);
+      }, true);
+    }
+  }
+
   // The pointerId of the vision pointer's events (a mouse's in Chrome).
   const _VISION_POINTER_ID = 1;
 
@@ -2463,6 +2584,15 @@
         error: 'Not dispatched: the point is inside an embedded frame drawn rotated, skewed, flipped or in 3D, so it cannot be placed on the frame\'s content. Use a control outside that frame.',
       };
     }
+    // A frame this world cannot enter (another site's, a plugin, or one
+    // still loading): a click or drag sent here would stop at its element
+    // and reach nothing inside it.
+    if ((type === 'click' || type === 'drag') && /^(IFRAME|FRAME|OBJECT|EMBED)$/i.test(String(hit.el.tagName || ''))) {
+      return {
+        success: false, dispatched: false, noDispatch: true, visionInputRefused: 'opaque_frame',
+        error: `Not dispatched: the point is inside an embedded frame whose content this browser's vision input cannot reach (another site's frame, a plugin, or a frame still loading): the ${type} would stop at the frame and do nothing inside it. Use a control outside that frame, or take a screenshot and try again if it was still loading.`,
+      };
+    }
     if (actionDeadlineExpired()) return { success: false, dispatched: false, noDispatch: true, deadlineExpired: true, error: 'The action deadline expired before dispatch.' };
     const { el, view, cx, cy } = hit;
     const button = params.button === 'right' ? 2 : params.button === 'middle' ? 1 : 0;
@@ -2481,7 +2611,12 @@
     // what it entered (shared ancestors get neither), pointer events before
     // mouse events, then the move. Arriving with no known previous target,
     // or again on the same one (`arrive`), over and enter go to the target.
+    // Style sheets whose :hover copy this input refreshed (_visionHoverAt).
+    const hoverAdopted = new Set();
     const moveOnto = (target, extra = {}, { arrive = false } = {}) => {
+      // :hover follows the pointer before its events go out, as it does for
+      // a mouse (_visionHoverAt).
+      _visionHoverAt(target, hoverAdopted);
       const last = _visionPointerOver;
       if (last !== target || arrive) {
         const previous = last && last !== target && last.isConnected ? last : null;

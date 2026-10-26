@@ -320,7 +320,20 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
         return { content: 'done' };
       }, { maxSteps: 10 });
       const tab = nextTab++;
-      await runLoop(agent, tab, streaming);
+      // The page monitor is prepared with each point tool's CSS point, so
+      // passive churn before dispatch does not void it (rebaseVisionPreparation).
+      const prepared = [];
+      const sendMessage = api.tabs.sendMessage;
+      api.tabs.sendMessage = async (tabId, message, ...rest) => {
+        if (tabId === tab && message?.action === 'page_monitor_prepare') prepared.push(message.params);
+        return sendMessage(tabId, message, ...rest);
+      };
+      try { await runLoop(agent, tab, streaming); } finally { api.tabs.sendMessage = sendMessage; }
+      const preparedFor = tool => prepared.filter(params => params.tool === tool)
+        .map(params => ({ visionPoint: params.visionPoint, visionWheel: params.visionWheel, x: params.x, y: params.y }));
+      assert.deepEqual(preparedFor('hover_at'), [{ visionPoint: true, visionWheel: undefined, x: 360, y: 90 }], JSON.stringify(prepared));
+      assert.deepEqual(preparedFor('drag_at'), [{ visionPoint: true, visionWheel: undefined, x: 0, y: 0 }], 'a drag binds its start point');
+      assert.deepEqual(preparedFor('scroll_at'), [{ visionPoint: undefined, visionWheel: true, x: undefined, y: undefined }], 'a wheel binds no element');
       const wheel = platform.find(entry => entry.kind === 'wheel');
       assert.deepEqual({ x: wheel.x, y: wheel.y, deltaX: wheel.deltaX, deltaY: wheel.deltaY }, { x: 720, y: 450, deltaX: 0, deltaY: 300 });
       const hover = platform.find(entry => entry.kind === 'hover');
@@ -780,6 +793,63 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       await agent._visionCaptureSettled(tab, state);
       assert.equal(scene.captures - before, captures, JSON.stringify(block));
     }
+  });
+
+  test(`${build}: a window resized while the model decides gets a fresh full frame before any point is used`, async () => {
+    let tab;
+    const ctx = runAgent(step => {
+      if (step === 1) {
+        // The window is resized while the model reads f1 and picks a point on it.
+        ctx.scene.cssWidth = 1200;
+        ctx.scene.cssHeight = 760;
+        ctx.agent._queuePageFeedback(tab, { frameId: 0, revision: 1, kind: 'resize', source: 'unknown', target: 'viewport',
+          viewport: { width: 1200, height: 760, visualWidth: 1200, visualHeight: 760, scale: 1, offsetX: 0, offsetY: 0 } });
+        return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      }
+      if (step === 2) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Clicked.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { maxSteps: 8 });
+    tab = nextTab++;
+    await runLoop(ctx.agent, tab, false);
+    const clicks = ctx.dispatched.filter(entry => entry.name === 'click');
+    assert.equal(clicks.length, 1, `only the click chosen on the resized screen went out: ${JSON.stringify(clicks.map(entry => entry.args))}`);
+    // The second request shows the resized viewport as a new full frame, and
+    // its point maps through that frame.
+    const frames = visionMessages(ctx.requests[1].messages).map(textOf);
+    const last = frames.at(-1) || '';
+    assert.match(last, /full viewport/i, last.slice(0, 300));
+    assert.match(last, /1200\s*[x×]\s*760/, last.slice(0, 400));
+    const session = ctx.agent._visionSessions.get(tab);
+    assert.equal(session.keyframe.cssWidth, 1200);
+    const { x, y } = clicks[0].args;
+    assert.ok(Math.abs(x - 300 * 1200 / session.keyframe.width) < 1 && Math.abs(y - 200 * 760 / session.keyframe.height) < 1, JSON.stringify({ x, y, frame: [session.keyframe.width, session.keyframe.height] }));
+  });
+
+  test(`${build}: a resize the page has not reported yet still keeps stale points from going out`, async () => {
+    let tab;
+    const ctx = runAgent(step => {
+      if (step === 1) {
+        // Resized as the batch starts: no page feedback reports it in time.
+        ctx.scene.cssWidth = 1200;
+        ctx.scene.cssHeight = 760;
+        return { toolCalls: [call('click_at', { x: 300, y: 200 }), call('type_text', { text: 'typed on the old screen' })] };
+      }
+      if (step === 2) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Clicked.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { maxSteps: 8 });
+    tab = nextTab++;
+    await runLoop(ctx.agent, tab, false);
+    // Neither the click planned on f1 nor the typing planned after it went out.
+    assert.deepEqual(ctx.dispatched.map(entry => entry.name), ['click', 'done'], JSON.stringify(ctx.dispatched.map(entry => [entry.name, entry.args])));
+    assert.ok(toolTexts(ctx.requests[1]).some(text => /viewport_changed/.test(text) && /resized or zoomed after f1/.test(text)), toolTexts(ctx.requests[1]).join('\n'));
+    const last = visionMessages(ctx.requests[1].messages).map(textOf).at(-1) || '';
+    assert.match(last, /full viewport/i, last.slice(0, 300));
+    // The click chosen on the new frame maps through it.
+    const session = ctx.agent._visionSessions.get(tab);
+    const { x, y } = ctx.dispatched[0].args;
+    assert.ok(Math.abs(x - 300 * 1200 / session.keyframe.width) < 1 && Math.abs(y - 200 * 760 / session.keyframe.height) < 1, JSON.stringify({ x, y }));
   });
 
   test(`${build}: page churn before a decision costs no tree read, and no message or image while the screen stays as seen`, async () => {

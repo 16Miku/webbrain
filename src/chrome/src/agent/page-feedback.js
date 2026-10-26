@@ -1989,8 +1989,10 @@ export function installPageFeedback(Agent) {
           params: { ...safeAction(name, args), runToken: run.token, operationId, allowPassiveRebase: allowPassiveRebase === true,
             // The monitor rebases these over passive churn while the element
             // at the CSS point (or the focused field) stays the same; a wheel
-            // binds no element. A person's input still voids all three.
-            ...(policy.kind === 'vision_point' && vision?.cssPoint ? { visionPoint: true, x: vision.cssPoint.x, y: vision.cssPoint.y } : {}),
+            // binds no element. A person's input still voids all three. A
+            // native hover_at / drag_at gives its point as monitorPoint.
+            ...(policy.kind === 'vision_point' && (vision?.cssPoint || vision?.monitorPoint)
+              ? { visionPoint: true, x: (vision.cssPoint || vision.monitorPoint).x, y: (vision.cssPoint || vision.monitorPoint).y } : {}),
             ...(focusFollowUp ? { visionFocusFollowUp: true } : {}),
             ...(name === 'scroll_at' ? { visionWheel: true } : {}),
             ...(batchId ? { batchId } : {}),

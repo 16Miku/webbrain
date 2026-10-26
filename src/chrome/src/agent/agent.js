@@ -15730,8 +15730,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       enabled: this.browserBatchEnabled !== false, tier: this._resolvePromptTier(provider), allowedToolNames, toolSchemas: batchSchemas,
     });
     // Vision mode: click_at becomes an ordinary coordinate click here, before
-    // any gate or guard runs (vision-runtime.js).
-    toolCalls = this._visionTranslateToolCalls(tabId, toolCalls);
+    // any gate or guard runs (vision-runtime.js). Points read from a frame the
+    // window was resized or zoomed since are refused first.
+    const staleLayout = await this._visionStaleLayoutRefusal(tabId, toolCalls);
+    toolCalls = this._visionTranslateToolCalls(tabId, toolCalls, { staleLayout });
     const originalUpdate = onUpdate;
     const cancellationState = { active: null };
     // Begin wrapper rows at their execution position, including rejected batches.

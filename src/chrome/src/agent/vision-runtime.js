@@ -61,6 +61,13 @@ const MICRO_CHANGE_MIN_CELLS = 6;
 // as does the coordinate click click_at becomes.
 const VISION_LOOP_SCREEN_TOOLS = new Set([...VISION_NATIVE_TOOLS, 'type_text', 'press_keys']);
 
+// Does this vision call place something at points of a screenshot (a click,
+// hover, drag, zoom region, or a wheel at a point)?
+function visionCallReadsPoints(name, args = {}) {
+  if (['click_at', 'hover_at', 'drag_at', 'zoom'].includes(name)) return true;
+  return name === 'scroll_at' && args?.x != null && args?.y != null;
+}
+
 export function isMicroScreenChange(diff) {
   return diff?.comparable === true && Number.isFinite(diff.changedCells)
     && diff.changedCells <= Math.max(MICRO_CHANGE_MIN_CELLS, Math.round((Number(diff.totalCells) || 0) * MICRO_CHANGE_CELL_RATIO));
@@ -715,7 +722,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
    * coordinate calls follow an earlier action in the same batch (those are
    * re-checked against the live screen right before dispatch).
    */
-  proto._visionTranslateToolCalls = function _visionTranslateToolCalls(tabId, toolCalls) {
+  proto._visionTranslateToolCalls = function _visionTranslateToolCalls(tabId, toolCalls, { staleLayout = null } = {}) {
     const state = this._visionRunState(tabId);
     if (!state.active || !Array.isArray(toolCalls) || !toolCalls.some(call => VISION_TOOL_NAMES.has(call?.function?.name))) return toolCalls;
     const session = this._visionSessionFor(tabId, state);
@@ -734,7 +741,12 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
         let args = {};
         try { args = typeof call.function.arguments === 'string' ? JSON.parse(call.function.arguments || '{}') : (call.function.arguments || {}); }
         catch { args = null; }
-        if (args && VISION_TRANSLATED_TOOLS.has(name)) {
+        if (args && staleLayout && visionCallReadsPoints(name, args)) {
+          // Read from a frame the window was resized or zoomed since
+          // (_visionStaleLayoutRefusal): refused, and the rest of the batch
+          // with it, before any gate runs.
+          translated = { ...call, _vision: { tool: name, error: staleLayout } };
+        } else if (args && VISION_TRANSLATED_TOOLS.has(name)) {
           const result = translateVisionClick(args, session);
           translated = result.ok
             ? { ...call, function: { ...call.function, name: result.name, arguments: JSON.stringify(result.args) },
@@ -742,7 +754,15 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
             : { ...call, _vision: { tool: name, error: result.result } };
           clickedAt = result.ok && result.vision.button === 'left' ? { ...result.vision.cssPoint } : null;
         } else if (args) {
-          translated = { ...call, _vision: { tool: name, needsStabilityCheck: recheck } };
+          // hover_at and drag_at bind the page monitor to the element at
+          // their point (a drag's start; its end is held by the pixel check),
+          // as a translated click does, so unrelated churn before dispatch
+          // does not void them (page-feedback.js, rebaseVisionPreparation).
+          const at = name === 'hover_at' ? { x: args.x, y: args.y, image: args.image }
+            : name === 'drag_at' ? { x: args.start_x, y: args.start_y, image: args.image } : null;
+          const point = at ? session.resolvePoint(at) : null;
+          translated = { ...call, _vision: { tool: name, needsStabilityCheck: recheck,
+            ...(point?.ok ? { monitorPoint: { x: point.cssX, y: point.cssY } } : {}) } };
         }
       } else if ((name === 'type_text' || name === 'press_keys') && clickedAt) {
         translated = { ...call, _vision: { tool: name, focusFollowUp: { ...clickedAt } } };
@@ -753,6 +773,45 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       }
       return translated;
     });
+  };
+
+  /**
+   * Before a batch that uses screenshot points: has the window been resized
+   * or zoomed (CSS viewport size or device pixel ratio) since the frame they
+   * were read from? Page feedback sets a decision aside for a resize it
+   * reported while the model decided; this catches one it had not reported
+   * yet, which would otherwise send the points through the old geometry.
+   * Returns the refusal for those points (a full frame follows), or null.
+   */
+  proto._visionStaleLayoutRefusal = async function _visionStaleLayoutRefusal(tabId, toolCalls) {
+    const state = this._visionRunState(tabId);
+    const session = state.active ? this._visionSessions?.get(tabId) : null;
+    const keyframe = session?.keyframe;
+    if (!keyframe || !Array.isArray(toolCalls)) return null;
+    const reads = toolCalls.some(call => {
+      const name = call?.function?.name || '';
+      if (!VISION_TOOL_NAMES.has(name)) return false;
+      try { return visionCallReadsPoints(name, typeof call.function.arguments === 'string' ? JSON.parse(call.function.arguments || '{}') : (call.function.arguments || {})); }
+      catch { return false; }
+    });
+    if (!reads) return null;
+    let probe = null;
+    try { probe = await this._visionPlatformProbe(tabId); }
+    catch (error) {
+      if (isControlFlowError(error)) throw error;
+      return null;
+    }
+    if (!probe || !session.layoutChanged({ cssWidth: probe.cssWidth, cssHeight: probe.cssHeight, devicePixelRatio: probe.devicePixelRatio })) return null;
+    session.forceKeyframe = true;
+    const size = (width, height) => `${Math.round(Number(width) || 0)}x${Math.round(Number(height) || 0)}`;
+    this._visionTraceNote(tabId, 'vision_layout_changed', {
+      frame: keyframe.id, was: size(keyframe.cssWidth, keyframe.cssHeight), now: size(probe.cssWidth, probe.cssHeight),
+      dpr: [keyframe.devicePixelRatio, probe.devicePixelRatio],
+    });
+    return {
+      success: false, dispatched: false, noDispatch: true, visionCoordinateError: 'viewport_changed',
+      error: `Not dispatched: the browser window was resized or zoomed after ${keyframe.id} was taken (viewport ${size(keyframe.cssWidth, keyframe.cssHeight)} CSS px then, ${size(probe.cssWidth, probe.cssHeight)} now), so points read from it no longer land where you saw them. A fresh full frame follows; read the point again there.`,
+    };
   };
 
   /**

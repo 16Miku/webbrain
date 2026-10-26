@@ -480,6 +480,8 @@ test('content-script vision input (Firefox path) moves the pointer off one eleme
     const take = () => page.evaluate(() => window.log.splice(0).filter(entry => entry[1].startsWith('mouse')).map(entry => entry.slice(0, 3)));
     await run({ type: 'hover', x: 130, y: 120 });
     assert.deepEqual(await take(), [['item', 'mouseover', null], ['item', 'mouseenter', null]], 'the first hover arrives on the item');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('[data-webbrain-hover]').length + document.adoptedStyleSheets.length), 0,
+      'a page without :hover rules gets no emulated :hover');
     // Item -> its menu: out of the item, over the menu; no leave or enter on the menu.
     await run({ type: 'hover', x: 250, y: 180 });
     assert.deepEqual(await take(), [['item', 'mouseout', 'menu'], ['item', 'mouseleave', 'menu'], ['menu', 'mouseover', 'item']]);
@@ -495,6 +497,69 @@ test('content-script vision input (Firefox path) moves the pointer off one eleme
     const drag = await page.evaluate(() => window.log.splice(0));
     assert.ok(drag.some(entry => entry[0] === 'source' && entry[1] === 'mouseleave' && entry[2] === 'drop' && entry[3] === 1), JSON.stringify(drag));
     assert.ok(drag.some(entry => entry[0] === 'drop' && entry[1] === 'mouseover' && entry[2] === 'source' && entry[3] === 1), JSON.stringify(drag));
+  } finally {
+    await browser.close();
+  }
+});
+
+test('content-script vision hover (Firefox path) reveals what CSS :hover reveals, until the pointer or a person moves on', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+    // A CSS-only menu, a rule inside @media, a web component styled by
+    // :host(:hover) in its shadow root, and a rule from another origin's
+    // style sheet, which cannot be read.
+    await page.setContent(`<!doctype html><style>body{margin:0}
+      #menu{position:absolute;left:100px;top:100px;width:200px;height:40px;background:#ddd}
+      #menu .submenu{display:none;position:absolute;left:0;top:40px;width:200px;height:120px;background:#bbb}
+      #menu:hover .submenu{display:block}
+      #wide{position:absolute;left:400px;top:100px;width:200px;height:40px;background:#ddd}
+      @media (min-width: 600px) { #wide:hover { outline: 3px solid rgb(255, 0, 0); } }
+      #away{position:absolute;left:100px;top:400px;width:200px;height:40px}</style>
+      <div id="menu">Menu<div class="submenu"><a id="item" href="#item">Item</a></div></div>
+      <div id="wide">Wide</div><x-tip style="position:absolute;left:700px;top:100px;width:200px;height:40px;display:block"></x-tip>
+      <div id="away">Away</div>
+      <script>customElements.define('x-tip', class extends HTMLElement {
+        constructor() { super(); this.attachShadow({ mode: 'open' }).innerHTML = '<style>.tip{display:none}:host(:hover) .tip{display:block}</style><span>Tip</span><span class="tip">Shown</span>'; }
+      });</script>`);
+    const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
+    const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
+    const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
+    await page.evaluate(({ code, guardBlock }) => {
+      // eslint-disable-next-line no-new-func
+      window.__visionInput = new Function(`function withLocalPageDispatch(callback) { return callback(); }
+        function _uniqueFileInputSelector(input) { return input.id ? '#' + input.id : ''; }
+        function _deepSelectorMatches(selector) { return [...document.querySelectorAll(selector)]; }
+        ${guardBlock}\n${code}\nreturn visionInput;`)();
+    }, { code: block, guardBlock });
+    const run = params => page.evaluate(p => window.__visionInput(p), params);
+    const state = () => page.evaluate(() => ({
+      submenu: getComputedStyle(document.querySelector('#menu .submenu')).display,
+      outline: getComputedStyle(document.getElementById('wide')).outlineColor,
+      tip: getComputedStyle(document.querySelector('x-tip').shadowRoot.querySelector('.tip')).display,
+      marked: document.querySelectorAll('[data-webbrain-hover]').length,
+      adopted: document.adoptedStyleSheets.length,
+    }));
+    assert.deepEqual(await state(), { submenu: 'none', outline: 'rgb(0, 0, 0)', tip: 'none', marked: 0, adopted: 0 });
+    // Hovering the menu opens it; the pointer can then go down into it.
+    let result = await run({ type: 'hover', x: 150, y: 120 });
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.equal((await state()).submenu, 'block');
+    await run({ type: 'hover', x: 150, y: 170 });
+    assert.equal((await state()).submenu, 'block', 'still open over its own submenu');
+    // The rule inside @media applies; the menu closes behind the pointer.
+    await run({ type: 'hover', x: 450, y: 120 });
+    assert.deepEqual({ ...(await state()), marked: undefined }, { submenu: 'none', outline: 'rgb(255, 0, 0)', tip: 'none', marked: undefined, adopted: 1 });
+    // A shadow root's :host(:hover) rule applies inside it.
+    await run({ type: 'hover', x: 750, y: 120 });
+    assert.equal((await state()).tip, 'block');
+    // A click leaves the pointer, and :hover, where it clicked.
+    await run({ type: 'click', x: 150, y: 120 });
+    assert.equal((await state()).submenu, 'block');
+    // A person's own pointer moving ends the emulation, leaving nothing behind.
+    await page.mouse.move(150, 420);
+    await page.waitForFunction(() => !document.querySelector('[data-webbrain-hover]'));
+    assert.deepEqual(await state(), { submenu: 'none', outline: 'rgb(0, 0, 0)', tip: 'none', marked: 0, adopted: 0 });
   } finally {
     await browser.close();
   }
@@ -864,7 +929,7 @@ test('the DOM probe behind the dispatch checks reads controls, text fields, focu
   }
 });
 
-test('vision input (Firefox path) and the DOM probe place points inside scaled same-origin frames', async () => {
+test('vision input (Firefox path) and the DOM probe place points inside scaled same-origin frames, and refuse frames they cannot enter', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {
     const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
@@ -880,8 +945,9 @@ test('vision input (Firefox path) and the DOM probe place points inside scaled s
     await page.setContent(`<!doctype html><style>body{margin:0}iframe{position:absolute;width:400px;height:300px;border:3px solid #000}</style>
       ${frame('scaled', 'left:100px;top:50px;transform:scale(0.5);transform-origin:0 0')}
       ${frame('tilted', 'left:600px;top:50px;transform:rotate(10deg)')}
+      <iframe id="cross" style="left:600px;top:420px;width:200px;height:100px" src="data:text/html,<button>Elsewhere</button>"></iframe>
       <div style="position:absolute;left:100px;top:400px;transform:scale(1.5);transform-origin:0 0">${frame('nested', 'position:static;width:200px;height:100px;border:1px solid #000', inner(20, 10))}</div>`);
-    await page.waitForFunction(() => [...document.querySelectorAll('iframe')].every(item => item.contentWindow?.log));
+    await page.waitForFunction(() => ['scaled', 'tilted', 'nested'].every(id => document.getElementById(id).contentWindow?.log));
     const source = fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/content.js'), 'utf8');
     const block = source.slice(source.indexOf('  function _visionTargetAt('), source.indexOf('  let _lastClickIdent = null;'));
     const guardBlock = source.slice(source.indexOf('  function uniqueFileInputSelector(input) {'), source.indexOf('  /**\n   * Click an element by selector or coordinates.'));
@@ -918,6 +984,10 @@ test('vision input (Firefox path) and the DOM probe place points inside scaled s
     assert.equal(result.visionInputRefused, 'frame_unmappable', JSON.stringify(result));
     assert.equal(result.noDispatch, true);
     assert.deepEqual(await take('tilted'), []);
+    // A frame from another origin is never entered: a click there would stop at the frame element.
+    result = await run({ type: 'click', x: 700, y: 470 });
+    assert.equal(result.visionInputRefused, 'opaque_frame', JSON.stringify(result));
+    assert.equal(result.noDispatch, true);
     // The DOM probe behind the dispatch checks reads the same elements, in both builds.
     for (const build of ['chrome', 'firefox']) {
       const { visionDomProbeExpression } = await import(`../src/${build}/src/agent/vision-dom-probe.js`);
