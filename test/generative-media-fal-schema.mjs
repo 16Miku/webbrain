@@ -137,6 +137,95 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(mock.calls.submits[0].duration, 8);
   });
 
+  test(`${build}: fallback lengths and published defaults do not cap explicit clip durations`, async () => {
+    for (const [durationSchema, requested] of [
+      [null, 15],
+      [{ type: 'integer', minimum: 1, default: 5 }, 8],
+      [{ type: 'string', default: '5' }, 15],
+    ]) {
+      const mock = api({
+        catalog: () => durationSchema ? listing(schema({ duration: durationSchema })) : json({}, 404),
+        direct: () => json({}, 404),
+      });
+      const result = await run(mock, { video: { duration: requested } });
+      assert.deepEqual(mock.calls.submits.map(body => body.duration),
+        [durationSchema?.type === 'string' ? String(requested) : requested]);
+      assert.equal(result.totalSeconds, requested);
+    }
+  });
+
+  test(`${build}: automatic fallback lengths satisfy published unbounded duration constraints`, async () => {
+    for (const [durationSchema, expected] of [
+      [{ type: 'integer', minimum: 10 }, 10],
+      [{ minimum: 10 }, 10],
+      [{ type: 'integer', minimum: 5, multipleOf: 5 }, 10],
+      [{ type: 'integer', exclusiveMinimum: 8 }, 9],
+      [{ type: 'integer', minimum: 10, default: 5 }, 10],
+      [{ type: 'integer', minimum: 10, default: 15 }, 15],
+      [{ type: 'integer', minimum: 10, default: 180 }, 10],
+    ]) {
+      const mock = api({
+        catalog: () => listing(schema({ duration: durationSchema })),
+        direct: () => json({}, 404),
+      });
+      const result = await run(mock, { video: { estimated_duration: 5 } });
+      assert.deepEqual(mock.calls.submits.map(body => body.duration), [expected], JSON.stringify(durationSchema));
+      assert.equal(result.totalSeconds, expected);
+      assert.equal(result.fallbackClipSeconds, expected);
+    }
+  });
+
+  test(`${build}: explicit durations that violate unbounded schema constraints fail before a paid request`, async () => {
+    for (const durationSchema of [
+      { type: 'integer', minimum: 10 },
+      { minimum: 10 },
+      { type: 'integer', minimum: 5, multipleOf: 5 },
+      { type: 'integer', exclusiveMinimum: 8 },
+    ]) {
+      const mock = api({
+        catalog: () => listing(schema({ duration: durationSchema })),
+        direct: () => json({}, 404),
+      });
+      await assert.rejects(run(mock, { video: { duration: 8 } }), /duration|length|clip/i);
+      assert.equal(mock.calls.submits.length, 0, JSON.stringify(durationSchema));
+    }
+  });
+
+  test(`${build}: contradictory published duration constraints do not permit an invalid fallback`, async () => {
+    const mock = api({
+      catalog: () => listing(schema({ duration: { type: 'integer', minimum: 10, maximum: 5 } })),
+      direct: () => json({}, 404),
+    });
+    await assert.rejects(run(mock, { video: { estimated_duration: 5 } }), /duration|length|clip/i);
+    assert.equal(mock.calls.submits.length, 0);
+  });
+
+  test(`${build}: symbolic-only duration options cannot stand in for requested seconds`, async () => {
+    const mock = api({
+      catalog: () => listing(schema({ duration: { type: 'string', enum: ['auto'], default: 'auto' } })),
+      direct: () => json({}, 404),
+    });
+    for (const video of [{ estimated_duration: 5 }, { duration: 8 }]) {
+      await assert.rejects(run(mock, { video }), /duration|length|clip/i);
+      assert.equal(mock.calls.submits.length, 0);
+    }
+    await run(mock, { media: 'video', video: undefined });
+    assert.equal(mock.calls.submits.length, 1, 'a video with no duration obligation may use the provider default');
+    assert.equal(Object.hasOwn(mock.calls.submits[0], 'duration'), false);
+  });
+
+  test(`${build}: absent metadata does not let explicit clips bypass the two-minute limit`, async () => {
+    const mock = api({ catalog: () => json({}, 404), direct: () => json({}, 404) });
+    await assert.rejects(run(mock, { video: { duration: 121 } }), /120 s/);
+    assert.equal(mock.calls.submits.length, 0);
+  });
+
+  test(`${build}: an unspecified long clip still requires distinct scenes when model limits are unknown`, async () => {
+    const mock = api({ catalog: () => json({}, 404), direct: () => json({}, 404) });
+    await assert.rejects(run(mock, { video: { estimated_duration: 60 } }), /distinct scenes.*estimated_duration: 60/);
+    assert.equal(mock.calls.submits.length, 0);
+  });
+
   test(`${build}: fal schema authorization failures remain errors`, async () => {
     for (const status of [401, 403]) {
       const mock = api({ catalog: () => json({ error: { message: 'Access denied' } }, status) });
@@ -198,6 +287,20 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(mock.calls.schemas, 1);
       assert.equal(mock.calls.submits[0].duration, 8);
       assert.equal(result.fallbackClipSeconds, 8);
+    }
+  });
+
+  test(`${build}: Comfy Router honors explicit lengths and constrained automatic fallbacks`, async () => {
+    for (const [durationSchema, video, expected] of [
+      [null, { duration: 15 }, 15],
+      [{ type: 'integer', minimum: 1, default: 5 }, { duration: 15 }, 15],
+      [{ type: 'integer', minimum: 10 }, { estimated_duration: 5 }, 10],
+      [{ type: 'integer', minimum: 5, multipleOf: 5 }, { estimated_duration: 5 }, 10],
+    ]) {
+      const mock = comfyApi(() => durationSchema ? json(schema({ duration: durationSchema })) : json({}, 404));
+      const result = await run(mock, { config: comfyConfig, video });
+      assert.deepEqual(mock.calls.submits.map(body => body.duration), [expected], JSON.stringify(durationSchema));
+      assert.equal(result.totalSeconds, expected);
     }
   });
 

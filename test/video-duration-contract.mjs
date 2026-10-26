@@ -63,13 +63,17 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(pin({ media: 'video', video_id: 'explainer', estimated_duration: 5 }, approved).args.estimated_duration, 120);
   });
 
-  test(`${build}: actual trace retry never dispatches a default short paid clip`, async () => {
+  test(`${build}: a rejected scene generation cannot retry as a default short paid clip`, async () => {
     const { agent, tab, guard } = fixture();
     const originalFetch = globalThis.fetch;
     let submits = 0, saved = 0;
     agent._persistNow = async () => { saved++; return { ok: true }; };
     globalThis.fetch = async (url, init = {}) => {
-      if (init.method === 'POST') { submits++; assert.fail('A target-losing retry must not submit a paid clip'); }
+      if (init.method === 'POST') {
+        submits++;
+        assert.equal(JSON.parse(init.body).duration, 15, 'only the original full scene plan may be submitted');
+        return new Response(JSON.stringify({ error: 'Fixture provider rejected this clip length.' }), { status: 422 });
+      }
       if (url.startsWith('https://api.fal.ai/')) return json({ models: [] });
       assert.ok(url.startsWith('https://fal.ai/api/openapi/queue/openapi.json'));
       return json({});
@@ -82,14 +86,16 @@ for (const build of ['chrome', 'firefox']) {
       }, () => {}, context);
       assert.equal(first.success, false);
       assert.equal(guard.videoDurationContract.requestedSeconds, 60);
-      assert.match(first.error, /8 s/);
+      assert.match(first.error, /422/);
+      const firstSubmits = submits;
+      assert.ok(firstSubmits > 0, 'missing metadata no longer prevents the explicit scene plan');
       for (const retry of [{ prompt: 'Explain the Minkowski sum.' }, { media: 'video', prompt: 'Explain the Minkowski sum.' },
         { media: 'video', prompt: 'Explain it.', duration: 5, estimated_duration: 5 }]) {
         const result = await agent._executeToolImpl(tab, 'generate_image', retry, () => {}, context);
         assert.equal(result.success, false);
-        assert.match(result.error, /estimated_duration: 60/);
+        assert.match(result.error, /estimated_duration: 60|requested video needs 60 s/);
       }
-      assert.equal(submits, 0);
+      assert.equal(submits, firstSubmits, 'target-losing retries never submit another paid clip');
       assert.equal(saved, 8, 'save target before each attempt and its result afterward');
     } finally { globalThis.fetch = originalFetch; }
   });

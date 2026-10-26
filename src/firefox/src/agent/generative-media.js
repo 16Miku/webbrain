@@ -342,11 +342,13 @@ export function videoInputCapabilities(openapi) {
       if (defaultSeconds !== undefined) break;
     }
     if (defaultSeconds !== undefined) entry.default_duration = defaultSeconds;
-    const admitsType = (form, allowed) => form.every(schema => schema.type === undefined
-      || [].concat(schema.type).some(type => allowed.includes(type)));
-    const stringOnly = durationForms.some(form => admitsType(form, ['string']))
-      && !durationForms.some(form => admitsType(form, ['integer', 'number']));
-    entry.encodeDuration = seconds => seconds === defaultSeconds ? defaultValue : stringOnly ? String(seconds) : seconds;
+    entry.encodeDuration = seconds => {
+      const candidates = seconds === defaultSeconds ? [defaultValue, seconds, String(seconds)] : [seconds, String(seconds)];
+      // A missing type does not justify converting to text to evade numeric bounds.
+      return candidates.find(value => durationForms.some(form => formAllows(form, value)
+        && (typeof value !== 'string' || value === defaultValue
+          || form.some(schema => [].concat(schema.type ?? []).includes('string')))));
+    };
   }
   const aspectRatios = listed('aspect_ratio');
   if (aspectRatios) entry.supported_aspect_ratios = aspectRatios;
@@ -358,7 +360,26 @@ export function videoInputCapabilities(openapi) {
 // A clip's length as the model takes it, ready to merge into its request.
 function clipLength(entry, clip) {
   if (clip.duration === undefined || (entry?.inputs && !entry.inputs.includes('duration'))) return {};
-  return { duration: entry?.encodeDuration ? entry.encodeDuration(clip.duration) : clip.duration };
+  const duration = entry?.encodeDuration ? entry.encodeDuration(clip.duration) : clip.duration;
+  if (duration === undefined) throw new Error(`This video model's published duration constraints do not allow a ${clip.duration} s clip. Choose a supported duration.`);
+  return { duration };
+}
+
+// Unbounded schemas can still have a minimum or step size. Choose whole seconds
+// that satisfy those constraints without turning the fallback into a maximum.
+function nextVideoDuration(entry, minimum) {
+  for (let seconds = Math.ceil(minimum); seconds <= MAX_VIDEO_SECONDS; seconds++) {
+    if (!entry?.encodeDuration || entry.encodeDuration(seconds) !== undefined) return seconds;
+  }
+  return undefined;
+}
+
+function fallbackVideoDuration(entry) {
+  const preferred = entry?.default_duration;
+  if (preferred > 0 && preferred <= MAX_VIDEO_SECONDS && nextVideoDuration(entry, preferred) === preferred) return preferred;
+  const duration = nextVideoDuration(entry, FALLBACK_VIDEO_CLIP_SECONDS) ?? nextVideoDuration(entry, 1);
+  if (duration === undefined) throw new Error(`The published duration constraints provide no usable whole-second clip within WebBrain's ${MAX_VIDEO_SECONDS} s limit. Choose a model that accepts a duration within that limit.`);
+  return duration;
 }
 
 /**
@@ -368,26 +389,26 @@ function clipLength(entry, clip) {
  * the model would make the same clip twice. Refuses more than `maxSeconds` in
  * total or `maxClips`.
  */
-export function planVideoClips(scenes, durations, { maxSeconds = MAX_VIDEO_SECONDS, maxClips = MAX_VIDEO_CLIPS, fallbackSeconds = FALLBACK_VIDEO_CLIP_SECONDS } = {}) {
+export function planVideoClips(scenes, durations, { maxSeconds = MAX_VIDEO_SECONDS, maxClips = MAX_VIDEO_CLIPS, fallbackSeconds = FALLBACK_VIDEO_CLIP_SECONDS,
+  selectDuration = seconds => seconds ?? fallbackSeconds } = {}) {
   const lengths = durations?.length ? durations : [fallbackSeconds];
   const longest = lengths[lengths.length - 1];
   const clips = scenes.map((scene, index) => {
     const prompt = String(scene?.prompt || '').trim();
     if (!prompt) throw new Error(`Scene ${index + 1} needs a prompt.`);
-    if (scene.duration > longest) {
-      if (!durations?.length) {
-        throw new Error(`Scene ${index + 1} is ${scene.duration} s. Published clip lengths are unavailable, so WebBrain is using ${longest} s as a fallback, not a confirmed model limit. Retry with distinct scenes of up to ${longest} s that cover the full requested duration; WebBrain will generate and join them.`);
-      }
+    if (durations?.length && scene.duration > longest) {
       throw new Error(`Scene ${index + 1} is ${scene.duration} s, and this model makes clips of up to ${longest} s. Split it into scenes of up to ${longest} s, each with its own prompt for its part, so no clip repeats another.`);
     }
-    return { prompt, duration: lengths.find(value => value >= scene.duration) ?? longest };
+    const duration = durations?.length ? lengths.find(value => value >= scene.duration) ?? longest : selectDuration(scene.duration);
+    if (duration === undefined) throw new Error(`Scene ${index + 1} has no supported whole-second duration within WebBrain's ${maxSeconds} s limit. Shorten the scene or choose another video model.`);
+    return { prompt, duration };
   });
   const total = clips.reduce((sum, clip) => sum + clip.duration, 0);
   if (clips.length > maxClips) {
     throw new Error(`These scenes need ${clips.length} clips and WebBrain makes at most ${maxClips}. Use fewer, longer scenes.`);
   }
   if (total > maxSeconds) {
-    throw new Error(`These scenes come to ${total} s with the ${durations?.length ? "model's clip lengths" : 'fallback clip length'} (${lengths.join(', ')} s), and WebBrain makes videos up to ${maxSeconds} s. Shorten or merge scenes.`);
+    throw new Error(`These scenes come to ${total} s with the ${durations?.length ? "model's clip lengths" : 'planned clip lengths'} (${[...new Set(clips.map(clip => clip.duration))].join(', ')} s), and WebBrain makes videos up to ${maxSeconds} s. Shorten or merge scenes.`);
   }
   return { clips, total };
 }
@@ -396,22 +417,25 @@ export function planVideoClips(scenes, durations, { maxSeconds = MAX_VIDEO_SECON
 // clips of its scenes.
 function planVideo(prompt, video, entry) {
   const durations = clipDurations(entry);
-  const fallbackSeconds = entry?.default_duration || FALLBACK_VIDEO_CLIP_SECONDS;
-  const fallback = durations ? {} : { fallbackClipSeconds: fallbackSeconds };
   const shape = videoShape(entry, video);
   const scenes = Array.isArray(video?.scenes) ? video.scenes : null;
+  const needsFallback = !durations && (scenes?.length || (video?.duration === undefined && video?.estimated_duration !== undefined));
+  const fallbackSeconds = needsFallback ? fallbackVideoDuration(entry) : undefined;
+  const fallback = fallbackSeconds === undefined ? {} : { fallbackClipSeconds: fallbackSeconds };
   if (scenes?.length) {
     if (video.duration !== undefined) throw new Error('With scenes, give each scene its duration instead of duration.');
     if (video.estimated_duration === undefined) {
       throw new Error('With scenes, give estimated_duration: how many seconds the requested video needs before fitting it to the 120 s maximum.');
     }
-    const { clips, total } = planVideoClips(scenes, durations, { fallbackSeconds });
+    const { clips, total } = planVideoClips(scenes, durations, {
+      fallbackSeconds, selectDuration: seconds => nextVideoDuration(entry, seconds ?? fallbackSeconds),
+    });
     if (video.estimated_duration <= MAX_VIDEO_SECONDS && total < video.estimated_duration) {
       throw new Error(`These scenes provide ${total} s, but the requested video needs ${video.estimated_duration} s. Add or lengthen scenes to cover the requested duration before generating.`);
     }
     return {
       scenes: true,
-      ...fallback,
+      ...(clips.some(clip => clip.duration === fallbackSeconds) ? fallback : {}),
       total,
       estimated: video.estimated_duration,
       shape,
@@ -420,14 +444,15 @@ function planVideo(prompt, video, entry) {
       clips: clips.map(clip => ({ ...clip, prompt: `${prompt}\n\n${clip.prompt}` })),
     };
   }
-  const longest = durations?.[durations.length - 1] ?? fallbackSeconds;
+  const longest = durations?.[durations.length - 1];
   const wanted = video?.estimated_duration === undefined
     ? video?.duration : Math.max(video.estimated_duration, video.duration ?? 0);
   if (wanted !== undefined && longest && wanted > longest) {
-    if (!durations) {
-      throw new Error(`A ${formatSeconds(wanted)} video needs multiple clips with WebBrain's ${longest} s fallback. Published clip lengths are unavailable. Retry with distinct scenes of up to ${longest} s covering the full requested duration, and keep estimated_duration: ${video?.estimated_duration ?? wanted}. WebBrain will generate and join them.`);
-    }
     throw new Error(`A ${formatSeconds(wanted)} video needs more than one clip: this model makes clips of up to ${longest} s. Describe it as scenes of up to ${longest} s each, ${MAX_VIDEO_SECONDS} s in total, with estimated_duration.`);
+  }
+  if (wanted > MAX_VIDEO_SECONDS) throw new Error(`WebBrain makes videos up to ${MAX_VIDEO_SECONDS} s. Describe a shorter version as scenes and keep estimated_duration: ${wanted} so WebBrain can ask before generating it.`);
+  if (fallbackSeconds !== undefined && wanted > fallbackSeconds) {
+    throw new Error(`A ${formatSeconds(wanted)} video needs multiple clips with WebBrain's ${fallbackSeconds} s fallback. Published clip lengths are unavailable. Retry with distinct scenes covering the full requested duration, using ${fallbackSeconds} s per scene as a starting point, and keep estimated_duration: ${video?.estimated_duration ?? wanted}. WebBrain will generate and join them.`);
   }
   if (video?.duration !== undefined && video?.estimated_duration !== undefined && video.duration < video.estimated_duration) {
     throw new Error(`The requested video needs ${video.estimated_duration} s, but duration specifies only ${video.duration} s. Increase the clip duration or describe the full video as scenes before generating.`);
@@ -439,8 +464,9 @@ function planVideo(prompt, video, entry) {
       throw new Error(`This video model does not make ${video.duration} s clips. Supported: ${durations.join(', ')} s.`);
     }
     duration = video.duration;
+    clipLength(entry, { duration });
   } else if (wanted !== undefined) {
-    duration = durations?.find(value => value >= wanted) ?? longest;
+    duration = durations?.find(value => value >= wanted) ?? fallbackSeconds;
   }
   return { scenes: false, shape, ...(duration !== undefined ? fallback : {}), clips: [{ prompt, ...(duration !== undefined ? { duration } : {}) }] };
 }

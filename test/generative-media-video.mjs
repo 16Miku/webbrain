@@ -549,9 +549,10 @@ for (const build of ['chrome', 'firefox']) {
     assert.throws(() => media.planVideoClips(scenes(9, 15), grok.supported_durations), /up to 120 s/);
     assert.throws(() => media.planVideoClips(scenes(25, 4), grok.supported_durations), /at most 24/);
     assert.deepEqual(media.planVideoClips(scenes(2, 5), null), {
-      clips: scenes(2, 8), total: 16,
+      clips: scenes(2, 5), total: 10,
     });
-    assert.throws(() => media.planVideoClips(scenes(4, 15), null), /8 s as a fallback, not a confirmed model limit.*Retry with distinct scenes/);
+    assert.deepEqual(media.planVideoClips(scenes(4, 15), null), { clips: scenes(4, 15), total: 60 });
+    assert.throws(() => media.planVideoClips(scenes(9, 15), null), /up to 120 s/);
     assert.throws(() => media.planVideoClips([{ prompt: ' ', duration: 5 }], [5]), /Scene 1 needs a prompt/);
   });
 
@@ -848,6 +849,24 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(failed.error, /422/);
     assert.ok(rejected.calls.submits.length <= 3, 'a validation rejection is not retried');
     assert.deepEqual(rejected.calls.downloads, []);
+  });
+
+  test(`${build}: explicit scenes exceed fallback lengths and still respect unbounded constraints`, async () => {
+    for (const [duration, requested, expected] of [
+      [undefined, 15, 15],
+      [{ type: 'integer', minimum: 1, default: 5 }, 15, 15],
+      [{ type: 'integer', minimum: 10 }, 5, 10],
+      [{ type: 'integer', minimum: 5, multipleOf: 5 }, 8, 10],
+    ]) {
+      const model = { id: 'provider/video', schema: duration ? falSchema({ duration }) : null };
+      const api = falApi({ model: model.id, schema: model.schema });
+      const result = await generate({ prompt: 'Story', scenes: scenes(4, requested), estimated_duration: requested * 4 },
+        { config: falConfig(model), fetchImpl: api.fetchImpl, pollIntervalMs: 1 });
+      assert.equal(result.success, true, result.error);
+      assert.deepEqual(api.calls.submits.map(body => body.duration), Array(4).fill(expected));
+      assert.equal(result.plannedSeconds, expected * 4);
+      assert.equal(result.estimatedSeconds, requested * 4);
+    }
   });
 
   test(`${build}: Comfy Router scenes take each clip's length over the saved model input`, async () => {

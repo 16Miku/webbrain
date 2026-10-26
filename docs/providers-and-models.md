@@ -327,10 +327,15 @@ body has, its listed clip lengths (sent as listed, such as `6`, `"6"` or
 listed aspect ratios and resolutions (matched without regard to case and sent as
 listed, such as `768P`). When fal.ai's catalog has no readable clip lengths,
 WebBrain also tries its public OpenAPI endpoint without credentials. If clip
-lengths remain unavailable, scenes use the schema's stated duration default,
-or an 8-second fallback. A one-minute request can therefore use eight distinct
+lengths remain unavailable, an unspecified clip length uses the schema's valid
+duration default, or a whole-second fallback starting at 8 seconds that meets
+the published minimum, maximum and step size. A one-minute request can use eight distinct
 8-second scenes, aiming for 64 seconds; the output is measured separately.
-Fallback lengths are attempts, not advertised model limits. String duration
+Fallback lengths are attempts, not advertised model limits. Explicit clip and
+scene lengths can exceed the default or fallback when the published constraints
+allow them; scene lengths round up as needed to satisfy those constraints.
+When no valid whole-second length fits the 120-second cap, the request fails
+before generation with an actionable error. String duration
 inputs keep their declared encoding; a schema with no duration field uses the
 provider's default without adding that field. Real submission errors still
 stop the request, while missing metadata alone does not. A local
