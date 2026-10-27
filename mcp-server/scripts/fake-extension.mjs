@@ -2,18 +2,22 @@
 
 // Stands in for the WebBrain extension so the MCP server can be driven without
 // Chrome. Speaks the same frames as src/chrome/src/offscreen/cloud-bridge.js:
-// the `hello` handshake, then canned replies to cloud_run / cloud_status /
-// cloud_respond / cloud_abort. Anything else comes back as an error, which is
-// how you check the server's failure path.
+// the `hello` handshake and the answer to the pairing challenge, then canned
+// replies to cloud_run / cloud_status / cloud_respond / cloud_abort. Anything
+// else comes back as an error, which is how you check the server's failure path.
 //
 //   cd mcp-server && node scripts/fake-extension.mjs [ws-url]
 //
 // Defaults to ws://127.0.0.1:17374/extension. Start the server first
-// (npm start), then this, then point your MCP client at the server.
+// (npm start), then this, then point your MCP client at the server. It pairs
+// with the same key the server uses (WEBBRAIN_BRIDGE_KEY, WEBBRAIN_BRIDGE_KEY_FILE
+// or ~/.webbrain/bridge-key).
 
 import WebSocket from "ws";
+import { loadPairingKey, pairingProof, PAIRING_SCHEME } from "../dist/pairing.js";
 
 const url = process.argv[2] || "ws://127.0.0.1:17374/extension";
+const { key: pairingKey } = loadPairingKey();
 const socket = new WebSocket(url);
 let lastRunId = null;
 
@@ -41,6 +45,11 @@ socket.on("message", (raw) => {
     msg = JSON.parse(raw.toString());
   } catch {
     log("non-JSON frame:", raw.toString());
+    return;
+  }
+  if (msg.type === "pairing_challenge" || msg.type === "auth_challenge") {
+    socket.send(JSON.stringify({ type: "pairing_proof", scheme: PAIRING_SCHEME, proof: pairingProof(pairingKey, msg.nonce) }));
+    log("pairing proof sent");
     return;
   }
   if (!msg.action) {

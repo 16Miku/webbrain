@@ -1416,7 +1416,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => {});
   if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
     || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId
-    || changes.webbrainCloudBridgeLegacyBearerAuth) {
+    || changes.webbrainCloudBridgeLegacyBearerAuth
+    || changes.webbrainCloudBridgePairingKey) {
     cloudRunController.syncBridge().catch(() => {});
   }
   if (changes.maxAgentSteps) {

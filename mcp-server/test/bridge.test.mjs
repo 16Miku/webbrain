@@ -9,21 +9,35 @@
  */
 
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
+import { once } from "node:events";
 import test from "node:test";
 import WebSocket from "ws";
 
+const PAIRING_KEY = "bridge-test-pairing-key-0123456789";
 process.env.WEBBRAIN_BRIDGE_PORT = process.env.WEBBRAIN_BRIDGE_PORT || "17399";
 process.env.WEBBRAIN_COMMAND_TIMEOUT_MS = "2000";
 process.env.WEBBRAIN_POLL_INTERVAL_MS = "20";
+process.env.WEBBRAIN_BRIDGE_KEY = PAIRING_KEY;
 
 const { WebBrainBridge, BridgeError, TERMINAL_STATUSES } = await import("../dist/bridge.js");
 const { bridgeUrl } = await import("../dist/config.js");
 const { awaitSettled, describeSnapshot } = await import("../dist/runs.js");
 
-/** Minimal stand-in for the extension's offscreen bridge client. */
-function fakeExtension(url, handler, { client = "webbrain-extension" } = {}) {
+/** Computed independently of dist/pairing.js so a drift in either side fails here. */
+function proofFor(key, nonce) {
+  return createHmac("sha256", key).update(`webbrain-bridge-pairing-v1:${nonce}`).digest("hex");
+}
+
+/**
+ * Minimal stand-in for the extension's offscreen bridge client. `key: null`
+ * models an extension that cannot answer the pairing challenge.
+ */
+function fakeExtension(url, handler, { client = "webbrain-extension", key = PAIRING_KEY, hello = true } = {}) {
   const socket = new WebSocket(url);
+  socket.frames = [];
   socket.on("open", () => {
+    if (!hello) return;
     socket.send(
       JSON.stringify({
         type: "hello",
@@ -36,11 +50,22 @@ function fakeExtension(url, handler, { client = "webbrain-extension" } = {}) {
   });
   socket.on("message", async (raw) => {
     const msg = JSON.parse(raw.toString());
+    socket.frames.push(msg);
+    if (msg.type === "pairing_challenge" || msg.type === "auth_challenge") {
+      if (key !== null) {
+        socket.send(JSON.stringify({ type: "pairing_proof", scheme: msg.scheme, proof: proofFor(key, msg.nonce) }));
+      }
+      return;
+    }
     if (!msg.action) return;
     const reply = await handler(msg);
     socket.send(JSON.stringify({ id: msg.id, ...reply }));
   });
   return socket;
+}
+
+function closeInfo(socket) {
+  return once(socket, "close").then(([code, reason]) => ({ code, reason: reason.toString() }));
 }
 
 test("handshake, command correlation, and payload shape", async (t) => {
@@ -193,32 +218,137 @@ test("a web-page origin cannot replace the connected extension", async (t) => {
   await bridge.stop();
 });
 
-test("a new socket cannot inherit an earlier extension handshake", async (t) => {
+test("a local process claiming to be the extension cannot replace the paired extension", async (t) => {
+  const bridge = new WebBrainBridge({ pairingTimeoutMs: 200 });
+  t.after(() => bridge.stop());
+  await bridge.start();
+
+  const extension = fakeExtension(bridgeUrl(), (msg) => ({
+    ok: true,
+    result: { runId: msg.payload.runId, status: "running" },
+  }));
+  await bridge.waitForExtension(3000);
+  assert.equal(bridge.isConnected(), true);
+
+  // Origin-less native client with a perfect hello but no pairing proof.
+  const rogue = fakeExtension(bridgeUrl(), () => ({ ok: true, result: { runId: "forged" } }), { key: null });
+  const rogueClosed = closeInfo(rogue);
+  await once(rogue, "open");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(bridge.isConnected(), true, "an unpaired hello displaced the extension");
+  const result = await bridge.request("cloud_run", { runId: "still-private", task: "private task", mode: "ask" });
+  assert.equal(result.runId, "still-private", "the paired extension must keep answering");
+  assert.deepEqual(rogue.frames.map((frame) => frame.type), ["pairing_challenge"], "an unpaired socket must only see the challenge");
+
+  const { code, reason } = await rogueClosed;
+  assert.equal(code, 4001);
+  assert.match(reason, /Pairing required/);
+  assert.equal(bridge.isConnected(), true);
+
+  extension.close();
+  await bridge.stop();
+});
+
+test("a wrong pairing proof is refused without touching the paired extension", async (t) => {
   const bridge = new WebBrainBridge();
   t.after(() => bridge.stop());
   await bridge.start();
 
-  const extension = fakeExtension(bridgeUrl(), () => ({ ok: true, result: {} }));
+  const extension = fakeExtension(bridgeUrl(), () => ({ ok: true, result: { runId: "safe", status: "running" } }));
   await bridge.waitForExtension(3000);
+
+  const rogue = fakeExtension(bridgeUrl(), () => ({ ok: true, result: {} }), { key: "a-guessed-pairing-key-000000" });
+  const { code, reason } = await closeInfo(rogue);
+  assert.equal(code, 4001);
+  assert.equal(reason, "Pairing key mismatch");
+  assert.deepEqual(rogue.frames.map((frame) => frame.type), ["pairing_challenge"]);
+
   assert.equal(bridge.isConnected(), true);
+  assert.equal((await bridge.request("cloud_status", { runId: "safe" })).runId, "safe");
 
-  const rogue = new WebSocket(bridgeUrl());
-  let receivedCommands = 0;
-  rogue.on("message", () => {
-    receivedCommands += 1;
-  });
-  await new Promise((resolve) => rogue.on("open", resolve));
-  await new Promise((resolve) => setTimeout(resolve, 20));
-
-  assert.equal(bridge.isConnected(), false, "the replacement socket has not sent hello");
-  await assert.rejects(
-    () => bridge.request("cloud_run", { task: "private task", mode: "ask" }),
-    /No WebBrain extension is connected/,
-  );
-  assert.equal(receivedCommands, 0, "an unverified socket must not receive task frames");
-
-  rogue.close();
   extension.close();
+  await bridge.stop();
+});
+
+test("a pairing proof cannot be replayed on another socket", async (t) => {
+  const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
+  await bridge.start();
+
+  const first = fakeExtension(bridgeUrl(), () => ({ ok: true, result: {} }));
+  await bridge.waitForExtension(3000);
+  const recordedNonce = first.frames[0].nonce;
+  const recordedProof = proofFor(PAIRING_KEY, recordedNonce);
+  first.close();
+  await once(first, "close");
+
+  const replay = new WebSocket(bridgeUrl());
+  const replayClosed = closeInfo(replay);
+  const [challengeRaw] = await once(replay, "message");
+  const challenge = JSON.parse(challengeRaw.toString());
+  assert.notEqual(challenge.nonce, recordedNonce, "every socket needs a fresh nonce");
+  replay.send(JSON.stringify({ type: "hello", client: "webbrain-extension", protocolVersion: 2, capabilities: [] }));
+  replay.send(JSON.stringify({ type: "auth", scheme: challenge.scheme, proof: recordedProof }));
+  assert.equal((await replayClosed).code, 4001);
+  assert.equal(bridge.isConnected(), false);
+
+  await bridge.stop();
+});
+
+test("the pairing key never crosses the socket and pairing works in either frame order", async (t) => {
+  const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
+  await bridge.start();
+
+  // Proof before hello: the bridge must wait for both before trusting the socket.
+  const socket = new WebSocket(bridgeUrl());
+  const seen = [];
+  socket.on("message", (raw) => {
+    const text = raw.toString();
+    seen.push(text);
+    const msg = JSON.parse(text);
+    if (msg.type === "pairing_challenge" || msg.type === "auth_challenge") {
+      socket.send(JSON.stringify({ type: "pairing_proof", scheme: msg.scheme, proof: proofFor(PAIRING_KEY, msg.nonce) }));
+      setTimeout(() => {
+        assert.equal(bridge.isConnected(), false, "a proof without hello must not be enough");
+        socket.send(JSON.stringify({ type: "hello", client: "webbrain-extension", protocolVersion: 2, capabilities: [] }));
+      }, 30);
+      return;
+    }
+    if (msg.action) socket.send(JSON.stringify({ id: msg.id, ok: true, result: { runId: "r", status: "running" } }));
+  });
+  assert.equal(await bridge.waitForExtension(3000), true);
+  await bridge.request("cloud_status", { runId: "r" });
+
+  assert.equal(JSON.parse(seen[0]).scheme, "hmac-sha256-v1");
+  for (const frame of seen) assert.equal(frame.includes(PAIRING_KEY), false, "the key must never be sent");
+
+  socket.close();
+  await bridge.stop();
+});
+
+test("a paired reconnect supersedes the previous extension socket", async (t) => {
+  const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
+  await bridge.start();
+
+  const first = fakeExtension(bridgeUrl(), () => ({ ok: true, result: { runId: "first" } }));
+  await bridge.waitForExtension(3000);
+  const firstClosed = closeInfo(first);
+
+  const second = fakeExtension(bridgeUrl(), () => ({ ok: true, result: { runId: "second" } }));
+  assert.equal((await firstClosed).code, 1000);
+  assert.equal(bridge.isConnected(), true);
+  assert.equal((await bridge.request("cloud_status", {})).runId, "second");
+
+  second.close();
+  await bridge.stop();
+});
+
+test("a pairing key shorter than 16 characters is refused at start", async () => {
+  const bridge = new WebBrainBridge({ pairingKey: "short" });
+  await assert.rejects(() => bridge.start(), /at least 16 characters/);
   await bridge.stop();
 });
 

@@ -31,6 +31,7 @@
 
 import { htmlToText } from "../util/htmlToText.js";
 import { safeFetch, readBodyCapped } from "../util/safeFetch.js";
+import type { UrlGuardOptions } from "../util/urlGuard.js";
 import {
   compactText,
   normalizeTextLimit,
@@ -50,8 +51,6 @@ export interface ResearchUrlArgs {
   url: string;
   /** ms; default 30 000, cap 120 000. */
   timeout?: number;
-  /** Allow RFC1918 / loopback targets. Off by default. */
-  allowPrivate?: boolean;
   /**
    * Maximum characters returned in the main text field after compaction.
    * Defaults to 16k; capped at 60k.
@@ -189,7 +188,14 @@ function extractLinks(html: string, base: string): ResearchUrlLink[] {
   return out;
 }
 
-export async function researchUrl(args: ResearchUrlArgs): Promise<ResearchUrlResult> {
+/**
+ * `opts.allowPrivate` opens RFC1918 / loopback / link-local targets; it
+ * is kept out of `args` for the same reason as in `fetchUrl`.
+ */
+export async function researchUrl(
+  args: ResearchUrlArgs,
+  opts: UrlGuardOptions = {},
+): Promise<ResearchUrlResult> {
   if (!args?.url) return { success: false, error: "url is required" };
 
   const timeoutMs = Math.min(
@@ -205,7 +211,7 @@ export async function researchUrl(args: ResearchUrlArgs): Promise<ResearchUrlRes
     const res = await safeFetch(args.url, {
       method: "GET",
       signal: controller.signal,
-      allowPrivate: !!args.allowPrivate,
+      allowPrivate: opts.allowPrivate === true,
       headers: {
         // Some sites gate on User-Agent. Pretend to be a recent
         // desktop Firefox — same MO as curl/wget defaults.
