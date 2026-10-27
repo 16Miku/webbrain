@@ -2,6 +2,29 @@
 // clicks in waitForThenClick and click-all rules, recheck background coverage.
 import AutoConsent from '../../vendor/autoconsent/autoconsent.esm.js';
 
+// The page monitor reports any stylesheet it does not own as page churn.
+// Pre-hiding adds autoconsent's <style> and removes it 2 s later, after the
+// turn was released, so that removal refused the agent's next action as if
+// the page had changed. WebBrain creates the style elements upstream writes
+// into and registers them by reference; a page's element with the same id
+// stays the page's own.
+const PREHIDE_STYLE_ID = 'autoconsent-prehide';
+const RULES_STYLE_ID = 'autoconsent-css-rules';
+
+function existingStyle(id) {
+  const style = globalThis.document?.querySelector(`style#${id}`);
+  return style instanceof HTMLStyleElement ? style : null;
+}
+
+function ownStyle(id) {
+  const doc = globalThis.document;
+  if (!doc || existingStyle(id)) return;
+  const style = doc.createElement('style');
+  style.id = id;
+  (window.__wbPageMonitorDecorations ??= new WeakSet()).add(style);
+  (doc.head || doc.getElementsByTagName('head')[0] || doc.documentElement).appendChild(style);
+}
+
 export function guardCookieBannerInstance(consent, hasCoverage) {
   let stopped = false;
   const cancelled = new Error('Cookie-banner coverage revoked');
@@ -33,6 +56,9 @@ export function guardCookieBannerInstance(consent, hasCoverage) {
     consent[name] = async (...args) => {
       try {
         await requireCoverage();
+        // Some upstream rules (TrustArc, Evidon) hide through the shared
+        // rules style directly rather than through domActions.hide.
+        if (name !== '_start') ownStyle(RULES_STYLE_ID);
         return await original(...args);
       } catch (error) {
         if (error !== cancelled) throw error;
@@ -81,7 +107,21 @@ export function guardCookieBannerInstance(consent, hasCoverage) {
   // changes and pre-hiding while an earlier rule is waiting for an element.
   for (const name of ['hide', 'stylesheet', 'removeClass', 'setStyle', 'addStyle', 'prehide']) {
     const original = dom[name].bind(dom);
-    dom[name] = (...args) => stopped ? false : original(...args);
+    const styleId = name === 'prehide' ? PREHIDE_STYLE_ID
+      : name === 'hide' || name === 'stylesheet' ? RULES_STYLE_ID : null;
+    dom[name] = (...args) => {
+      if (stopped) return false;
+      if (styleId) ownStyle(styleId);
+      return original(...args);
+    };
+  }
+  // Upstream creates the pre-hide style in order to remove it. With nothing
+  // pre-hidden, that insert-and-remove pair was itself reported as churn.
+  if (typeof dom.undoPrehide === 'function') {
+    const undoPrehide = dom.undoPrehide.bind(dom);
+    dom.undoPrehide = () => {
+      if (!globalThis.document || existingStyle(PREHIDE_STYLE_ID)) undoPrehide();
+    };
   }
   const restoreFocus = consent.restoreFocus.bind(consent);
   consent.restoreFocus = () => { if (!stopped) restoreFocus(); };

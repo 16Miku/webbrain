@@ -228,7 +228,7 @@ try {
     window.bulkEvents = [];
     chrome.runtime.onMessage.addListener(event => { if (event.action === 'agent_update') bulkEvents.push({ requestId: event.requestId, type: event.type, data: event.data }); });
     await chrome.storage.local.set({ helpImproveWebBrain: false, planBeforeActMode: 'off', planBeforeAct: false, planReviewMode: 'never',
-      screenshotFallback: false, autoScreenshot: false, maxAgentSteps: 150, systemOneEnabled: false, tracingEnabled: false,
+      screenshotFallback: false, autoScreenshot: false, visionMode: 'off', maxAgentSteps: 150, systemOneEnabled: false, tracingEnabled: false,
       agentAllowLocalNetwork: true, askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false });
   });
   assert.equal((await message('update_provider', { providerId: 'openrouter', config: { apiKey: 'owned-fixture-fake-key', baseUrl: `${origin}/v1`, model: 'minimax/minimax-m3', contextWindow: 1000000, enabled: true, supportsAskStreaming: false } })).ok, true);

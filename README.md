@@ -126,7 +126,7 @@ preview `ollama launch webbrain --model <model>` handoff. Details:
 **Cloud APIs** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
 Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter, and more.
-The Providers page ships **114 built-in provider cards on Chromium** (113 on Firefox),
+The Providers page ships **115 built-in provider cards on Chromium** (114 on Firefox),
 including an endpoint-free local WebGPU option with the tested LFM2.5 2.6B
 preset and an experimental custom Hugging Face ONNX repository option —
 see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
@@ -147,6 +147,10 @@ required; turning the existing switch off also purges queued diagnostics.
   elements, via the accessibility tree rather than brittle selectors
 - **Acts on it** — click, type, scroll, navigate, upload, download, and verify
   forms, with per-site permission prompts before consequential actions
+- **Vision mode** — with a model that takes images, Act runs see the page as
+  screenshots and click, type and scroll at coordinates; only the changed part
+  of the screen is sent after each action, and retina displays and browser
+  zoom are handled ([details](docs/vision-mode.md))
 - **Plan before Act** — Act and Dev can generate a structured plan, show it for
   approval, and pin the approved plan to the scratchpad before any tool runs
 - **Multi-step agent** — autonomous tool-use loop, configurable up to 195 steps
@@ -309,7 +313,13 @@ npx -y @webbrain/mcp-server
 ```
 
 Once the server is running, open **WebBrain → Settings → Bridge**,
-set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
+set the URL to `ws://127.0.0.1:17374/extension`, paste the pairing key printed by
+`npx -y @webbrain/mcp-server pairing-key` into **Pairing key**, and enable it.
+The server only trusts a socket that proves it holds that key (an HMAC over a
+fresh challenge; the key is never sent), so another local process cannot pose
+as the extension. The LM Studio plugin uses the same key file,
+`~/.webbrain/bridge-key`. Update the extension before upgrading the server: a
+version without the Pairing key field cannot pair.
 On Chromium browsers the bridge runs from the extension's off-screen document.
 Firefox hosts it in the background page and is configured under the same
 **Settings → Bridge** tab (not yet verified against the MCP server on a real Firefox

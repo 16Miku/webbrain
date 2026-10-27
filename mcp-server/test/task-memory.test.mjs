@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import WebSocket from 'ws';
+import { createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -11,12 +12,28 @@ const allocator = createServer();
 allocator.listen(0, '127.0.0.1');
 await once(allocator, 'listening');
 process.env.WEBBRAIN_BRIDGE_PORT = String(allocator.address().port);
+const PAIRING_KEY = 'task-memory-test-pairing-key-0123';
+process.env.WEBBRAIN_BRIDGE_KEY = PAIRING_KEY;
 allocator.close();
 await once(allocator, 'close');
-const { WebBrainBridge } = await import('../dist/bridge.js');
+const { WebBrainBridge, MAX_MEMORY_RUN_SCOPES } = await import('../dist/bridge.js');
 const { startRun, getStatus, describeSnapshot } = await import('../dist/runs.js');
 const { bridgeUrl } = await import('../dist/config.js');
 const { validateTaskMemory, redactTaskMemory, redactMemoryRunResponse, taskMemoryPrivateValues } = await import('../dist/task-memory.js');
+
+// Stand-in extension socket: sends hello and answers the pairing challenge.
+// The tests' own message handlers also see the challenge and skip frames without an action.
+function pairedExtension(url, capabilities) {
+  const socket = new WebSocket(url);
+  socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities })));
+  socket.on('message', raw => {
+    const msg = JSON.parse(raw.toString());
+    if (msg.type !== 'pairing_challenge' && msg.type !== 'auth_challenge') return;
+    const proof = createHmac('sha256', PAIRING_KEY).update('webbrain-bridge-pairing-v1:' + msg.nonce).digest('hex');
+    socket.send(JSON.stringify({ type: 'pairing_proof', scheme: msg.scheme, proof }));
+  });
+  return socket;
+}
 
 const memory = {
   version: 1, botId: 'bot-owned', runId: 'app-run-1', policyVersion: 1,
@@ -79,9 +96,8 @@ test('direct bridge rejects invalid, misplaced, or unsupported memory without se
   const bridge = new WebBrainBridge();
   await bridge.start();
   const seen = [];
-  const extension = new WebSocket(bridgeUrl());
-  extension.on('open', () => extension.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities: [] })));
-  extension.on('message', raw => { seen.push(JSON.parse(raw.toString())); });
+  const extension = pairedExtension(bridgeUrl(), []);
+  extension.on('message', raw => { const msg = JSON.parse(raw.toString()); if (msg.action) seen.push(msg); });
   try {
     assert.equal(await bridge.waitForExtension(3000), true);
     await assert.rejects(bridge.request('cloud_run', { task: 'Read', taskMemory: memory }), error => error.status === 409);
@@ -97,13 +113,12 @@ test('memory values survive failure and reconnect, with capability downgrade sti
   await bridge.start();
   const privateMemory = { ...memory, context: { notes: 'private-reconnect-note' } };
   const connect = capabilities => {
-    const socket = new WebSocket(bridgeUrl());
-    socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities })));
-    return socket;
+    return pairedExtension(bridgeUrl(), capabilities);
   };
   const first = connect(['bot_memory_v1']);
   first.on('message', raw => {
     const msg = JSON.parse(raw.toString());
+    if (!msg.action) return;
     first.send(JSON.stringify({ id: msg.id, ok: true, result: { runId: 'reconnect-protected', status: 'running' } }));
   });
   let second;
@@ -114,7 +129,7 @@ test('memory values survive failure and reconnect, with capability downgrade sti
     second = connect([]);
     const received = [];
     second.on('message', raw => {
-      const msg = JSON.parse(raw.toString()); received.push(msg);
+      const msg = JSON.parse(raw.toString()); if (!msg.action) return; received.push(msg);
       const ordinary = msg.payload.runId === 'reconnect-ordinary';
       second.send(JSON.stringify(msg.action === 'cloud_respond'
         ? { id: msg.id, ok: false, status: 500, error: 'failed private-reconnect-note ' + memory.callbackToken }
@@ -135,6 +150,103 @@ test('memory values survive failure and reconnect, with capability downgrade sti
   } finally { first.close(); second?.close(); await bridge.stop(); }
 });
 
+const memoryFor = runId => ({ ...memory, runId, callbackUrl: `http://127.0.0.1:4174/api/internal/bot-memory/${runId}`,
+  callbackToken: `private-scoped-callback-token-${runId}`, context: { notes: `private-note-${runId}` } });
+const memoryExtension = reply => {
+  const socket = new WebSocket(bridgeUrl());
+  socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities: ['bot_memory_v1'] })));
+  socket.on('message', raw => {
+    const msg = JSON.parse(raw.toString());
+    if (msg.type === 'pairing_challenge' || msg.type === 'auth_challenge') {
+      const proof = createHmac('sha256', PAIRING_KEY).update('webbrain-bridge-pairing-v1:' + msg.nonce).digest('hex');
+      socket.send(JSON.stringify({ type: 'pairing_proof', scheme: msg.scheme, proof }));
+      return;
+    }
+    if (!msg.action) return;
+    socket.send(JSON.stringify({ id: msg.id, ...reply(msg) }));
+  });
+  return socket;
+};
+const assertBoundedScopes = bridge => {
+  assert.ok(bridge.memoryRuns.size <= MAX_MEMORY_RUN_SCOPES);
+  assert.ok(bridge.memoryRunValues.size <= MAX_MEMORY_RUN_SCOPES);
+  assert.ok(bridge.memoryProtectedRunIds.size <= MAX_MEMORY_RUN_SCOPES);
+  assert.ok(bridge.memoryPrivateValues.size <= 2 * MAX_MEMORY_RUN_SCOPES);
+};
+
+test('one long-lived bridge keeps accepting sequential memory runs while retained memory stays bounded', async () => {
+  const bridge = new WebBrainBridge();
+  await bridge.start();
+  const extension = memoryExtension(msg => ({ ok: true, result: msg.action === 'cloud_run'
+    ? { runId: msg.payload.runId, status: 'running' }
+    : { runId: msg.payload.runId, status: 'completed', content: `Finished private-note-${msg.payload.runId}` } }));
+  const total = 2 * MAX_MEMORY_RUN_SCOPES + 10;
+  try {
+    assert.equal(await bridge.waitForExtension(3000), true);
+    for (let i = 0; i < total; i++) {
+      const runId = `sequential-${i}`;
+      const privateMemory = memoryFor(runId);
+      await startRun(bridge, { runId, task: 'Check the page', mode: 'act', taskMemory: privateMemory });
+      const settled = await getStatus(bridge, runId);
+      assert.equal(settled.status, 'completed');
+      for (const secret of [privateMemory.callbackToken, privateMemory.context.notes]) assert.equal(JSON.stringify(settled).includes(secret), false);
+    }
+    assertBoundedScopes(bridge);
+    const latest = `sequential-${total - 1}`;
+    assert.equal(JSON.stringify(await getStatus(bridge, latest)).includes(`private-note-${latest}`), false);
+  } finally { extension.close(); await bridge.stop(); }
+});
+
+test('unfinished memory runs keep their scopes; a full bridge rereads the run list before refusing', async () => {
+  const bridge = new WebBrainBridge();
+  await bridge.start();
+  const states = new Map();
+  const sent = [];
+  const extension = memoryExtension(msg => {
+    sent.push(msg);
+    const { runId } = msg.payload;
+    if (msg.action === 'cloud_run') { states.set(runId, 'running'); return { ok: true, result: { runId, status: 'running' } }; }
+    if (!runId) return { ok: true, result: { runs: [...states].map(([id, status]) => ({ runId: id, status })) } };
+    return { ok: true, result: { runId, status: states.get(runId), content: `Working on private-note-${runId}` } };
+  });
+  const starts = () => sent.filter(msg => msg.action === 'cloud_run').length;
+  const start = runId => startRun(bridge, { runId, task: 'Check the page', mode: 'act', taskMemory: memoryFor(runId) });
+  try {
+    assert.equal(await bridge.waitForExtension(3000), true);
+    for (let i = 0; i < MAX_MEMORY_RUN_SCOPES; i++) await start(`live-${i}`);
+    await assert.rejects(start('overflow'), error => error.status === 409 && /unfinished/.test(error.message));
+    assert.equal(starts(), MAX_MEMORY_RUN_SCOPES);
+    assert.deepEqual(sent.at(-1), { id: sent.at(-1).id, action: 'cloud_status', payload: {} });
+    assert.equal(JSON.stringify(await getStatus(bridge, 'live-0')).includes('private-note-live-0'), false);
+    // Finished without anyone polling it; only the run list reveals that.
+    states.set('live-7', 'completed');
+    await start('after-finish');
+    assert.equal(starts(), MAX_MEMORY_RUN_SCOPES + 1);
+    assert.equal(bridge.memoryRuns.has('live-7'), false);
+    assertBoundedScopes(bridge);
+    for (const runId of ['live-0', 'live-8', 'after-finish']) {
+      assert.equal(JSON.stringify(await getStatus(bridge, runId)).includes(`private-note-${runId}`), false);
+    }
+  } finally { extension.close(); await bridge.stop(); }
+});
+
+test('memory starts the extension refuses never exhaust bridge capacity', async () => {
+  const bridge = new WebBrainBridge();
+  await bridge.start();
+  const extension = memoryExtension(msg => msg.action === 'cloud_run'
+    ? { ok: false, status: 409, error: `Tab is busy for private-note-${msg.payload.runId}` }
+    : { ok: true, result: { runs: [] } });
+  try {
+    assert.equal(await bridge.waitForExtension(3000), true);
+    for (let i = 0; i < MAX_MEMORY_RUN_SCOPES + 10; i++) {
+      const runId = `refused-${i}`;
+      await assert.rejects(startRun(bridge, { runId, task: 'Check the page', mode: 'act', taskMemory: memoryFor(runId) }),
+        error => error.status === 409 && /Tab is busy/.test(error.message) && !error.message.includes(`private-note-${runId}`));
+    }
+    assertBoundedScopes(bridge);
+  } finally { extension.close(); await bridge.stop(); }
+});
+
 test('MCP rejects protected runs on old bridges before dispatch; ordinary calls are unchanged', async () => {
   const calls = [];
   const bridge = { capabilities: () => [], async request(action, payload) { calls.push({ action, payload }); return { runId: 'ordinary', status: 'running' }; } };
@@ -149,10 +261,10 @@ test('MCP transports memory outside prompts and redacts credentials from status 
   await bridge.start();
   const seen = [];
   let rejectNext = false;
-  const extension = new WebSocket(bridgeUrl());
-  extension.on('open', () => extension.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities: ['bot_memory_v1'] })));
+  const extension = pairedExtension(bridgeUrl(), ['bot_memory_v1']);
   extension.on('message', raw => {
     const message = JSON.parse(raw.toString());
+    if (!message.action) return;
     seen.push(message);
     const ordinary = message.action === 'cloud_run' && !message.payload.taskMemory;
     extension.send(JSON.stringify(rejectNext
@@ -199,10 +311,9 @@ test('real MCP stdio run forwards the optional envelope privately and preserves 
     assert.equal(unsupported.isError, true);
     assert.match(JSON.stringify(unsupported), /Update the browser extension/);
     assert.equal(JSON.stringify(unsupported).includes(memory.callbackToken), false);
-    extension = new WebSocket(`ws://127.0.0.1:${port}/extension`);
-    extension.on('open', () => extension.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities: ['bot_memory_v1'] })));
+    extension = pairedExtension(`ws://127.0.0.1:${port}/extension`, ['bot_memory_v1']);
     extension.on('message', raw => {
-      const msg = JSON.parse(raw.toString()); seen.push(msg);
+      const msg = JSON.parse(raw.toString()); if (!msg.action) return; seen.push(msg);
       const protectedRun = !!msg.payload.taskMemory;
       extension.send(JSON.stringify({ id: msg.id, ok: true, result: {
         runId: msg.payload.runId, status: 'completed',

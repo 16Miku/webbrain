@@ -6,6 +6,9 @@ const DIRECT_ACTION_TOOLS = new Set([
   'set_checked',
   'iframe_click',
   'drag_drop',
+  // Vision mode's drag (a slider, a reordered item, a canvas stroke); its
+  // click_at is recorded as the coordinate click it runs as.
+  'drag_at',
   'type_text',
   'type_ax',
   'iframe_type',
@@ -70,6 +73,10 @@ const OBSERVATION_TOOLS = new Set([
   'inspect_viewport',
   'screenshot',
   'full_page_screenshot',
+  // Vision mode: a zoom, which captures its region of the page as it is now.
+  // take_screenshot only asks for the frame the screen update after its
+  // batch captures, which records itself as auto_screenshot once it exists.
+  'zoom',
   'list_downloads',
   'read_downloaded_file',
   'chrome_web_store_status',

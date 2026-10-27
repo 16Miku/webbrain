@@ -90,7 +90,7 @@ try {
     chrome.runtime.onMessage.addListener(e => { if (e.action === 'agent_update') events.push({ type: e.type, data: e.data }); });
     await chrome.storage.local.set({
       helpImproveWebBrain: false, planBeforeActMode: 'off', planReviewMode: 'never', screenshotFallback: false, autoScreenshot: false,
-      maxAgentSteps: 15, systemOneEnabled: false, tracingEnabled: false, agentAllowLocalNetwork: true,
+      visionMode: 'off', maxAgentSteps: 15, systemOneEnabled: false, tracingEnabled: false, agentAllowLocalNetwork: true,
       askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false,
     });
   });

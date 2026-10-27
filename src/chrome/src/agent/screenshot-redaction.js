@@ -427,7 +427,9 @@ export async function pixelateDataUrl(dataUrl, regions, opts = {}) {
       const sh = Math.max(1, Math.floor(h / block));
       const tmp = new OffscreenCanvas(sw, sh);
       const tctx = tmp.getContext('2d');
-      if (!tctx) continue;
+      // One region left sharp would pass for a redacted image: fail whole,
+      // so the caller sees an unredacted result.
+      if (!tctx) return dataUrl;
       tctx.imageSmoothingEnabled = false;
       tctx.drawImage(canvas, x, y, w, h, 0, 0, sw, sh);
       // Step 2: upscale back with smoothing off → blocky, unreadable pixels.

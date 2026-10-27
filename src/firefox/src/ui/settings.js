@@ -1,5 +1,7 @@
 import { DECISION_MODE_KEY, DECISION_SETTINGS_KEYS, materializeLegacyDecisionFeatures, DEFAULT_DECISION_MODEL, resolveDecisionConfig, resolveDecisionMode } from '../agent/decision-config.js';
 import { normalizeLeanModeSetting } from '../agent/lean-mode.js';
+import { normalizeVisionModeSetting } from '../agent/vision-mode.js';
+import { normalizeVisionQuality } from '../agent/vision-budget.js';
 import { D1_CONSENT_KEY, D1_CONSENT_VERSION, D1_MODEL_ID } from '../providers/d1-config.js';
 import { d1LocalAssistReady } from '../agent/decision-availability.js';
 import { initD1Settings } from './d1-settings.js';
@@ -85,7 +87,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '42.4.3';
+const EXT_VERSION = '44.0.2';
 
 const providersContainer = document.getElementById('providers');
 const generalSearchInput = document.getElementById('input-general-search');
@@ -94,6 +96,9 @@ const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
 const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
 const composerDeliveryModeSelect = document.getElementById('select-composer-delivery-mode');
+const agentIndicatorStyleSelect = document.getElementById('select-agent-indicator-style');
+// Read by content/agent-visual-indicator.js; 'circuit' is the default.
+const AGENT_INDICATOR_STYLES = ['circuit', 'aurora', 'scan', 'gears', 'classic'];
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
 const autoGroupTabsToggle = document.getElementById('toggle-auto-group-tabs');
 const helpImproveToggle = document.getElementById('toggle-help-improve');
@@ -132,6 +137,8 @@ const feedbackDiagnosticsToggle = document.getElementById('toggle-feedback-diagn
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
 const strictGuardsToggle = document.getElementById('toggle-strict-guards');
 const leanModeSelect = document.getElementById('select-lean-mode');
+const visionModeSelect = document.getElementById('select-vision-mode');
+const visionQualitySelect = document.getElementById('select-vision-quality');
 const allowLocalNetworkToggle = document.getElementById('toggle-allow-local-network');
 const scheduledTasksToggle = document.getElementById('toggle-scheduled-tasks');
 const scheduledConfirmToggle = document.getElementById('toggle-scheduled-confirm');
@@ -604,7 +611,7 @@ async function init() {
   browser.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await browser.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'strictSecretMode', 'strictGuards', 'leanMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'clarifyTimeoutPolicy', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await browser.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'agentIndicatorStyle', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'strictSecretMode', 'strictGuards', 'leanMode', 'visionMode', 'visionQuality', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'clarifyTimeoutPolicy', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
@@ -612,6 +619,9 @@ async function init() {
   if (verboseToggle) verboseToggle.checked = stored.verboseMode || false;
   if (composerDeliveryModeSelect) {
     composerDeliveryModeSelect.value = stored.composerDeliveryMode === 'steer' ? 'steer' : 'queue';
+  }
+  if (agentIndicatorStyleSelect) {
+    agentIndicatorStyleSelect.value = AGENT_INDICATOR_STYLES.includes(stored.agentIndicatorStyle) ? stored.agentIndicatorStyle : 'circuit';
   }
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
   if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
@@ -694,6 +704,8 @@ async function init() {
   if (strictSecretToggle) strictSecretToggle.checked = stored.strictSecretMode === true; // off by default
   if (strictGuardsToggle) strictGuardsToggle.checked = stored.strictGuards === true; // off by default
   if (leanModeSelect) leanModeSelect.value = normalizeLeanModeSetting(stored.leanMode); // auto by default
+  if (visionModeSelect) visionModeSelect.value = normalizeVisionModeSetting(stored.visionMode); // Auto by default
+  if (visionQualitySelect) visionQualitySelect.value = normalizeVisionQuality(stored.visionQuality); // balanced by default
   if (allowLocalNetworkToggle) allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true;
   if (scheduledTasksToggle) scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false;
   if (scheduledConfirmToggle) scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false;
@@ -1341,6 +1353,11 @@ composerDeliveryModeSelect?.addEventListener('change', async () => {
   await browser.storage.local.set({ composerDeliveryMode: mode }).catch(() => {});
 });
 
+agentIndicatorStyleSelect?.addEventListener('change', async () => {
+  const style = AGENT_INDICATOR_STYLES.includes(agentIndicatorStyleSelect.value) ? agentIndicatorStyleSelect.value : 'circuit';
+  await browser.storage.local.set({ agentIndicatorStyle: style }).catch(() => {});
+});
+
 downloadDirectoryInput?.addEventListener('input', () => {
   downloadDirectoryInput.setCustomValidity('');
 });
@@ -1568,6 +1585,14 @@ strictGuardsToggle?.addEventListener('change', async () => {
 
 leanModeSelect?.addEventListener('change', async () => {
   await browser.storage.local.set({ leanMode: normalizeLeanModeSetting(leanModeSelect.value) }).catch(() => {});
+});
+
+visionModeSelect?.addEventListener('change', async () => {
+  await browser.storage.local.set({ visionMode: normalizeVisionModeSetting(visionModeSelect.value) }).catch(() => {});
+});
+
+visionQualitySelect?.addEventListener('change', async () => {
+  await browser.storage.local.set({ visionQuality: normalizeVisionQuality(visionQualitySelect.value) }).catch(() => {});
 });
 
 allowLocalNetworkToggle?.addEventListener('change', async () => {

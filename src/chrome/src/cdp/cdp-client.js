@@ -1088,6 +1088,123 @@ export class CDPClient {
   }
 
   /**
+   * The document native input reaches: the one under a viewport point (a
+   * coordinate click) or the one holding keyboard focus (type_text without a
+   * selector, press_keys). Chrome delivers that input into embedded frames,
+   * process-isolated cross-origin ones included, so the permission gate
+   * charges this document's site rather than the top-level page's. The walk
+   * follows _pageAgentInputTarget, but focus, scroll offsets and the frame's
+   * origin are read in an isolated world, where the page cannot redefine
+   * activeElement, scrollX or origin. Returns { topDocument: true } for the
+   * tab's own document, else { topDocument: false, url } with url '' when the
+   * frame has no web origin (a sandboxed or data: document). Throws when the
+   * receiving document cannot be established.
+   */
+  async resolveInputFrame(tabId, target = {}) {
+    const keyboard = target.focused === true;
+    let x = Number(target.x), y = Number(target.y);
+    if (!keyboard && (!Number.isFinite(x) || !Number.isFinite(y))) throw new Error('Input point is not a number');
+    await this.attach(tabId);
+    let sessionId = '';
+    const temporarySessions = [];
+    const isolatedContext = async frameId => (await this.sendCommand(tabId, 'Page.createIsolatedWorld',
+      { frameId, worldName: 'webbrain-input-frame' }, sessionId)).executionContextId;
+    try {
+      for (let depth = 0; depth < 16; depth++) {
+        const tree = await this.getAllFrames(tabId, sessionId);
+        const frames = new Map(tree.map(frame => [String(frame.id), frame]));
+        const rootFrameId = String(tree[0]?.id || '');
+        if (!rootFrameId) throw new Error('Cannot read the input frame tree');
+        let frameId = rootFrameId;
+        let contextId = await isolatedContext(frameId);
+        let contextFrameId = frameId;
+        // A process-isolated child, entered through its own session next.
+        let remoteFrameId = '';
+        if (keyboard) {
+          for (let local = 0; local < 16; local++) {
+            const focused = await this.sendCommand(tabId, 'Runtime.evaluate', {
+              expression: '(() => { let el = document.activeElement; while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement; return el; })()',
+              contextId,
+            }, sessionId);
+            const objectId = focused?.result?.objectId;
+            if (!objectId) break;
+            let node;
+            try { ({ node } = await this.sendCommand(tabId, 'DOM.describeNode', { objectId }, sessionId)); }
+            finally { this.releaseObject(tabId, objectId, sessionId); }
+            // Focus inside a frame shows in its parent as the frame element;
+            // <object> and <embed> can host a cross-origin document too.
+            if (!node?.frameId || !/^(IFRAME|FRAME|OBJECT|EMBED)$/.test(node.nodeName)) break;
+            if (!frames.has(String(node.frameId))) { remoteFrameId = String(node.frameId); break; }
+            frameId = String(node.frameId);
+            contextId = await isolatedContext(frameId);
+            contextFrameId = frameId;
+          }
+        } else {
+          const offset = await this.sendCommand(tabId, 'Runtime.evaluate', {
+            expression: '({ x: scrollX, y: scrollY })', returnByValue: true, contextId,
+          }, sessionId);
+          const scroll = offset?.result?.value;
+          if (!Number.isFinite(scroll?.x) || !Number.isFinite(scroll?.y)) throw new Error('Cannot resolve input document coordinates');
+          const hit = await this.sendCommand(tabId, 'DOM.getNodeForLocation', { x: Math.round(x + scroll.x), y: Math.round(y + scroll.y) }, sessionId);
+          frameId = String(hit?.frameId || rootFrameId);
+          const { node } = await this.sendCommand(tabId, 'DOM.describeNode', { backendNodeId: hit.backendNodeId }, sessionId);
+          // The hit test already enters same-process frames, so a frame element
+          // here is a process-isolated frame (or the point is on a frame's
+          // border); either way the frame is taken as the receiver.
+          if (node?.frameId && /^(IFRAME|FRAME|OBJECT|EMBED)$/.test(node.nodeName)) {
+            if (frames.has(String(node.frameId))) frameId = String(node.frameId);
+            else {
+              remoteFrameId = String(node.frameId);
+              const owner = await this.sendCommand(tabId, 'DOM.resolveNode', {
+                backendNodeId: hit.backendNodeId,
+                executionContextId: frameId === rootFrameId ? contextId : await isolatedContext(frameId),
+              }, sessionId);
+              let quads, size;
+              try {
+                ({ quads } = await this.sendCommand(tabId, 'DOM.getContentQuads', { backendNodeId: hit.backendNodeId }, sessionId));
+                size = (await this.sendCommand(tabId, 'Runtime.callFunctionOn', { objectId: owner.object.objectId,
+                  functionDeclaration: 'function () { return { width: this.clientWidth, height: this.clientHeight }; }', returnByValue: true }, sessionId))?.result?.value;
+              } finally { this.releaseObject(tabId, owner?.object?.objectId, sessionId); }
+              const q = quads?.[0];
+              if (!q || !size?.width || !size?.height) throw new Error('Cannot resolve the input frame');
+              const ax = q[2] - q[0], ay = q[3] - q[1], bx = q[6] - q[0], by = q[7] - q[1];
+              const determinant = ax * by - ay * bx, dx = x - q[0], dy = y - q[1];
+              if (!determinant) throw new Error('Cannot resolve the input frame');
+              x = (dx * by - dy * bx) / determinant * size.width;
+              y = (ax * dy - ay * dx) / determinant * size.height;
+            }
+          }
+        }
+        if (remoteFrameId) {
+          const existing = [...(this.runtimeContexts.get(tabId)?.values() || [])].find(context => context.frameId === remoteFrameId && context.sessionId);
+          if (existing) sessionId = existing.sessionId;
+          else {
+            const attached = await this.sendCommand(tabId, 'Target.attachToTarget', { targetId: remoteFrameId, flatten: true });
+            sessionId = attached.sessionId; temporarySessions.push(sessionId);
+          }
+          continue;
+        }
+        if (!sessionId && frameId === rootFrameId) return { topDocument: true };
+        const frame = frames.get(frameId);
+        if (!frame) throw new Error('The input frame is not in the frame tree');
+        // The frame tree derives securityOrigin from the URL, which hides the
+        // origin an about:blank or srcdoc document inherits and the opaque
+        // origin of a sandboxed one; the document's own origin decides.
+        const origin = await this.sendCommand(tabId, 'Runtime.evaluate', {
+          expression: 'self.origin', returnByValue: true,
+          contextId: contextFrameId === frameId ? contextId : await isolatedContext(frameId),
+        }, sessionId);
+        return { topDocument: false, url: this._webMCPSafeFrameUrl({ url: frame.url, securityOrigin: String(origin?.result?.value || 'null') }) };
+      }
+      throw new Error('Input frame nesting exceeds the limit');
+    } finally {
+      for (const id of temporarySessions.reverse()) {
+        try { await this.sendCommand(tabId, 'Target.detachFromTarget', { sessionId: id }); } catch {}
+      }
+    }
+  }
+
+  /**
    * Register an event handler.
    */
   on(tabId, event, handler) {
@@ -3287,9 +3404,13 @@ export class CDPClient {
       timer: null,
     };
     state.handler = (params = {}) => {
+      // Only the protocol saw this chooser: the page-world guard covers the
+      // top document and its open shadow roots, so the input is in a frame
+      // or a closed shadow root, where upload_file cannot reach it either.
       state.blocked = {
         blocked: true,
         selector: null,
+        protocolOnly: true,
         ts: Date.now(),
         ...(params.backendNodeId ? { backendNodeId: params.backendNodeId } : {}),
       };
@@ -3555,6 +3676,7 @@ export class CDPClient {
       dispatched: true,
       filePickerBlocked: true,
       ...(selector ? { selector } : {}),
+      ...(blocked?.protocolOnly === true ? { protocolOnly: true } : {}),
       error: ['Blocked a native file chooser.', context, guidance].filter(Boolean).join(' '),
     };
   }

@@ -13,7 +13,7 @@ import { createTimeoutRing, updateTimeoutRing } from './timeout-ring.js';
 import { mountActivityBrain } from './activity-brain.js';
 import { createComposerModePins } from './composer-mode-pin.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
-import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
+import { CAPABILITY_LABEL, uploadApprovalCard } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks, linkifyPlainUrls } from './markdown-link.js';
 import { installChatLinkIcons } from './chat-link-icons.js';
 import { codeFenceLanguage, createMarkdownPlaceholders, highlightCode, renderMarkdownBlockquotes, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
@@ -4269,7 +4269,7 @@ function trimScheduleUrlProse(raw) {
   for (;;) {
     const last = url.slice(-1);
     const opener = last === ')' ? '(' : last === ']' ? '[' : '';
-    if (/[.,;:!?]/.test(last) || (opener && url.split(last).length > url.split(opener).length)) {
+    if (/[.,;:!?…]/.test(last) || (opener && url.split(last).length > url.split(opener).length)) {
       url = url.slice(0, -1);
     } else {
       return url;
@@ -4278,10 +4278,11 @@ function trimScheduleUrlProse(raw) {
 }
 
 // The one http(s) address a task's prompt names, so "check https://example.com/
-// every day" targets that page rather than whatever tab is open.
+// every day" targets that page rather than whatever tab is open. As in chat
+// links, curly quotes, guillemets and CJK punctuation end the address.
 function scheduleUrlFromPrompt(prompt) {
   const urls = new Set();
-  for (const match of String(prompt || '').matchAll(/https?:\/\/[^\s<>"'`]+/gi)) {
+  for (const match of String(prompt || '').matchAll(/https?:\/\/[^\s<>"'`“”‘’„‚«»‹›「」『』【】〔〕〈〉《》（）［］｛｝、。，；：！？]+/gi)) {
     const url = trimScheduleUrlProse(match[0]);
     if (isHttpScheduleUrl(url)) urls.add(url);
   }
@@ -6565,7 +6566,7 @@ function rebindClarifyCards() {
     // the card. Skip permission/form-submit cards (they never auto-timeout).
     if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
       || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1'
-      || card.dataset.videoLengthConfirmation === '1') return;
+      || card.dataset.videoLengthConfirmation === '1' || card.dataset.downloadReadConfirmation === '1') return;
     const deadlineTs = Number(card.dataset.deadlineTs);
     if (!Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
     const firstOption = card.dataset.firstOption
@@ -9189,6 +9190,9 @@ function resolvePendingPermissionPromptForContext(context) {
   if (targetTabId == null || !targetClarifyId) return false;
   for (const card of document.querySelectorAll('.clarify-card[data-permission="1"]')) {
     if (card.classList.contains('clarify-answered')) continue;
+    // A card for a local file from outside the run is answered only by a
+    // click on it: turning prompts off does not approve that file.
+    if (card.dataset.uploadExactFile === '1') continue;
     if (String(card.dataset.tabId || '') !== String(targetTabId)) continue;
     if (String(card.dataset.clarifyId || '') !== targetClarifyId) continue;
     submitClarify(card, targetTabId, targetClarifyId, 'once', 'slash-command');
@@ -9203,6 +9207,7 @@ function resolvePendingPermissionPromptsForTab(tabId) {
   let resolved = 0;
   for (const card of document.querySelectorAll('.clarify-card[data-permission="1"]')) {
     if (card.classList.contains('clarify-answered')) continue;
+    if (card.dataset.uploadExactFile === '1') continue;
     if (String(card.dataset.tabId || '') !== targetTabId) continue;
     const clarifyId = String(card.dataset.clarifyId || '');
     if (!clarifyId) continue;
@@ -11250,6 +11255,7 @@ function renderClarifyCard(data) {
     ? 'scheduled_clarification'
     : data.workflowHealing || data.pendingReconciliation === true || data.recipientConfirmation
       || data.mutationConfirmation || data.unverifiedStepConfirmation || data.videoLengthConfirmation
+      || data.downloadReadConfirmation
       ? ''
       : data.submitConfirmation
         ? 'form_confirmation'
@@ -11514,6 +11520,44 @@ function renderClarifyCard(data) {
     return;
   }
 
+  // Downloaded-file read: the model asked to read a file from the browser's
+  // download history that WebBrain did not download in this chat. The name is
+  // the download's own (page-settable) name, shown as text only. Fixed choices
+  // return stable values ('once'/'deny'); the card never times out.
+  if (data.downloadReadConfirmation) {
+    card.dataset.downloadReadConfirmation = '1';
+    const file = data.downloadReadConfirmation || {};
+    const filename = String(file.filename || '').slice(0, 260);
+    const host = String(file.host || '').slice(0, 300);
+    qEl.textContent = t('sp.download_read.question');
+    const reasonEl = document.createElement('div');
+    reasonEl.className = 'clarify-reason';
+    reasonEl.textContent = t('sp.download_read.reason');
+    card.appendChild(reasonEl);
+    const fileEl = document.createElement('div');
+    fileEl.className = 'clarify-subject';
+    fileEl.textContent = host ? t('sp.download_read.file_from', { filename, host }) : filename;
+    card.appendChild(fileEl);
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    for (const [value, label] of [['once', t('sp.download_read.read')], ['deny', t('sp.download_read.dont')]]) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'clarify-option';
+      b.textContent = String(label).slice(0, 200);
+      b.dataset.value = value;
+      b.addEventListener('click', () => {
+        card.dataset.answerLabel = b.textContent;
+        submitClarify(card, tabId, clarifyId, value, 'option');
+      });
+      optionsEl.appendChild(b);
+    }
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
+
   // Unverifiable step: one of WebBrain's checks could not verify a commit,
   // publish or submit, so it asks instead of refusing. The text is what the
   // page showed when WebBrain asked: page content, shown as text only
@@ -11585,20 +11629,50 @@ function renderClarifyCard(data) {
     // carry their own translation under the key.
     const resolvedVerb = verb === verbKey ? (CAPABILITY_LABEL[cap] || cap) : verb;
     const grouped = data.permission.grouped === true;
+    // An upload card names the exact file the page would receive and has no
+    // "always". Its name, path and address are data, set as text only. Like
+    // the grouped-search card, its copy is English for now.
+    const upload = !grouped && data.permission.upload && typeof data.permission.upload === 'object'
+      ? uploadApprovalCard(data.permission.upload)
+      : null;
+    if (upload && !upload.runOwned) card.dataset.uploadExactFile = '1';
     qEl.textContent = grouped
       ? String(data.question || `WebBrain wants to run a task-scoped low-risk search on ${host}.`).slice(0, 600)
-      : t('sp.perm.question', { verb: resolvedVerb, host });
+      : upload
+        ? `WebBrain wants to attach a local file to a page on ${host}. The page can read the file as soon as it is attached. Allow it?`
+        : t('sp.perm.question', { verb: resolvedVerb, host });
+
+    const fileLines = !upload ? []
+      : upload.kind === 'picker'
+        ? ["File: the one you choose next in WebBrain's file picker."]
+        : [
+          upload.name ? `File: ${upload.name}` : '',
+          upload.path ? `Local path: ${upload.path}` : '',
+          upload.sourceUrl ? `Downloaded from: ${upload.sourceUrl}` : '',
+        ].filter(Boolean);
+    for (const line of fileLines) {
+      const fileEl = document.createElement('div');
+      fileEl.className = 'clarify-reason';
+      fileEl.textContent = line;
+      card.appendChild(fileEl);
+    }
 
     const reasonEl = document.createElement('div');
     reasonEl.className = 'clarify-reason';
     reasonEl.textContent = grouped
       ? 'This one-time approval covers only this unchanged search on this tab. It does not allow passwords, payments, mutations, JavaScript, or future tasks.'
-      : t('sp.perm.reason');
+      : upload
+        ? (!upload.runOwned
+          ? 'You did not attach this file and this task did not download it. WebBrain asks each time it attaches such a file, even with permission prompts off. Allow only if you asked for this exact file.'
+          : upload.kind === 'picker'
+            ? `Allowing covers only files you choose for ${host} until the task ends.`
+            : `You attached this file, or this task downloaded it. Allowing covers only this file on ${host} until the task ends.`)
+        : t('sp.perm.reason');
     card.appendChild(reasonEl);
 
     const optionsEl = document.createElement('div');
     optionsEl.className = 'clarify-options';
-    const choices = grouped
+    const choices = grouped || upload
       ? [
         ['once', t('sp.perm.allow_once')],
         ['deny', t('sp.perm.dont_allow')],
@@ -11619,7 +11693,8 @@ function renderClarifyCard(data) {
     }
     card.appendChild(optionsEl);
     content.appendChild(card);
-    void maybeShowPermissionEducationHint(card);
+    // The hint offers "Always allow", which an upload card does not have.
+    if (!upload) void maybeShowPermissionEducationHint(card);
     scrollToBottom({ force: true });
     return;
   }
@@ -11863,7 +11938,7 @@ function lockClarifyCardFromAuto(data) {
     const unverifiedStep = card.dataset.unverifiedStepConfirmation === '1';
     if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
       || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1'
-      || card.dataset.videoLengthConfirmation === '1') return;
+      || card.dataset.videoLengthConfirmation === '1' || card.dataset.downloadReadConfirmation === '1') return;
     clearClarifyCountdown(card);
     card.classList.add('clarify-answered');
     for (const el of card.querySelectorAll('button, input')) {

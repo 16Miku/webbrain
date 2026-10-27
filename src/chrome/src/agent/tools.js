@@ -6,6 +6,7 @@ import { OTP_EMAIL_TOOL, OTP_EMAIL_TOOL_NAME } from './otp-email-tool.js';
 import { BOT_MEMORY_TOOLS } from './bot-memory.js';
 import { MAX_BATCH_ACTIONS, BATCHABLE_ACTION_TOOLS, BATCH_TRAILING_OBSERVATION_TOOLS } from './browser-batch.js';
 import { REQUEST_ACTION_MODE_TOOL_NAME, requestActionModeTool } from './auto-mode.js';
+import { VISION_TOOL_NAMES, buildVisionToolSet, buildVisionActPrompt } from './vision-tools.js';
 
 /**
  * Tool definitions for the WebBrain agent.
@@ -1111,7 +1112,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'list_downloads',
-      description: 'List the user\'s most recent downloads with state, filename, source URL, and bytes received. Use this to verify a download you triggered actually completed.',
+      description: 'List this conversation\'s downloads (files you downloaded, or that downloaded while you worked) with state, file name, source URL, and bytes received. Use this to verify a download you triggered actually completed. The user\'s other download history is not listed.',
       parameters: {
         type: 'object',
         properties: {
@@ -1125,7 +1126,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'read_downloaded_file',
-      description: 'Read actual saved bytes of a completed browser download through an isolated local-file reader; never re-fetch its source URL. Returns at most 16k text characters, base64 for small binaries, or saved-file metadata for large binaries. Pass downloadId from list_downloads or download_files. A missing file or unavailable local reader returns an error.',
+      description: 'Read actual saved bytes of a completed browser download through an isolated local-file reader; never re-fetch its source URL. Returns at most 16k text characters, base64 for small binaries, or saved-file metadata for large binaries. Pass downloadId from list_downloads or download_files. A missing file or unavailable local reader returns an error. A download from outside this conversation is read only if the user approves that exact file on WebBrain\'s card.',
       parameters: {
         type: 'object',
         properties: {
@@ -1169,14 +1170,14 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'upload_file',
-      description: 'Attach a file directly to an existing file input without opening the page or OS file-picker dialog. The actual file bytes must match the input’s accepted types. A file_type_mismatch is known no-dispatch: obtain the underlying asset (use an observed sourceResolution raw URL when returned), download it under normal permissions, and use the new downloadId; do not retry the viewer HTML. This proves only that the page input received or consumed the file; it does NOT prove a remote upload, form submission, or repository commit. A page_consumed attachment may clear its file input and show a preview/crop instead of a filename. Inspect the staged preview/crop or status and the current task-authorized Save/Submit/Commit controls; local attachment does not prove a remote upload or remote submission. Do not re-open the chooser or re-upload solely because the filename is absent or not rendered. Retry only if the file is genuinely missing or the user explicitly requests a new file. Do NOT click "Choose file", "Select a file", an upload drop zone, or the input first when the input already exists. Provide ONE source: attachmentId from the current user-attachment notice, downloadId from download_files/list_downloads, or an absolute filePath. Never guess an id. attachmentId is valid only during the current run and reuses the exact file the user already attached. If both downloadId and filePath are accidentally provided, a valid downloadId is preferred and filePath is the fallback. If the selector is ambiguous, call get_interactive_elements and use the exact selector on the intended file-input record before retrying. If no file input exists because the widget creates it lazily, one guarded click on its add-files control may initialize it; then retry upload_file with the exact selector returned or discovered.',
+      description: 'Attach a file directly to an existing file input without opening the page or OS file-picker dialog. The actual file bytes must match the input’s accepted types. A file_type_mismatch is known no-dispatch: obtain the underlying asset (use an observed sourceResolution raw URL when returned), download it under normal permissions, and use the new downloadId; do not retry the viewer HTML. This proves only that the page input received or consumed the file; it does NOT prove a remote upload, form submission, or repository commit. A page_consumed attachment may clear its file input and show a preview/crop instead of a filename. Inspect the staged preview/crop or status and the current task-authorized Save/Submit/Commit controls; local attachment does not prove a remote upload or remote submission. Do not re-open the chooser or re-upload solely because the filename is absent or not rendered. Retry only if the file is genuinely missing or the user explicitly requests a new file. Do NOT click "Choose file", "Select a file", an upload drop zone, or the input first when the input already exists. Provide ONE source: attachmentId from the current user-attachment notice, downloadId from download_files/list_downloads, or an absolute filePath. Never guess an id. A downloadId this run did not download, or a filePath that is not a download of this run, asks the user to approve that exact file every time, so prefer attachmentId or a downloadId from this run. attachmentId is valid only during the current run and reuses the exact file the user already attached. If both downloadId and filePath are accidentally provided, a valid downloadId is preferred and filePath is the fallback. If the selector is ambiguous, call get_interactive_elements and use the exact selector on the intended file-input record before retrying. If no file input exists because the widget creates it lazily, one guarded click on its add-files control may initialize it; then retry upload_file with the exact selector returned or discovered.',
       parameters: {
         type: 'object',
         properties: {
           selector: { type: 'string', description: 'CSS selector for the file input element' },
           attachmentId: { type: 'string', description: 'Opaque id from the current [UNTRUSTED USER ATTACHMENTS] notice. Reuses that exact user-selected file without another picker. Valid only during the current agent run.' },
           downloadId: { type: 'number', description: 'Id of a previously downloaded file (from download_files or list_downloads). Preferred over filePath: it resolves to the real saved path automatically, so you never have to remember it. Survives context compaction via the scratchpad.' },
-          filePath: { type: 'string', description: 'Absolute path to the local file. Optional if downloadId is given.' },
+          filePath: { type: 'string', description: 'Absolute path to the local file. Optional if downloadId is given. Unless it is a file this run downloaded, the user must approve this exact file each time.' },
         },
         required: ['selector'],
       },
@@ -1449,7 +1450,7 @@ export const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          providerTasks: {"type": "array", "minItems": 1, "maxItems": 7, "description": "One documented native method per enabled provider, all for the SAME challenge and CAPTCHA family. Settings weights determine fallback order. Never include API keys. Use inject:false.", "items": {"type": "object", "properties": {"provider": {"type": "string", "enum": ["capsolver", "2captcha", "capmonster", "solvecaptcha", "anti-captcha", "nopecha", "nonecap"]}, "method": {"type": "string"}, "parameters": {"type": "object", "description": "Exact provider-native fields from get_captcha_capabilities. Include observed page/challenge parameters and matching proxy when required.", "additionalProperties": true}}, "required": ["provider", "method", "parameters"], "additionalProperties": false}},
+          providerTasks: {"type": "array", "minItems": 1, "maxItems": 8, "description": "One documented native method per enabled provider, all for the SAME challenge and CAPTCHA family. Settings weights determine fallback order. Never include API keys. Use inject:false.", "items": {"type": "object", "properties": {"provider": {"type": "string", "enum": ["capsolver", "2captcha", "capmonster", "solvecaptcha", "anti-captcha", "nopecha", "nonecap", "solvecha"]}, "method": {"type": "string"}, "parameters": {"type": "object", "description": "Exact provider-native fields from get_captcha_capabilities. Include observed page/challenge parameters and matching proxy when required.", "additionalProperties": true}}, "required": ["provider", "method", "parameters"], "additionalProperties": false}},
           type: {
             type: 'string',
             enum: ['recaptcha_v2', 'recaptcha_v3', 'recaptcha_v2_enterprise', 'recaptcha_v3_enterprise', 'hcaptcha', 'turnstile', 'image_to_text', 'aws_waf'],
@@ -1551,7 +1552,7 @@ export const RETIRED_AGENT_TOOL_NAMES = new Set([
   'screenshot', 'full_page_screenshot', 'record_tab', 'stop_recording',
   'new_tab', 'list_tabs', 'activate_tab',
 ]);
-export const RESERVED_AGENT_TOOL_NAMES = new Set([...AGENT_TOOL_NAMES, ...RETIRED_AGENT_TOOL_NAMES, OTP_EMAIL_TOOL_NAME, 'done_json', 'load_skill', 'beep', REQUEST_ACTION_MODE_TOOL_NAME, ...BOT_MEMORY_TOOLS.map(tool => tool.function.name)]);
+export const RESERVED_AGENT_TOOL_NAMES = new Set([...AGENT_TOOL_NAMES, ...RETIRED_AGENT_TOOL_NAMES, ...VISION_TOOL_NAMES, OTP_EMAIL_TOOL_NAME, 'done_json', 'load_skill', 'beep', REQUEST_ACTION_MODE_TOOL_NAME, ...BOT_MEMORY_TOOLS.map(tool => tool.function.name)]);
 export const DEV_ONLY_TOOL_NAMES = new Set([
   'read_page_source',
   'inspect_element_styles',
@@ -2086,6 +2087,11 @@ export function getToolsForMode(mode, opts = {}) {
       return true;
     });
     base = [...base, ...extras];
+  }
+  // Vision mode (vision-mode.js): an Act run whose model sees screenshots
+  // gets coordinate tools instead of the tree/ref/selector tools.
+  if (opts.vision && normalizedMode === 'act' && !devCompactBlocked) {
+    base = buildVisionToolSet(base, { coordinates: opts.vision.coordinates === 'normalized' ? 'normalized' : 'pixel' });
   }
   const advertisedNames = new Set(base.map(tool => tool.function.name));
   base = base.map(tool => tool.function.name !== 'browser_batch' ? tool : {
@@ -2718,3 +2724,17 @@ LISTINGS:
  * prompt; WebBrain skips its quality checks, so the model checks its own work.
  */
 export const SYSTEM_PROMPT_LEAN_NOTE = `LEAN MODE: WebBrain does not re-check your typing or your result for you. Check your own work: after an action that changes the page, read the page again and compare what you see with the request before calling done.`;
+
+/**
+ * Act prompt of a vision run (vision-mode.js). Replaces the tier's
+ * tree-centred Act prompt; the shared policy sections are reused verbatim.
+ */
+export function getVisionActPrompt({ coordinates = 'pixel', tier = 'full' } = {}) {
+  return buildVisionActPrompt({
+    coordinates,
+    tier,
+    sensitiveGuidance: SENSITIVE_PAGE_DATA_GUIDANCE,
+    planGuidance: tier === 'compact' ? PLAN_TO_EXECUTION_GUIDANCE_COMPACT : PLAN_TO_EXECUTION_GUIDANCE,
+    tabLimitation: BROWSER_TAB_LIMITATION,
+  });
+}

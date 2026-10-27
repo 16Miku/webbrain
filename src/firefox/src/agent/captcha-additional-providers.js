@@ -15,6 +15,8 @@ export function buildAdditionalCaptchaTask(id, task) {
     if (mapped.type?.startsWith('RecaptchaV2')) delete mapped.userAgent;
     return mapped;
   }
+  // Solvecha accepts the same ImageToTextTask body as the other JSON providers.
+  if (id === 'solvecha') return mapped;
   if (id !== 'capmonster') throw new Error(`Unknown CAPTCHA provider: ${id}`);
   if (task.type === 'AntiTurnstileTaskProxyLess') {
     const { action, pagedata, ...rest } = mapped;
@@ -93,6 +95,7 @@ async function solveWithSolveCaptcha(apiKey, task) {
 const JSON_PROVIDERS = {
   capmonster: { base: 'https://api.capmonster.cloud', name: 'CapMonster Cloud' },
   'anti-captcha': { base: 'https://api.anti-captcha.com', name: 'Anti-Captcha' },
+  solvecha: { base: 'https://api.solvecha.com', name: 'Solvecha' },
 };
 export async function getAdditionalCaptchaBalance(id, apiKey) {
   if (['nopecha', 'nonecap'].includes(id)) return getHcaptchaProviderBalance(id, apiKey);

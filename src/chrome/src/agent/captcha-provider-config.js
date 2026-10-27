@@ -12,6 +12,7 @@ export const CAPTCHA_PROVIDERS = [
   { id: 'anti-captcha', name: 'Anti-Captcha', key: 'antiCaptchaApiKey', enabled: 'antiCaptchaEnabled', weight: 'antiCaptchaWeight', defaultWeight: 96, domId: 'anti-captcha', types: STANDARD_TYPES, docs: 'https://anti-captcha.com/apidoc' },
   { id: 'nopecha', name: 'NopeCHA', key: 'nopechaApiKey', enabled: 'nopechaEnabled', weight: 'nopechaWeight', defaultWeight: 95, domId: 'nopecha', types: ["hcaptcha"], docs: 'https://nopecha.com/api-reference/' },
   { id: 'nonecap', name: 'NoneCap', key: 'nonecapApiKey', enabled: 'nonecapEnabled', weight: 'nonecapWeight', defaultWeight: 94, domId: 'nonecap', types: ["hcaptcha"], docs: 'https://nonecap.com/api-reference/' },
+  { id: 'solvecha', name: 'Solvecha', key: 'solvechaApiKey', enabled: 'solvechaEnabled', weight: 'solvechaWeight', defaultWeight: 93, domId: 'solvecha', types: ['image_to_text'], docs: 'https://solvecha.com/docs' },
 ].map(provider => ({ ...provider, nativeTypes: [...new Set(CAPTCHA_CATALOG.filter(c => c.provider === provider.id).map(c => c.family))] }));
 export const CAPTCHA_SETTINGS_KEYS = [
   ...CAPTCHA_PROVIDERS.flatMap(provider => [provider.key, provider.enabled, provider.weight]),
@@ -26,8 +27,8 @@ export function isValidTwoCaptchaApiKey(value) {
 export function isValidCaptchaApiKey(id, value) {
   const key = normalizeTwoCaptchaApiKey(value);
   if (id === 'nonecap') return /^nc_live_[A-Za-z0-9_-]{32}$/.test(key);
-  // NopeCHA documents an opaque subscription key, not a 32-hex constraint.
-  if (id === 'nopecha') return /^[A-Za-z0-9_-]{1,256}$/.test(key);
+  // NopeCHA and Solvecha document opaque keys, not a 32-hex constraint.
+  if (id === 'nopecha' || id === 'solvecha') return /^[A-Za-z0-9_-]{1,256}$/.test(key);
   return id === 'capsolver' ? isValidCapsolverApiKey(value)
     : CAPTCHA_PROVIDERS.some(provider => provider.id === id) && isValidTwoCaptchaApiKey(value);
 }

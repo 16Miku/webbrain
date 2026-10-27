@@ -376,7 +376,8 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   // targets and the app's own outcome booleans supply history without sending
   // arbitrary tool arguments to another judge. Batched actions count too.
   const actions = currentExecutionActions(agent, tabId);
-  const recordedActions = actions.filter(action => /^(type|fill|click|navigate|set_)/.test(action.name)).slice(-8)
+  // A vision run's drag (a slider, a reorder) changes state like a click.
+  const recordedActions = actions.filter(action => /^(type|fill|click|navigate|set_)/.test(action.name) || action.name === 'drag_at').slice(-8)
     .map(action => ({ tool: action.name, ...recordedActionFacts(action) }));
   // A password the run entered can still show up in its summary, in the
   // request, or in a field a "show password" control made visible.

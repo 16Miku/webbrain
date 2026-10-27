@@ -174,6 +174,66 @@ for (const build of BUILDS) {
     assert.equal(clicks, 1, 'cancellation unwinds a rule before its direct DOM mutations');
   });
 
+  test(`${build}: autoconsent's own style elements are page-monitor decorations`, async () => {
+    // A minimal document: upstream's getStyleElement looks the style up by id
+    // and creates it when missing; undoPrehide removes it.
+    class FakeStyle { constructor() { this.id = ''; this.parent = null; } remove() { this.parent?.delete(this); this.parent = null; } }
+    const head = new Set();
+    let inserts = 0;
+    const doc = {
+      head: { appendChild(el) { inserts += 1; el.parent = head; head.add(el); return el; } },
+      createElement: () => new FakeStyle(),
+      querySelector: selector => [...head].find(el => `style#${el.id}` === selector) || null,
+      getElementsByTagName: () => [],
+    };
+    const getStyleElement = id => doc.querySelector(`style#${id}`) || doc.head.appendChild(Object.assign(doc.createElement('style'), { id }));
+    const saved = { document: globalThis.document, window: globalThis.window, HTMLStyleElement: globalThis.HTMLStyleElement };
+    Object.assign(globalThis, { document: doc, window: {}, HTMLStyleElement: FakeStyle });
+    try {
+      const consent = {
+        config: { enabled: true, autoAction: 'optOut' },
+        doOptOut() { getStyleElement('autoconsent-css-rules'); return true; }, doOptIn() {}, handlePopup() {},
+        findCmp() {}, waitForPopup() {}, restoreFocus() {},
+        undoPrehide() { this.domActions.undoPrehide(); },
+        domActions: {
+          elementSelector: () => [], clickElement: async () => true,
+          prehide() { getStyleElement('autoconsent-prehide'); return true; },
+          undoPrehide() { getStyleElement('autoconsent-prehide').remove(); },
+          hide() { getStyleElement('autoconsent-css-rules'); return true; },
+          stylesheet() { getStyleElement('autoconsent-css-rules'); return true; },
+          removeClass() {}, setStyle() {}, addStyle() {},
+        },
+      };
+      const guard = guardCookieBannerInstance(consent, async () => true);
+      const decorations = () => globalThis.window.__wbPageMonitorDecorations;
+
+      consent.domActions.undoPrehide();
+      assert.equal(inserts, 0, 'undoing with nothing pre-hidden inserts no style');
+
+      consent.domActions.prehide('#banner');
+      const prehide = doc.querySelector('style#autoconsent-prehide');
+      assert.ok(prehide && decorations().has(prehide), 'the pre-hide style is registered before it reaches the page');
+      consent.domActions.hide('#banner');
+      await consent.doOptOut();
+      const rules = doc.querySelector('style#autoconsent-css-rules');
+      assert.ok(rules && decorations().has(rules), 'the shared rules style is registered too');
+      assert.equal(inserts, 2, 'each style is inserted once');
+
+      guard.stop();
+      assert.equal(doc.querySelector('style#autoconsent-prehide'), null, 'stopping still removes pre-hiding');
+
+      const pageStyle = Object.assign(new FakeStyle(), { id: 'autoconsent-prehide' });
+      doc.head.appendChild(pageStyle);
+      const second = { ...consent, config: { enabled: true }, domActions: { ...consent.domActions } };
+      guardCookieBannerInstance(second, async () => true);
+      second.domActions.prehide('#banner');
+      assert.equal(decorations().has(pageStyle), false, 'a page element with the same id is not claimed');
+    } finally {
+      Object.assign(globalThis, saved);
+      for (const key of Object.keys(saved)) if (saved[key] === undefined) delete globalThis[key];
+    }
+  });
+
   test(`${build}: 'agent' mode injects only into tabs an Act or Dev run is driving`, async () => {
     const { fake } = setup({ runs: new Map([[1, 'act'], [2, 'ask'], [4, 'dev']]) });
     fake.commit(1, 0, 'https://shop.example/');
@@ -575,8 +635,8 @@ for (const build of BUILDS) {
 
   test(`${build}: the agent, background and settings are wired`, async () => {
     const agent = await read(`src/${build}/src/agent/agent.js`);
-    assert.equal(agent.split('await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);').length - 1, 3,
-      'both run loops and the tool-batch screenshot path settle cookie banners');
+    assert.equal(agent.split('await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);').length - 1, 5,
+      'both run loops, the first vision frame of each and the tool-batch screenshot path settle cookie banners');
     assert.match(agent, /setCookieBannerHost\(host\) \{/);
     const background = await read(`src/${build}/src/background.js`);
     assert.match(background, /createCookieBannerHost\(/);

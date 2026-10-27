@@ -76,8 +76,32 @@ export class LoopDetector {
     return false;
   }
 
+  /**
+   * What a call acted on beyond its arguments, added to its loop identity.
+   * Browser-neutral by default; a vision run (vision-runtime.js) names the
+   * screen, so the same point after the screen changed is a new call while a
+   * repeat on an unchanged screen stays the same one.
+   */
+  _loopScreenIdentity(_tabId, _name, _args) {
+    return '';
+  }
+
+  /** Whether loop advice should name vision tools (vision-runtime.js). */
+  _loopVisionRun(_tabId) {
+    return false;
+  }
+
+  /** The tool name the model used: a vision run's coordinate click is its click_at. */
+  _loopToolLabel(tabId, name) {
+    return name === 'click' && this._loopVisionRun(tabId) ? 'click_at' : name;
+  }
+
   _isToolResultErroredForLoop(name, _args, result) {
     if (!result || typeof result !== 'object') return false;
+    // A vision click on a native dropdown focuses it for type_text instead of
+    // opening a popup no screenshot shows (vision-runtime.js): the designed
+    // path for choosing an option, however often a form needs it, not a miss.
+    if (result.nativeSelect === true && result.dispatched === false) return false;
     // A text write that went out but could not be read back exactly is an
     // advisory result (success with unverifiedWrite, see the agent's
     // text-write advisories), not a failed target: a content failureScope
@@ -226,7 +250,8 @@ export class LoopDetector {
   }
 
   _recordCall(tabId, name, args, result) {
-    const key = this._loopCallKey(name, args, result);
+    const screen = this._loopScreenIdentity(tabId, name, args);
+    const key = this._loopCallKey(name, args, result) + (screen ? `|screen:${screen}` : '');
     const buf = this.recentCalls.get(tabId) || [];
     buf.push({ key, name, ts: Date.now() });
     if (buf.length > 6) buf.shift();
@@ -300,7 +325,9 @@ export class LoopDetector {
     return {
       kind: 'nudge',
       intent,
-      warning: '[CAROUSEL OSCILLATION: The page returned to a recently visited slide after alternating forward/back actions. Stop using arrows, coordinate clicks, and Previous/Next. On a supported Instagram permalink use carousel_navigate with a strictly increasing index; otherwise re-read the current page once.]',
+      warning: this._loopVisionRun(tabId)
+        ? '[CAROUSEL OSCILLATION: The page returned to a recently visited slide after alternating forward/back actions. Stop using arrows, clicks and Previous/Next. Look at the current screen once and decide from the slide it shows.]'
+        : '[CAROUSEL OSCILLATION: The page returned to a recently visited slide after alternating forward/back actions. Stop using arrows, coordinate clicks, and Previous/Next. On a supported Instagram permalink use carousel_navigate with a strictly increasing index; otherwise re-read the current page once.]',
     };
   }
 
@@ -737,7 +764,10 @@ export class LoopDetector {
   _checkCoordClickLoop(tabId, x, y) {
     const bx = Math.round(x / 5) * 5;
     const by = Math.round(y / 5) * 5;
-    const key = `${bx},${by}`;
+    // In a vision run only clicks on the same screen add up: a point clicked
+    // again after the screen changed (a list moving up under it) starts over.
+    const screen = this._loopScreenIdentity(tabId, 'click', { x, y, coordinate_space: 'css' });
+    const key = `${bx},${by}${screen ? `@${screen}` : ''}`;
     const buf = this.recentCoordClicks.get(tabId) || [];
     buf.push({ key, ts: Date.now() });
     if (buf.length > 12) buf.shift();
@@ -827,21 +857,23 @@ export class LoopDetector {
         failures.set(failureScope, attempts);
         if (failures.size > 32) failures.delete(failures.keys().next().value);
         this.failedActionLoops.set(tabId, failures);
+        const label = this._loopToolLabel(tabId, toolName);
+        const vision = this._loopVisionRun(tabId);
         if (attempts >= maxAttempts) {
           this._clearLoopState(tabId);
           return {
             kind: 'stop',
             message: isOcclusionFailure
-              ? `Stopped: ${toolName} failed ${maxAttempts} times because the target is occluded by an overlapping layer or docked header. Close the overlay, scroll past the obstruction, or re-read the page before retrying.`
-              : `Stopped: ${toolName} failed or made no progress three times for the same target. Repeating it or switching to a precomputed fallback cannot make progress without fresh page evidence.`,
+              ? `Stopped: ${label} failed ${maxAttempts} times because the target is occluded by an overlapping layer or docked header. Close the overlay, scroll past the obstruction, or re-read the page before retrying.`
+              : `Stopped: ${label} failed or made no progress three times for the same target. Repeating it or switching to a precomputed fallback cannot make progress without fresh page evidence.`,
           };
         }
         if (attempts >= 2) {
           return {
             kind: 'nudge',
             warning: isOcclusionFailure
-              ? `[OVERLAY OCCLUSION: ${toolName} failed because the target element is occluded or covered by an overlapping element (such as a modal backdrop, fixed header, or sticky toolbar). Try closing the overlay (e.g. clicking a close/dismiss button or pressing Escape), scrolling the element into clear view, or re-reading the accessibility tree.]`
-              : `[FAILED ACTION LOOP: ${toolName} has failed or made no progress twice for the same target. Do not retry it or use a queued fallback. Re-read the page/tree and choose a new action from current evidence.]`,
+              ? `[OVERLAY OCCLUSION: ${label} failed because the target element is occluded or covered by an overlapping element (such as a modal backdrop, fixed header, or sticky toolbar). Try closing the overlay (e.g. clicking a close/dismiss button or pressing Escape), scrolling the element into clear view, or ${vision ? 'looking at the current screen again' : 're-reading the accessibility tree'}.]`
+              : `[FAILED ACTION LOOP: ${label} has failed or made no progress twice for the same target. Do not retry it or use a queued fallback. ${vision ? 'Look at the current screen (zoom in if the target is small)' : 'Re-read the page/tree'} and choose a new action from current evidence.]`,
           };
         }
       } else if (toolResult?.success === true && toolResult?.verified !== false) {
@@ -870,7 +902,7 @@ export class LoopDetector {
         this._clearLoopState(tabId);
         return {
           kind: 'stop',
-          message: toolResult.stopMessage || `Stopped: ${toolName} hit the same non-retryable failure twice. Retrying or switching to an equivalent tool will not make progress.`,
+          message: toolResult.stopMessage || `Stopped: ${this._loopToolLabel(tabId, toolName)} hit the same non-retryable failure twice. Retrying or switching to an equivalent tool will not make progress.`,
         };
       }
     }
@@ -921,11 +953,13 @@ export class LoopDetector {
     const nudges = (this.loopNudges.get(tabId) || 0) + 1;
     this.loopNudges.set(tabId, nudges);
 
+    const label = name => this._loopToolLabel(tabId, name);
+    const vision = this._loopVisionRun(tabId);
     if (nudges >= 8) {
       this._clearLoopState(tabId);
       const desc = loop.type === 'repeat'
-        ? `the same call to ${loop.name}`
-        : `between ${loop.a} and ${loop.b}`;
+        ? `the same call to ${label(loop.name)}`
+        : `between ${label(loop.a)} and ${label(loop.b)}`;
       return {
         kind: 'stop',
         message: `Stopped: I detected I was looping on ${desc} without making progress after multiple warnings. Please tell me what's blocking, give me a different instruction, or take a look at the page yourself.`,
@@ -941,10 +975,13 @@ export class LoopDetector {
       warning = rangedFetch
         ? '[LOOP DETECTED: You are repeatedly probing the same resource with HTTP byte ranges. Stop guessing byte offsets or file size. Use fetch_url({url, find:"literal"}) to search the full decoded response, continue semantic text pagination with offset:nextOffset, or answer now with the evidence already collected. Do not send another Range header for this resource.]'
         : shortcut
-        ? `[LOOP DETECTED + API SHORTCUT FOUND: You've called ${loop.name} ${loop.count} times. Each click triggered the same background request pattern: ${shortcut.method} ${shortcut.url}. Instead of clicking again, consider fetch_url({url: "${shortcut.url}", method: "${shortcut.method}"${shortcut.replayRequestId ? `, replayRequestId: "${shortcut.replayRequestId}"` : ''}}) with the same method; follow the UI/API mutation policy for mutating methods.]`
-        : `[LOOP DETECTED: You've just called ${loop.name} ${loop.count} times with the same arguments and the same outcome. The current approach is NOT working. Try something fundamentally different: a different selector, a different tool, scroll to find a different element, or re-read the page/tree to see what's actually on screen. DO NOT repeat this exact call again — try a creative alternative.]`;
+        ? `[LOOP DETECTED + API SHORTCUT FOUND: You've called ${label(loop.name)} ${loop.count} times. Each click triggered the same background request pattern: ${shortcut.method} ${shortcut.url}. Instead of clicking again, consider fetch_url({url: "${shortcut.url}", method: "${shortcut.method}"${shortcut.replayRequestId ? `, replayRequestId: "${shortcut.replayRequestId}"` : ''}}) with the same method; follow the UI/API mutation policy for mutating methods.]`
+        : vision
+          // Only a call keyed on the screen repeated on an unchanged one.
+          ? `[LOOP DETECTED: You've just called ${label(loop.name)} ${loop.count} times with the same arguments and ${this._loopScreenIdentity(tabId, toolName, toolArgs) ? 'the screen did not change in between' : 'the same outcome'}. The current approach is NOT working. Try something fundamentally different: a different point or control, a different tool, scroll to find a different element, or zoom into the screen to see what's actually there. DO NOT repeat this exact call again — try a creative alternative.]`
+          : `[LOOP DETECTED: You've just called ${loop.name} ${loop.count} times with the same arguments and the same outcome. The current approach is NOT working. Try something fundamentally different: a different selector, a different tool, scroll to find a different element, or re-read the page/tree to see what's actually on screen. DO NOT repeat this exact call again — try a creative alternative.]`;
     } else {
-      warning = `[LOOP DETECTED: You're oscillating between ${loop.a} and ${loop.b} without making progress. Stop. Re-read the page/tree to see what's actually happening, then try a completely different approach.]`;
+      warning = `[LOOP DETECTED: You're oscillating between ${label(loop.a)} and ${label(loop.b)} without making progress. Stop. ${vision ? 'Look at the current screen (zoom in if needed)' : 'Re-read the page/tree'} to see what's actually happening, then try a completely different approach.]`;
     }
     return { kind: 'nudge', warning };
   }

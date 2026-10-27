@@ -1,6 +1,6 @@
 # CAPTCHA native method reference
 
-Companion to [CAPTCHA provider coverage](captcha-provider-coverage.md). Contracts rechecked 2026-10-01. Generated from the executable catalog; 198 method variants across seven providers. Method IDs select an adapter contract, not an arbitrary upstream task type. Fixed values are added automatically. Fields use dot paths for nested objects; pass nested JSON, not literal dotted keys.
+Companion to [CAPTCHA provider coverage](captcha-provider-coverage.md). Contracts rechecked 2026-10-01. Generated from the executable catalog; 203 method variants across eight providers. Method IDs select an adapter contract, not an arbitrary upstream task type. Fixed values are added automatically. Fields use dot paths for nested objects; pass nested JSON, not literal dotted keys.
 
 Required fields below are unconditional. GeeTest v3 additionally needs `gt` and a fresh `challenge`; v4 needs its provider-specific CAPTCHA ID. AWS WAF variants, proxy authentication, alternate image inputs, and VisionEngine module-specific fields have conditional requirements described in the guide and official documentation. Every submitted value must come from the selected challenge.
 
@@ -1610,3 +1610,45 @@ Family: `hcaptcha`. [Official contract](https://nonecap.com/api-reference/).
 - Required: `sitekey` (string), `url` (string).
 - Optional: `rqdata` (string), `proxy` (object or string).
 - Fixed wire values: `{"type":"hcaptcha_enterprise"}`. Route: `/v1/solves`.
+
+## solvecha (5 variants)
+
+### recognition/funcaptcha
+
+Family: `funcaptcha_recognition`. [Official contract](https://solvecha.com/docs).
+
+- Required: `task` (string), `image_data` (array).
+- Optional: None.
+- Fixed wire values: `{}`. Route: `/v1/recognition/funcaptcha`.
+
+### recognition/funcaptcha_match
+
+Family: `funcaptcha_match`. [Official contract](https://solvecha.com/docs).
+
+- Required: `task` (string), `image_data` (array).
+- Optional: None.
+- Fixed wire values: `{}`. Route: `/v1/recognition/funcaptcha_match`.
+
+### recognition/geetest
+
+Family: `geetest_recognition`. [Official contract](https://solvecha.com/docs).
+
+- Required: `task` (string), `image_data` (array).
+- Optional: None.
+- Fixed wire values: `{}`. Route: `/v1/recognition/geetest`.
+
+### recognition/recaptcha
+
+Family: `recaptcha_recognition`. [Official contract](https://solvecha.com/docs).
+
+- Required: `task` (string), `grid` (string|null), `image_data` (array).
+- Optional: None.
+- Fixed wire values: `{}`. Route: `/v1/recognition/recaptcha`.
+
+### recognition/textcaptcha
+
+Family: `image_to_text`. [Official contract](https://solvecha.com/docs).
+
+- Required: `image_data` (array).
+- Optional: None.
+- Fixed wire values: `{}`. Route: `/v1/recognition/textcaptcha`.

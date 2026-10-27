@@ -107,7 +107,10 @@ export async function incompleteCompletionBlock(agent, tabId, { outcome, summary
     return { success: false, blockedDone: true, recoverableIncomplete: true,
       recovery: reading.choice,
       error: reading.choice === 'wait_then_check'
-        ? 'The authorized task is still in progress. Wait for the relevant completion control or state with wait_for_element, or use a bounded wait_for_stable followed by a fresh page/status read. Continue the authorized flow when ready. Do not re-upload or repeat a submission already dispatched. For a longer external wait, use schedule_resume only when available and appropriate; otherwise explain the concrete remaining blocker after checking.'
+        ? (agent._visionRunState?.(tabId)?.active === true
+          ? 'The authorized task is still in progress. Wait with wait({seconds}) and look at the screen update that follows (read_page for exact status text) until the relevant completion control or state shows.'
+          : 'The authorized task is still in progress. Wait for the relevant completion control or state with wait_for_element, or use a bounded wait_for_stable followed by a fresh page/status read.')
+          + ' Continue the authorized flow when ready. Do not re-upload or repeat a submission already dispatched. For a longer external wait, use schedule_resume only when available and appropriate; otherwise explain the concrete remaining blocker after checking.'
         : (declined ? 'The user declined one action on WebBrain\'s card; that refusal is final. Do not retry it, ask again or reach it another way. ' : '')
           + 'The authorized task still has a reasonable next step. Inspect the current page and available source/history, retrieve the missing information when possible, and continue with the permitted tools. Use clarify for essential information only the user can provide. Do not repeat a consequential action already dispatched. Finish partial or failed only for a concrete blocker or after reasonable recovery has been tried.',
     };

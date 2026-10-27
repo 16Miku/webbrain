@@ -145,6 +145,14 @@ export const UNTRUSTED_CONTENT_TOOLS = new Set([
   'screenshot',
   'full_page_screenshot',
   'inspect_viewport',
+  // Vision mode captures and pointer results: images and the element under
+  // the pointer are page-derived.
+  'take_screenshot',
+  'zoom',
+  'scroll_at',
+  'hover_at',
+  'drag_at',
+  'click_at',
   // done: in Act mode the result carries page-derived verification fields
   // (pageTitle, pageUrl, pageState with dialog titles / live-region text) that
   // are persisted as the final tool message and re-read on the next user turn.
@@ -436,6 +444,10 @@ const TOOL_CAPABILITY = {
   set_checked: Capability.CLICK,
   iframe_click: Capability.CLICK,
   drag_drop: Capability.CLICK,
+  // Vision mode (vision-tools.js). click_at is rewritten into `click` before
+  // the gate runs; it is listed so the name alone is never ungated.
+  click_at: Capability.CLICK,
+  drag_at: Capability.CLICK,
   type_text: Capability.TYPE,
   type_ax: Capability.TYPE,
   iframe_type: Capability.TYPE,
@@ -636,6 +648,20 @@ export function urlFilterHostHint(urlFilter, frameUrls = []) {
     : '';
 }
 
+/**
+ * Does this call's input go to whichever document is under a viewport point
+ * or holds keyboard focus, rather than to an element WebBrain resolved in the
+ * top document? A coordinate click (a vision click_at runs as one), type_text
+ * without a selector and press_keys do: native input lands in an embedded
+ * frame there, a cross-origin payment, identity or wallet frame included.
+ */
+export function inputReachesReceivingFrame(toolName, args) {
+  args = args || {};
+  if (toolName === 'click') return args.x != null && args.y != null;
+  if (toolName === 'type_text') return !args.selector;
+  return toolName === 'press_keys';
+}
+
 /** Resolve a URL (relative / protocol-relative / absolute) to a host against a
  *  base page URL — exactly what the browser handler does (new URL(raw, base)). */
 function resolveHostAgainst(url, base) {
@@ -651,7 +677,8 @@ function resolveHostAgainst(url, base) {
 /**
  * Which host does this capability act on? Navigate/network/download target the
  * destination URL (resolved against the current page); click/type/execute/
- * record target the current page. Returns '' for an iframe action whose frame
+ * record target the current page (or the frame that receives point/focus
+ * input). Returns '' for an iframe action or point/focus input whose frame
  * can't be identified, so the caller fails closed. For the MULTI-host case
  * (download_files with a urls[] array) use requiredHosts() instead.
  */
@@ -681,6 +708,13 @@ export function hostForCapability(capability, args, currentUrlOrHost, toolName) 
   // identify the frame → '' so the caller fails closed.
   if (toolName === 'iframe_click' || toolName === 'iframe_type' || toolName === 'promote_iframe') {
     return normalizeHost(args.urlFilter);
+  }
+  // Point and focus input reaches the receiving document, not necessarily the
+  // top-level page. agent.js always overwrites _inputFrameUrl with that
+  // document's URL before the gate runs; '' (it could not be identified)
+  // fails closed instead of borrowing the top-level page's grant.
+  if ((capability === Capability.CLICK || capability === Capability.TYPE) && inputReachesReceivingFrame(toolName, args)) {
+    return normalizeHost(args._inputFrameUrl);
   }
   if (capability === Capability.NAVIGATE || capability === Capability.NETWORK || capability === Capability.DOWNLOAD) {
     if (typeof args.url === 'string' && args.url) {
@@ -718,6 +752,52 @@ export function requiredHosts(capability, args, currentUrlOrHost, toolName) {
   }
   const h = hostForCapability(capability, args, currentUrlOrHost, toolName);
   return h ? [h] : [];
+}
+
+/**
+ * upload_file puts a local file into a page's file input, and the page can
+ * read that File the moment it lands. Its approval therefore names the exact
+ * file and the page host, never the host alone. `sourceKey` is the source the
+ * handler will read: attachment:<id>, download:<id>, path:<path> or picker
+ * (Firefox's own file picker, where the user chooses the file).
+ */
+export function uploadApprovalKey(host, sourceKey) {
+  const h = normalizeHost(host);
+  const source = String(sourceKey || '');
+  return h && source ? `upload_file\n${h}\n${source}` : '';
+}
+
+/**
+ * What the upload card shows about the file, bounded and stripped of control
+ * characters. A download's address is shown only when it is a web address
+ * (staged downloads have blob: or data: addresses that tell the user nothing).
+ */
+export function uploadApprovalCard(upload = {}) {
+  const text = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max);
+  const kind = ['attachment', 'download', 'path', 'picker'].includes(upload?.kind) ? upload.kind : 'path';
+  const path = text(upload?.path, 500);
+  const sourceUrl = text(upload?.sourceUrl, 500);
+  return {
+    kind,
+    runOwned: upload?.runOwned === true,
+    name: text(upload?.name || path.split(/[\\/]/).pop(), 200),
+    path,
+    sourceUrl: /^https?:\/\//i.test(sourceUrl) ? sourceUrl : '',
+  };
+}
+
+/** English wording of the upload card, also kept by scheduled pending cards. */
+export function uploadApprovalQuestion(host, upload = {}) {
+  const card = uploadApprovalCard(upload);
+  const file = card.kind === 'picker'
+    ? 'a file you choose in WebBrain\'s file picker'
+    : card.kind === 'attachment'
+      ? `the file you attached${card.name ? ` ("${card.name}")` : ''}`
+      : card.kind === 'download'
+        ? `the downloaded file ${card.path || card.name}${card.sourceUrl ? ` (from ${card.sourceUrl})` : ''}`
+        : `the local file ${card.path}`;
+  const origin = card.runOwned ? '' : ' You did not attach this file and this task did not download it.';
+  return `WebBrain wants to attach ${file} to a page on ${normalizeHost(host) || 'this site'}. The page can read the file as soon as it is attached.${origin} Allow it?`;
 }
 
 /**

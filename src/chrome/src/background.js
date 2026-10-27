@@ -46,6 +46,8 @@ import {
 } from './providers/webgpu.js';
 import { Agent } from './agent/agent.js';
 import { normalizeLeanModeSetting } from './agent/lean-mode.js';
+import { normalizeVisionModeSetting } from './agent/vision-mode.js';
+import { normalizeVisionQuality } from './agent/vision-budget.js';
 import {
   CUSTOM_SKILLS_STORAGE_KEY,
   DEFAULT_SKILL_SOURCES,
@@ -289,14 +291,19 @@ const agent = new Agent(providerManager);
 agent.strictSecretMode = false;
 agent.setStandaloneOfflineRagService(createOffscreenOfflineRetrievalService());
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
+// apiMutationSitePrompt: true keeps each host's network permission prompt for
+// write requests the default-on setting above allows (written at install, see
+// below). Without it an install keeps the earlier waiver.
 const alwaysAllowApiMutationsReady = chrome.storage.local
-  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
+  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true, apiMutationSitePrompt: false })
   .then((stored) => {
     agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
+    agent.setApiMutationSitePrompt(stored.apiMutationSitePrompt !== false);
   })
   .catch(() => {
     // An unreadable setting must not bypass a stored opt-out.
     agent.setAlwaysAllowApiMutations(false);
+    agent.setApiMutationSitePrompt(true);
   });
 agent.setConversationScopeChangeListener((tabId, state) => {
   chrome.runtime.sendMessage({
@@ -354,6 +361,7 @@ const scheduler = new ScheduledJobManager({
     await clarifyTimeoutReady;
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
+    await visionModeReady;
     await imageGenConfigReady;
     await browserBatchEnabledReady;
     await webMcpEnabledReady;
@@ -697,6 +705,15 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   mergeTraceTiers(reason).catch(() => {});
 });
 
+// Always allow API mutations is on by default, so leaving it on is not a
+// decision to skip a site's permission prompt: a new install keeps that prompt
+// for model-initiated write requests (see Agent.isApiMutationPromptWaived).
+// Installs from before this marker are not migrated and keep the waiver.
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason !== 'install') return;
+  chrome.storage.local.set({ apiMutationSitePrompt: true }).catch(() => {});
+});
+
 async function loadSiteAdapters() {
   const stored = await chrome.storage.local.get('useSiteAdapters');
   if (stored.useSiteAdapters != null) agent.useSiteAdapters = stored.useSiteAdapters;
@@ -737,6 +754,15 @@ async function loadStrictSecretMode() {
   agent.leanMode = normalizeLeanModeSetting(stored?.leanMode);
 }
 const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
+
+// Vision mode is on unless the user turned it off (vision-mode.js); the
+// screenshot size defaults to balanced. A running task keeps its decision.
+async function loadVisionMode() {
+  const stored = await chrome.storage.local.get(['visionMode', 'visionQuality']).catch(() => ({}));
+  agent.visionMode = normalizeVisionModeSetting(stored?.visionMode);
+  agent.visionQuality = normalizeVisionQuality(stored?.visionQuality);
+}
+const visionModeReady = loadVisionMode().catch(() => {});
 
 async function loadImageGenConfig() {
   const stored = await chrome.storage.local.get(IMAGE_GEN_MODEL_KEY).catch(() => ({}));
@@ -1389,7 +1415,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (PROFILE_SYNC_DATA_KEYS.some((key) => changes[key])) profileSync.noteChanges(changes).catch(() => {});
   if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => {});
   if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
-    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
+    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId
+    || changes.webbrainCloudBridgeLegacyBearerAuth
+    || changes.webbrainCloudBridgePairingKey) {
     cloudRunController.syncBridge().catch(() => {});
   }
   if (changes.maxAgentSteps) {
@@ -1415,6 +1443,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     const value = changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue;
     agent.setAlwaysAllowApiMutations(value === undefined || value === true);
     refreshPrompts = true;
+  }
+  if (changes.apiMutationSitePrompt) {
+    const value = changes.apiMutationSitePrompt.newValue;
+    agent.setApiMutationSitePrompt(value !== undefined && value !== false);
   }
   if (changes.useSiteAdapters) {
     agent.useSiteAdapters = changes.useSiteAdapters.newValue;
@@ -1453,6 +1485,14 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   // A running task keeps the mode it started with; the next run uses this.
   if (changes.leanMode) {
     agent.leanMode = normalizeLeanModeSetting(changes.leanMode.newValue);
+  }
+  // Like lean mode, a running task keeps the vision decision it started with.
+  if (changes.visionMode) {
+    agent.visionMode = normalizeVisionModeSetting(changes.visionMode.newValue);
+    agent._refreshSystemPrompts?.();
+  }
+  if (changes.visionQuality) {
+    agent.visionQuality = normalizeVisionQuality(changes.visionQuality.newValue);
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = changes.strictSecretMode.newValue === true;
@@ -3598,6 +3638,7 @@ async function handleMessage(msg, sender) {
     await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady, clarifyTimeoutReady]);
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
+    await visionModeReady;
     await webMcpEnabledReady;
     await screenshotRedactionReady;
     await imageBudgetReady;
@@ -5033,6 +5074,7 @@ async function handleMessage(msg, sender) {
       if (sender.id !== api.runtime.id || String(sender.url || '').split(/[?#]/)[0] !== providersUrl) return { success: false, error: 'Decision fixtures are available only from the extension Providers page.' };
       try {
         await strictSecretModeReady;
+        await visionModeReady;
         if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
         const fixture = msg.fixture;
         if (!fixture || typeof fixture !== 'object' || Array.isArray(fixture)) throw new Error('Invalid decision fixture.');
@@ -5057,6 +5099,7 @@ async function handleMessage(msg, sender) {
         const chatModel = fromInstall && msg.command === 'download' && msg.chatModel != null ? String(msg.chatModel) : '';
         if (chatModel && !isSelectableWebgpuPreset(chatModel)) throw new Error('Unknown local chat model.');
         await strictSecretModeReady;
+        await visionModeReady;
         if (agent.strictSecretMode && !['dispose', 'reset', 'stop', 'clear', 'status'].includes(msg.command)) throw new Error('D1 is disabled in Strict Secret Mode.');
         if (!['status', 'probe', 'download', 'load', 'stop', 'dispose', 'clear', 'reset', 'consent'].includes(msg.command)) throw new Error('Invalid D1 model command.');
         if (['download', 'load', 'consent'].includes(msg.command)) {
@@ -5088,6 +5131,7 @@ async function handleMessage(msg, sender) {
     }
     case 'list_decision_models': {
       await strictSecretModeReady;
+      await visionModeReady;
       try {
         if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
         // Discovery lists the configured provider's models whatever the mode.
@@ -5097,6 +5141,7 @@ async function handleMessage(msg, sender) {
     }
     case 'test_system_one': {
       await strictSecretModeReady;
+      await visionModeReady;
       try {
         if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
         if (Object.hasOwn(msg, 'localFixture')) {

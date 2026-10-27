@@ -23,7 +23,7 @@
 }
 ```
 
-（这是 Chrome MV3 清单。Firefox MV2 授予更窄的权限集 — `activeTab`、`menus`、`webNavigation`、`webRequest`、`storage`、`unlimitedStorage`、`tabs`、`tabGroups`、`downloads`、`alarms`、`clipboard*`、`<all_urls>` — 且没有 `debugger`/`offscreen`/`tabCapture`，请参见下方的 Firefox 差异。）
+（这是 Chrome MV3 清单。Firefox MV2 授予更窄的权限集 — `activeTab`、`menus`、`webNavigation`、`webRequest`、`dns`、`storage`、`unlimitedStorage`、`tabs`、`tabGroups`、`downloads`、`alarms`、`clipboard*`、`<all_urls>` — 且没有 `debugger`/`offscreen`/`tabCapture`，请参见下方的 Firefox 差异。）
 
 | 权限 | 风险 | 缓解措施 |
 |---|---|---|
@@ -105,7 +105,7 @@
 | **循环检测** | 三个独立的检测器在智能体重复相同操作或振荡时停止它。重复点击循环可能包括精确的同标签页 XHR/fetch URL+方法提示，以便智能体可以切换到 `fetch_url` 而不是永远点击。限制持续注入提示的损害。 |
 | **金融适配器** | 带有 `category: 'finance'` 的适配器注入额外的确认指导和警告横幅。 |
 | **严格秘密处理** | 即使模型被越狱而引用秘密，也能防止凭证泄露。 |
-| **本地网络阻止** | 本地网络访问默认关闭。关闭本地网络访问时，会阻止直接写有私有或回环 IP 地址的 URL 以及 localhost 主机名。不检查 DNS 解析，因此其他主机名仍可能连接到本地地址。即使开启本地网络访问，云元数据的 IP 字面量（169.254.169.254）以及列表中的元数据主机名或 `*.internal`/`*.local` 主机名仍会被阻止。 |
+| **本地网络阻止** | 本地网络访问默认关闭。关闭本地网络访问时，会阻止直接写有私有或回环 IP 地址的 URL 以及 localhost 主机名。`fetch_url`、`read_page_source` 和 `research_url` 还会阻止解析到这些地址的主机名：来自被阻止地址的响应会在模型看到之前被丢弃，Firefox 还会在发送前解析主机名并直接拒绝。在 Chrome 中，丢弃响应时请求已经到达该地址。即使开启本地网络访问，云元数据的 IP 字面量（169.254.169.254）以及列表中的元数据主机名或 `*.internal`/`*.local` 主机名仍会被阻止。 |
 
 ### 未防御的内容
 

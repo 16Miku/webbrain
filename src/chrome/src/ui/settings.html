@@ -66,6 +66,19 @@
       </div>
       <div class="setting-row">
         <div class="setting-info">
+          <div class="setting-label" data-i18n="st.display.agent_indicator.label"></div>
+          <div class="setting-desc" data-i18n="st.display.agent_indicator.desc"></div>
+        </div>
+        <select id="select-agent-indicator-style" data-i18n-aria-label="st.display.agent_indicator.label" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-family:inherit;cursor:pointer;">
+          <option value="circuit" data-i18n="st.display.agent_indicator.circuit"></option>
+          <option value="aurora" data-i18n="st.display.agent_indicator.aurora"></option>
+          <option value="scan" data-i18n="st.display.agent_indicator.scan"></option>
+          <option value="gears" data-i18n="st.display.agent_indicator.gears"></option>
+          <option value="classic" data-i18n="st.display.agent_indicator.classic"></option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
           <div class="setting-label" data-i18n="st.display.download_directory.label"></div>
           <div class="setting-desc" data-i18n="st.display.download_directory.desc"></div>
         </div>
@@ -676,6 +689,31 @@
             </div>
           </details>
         </section>
+        <section class="captcha-provider" aria-labelledby="solvecha-heading">
+          <div class="captcha-provider-header">
+            <h4 id="solvecha-heading"><a href="https://solvecha.com/" target="_blank" rel="noopener noreferrer">Solvecha</a></h4>
+            <label class="captcha-enabled"><input type="checkbox" id="solvecha-enabled"><span data-i18n="st.captcha.enabled"></span></label>
+          </div>
+          <p class="captcha-description"><span data-i18n="st.captcha.coverage"></span> <span id="solvecha-coverage"></span></p>
+          <p class="captcha-description"><a id="solvecha-docs" target="_blank" rel="noopener noreferrer" data-i18n="st.captcha.docs"></a></p>
+          <div class="field">
+            <label for="solvecha-api-key" data-i18n="st.captcha.provider_key" data-i18n-params='{"provider":"Solvecha"}'></label>
+            <input type="password" id="solvecha-api-key" pattern="[A-Za-z0-9_\-]{1,256}" maxlength="256" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="btn-row">
+            <button class="btn-primary" id="btn-save-solvecha" data-i18n="st.captcha.save"></button>
+            <button class="btn-secondary" id="btn-test-solvecha" data-i18n="st.captcha.check_balance"></button>
+            <button class="btn-secondary" id="btn-clear-solvecha" data-i18n="st.captcha.clear"></button>
+          </div>
+          <div class="test-result" id="test-solvecha" role="status" aria-live="polite"></div>
+          <details class="captcha-advanced">
+            <summary data-i18n="st.display.advanced"></summary>
+            <div class="field">
+              <label for="solvecha-weight" data-i18n="st.captcha.weight"></label>
+              <input type="number" id="solvecha-weight" value="93" step="any">
+            </div>
+          </details>
+        </section>
         <div class="info-box" style="margin-top:16px;" data-i18n="st.captcha.providers_security"></div>
       </div>
     </div>
@@ -703,6 +741,11 @@
         <span class="cloud-bridge-url-label" data-i18n="st.cb.url"></span>
         <input class="setting-input" type="text" id="cb-url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="ws://127.0.0.1:17374/extension">
       </label>
+      <label class="cloud-bridge-url-field" for="cb-pairing-key" style="margin-top:12px;">
+        <span class="cloud-bridge-url-label" data-i18n="st.cb.pairing_key"></span>
+        <input class="setting-input" type="password" id="cb-pairing-key" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="setting-desc" style="margin-top:4px;" data-i18n="st.cb.pairing_key_hint"></div>
       <details class="advanced-settings" id="cb-approval-details" style="margin-top:12px;">
         <summary data-i18n="st.cb.approval_summary"></summary>
         <div class="advanced-settings-body">
@@ -886,6 +929,27 @@
           <option value="auto" data-i18n="st.display.lean_mode.auto"></option>
           <option value="on" data-i18n="st.display.lean_mode.on"></option>
           <option value="off" data-i18n="st.display.lean_mode.off"></option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label" data-i18n="st.display.vision_mode.label"></div>
+          <div class="setting-desc" data-i18n="st.display.vision_mode.desc"></div>
+        </div>
+        <select id="select-vision-mode" data-i18n-aria-label="st.display.vision_mode.label">
+          <option value="auto" data-i18n="st.display.vision_mode.auto"></option>
+          <option value="off" data-i18n="st.display.vision_mode.off"></option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label" data-i18n="st.display.vision_quality.label"></div>
+          <div class="setting-desc" data-i18n="st.display.vision_quality.desc"></div>
+        </div>
+        <select id="select-vision-quality" data-i18n-aria-label="st.display.vision_quality.label">
+          <option value="economy" data-i18n="st.display.vision_quality.economy"></option>
+          <option value="balanced" data-i18n="st.display.vision_quality.balanced"></option>
+          <option value="sharp" data-i18n="st.display.vision_quality.sharp"></option>
         </select>
       </div>
       <div class="setting-row">

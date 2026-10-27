@@ -23,8 +23,8 @@ for (const build of ['chrome', 'firefox']) {
   const h = await import(`../src/${build}/src/agent/captcha-hcaptcha-providers.js`);
   const transfer = await import(`../src/${build}/src/config-transfer.js`);
   const stored = Object.fromEntries(config.CAPTCHA_PROVIDERS.flatMap(p => [[p.key, keys[p.id] || (p.id === 'capsolver' ? 'CAP-0123456789abcdefghij' : 'a'.repeat(32))], [p.enabled, true]]));
-  test(`${build}: seven-provider consent, weights, capabilities, key formats, and import`, () => {
-    assert.deepEqual(config.getCaptchaProviders(stored).map(p => p.id), ['capsolver','2captcha','capmonster','solvecaptcha','anti-captcha','nopecha','nonecap']);
+  test(`${build}: eight-provider consent, weights, capabilities, key formats, and import`, () => {
+    assert.deepEqual(config.getCaptchaProviders(stored).map(p => p.id), ['capsolver','2captcha','capmonster','solvecaptcha','anti-captcha','nopecha','nonecap','solvecha']);
     assert.equal(config.getCaptchaProviders({...stored, nonecapWeight: 200})[0].id, 'nonecap');
     assert.equal(config.getCaptchaProviders({...stored, nopechaEnabled: false}).some(p => p.id === 'nopecha'), false);
     for (const id of ['nopecha','nonecap']) {

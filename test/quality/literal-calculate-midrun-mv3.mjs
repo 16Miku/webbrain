@@ -192,7 +192,7 @@ try {
     chrome.runtime.sendMessage({ target: 'background', action, ...data }), { action, data });
   await settings.evaluate(async () => chrome.storage.local.set({ helpImproveWebBrain: false, planBeforeActMode: 'off',
     planBeforeAct: false, planReviewMode: 'never', screenshotFallback: false, autoScreenshot: false,
-    maxAgentSteps: 10, systemOneEnabled: false, tracingEnabled: false, agentAllowLocalNetwork: true,
+    visionMode: 'off', maxAgentSteps: 10, systemOneEnabled: false, tracingEnabled: false, agentAllowLocalNetwork: true,
     askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false, contextWindowMode: 'full',
     // gpt-5.4-mini on a router is a strong model, so Auto lean mode would skip the
     // calculation reading and the tool projection this case checks.
