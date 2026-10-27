@@ -15910,6 +15910,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return this._pageFeedbackRecoveryResult(tabId, messages, onUpdate) || { action: 'continue' };
       }
       if (toolResult?.success !== false && toolResult?.noDispatch !== true && toolResult?.dispatched !== false) this._resetPageFeedbackProgress(tabId);
+      // A vision click on a file input hands the next steps to upload_file,
+      // and a successful upload hands them back (vision-runtime.js).
+      toolResult = this._visionNoteUploadHandoff(tabId, fnName, toolResult, { vision: tc._vision, promptTier });
       if (jevPending) {
         this._jevPendingCalls.delete(tc.id);
         if (fnName !== 'get_accessibility_tree') jevPending.session.dispatched(toolResult);
@@ -48411,6 +48414,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
+      // An upload handed to the element tools starts or ends here, before
+      // anything this step does depends on whether it runs on vision
+      // (vision-runtime.js).
+      await this._visionUploadHandoffTick(tabId, steps);
       if (steps > 0 && !selectionOnly && !standaloneChatRun) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
@@ -48439,10 +48446,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
-      // Vision mode can end mid-run (a site workflow that needs the element
+      // Vision mode can end and resume mid-run (a step that needs the element
       // inventory, vision-mode.js); the system prompt follows the tools.
       const visionPromptNow = !!this._visionToolOptions(tabId, mode);
       if (visionPromptNow !== visionPromptActive && messages[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(mode, tabId);
+      // Back on vision after tree-path steps: the step starts on a fresh frame,
+      // never on the one from before them.
+      if (visionPromptNow && !visionPromptActive && !selectionOnly && !standaloneChatRun) {
+        await this._visionResumeKeyframe(tabId, messages, onUpdate, { mode });
+      }
+      this._visionNoteStepTools(tabId, visionPromptNow);
       visionPromptActive = visionPromptNow;
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
@@ -49764,6 +49777,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finish(steeringOutcome.content, steeringOutcome.status);
       }
 
+      // An upload handed to the element tools starts or ends here, before
+      // anything this step does depends on whether it runs on vision
+      // (vision-runtime.js).
+      await this._visionUploadHandoffTick(tabId, steps);
       if (steps > 0 && !selectionOnly && !standaloneChatRun) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
@@ -49791,10 +49808,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
-      // Vision mode can end mid-run (a site workflow that needs the element
+      // Vision mode can end and resume mid-run (a step that needs the element
       // inventory, vision-mode.js); the system prompt follows the tools.
       const visionPromptNow = !!this._visionToolOptions(tabId, mode);
       if (visionPromptNow !== visionPromptActive && messages[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(mode, tabId);
+      // Back on vision after tree-path steps: the step starts on a fresh frame,
+      // never on the one from before them.
+      if (visionPromptNow && !visionPromptActive && !selectionOnly && !standaloneChatRun) {
+        await this._visionResumeKeyframe(tabId, messages, onUpdate, { mode });
+      }
+      this._visionNoteStepTools(tabId, visionPromptNow);
       visionPromptActive = visionPromptNow;
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {

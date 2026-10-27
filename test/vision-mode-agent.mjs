@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
+import { cdpClient } from '../src/chrome/src/cdp/cdp-client.js';
 
 const PAGE = 'https://owned.example.test/form';
 const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
@@ -656,6 +657,186 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.ok(!ctx.requests[1].tools.includes('click_at'));
     assert.doesNotMatch(ctx.requests[1].system, /VISION CONTROL/);
     assert.equal(reasonAtStep2, 'workflow_needs_element_inventory');
+  });
+
+  test(`${build}: back on vision after tree-path steps, the next decision starts on a fresh full frame`, async () => {
+    let tab;
+    const ledger = { adapterName: 'Forms', revision: 1, job: { id: 'fill-form', template: 'form', stages: ['fill'], successEvidence: ['saved'], partialEvidence: ['not saved'], requiresLedger: true } };
+    const ctx = runAgent(step => {
+      if (step === 1) {
+        ctx.agent._planExecutionGuards.set(tab, { ...(ctx.agent._planExecutionGuards.get(tab) || {}), siteWorkflow: ledger });
+        return { toolCalls: [call('take_screenshot', {})] };
+      }
+      if (step === 2) {
+        // The tree step changes the page, and the workflow is let go.
+        ctx.scene.rects.push({ x: 500, y: 400, w: 200, h: 80, color: [0, 160, 0] });
+        ctx.agent._planExecutionGuards.set(tab, { ...ctx.agent._planExecutionGuards.get(tab), siteWorkflow: null });
+        return { toolCalls: [call('find_text', { text: 'Saved' })] };
+      }
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Done.', outcome: 'success' })] };
+      return { content: 'done' };
+    });
+    tab = nextTab++;
+    await runLoop(ctx.agent, tab, false);
+    const [, tree, back] = ctx.requests;
+    assert.ok(!tree.tools.includes('click_at'));
+    assert.ok(back.tools.includes('click_at'), back.tools.join(','));
+    assert.match(back.system, /VISION CONTROL/);
+    const latest = visionMessages(back.messages).at(-1);
+    assert.equal(latest.webbrainVisionFrame.kind, 'key', textOf(latest));
+    assert.match(textOf(latest), /\(vision resumed\)/);
+    // The tree batch that let the workflow go sent no screen update of its
+    // own: one frame for the return, not a patch and then a frame.
+    assert.deepEqual(visionMessages(back.messages).map(message => message.webbrainVisionFrame.kind), ['key', 'key']);
+    const session = ctx.agent._visionSessions.get(tab);
+    assert.equal(session.keyframe.id, latest.webbrainVisionFrame.ids[0]);
+    for (const old of visionMessages(tree.messages).flatMap(message => message.webbrainVisionFrame.ids || [])) {
+      assert.equal(session.resolvePoint({ x: 1, y: 1, image: old }).code, 'stale_image', old);
+    }
+    assert.equal(totalImages(back), 1, 'only the fresh frame is sent');
+  });
+
+  // A vision click_at that lands on a native file input: the real per-build
+  // dispatch runs with the file-chooser guard stubbed to report a block.
+  function blockChooser(ctx) {
+    const { agent } = ctx;
+    agent._visionClickPreflight = async () => ({ target: { tag: 'input' } });
+    agent._visionMutationBindingBlock = async () => null;
+    agent._redirectTargetBlankClick = async () => null;
+    agent._visionPlatformLateTab = async () => null;
+    agent._showAgentTarget = () => {};
+    let restore = () => {};
+    if (build === 'chrome') {
+      const saved = { attach: cdpClient.attach, sendCommand: cdpClient.sendCommand, armFileInputClickGuard: cdpClient.armFileInputClickGuard, consumeFileInputClickGuard: cdpClient.consumeFileInputClickGuard };
+      Object.assign(cdpClient, { attach: async () => {}, sendCommand: async () => ({}), armFileInputClickGuard: async () => {},
+        consumeFileInputClickGuard: async () => ({ blocked: true, selector: '#upload', ts: 1 }) });
+      restore = () => Object.assign(cdpClient, saved);
+    } else {
+      agent._visionContentInput = async () => ({ success: true, dispatched: true, method: 'firefox-bidi', target: { tag: 'input' }, _filePickerGuardId: 'fpg_test' });
+      agent._settleContentFilePickerGuard = async () => ({ success: false, dispatched: true, filePickerBlocked: true, selector: '#upload', error: 'Blocked a native file chooser. Call upload_file({selector: "#upload"}) directly.' });
+    }
+    const base = agent._executeToolWithLifecycle;
+    agent._executeToolWithLifecycle = async function (tab, name, args, onUpdate, context) {
+      if (name === 'click' && context?._vision?.tool === 'click_at') {
+        ctx.dispatched.push({ name, args, vision: context._vision });
+        return this._visionDispatchClick(tab, args, { vision: context._vision });
+      }
+      if (name === 'upload_file') {
+        ctx.dispatched.push({ name, args, vision: null });
+        return ctx.upload(args);
+      }
+      return base.call(this, tab, name, args, onUpdate, context);
+    };
+    return restore;
+  }
+  const attached = args => ({ success: true, attached: { name: 'clip.mp4', size: 4 }, file: 'clip.mp4', verified: false,
+    attachmentState: 'input_attached', remoteStateVerified: false, uploadTarget: { selector: args.selector } });
+  const blockedText = request => toolTexts(request).find(text => /filePickerBlocked/.test(text)) || '';
+
+  for (const streaming of [false, true]) {
+    const label = `${build}${streaming ? ' (streaming)' : ''}`;
+
+    test(`${label}: a click_at on a file input hands the next step to upload_file, then vision resumes on a fresh full frame`, async () => {
+      let tab;
+      const reasons = [];
+      const ctx = runAgent(step => {
+        reasons.push(ctx.agent._visionRunState(tab, 'act').reason);
+        if (step === 1) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+        if (step === 2) {
+          // The upload shows the file on the page.
+          ctx.scene.rects.push({ x: 600, y: 420, w: 200, h: 40, color: [0, 160, 0] });
+          return { toolCalls: [call('upload_file', { selector: '#upload', attachmentId: 'attachment_t_1' })] };
+        }
+        if (step === 3) return { toolCalls: [call('done', { summary: 'Attached.', outcome: 'success' })] };
+        return { content: 'done' };
+      });
+      ctx.upload = attached;
+      const restore = blockChooser(ctx);
+      tab = nextTab++;
+      try { await runLoop(ctx.agent, tab, streaming); } finally { restore(); }
+      const [first, handoff, back] = ctx.requests;
+      assert.ok(first.tools.includes('click_at') && !first.tools.includes('upload_file'));
+      assert.ok(handoff.tools.includes('upload_file'), handoff.tools.join(','));
+      assert.ok(!handoff.tools.includes('click_at'));
+      assert.doesNotMatch(handoff.system, /VISION CONTROL/);
+      assert.deepEqual(reasons, ['vision_capable_model', 'file_upload_needs_element_inventory', 'vision_capable_model']);
+      const blocked = blockedText(handoff);
+      assert.match(blocked, /"uploadHandoff":true/, blocked);
+      assert.match(blocked, /The next steps use the element tools/);
+      assert.match(blocked, /selector in this result/);
+      assert.match(blocked, /"selector":"#upload"/);
+      assert.doesNotMatch(blocked, /not available in vision mode/);
+      assert.deepEqual(ctx.dispatched.filter(entry => entry.name === 'upload_file').map(entry => entry.args.selector), ['#upload']);
+      assert.ok(back.tools.includes('click_at') && !back.tools.includes('upload_file'), back.tools.join(','));
+      assert.match(back.system, /VISION CONTROL/);
+      const latest = visionMessages(back.messages).at(-1);
+      assert.equal(latest.webbrainVisionFrame.kind, 'key', textOf(latest));
+      assert.match(textOf(latest), /\(vision resumed\)/);
+      assert.notEqual(latest.webbrainVisionFrame.ids[0], visionMessages(first.messages).at(-1).webbrainVisionFrame.ids[0]);
+      assert.equal(totalImages(back), 1, 'only the fresh frame is sent');
+      const session = ctx.agent._visionSessions.get(tab);
+      assert.equal(session.resolvePoint({ x: 1, y: 1, image: visionMessages(first.messages)[0].webbrainVisionFrame.ids[0] }).code, 'stale_image');
+      assert.equal(ctx.agent._visionRunSnapshots.has(tab), false, 'the run left no handoff behind');
+    });
+  }
+
+  test(`${build}: a handoff with no upload ends after five decisions, and a failed upload does not end it`, async () => {
+    let tab;
+    const offered = [];
+    const ctx = runAgent((step, _messages, options) => {
+      offered.push(names(options.tools).includes('click_at') ? 'vision' : 'tree');
+      if (step === 1) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      if (step === 2) return { toolCalls: [call('upload_file', { selector: '#upload', attachmentId: 'attachment_t_1' })] };
+      if (step <= 6) return { toolCalls: [call('find_text', { text: `Upload ${step}` })] };
+      if (step === 7) return { toolCalls: [call('done', { summary: 'Could not attach.', outcome: 'partial' })] };
+      return { content: 'done' };
+    }, { maxSteps: 12 });
+    ctx.upload = () => ({ success: false, error: 'File input not found for selector "#upload".' });
+    const restore = blockChooser(ctx);
+    tab = nextTab++;
+    try { await runLoop(ctx.agent, tab, false); } finally { restore(); }
+    assert.deepEqual(offered, ['vision', 'tree', 'tree', 'tree', 'tree', 'tree', 'vision']);
+    assert.match(textOf(visionMessages(ctx.requests[6].messages).at(-1)), /\(vision resumed\)/);
+  });
+
+  test(`${build}: leaving the page ends a handoff`, async () => {
+    let tab;
+    const offered = [];
+    const ctx = runAgent((step, _messages, options) => {
+      offered.push(names(options.tools).includes('click_at') ? 'vision' : 'tree');
+      if (step === 1) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      if (step === 2) {
+        ctx.scene.url = 'https://owned.example.test/elsewhere';
+        return { toolCalls: [call('find_text', { text: 'Upload' })] };
+      }
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Moved on.', outcome: 'partial' })] };
+      return { content: 'done' };
+    });
+    ctx.upload = attached;
+    const restore = blockChooser(ctx);
+    tab = nextTab++;
+    try { await runLoop(ctx.agent, tab, false); } finally { restore(); ctx.scene.url = PAGE; }
+    assert.deepEqual(offered, ['vision', 'tree', 'vision']);
+  });
+
+  test(`${build}: a run hands off twice at most, then reports the chooser in vision terms`, async () => {
+    let tab;
+    const offered = [];
+    const ctx = runAgent((step, _messages, options) => {
+      const vision = names(options.tools).includes('click_at');
+      offered.push(vision ? 'vision' : 'tree');
+      if (step <= 5) return { toolCalls: [vision ? call('click_at', { x: 300, y: 200 + step }) : call('upload_file', { selector: '#upload', attachmentId: 'attachment_t_1' })] };
+      if (step === 6) return { toolCalls: [call('done', { summary: 'Stopped.', outcome: 'partial' })] };
+      return { content: 'done' };
+    }, { maxSteps: 10 });
+    ctx.upload = attached;
+    const restore = blockChooser(ctx);
+    tab = nextTab++;
+    try { await runLoop(ctx.agent, tab, false); } finally { restore(); }
+    assert.deepEqual(offered, ['vision', 'tree', 'vision', 'tree', 'vision', 'vision']);
+    const third = toolTexts(ctx.requests[5]).filter(text => /filePickerBlocked/.test(text)).at(-1);
+    assert.match(third, /not available in vision mode/, third);
+    assert.doesNotMatch(third, /uploadHandoff/);
   });
 
   if (build === 'firefox') {

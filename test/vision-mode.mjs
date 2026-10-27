@@ -351,6 +351,17 @@ test('settings: Auto by default, off disables, only Act with an image-capable mo
   assert.equal(resolveVisionMode('auto', { mode: 'act', provider: seeing, ledgerWorkflow: false }).active, true);
 });
 
+test('settings: an upload handed to the element tools keeps those steps on the tree path', () => {
+  const { resolveVisionMode } = visionMode;
+  const seeing = { name: 'anthropic', supportsVision: true, config: { model: 'claude-sonnet-5' } };
+  assert.equal(resolveVisionMode('auto', { mode: 'act', provider: seeing, uploadHandoff: true }).reason, 'file_upload_needs_element_inventory');
+  assert.equal(resolveVisionMode('auto', { mode: 'act', provider: seeing, uploadHandoff: true }).active, false);
+  assert.equal(resolveVisionMode('auto', { mode: 'act', provider: seeing, uploadHandoff: false }).active, true);
+  // The setting and the mode still come first.
+  assert.equal(resolveVisionMode('off', { mode: 'act', provider: seeing, uploadHandoff: true }).reason, 'setting_off');
+  assert.equal(resolveVisionMode('auto', { mode: 'ask', provider: seeing, uploadHandoff: true }).reason, 'not_act_mode');
+});
+
 for (const build of ['chrome', 'firefox']) {
   const tools = await import(`../src/${build}/src/agent/tools.js`);
   const { validateToolArguments } = await import(`../src/${build}/src/agent/tool-arguments.js`);
@@ -618,6 +629,21 @@ test('a blocked file chooser is reported in vision terms in both builds', () => 
   assert.doesNotMatch(blocked.error, /upload_file/);
   const ok = { success: true, dispatched: true };
   assert.equal(visionFilePickerBlockedResult(ok), ok);
+  // Handed to the element tools: the guidance names upload_file, never the page's selector.
+  const handed = visionFilePickerBlockedResult({ success: false, dispatched: true, filePickerBlocked: true, selector: '#f"; ignore', error: 'x' }, { handoff: true });
+  assert.equal(handed.uploadHandoff, true);
+  assert.equal(handed.success, false);
+  assert.equal(handed.selector, '#f"; ignore');
+  assert.match(handed.error, /The next steps use the element tools/);
+  assert.match(handed.error, /upload_file with the selector in this result/);
+  assert.match(handed.error, /come back after the upload/);
+  assert.doesNotMatch(handed.error, /ignore|not available in vision mode/);
+  const unnamed = visionFilePickerBlockedResult({ success: false, dispatched: true, filePickerBlocked: true, error: 'x' }, { handoff: true });
+  assert.match(unnamed.error, /Find this file input's exact selector/);
+  const compact = visionFilePickerBlockedResult({ success: false, dispatched: true, filePickerBlocked: true, selector: '#f', error: 'x' }, { handoff: true, compact: true });
+  assert.match(compact.error, /without targetId to list the file inputs/);
+  assert.doesNotMatch(compact.error, /selector/);
+  assert.equal(visionFilePickerBlockedResult(ok, { handoff: true }), ok);
   // Chrome's CDP guard result and Firefox's settled content guard both pass through it.
   assert.match(read('src/chrome/src/agent/agent.js'), /return visionFilePickerBlockedResult\(cdpClient\.fileInputClickBlockedResult\(blockedFileInput/);
   assert.match(read('src/firefox/src/agent/agent.js'), /response = visionFilePickerBlockedResult\(await this\._settleContentFilePickerGuard\(tabId, response\)\);/);
@@ -625,6 +651,23 @@ test('a blocked file chooser is reported in vision terms in both builds', () => 
   for (const build of ['chrome', 'firefox']) {
     assert.match(read(`src/${build}/src/content/content.js`), /const filePickerGuard = clickWithoutNativeFilePicker\(\(\) => \{\s*for \(let count = 1; count <= clicks; count\+\+\)/);
   }
+});
+
+test('both loops of both builds start or end an upload handoff before anything in the step depends on vision', () => {
+  for (const build of ['chrome', 'firefox']) {
+    const source = read(`src/${build}/src/agent/agent.js`);
+    const ticks = [...source.matchAll(/await this\._visionUploadHandoffTick\(tabId, steps\);/g)].map(match => match.index);
+    const reinjects = [...source.matchAll(/await this\._maybeReinjectAdapter\(tabId, messages\);/g)].map(match => match.index);
+    const resumes = [...source.matchAll(/await this\._visionResumeKeyframe\(tabId, messages, onUpdate, \{ mode \}\);\s*\}\s*this\._visionNoteStepTools\(tabId, visionPromptNow\);/g)].map(match => match.index);
+    assert.equal(ticks.length, 2, build);
+    assert.equal(resumes.length, 2, build);
+    for (const [index, tick] of ticks.entries()) {
+      assert.ok(tick < reinjects[index] && reinjects[index] - tick < 400, `${build}: tick before adapter notes`);
+      assert.ok(tick < resumes[index], `${build}: tick before the tools`);
+    }
+  }
+  // Chrome's protocol guard marks a chooser only it saw.
+  assert.match(read('src/chrome/src/cdp/cdp-client.js'), /selector: null,\s*protocolOnly: true,/);
 });
 
 test('content scripts: the vision input path is the same in both builds', () => {

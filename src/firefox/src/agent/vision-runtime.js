@@ -26,6 +26,7 @@ import {
   VISION_NATIVE_TOOLS, VISION_TRANSLATED_TOOLS, VISION_NO_OBSERVE_TOOLS, VISION_TOOL_NAMES,
   VISION_SCROLL_STEP_CSS_PX, VISION_DEFAULT_SCROLL_STEPS, VISION_MAX_WAIT_SECONDS,
   translateVisionClick, visionKeyframeNote, visionPatchNote, visionNoChangeNote, visionZoomNote,
+  visionFilePickerBlockedResult,
 } from './vision-tools.js';
 import {
   VISION_MIN_DRAG_CSS_PX, visionMultiClickRefusal, visionDragRefusal, visionWheelRefusal,
@@ -51,6 +52,12 @@ const STABILITY_MARGIN_PX = 12;
 const SETTLE_INITIAL_DELAY_MS = 120;
 const SETTLE_POLL_MS = 220;
 const SETTLE_MAX_EXTRA_CAPTURES = 3;
+// An upload handoff (_visionNoteUploadHandoff) lasts this many model
+// decisions without a successful upload_file, and a run hands off at most
+// this many times: a page whose upload never succeeds goes back to vision
+// and then reports the chooser instead of handing off again.
+const UPLOAD_HANDOFF_DECISIONS = 5;
+const UPLOAD_HANDOFFS_PER_RUN = 2;
 // A change this small between two captures (a blinking caret, a ticking
 // clock, a spinner: a few 16 px cells) is not the page still reacting to an
 // action, and right after the model looked it is not worth a new image.
@@ -86,6 +93,18 @@ function isImageBlock(block) {
 // a provider.
 function visionUserMessage(content, tag) {
   return { role: 'user', content, webbrainAppOwned: true, webbrainAppOwnedKind: 'vision_frame', webbrainVisionFrame: tag };
+}
+
+// The page an upload handoff belongs to: its address without the fragment.
+function pageKey(url) {
+  return String(url || '').split('#')[0];
+}
+
+// upload_file put the file into its input, in any build's success shape
+// (Chrome CDP, Firefox synthetic or BiDi, recipient-bound).
+function uploadAttached(result) {
+  return result?.success === true && result.discoveryOnly !== true && result.outcomeUnknown !== true
+    && result.noDispatch !== true && ['input_attached', 'page_consumed'].includes(result.attachmentState);
 }
 
 function regionLabel(region) {
@@ -174,6 +193,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       ledgerWorkflow: this._planExecutionGuards?.get?.(tabId)?.siteWorkflow?.job?.requiresLedger === true,
       completeThreadRead: this.readCompletenessStates?.get?.(tabId)?.required === true,
       nativeChatPage: this._visionNativeChatPage?.(tabId) === true,
+      uploadHandoff: snapshot?.uploadHandoff?.active === true,
     });
   };
 
@@ -193,6 +213,13 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     this._visionRunSnapshots.set(tabId, {
       setting: normalizeVisionModeSetting(this.visionMode, 'off'),
       quality: normalizeVisionQuality(this.visionQuality),
+      // A file upload handed to the element tools (_visionNoteUploadHandoff):
+      // per run, so an enclosing run gets its own back with its snapshot.
+      uploadHandoff: null,
+      uploadHandoffs: 0,
+      // Whether the step being run was planned with the tree tools
+      // (_visionNoteStepTools).
+      treeStep: false,
     });
     this._visionSessions?.get(tabId)?.retireKeyframe?.();
     void this._visionPlatformLateTab?.(tabId, { cancel: true })?.catch?.(() => {});
@@ -203,6 +230,95 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     if (previous) this._visionRunSnapshots?.set(tabId, previous);
     else this._visionRunSnapshots?.delete(tabId);
     void this._visionPlatformLateTab?.(tabId, { cancel: true })?.catch?.(() => {});
+  };
+
+  /**
+   * A vision click_at the file-chooser guard stopped, in either build and on
+   * any dispatch path, hands the next steps to the element tools, upload_file
+   * among them; a successful upload_file hands them back. Called once per
+   * model tool call from the batch pipeline with the final result, which it
+   * returns as the model should read it. Changes take effect at the next step
+   * (_visionUploadHandoffTick): the rest of this batch, and its screen update,
+   * run in the mode they were planned in.
+   */
+  proto._visionNoteUploadHandoff = function _visionNoteUploadHandoff(tabId, name, result, { vision = null, promptTier = '' } = {}) {
+    const snapshot = this._visionRunSnapshots?.get(tabId);
+    if (vision?.tool === 'click_at' && result?.filePickerBlocked === true) {
+      // Only Chrome's protocol guard saw the chooser: its input is in a frame
+      // or a closed shadow root, which upload_file cannot reach either. A
+      // build whose upload_file has no file to use says so (agent
+      // _visionUploadSourceAvailable).
+      const reason = result.protocolOnly === true ? 'unreachable'
+        : this._visionUploadSourceAvailable?.(tabId, promptTier) === false ? 'no_source' : '';
+      const handoff = !!snapshot && !reason && !snapshot.uploadHandoff && snapshot.uploadHandoffs < UPLOAD_HANDOFFS_PER_RUN;
+      if (handoff) {
+        snapshot.uploadHandoffs += 1;
+        snapshot.uploadHandoff = { active: false, done: false, since: 0, url: '' };
+        this._visionTraceNote(tabId, 'vision_upload_handoff', { stage: 'armed', count: snapshot.uploadHandoffs });
+      }
+      return visionFilePickerBlockedResult(result, { handoff, compact: promptTier === 'compact', reason });
+    }
+    const handoff = snapshot?.uploadHandoff;
+    if (handoff?.active && name === 'upload_file' && uploadAttached(result)) handoff.done = true;
+    return result;
+  };
+
+  /**
+   * Once per loop iteration, before anything in the step depends on vision:
+   * an armed handoff starts on the page the tab shows now (the click that
+   * armed it may itself have changed the address), and an active one ends
+   * after its upload, when that page is left, or after
+   * UPLOAD_HANDOFF_DECISIONS decisions without an upload. `step` is the
+   * loop's count of model calls, which grows only when the model decides.
+   */
+  proto._visionUploadHandoffTick = async function _visionUploadHandoffTick(tabId, step) {
+    const snapshot = this._visionRunSnapshots?.get(tabId);
+    const handoff = snapshot?.uploadHandoff;
+    if (!handoff) return;
+    if (!handoff.active) {
+      handoff.active = true;
+      handoff.since = step;
+      handoff.url = pageKey(await this._currentUrl?.(tabId));
+      return;
+    }
+    let end = handoff.done ? 'uploaded' : '';
+    if (!end && handoff.url) {
+      const url = pageKey(await this._currentUrl?.(tabId));
+      if (url && url !== handoff.url) end = 'navigated';
+    }
+    if (!end && step - handoff.since >= UPLOAD_HANDOFF_DECISIONS) end = 'expired';
+    if (end) {
+      snapshot.uploadHandoff = null;
+      this._visionTraceNote(tabId, 'vision_upload_handoff', { stage: 'ended', reason: end });
+    }
+  };
+
+  /** Records whether the step about to run was planned with the vision tools. */
+  proto._visionNoteStepTools = function _visionNoteStepTools(tabId, vision) {
+    const snapshot = this._visionRunSnapshots?.get(tabId);
+    if (snapshot) snapshot.treeStep = !vision;
+  };
+
+  /**
+   * Back on vision after steps on the tree path (an upload handoff, a page
+   * that needed the element inventory): the last frame may no longer show
+   * the screen. It is retired first, so a failed capture leaves no frame to
+   * aim at, and a settled full frame starts the step.
+   */
+  proto._visionResumeKeyframe = async function _visionResumeKeyframe(tabId, messages, onUpdate, { mode = 'act' } = {}) {
+    const state = this._visionRunState(tabId, mode);
+    if (!state.active) return null;
+    this._visionSessions?.get(tabId)?.retireKeyframe?.();
+    try {
+      const frame = await this._visionCaptureSettled(tabId, state);
+      return await this._visionPushKeyframe(tabId, messages, onUpdate, { state, frame, reason: 'vision resumed' });
+    } catch (error) {
+      if (isControlFlowError(error)) throw error;
+      const message = `[SCREEN: the screen could not be captured on returning to screenshots (${errorText(error).slice(0, 160)}). Earlier screenshots show an older screen and cannot be used for coordinates. Call take_screenshot to try again.]`;
+      messages.push(visionUserMessage(message, { epoch: 0, kind: 'retire' }));
+      this._visionTraceNote(tabId, 'vision_frame_error', { stage: 'resume', error: String(error?.message || error).slice(0, 200) });
+      return null;
+    }
   };
 
   /** A closed tab or cleared conversation drops its screen state. */
@@ -565,6 +681,10 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
   proto._visionObserveAfterBatch = async function _visionObserveAfterBatch(tabId, messages, onUpdate, { toolCalls = [], force = false } = {}) {
     const state = this._visionRunState(tabId);
     if (!state.active) return null;
+    // A batch planned on the tree path gets no screen update even when it
+    // ends with vision back on (a page that needed the inventory left): the
+    // next step starts on a fresh frame instead (_visionResumeKeyframe).
+    if (!force && this._visionRunSnapshots?.get(tabId)?.treeStep === true) return null;
     // Once per batch: the batch's own end and the wrapper that catches the
     // batches leaving early (agent _executeToolBatch) both ask.
     if (toolCalls.length) {

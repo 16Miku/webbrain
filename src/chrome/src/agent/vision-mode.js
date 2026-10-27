@@ -7,7 +7,10 @@
 //            The option was called On before, so a stored 'on' (or true)
 //            reads as 'auto'.
 //   'off'  — the accessibility-tree path.
-// A run decides once, when it starts, and keeps that answer to the end.
+// A run reads the setting once, when it starts, and keeps it to the end.
+// Whether vision applies is decided again before every step: a step that
+// needs the element inventory (below) runs on the tree path, and the run
+// returns to vision, on a fresh full frame, when that need has passed.
 
 import { detectVisionProfile, normalizeVisionQuality } from './vision-budget.js';
 
@@ -39,6 +42,7 @@ export function resolveVisionMode(setting, {
   ledgerWorkflow = false,
   completeThreadRead = false,
   nativeChatPage = false,
+  uploadHandoff = false,
 } = {}) {
   const normalized = normalizeVisionModeSetting(setting);
   const base = { active: false, setting: normalized };
@@ -60,6 +64,11 @@ export function resolveVisionMode(setting, {
   // check made with click_ax, chat reads and sends bound to refs): a run on
   // their pages keeps the tree path.
   if (nativeChatPage) return { ...base, reason: 'native_chat_needs_element_inventory' };
+  // A vision click opened a native file chooser, which screenshots cannot
+  // show or operate: the next steps attach the file with upload_file, which
+  // names the input through the element inventory (vision-runtime.js
+  // _visionNoteUploadHandoff). The run returns to vision after the upload.
+  if (uploadHandoff) return { ...base, reason: 'file_upload_needs_element_inventory' };
   if (!provider) return { ...base, reason: 'no_provider' };
   const canSee = rawImage == null ? provider.supportsVision === true : rawImage === true;
   if (!canSee) return { ...base, reason: 'model_without_images' };

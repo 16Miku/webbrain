@@ -346,6 +346,147 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: an upload handoff starts and ends at step boundaries, per run`, async () => {
+    const agent = agentFor();
+    agent.visionMode = 'auto';
+    const tab = 33;
+    let url = 'https://owned.example/upload';
+    agent._currentUrl = async () => url;
+    agent._lastTabUrls = new Map([[tab, url]]);
+    const blocked = () => ({ success: false, dispatched: true, filePickerBlocked: true, selector: '#upload', error: 'Blocked a native file chooser.' });
+    const handoffs = () => agent._visionRunSnapshots.get(tab)?.uploadHandoff || null;
+    // Between runs there is no handoff to start: the chooser is reported in vision terms.
+    assert.match(agent._visionNoteUploadHandoff(tab, 'click', blocked(), { vision: { tool: 'click_at' } }).error, /not available in vision mode/);
+    agent._beginVisionRun(tab);
+    // A tree click on a file input is not a vision click.
+    assert.equal(agent._visionNoteUploadHandoff(tab, 'click', blocked(), { vision: null }).uploadHandoff, undefined);
+    assert.equal(handoffs(), null);
+    const handed = agent._visionNoteUploadHandoff(tab, 'click', blocked(), { vision: { tool: 'click_at' } });
+    assert.equal(handed.uploadHandoff, true);
+    // The rest of the batch keeps the mode it was planned in.
+    assert.equal(agent._visionRunState(tab, 'act').active, true);
+    await agent._visionUploadHandoffTick(tab, 1);
+    assert.equal(agent._visionRunState(tab, 'act').reason, 'file_upload_needs_element_inventory');
+    assert.equal(agent._visionToolOptions(tab, 'act'), null);
+    assert.ok(getToolsForMode('act', { tier: 'full', vision: agent._visionToolOptions(tab, 'act') }).some(tool => tool.function.name === 'upload_file'));
+    // Discovery, a failure or an unconfirmed outcome is not an upload.
+    for (const result of [{ success: false, discoveryOnly: true, requiresTarget: true }, { success: false, error: 'not found' },
+      { success: true, attachmentState: 'input_attached', outcomeUnknown: true }]) {
+      agent._visionNoteUploadHandoff(tab, 'upload_file', result, {});
+      assert.equal(handoffs().done, false, JSON.stringify(result));
+    }
+    // Firefox's BiDi upload carries neither `attached` nor `verified`.
+    agent._visionNoteUploadHandoff(tab, 'upload_file', { success: true, dispatched: true, attachmentState: 'input_attached', file: 'a.png' }, {});
+    assert.equal(handoffs().done, true);
+    assert.equal(agent._visionRunState(tab, 'act').active, false, 'the upload batch ends on the tree path');
+    await agent._visionUploadHandoffTick(tab, 2);
+    assert.equal(handoffs(), null);
+    assert.equal(agent._visionRunState(tab, 'act').active, true);
+    // A second handoff, inside a nested run: the enclosing run gets its own state back.
+    agent._visionNoteUploadHandoff(tab, 'click', blocked(), { vision: { tool: 'click_at' } });
+    await agent._visionUploadHandoffTick(tab, 3);
+    const enclosing = agent._visionRunSnapshots.get(tab);
+    agent._beginVisionRun(tab);
+    assert.equal(agent._visionRunState(tab, 'act').active, true, 'a nested run starts without the handoff');
+    agent._endVisionRun(tab, enclosing);
+    assert.equal(agent._visionRunState(tab, 'act').active, false);
+    // Leaving the page ends it; the fragment alone does not.
+    url = 'https://owned.example/upload#files';
+    await agent._visionUploadHandoffTick(tab, 4);
+    assert.equal(agent._visionRunState(tab, 'act').active, false);
+    url = 'https://owned.example/next';
+    await agent._visionUploadHandoffTick(tab, 5);
+    assert.equal(agent._visionRunState(tab, 'act').active, true);
+    // Two handoffs per run: the third chooser is reported in vision terms.
+    url = 'https://owned.example/upload';
+    const third = agent._visionNoteUploadHandoff(tab, 'click', blocked(), { vision: { tool: 'click_at' } });
+    assert.match(third.error, /not available in vision mode/);
+    assert.equal(handoffs(), null);
+    agent._endVisionRun(tab, null);
+    // The compact tier's upload_file finds its own target. Chrome's attaches
+    // only a file attached to the run's message; Firefox's can also ask the
+    // user to pick one.
+    agent._beginVisionRun(tab);
+    const compactBare = agent._visionNoteUploadHandoff(tab, 'click', blocked(), { vision: { tool: 'click_at' }, promptTier: 'compact' });
+    if (build === 'chrome') {
+      assert.match(compactBare.error, /no file to attach in this run/);
+      assert.equal(handoffs(), null);
+      agent._userAttachmentHandles.set(tab, new Map([['attachment_t_1', { name: 'clip.mp4' }]]));
+      const compact = agent._visionNoteUploadHandoff(tab, 'click', blocked(), { vision: { tool: 'click_at' }, promptTier: 'compact' });
+      assert.match(compact.error, /without targetId to list the file inputs/);
+      agent._userAttachmentHandles.delete(tab);
+    } else {
+      assert.match(compactBare.error, /without targetId to list the file inputs/);
+    }
+    assert.ok(handoffs());
+    agent._endVisionRun(tab, null);
+    // Only Chrome's protocol guard saw the chooser (a frame's input, or one in
+    // a closed shadow root): upload_file cannot reach it, so no handoff.
+    agent._beginVisionRun(tab);
+    const unreachable = agent._visionNoteUploadHandoff(tab, 'click', { ...blocked(), selector: undefined, protocolOnly: true }, { vision: { tool: 'click_at' } });
+    assert.match(unreachable.error, /cannot reach/);
+    assert.equal(unreachable.uploadHandoff, undefined);
+    assert.equal(handoffs(), null);
+    agent._endVisionRun(tab, null);
+  });
+
+  test(`${build}: a handoff belongs to the page the tab shows when it starts`, async () => {
+    const agent = agentFor();
+    agent.visionMode = 'auto';
+    const tab = 36;
+    // The click that armed it pushed a route before opening the chooser.
+    agent._lastTabUrls = new Map([[tab, 'https://owned.example/files']]);
+    let url = 'https://owned.example/files/upload';
+    agent._currentUrl = async () => url;
+    agent._beginVisionRun(tab);
+    agent._visionNoteUploadHandoff(tab, 'click', { success: false, filePickerBlocked: true, selector: '#f', error: 'x' }, { vision: { tool: 'click_at' } });
+    await agent._visionUploadHandoffTick(tab, 1);
+    assert.equal(agent._visionRunState(tab, 'act').reason, 'file_upload_needs_element_inventory');
+    await agent._visionUploadHandoffTick(tab, 2);
+    assert.equal(agent._visionRunState(tab, 'act').active, false);
+    url = 'https://owned.example/files';
+    await agent._visionUploadHandoffTick(tab, 3);
+    assert.equal(agent._visionRunState(tab, 'act').active, true);
+    agent._endVisionRun(tab, null);
+  });
+
+  test(`${build}: a handoff with no upload ends after five decisions`, async () => {
+    const agent = agentFor();
+    agent.visionMode = 'auto';
+    const tab = 34;
+    agent._currentUrl = async () => 'https://owned.example/upload';
+    agent._lastTabUrls = new Map([[tab, 'https://owned.example/upload']]);
+    agent._beginVisionRun(tab);
+    agent._visionNoteUploadHandoff(tab, 'click', { success: false, filePickerBlocked: true, error: 'x' }, { vision: { tool: 'click_at' } });
+    for (const step of [3, 4, 5, 6, 7]) {
+      await agent._visionUploadHandoffTick(tab, step);
+      assert.equal(agent._visionRunState(tab, 'act').active, false, `step ${step}`);
+    }
+    await agent._visionUploadHandoffTick(tab, 8);
+    assert.equal(agent._visionRunState(tab, 'act').active, true);
+    agent._endVisionRun(tab, null);
+  });
+
+  test(`${build}: back on vision, a failed capture leaves no frame to aim at and retires the old one in the history`, async () => {
+    const agent = agentFor();
+    agent.visionMode = 'auto';
+    const tab = 35;
+    agent._beginVisionRun(tab);
+    const state = agent._visionRunState(tab, 'act');
+    const session = agent._visionSessionFor(tab, state);
+    session.registerKeyframe({ imageWidth: 10, imageHeight: 10, cssWidth: 10, cssHeight: 10, devicePixelRatio: 1, scrollX: 0, scrollY: 0, url: 'https://owned.example/' }, new Uint8ClampedArray(400));
+    assert.equal(session.resolvePoint({ x: 5, y: 5 }).ok, true);
+    agent._visionCaptureSettled = async () => { throw new Error('capture failed'); };
+    const messages = [];
+    assert.equal(await agent._visionResumeKeyframe(tab, messages, () => {}, { mode: 'act' }), null);
+    assert.equal(session.keyframe, null);
+    assert.equal(session.resolvePoint({ x: 5, y: 5 }).code, 'no_frame');
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].webbrainVisionFrame.kind, 'retire');
+    assert.match(messages[0].content, /could not be captured on returning to screenshots/);
+    agent._endVisionRun(tab, null);
+  });
+
   test(`${build}: Gmail's result counter, which takes no target, stays in the vision tool list`, () => {
     // Offered on a Gmail result list (getGmailResultCountPolicy).
     const names = getToolsForMode('act', { tier: 'full', gmailResultCounting: true, vision: { coordinates: 'pixel' } }).map(tool => tool.function.name);

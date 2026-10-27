@@ -344,14 +344,38 @@ export const VISION_SITE_NOTES_PREFACE = '(Written for WebBrain\'s element tools
 
 /**
  * A vision click the native file-chooser guard stopped. The guard's own
- * guidance points to upload_file, which a vision run does not offer.
+ * guidance points to upload_file, which the vision tools do not include.
+ * With `handoff`, the next steps run on the element tools, upload_file
+ * among them (vision-runtime.js _visionNoteUploadHandoff); `compact` is the
+ * compact tier, whose upload_file finds its own target. The input's selector
+ * stays in `selector`, never in the guidance: it is page data. Without a
+ * handoff, `reason` says why: 'unreachable' (an input upload_file cannot
+ * reach) or 'no_source' (no file this run's upload_file could attach).
  */
-export function visionFilePickerBlockedResult(result) {
+export function visionFilePickerBlockedResult(result, { handoff = false, compact = false, reason = '' } = {}) {
   if (result?.filePickerBlocked !== true) return result;
+  if (!handoff) {
+    const why = reason === 'unreachable'
+      ? 'this file input is inside a frame or a closed shadow root that upload_file cannot reach. Do not click this control again; finish the rest of the task and tell the user this file has to be attached by hand.'
+      : reason === 'no_source'
+        ? 'there is no file to attach in this run (upload_file attaches only a file attached to the user\'s message). Do not click this control again; finish the rest of the task and ask the user to attach the file to their message.'
+        : 'file uploads are not available in vision mode. Do not click this control again; finish the rest of the task and tell the user the upload needs Vision mode off (Settings → Advanced).';
+    return {
+      ...result,
+      success: false,
+      error: `Blocked a native file chooser: it opens outside the page, where screenshots cannot show or operate it, and ${why}`,
+    };
+  }
+  const target = compact
+    ? 'Call upload_file without targetId to list the file inputs, then again with the targetId of this one.'
+    : result.selector
+      ? 'Call upload_file with the selector in this result (`selector`).'
+      : 'Find this file input\'s exact selector with the element tools, then call upload_file with it.';
   return {
     ...result,
     success: false,
-    error: 'Blocked a native file chooser: it opens outside the page, where screenshots cannot show or operate it, and file uploads are not available in vision mode. Do not click this control again; finish the rest of the task and tell the user the upload needs Vision mode off (Settings → Advanced).',
+    uploadHandoff: true,
+    error: `Blocked a native file chooser: it opens outside the page, where screenshots cannot show or operate it. The next steps use the element tools instead of screenshots so the file can be attached: ${target} Do not click this control again. Screenshots and the coordinate tools come back after the upload.`,
   };
 }
 
