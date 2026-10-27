@@ -638,6 +638,8 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(await agent._firefoxSavedDownloadBytes(9, item), null, 'no companion: the caller fetches again');
       firefoxBidi.readSavedDownload = async () => { throw new Error('The saved download no longer matches its browser record'); };
       assert.match((await agent._firefoxSavedDownloadBytes(9, item)).error, /no longer matches/);
+      firefoxBidi.readSavedDownload = async () => { throw new Error('saved_download_too_large: the saved download is larger than the companion can return.'); };
+      assert.equal(await agent._firefoxSavedDownloadBytes(9, item), null, 'too large for a reply: the size-checked fetch');
       assert.match((await agent._firefoxSavedDownloadBytes(9, { ...item, exists: false })).error, /no longer on disk/);
     } finally {
       firefoxBidi.readSavedDownload = saved;

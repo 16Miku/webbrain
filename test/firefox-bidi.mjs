@@ -73,6 +73,17 @@ test('the companion reads a saved download only as the browser recorded it', asy
     const link = join(dir, 'link.pdf');
     await symlink(file, link);
     await assert.rejects(session.readSavedDownload(runId, { ...record, filename: link }), /not a regular file/);
+    // The largest file the companion returns still fits a native reply; a larger one is refused with the fallback marker.
+    const { nativeReplyMessages } = await import('../firefox-companion/native-messages.mjs');
+    const { SAVED_DOWNLOAD_TOO_LARGE } = await import('../firefox-companion/session.mjs');
+    const limit = 24 * 1024 * 1024 - 64 * 1024;
+    const largest = join(dir, 'largest.bin');
+    await writeFile(largest, Buffer.alloc(limit, 1));
+    const fits = await session.readSavedDownload(runId, { ...record, filename: largest, fileSize: limit });
+    assert.ok([...nativeReplyMessages({ id: 'request-123456', result: fits })].length > 1);
+    const larger = join(dir, 'larger.bin');
+    await writeFile(larger, Buffer.alloc(limit + 1, 1));
+    await assert.rejects(session.readSavedDownload(runId, { ...record, filename: larger, fileSize: limit + 1 }), error => error.message.startsWith(SAVED_DOWNLOAD_TOO_LARGE));
   } finally {
     await session.close();
     await rm(dir, { recursive: true, force: true });

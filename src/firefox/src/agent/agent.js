@@ -17255,6 +17255,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     try { saved = await firefoxBidi.readSavedDownload(tabId, item); }
     catch (error) {
       if (error?.name === 'AbortError') throw error;
+      // Larger than a companion reply can carry: the size-checked fetch.
+      if (String(error?.message || '').startsWith('saved_download_too_large')) return null;
       return { error: `Could not read the saved download (${String(error?.message || error).slice(0, 160)}).` };
     }
     if (!saved || typeof saved.base64 !== 'string') return null;
@@ -19759,6 +19761,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     refusals.bySignature.set(signature, repeats);
     refusals.total += 1;
     if (repeats < 3 && refusals.total < 6) return null;
+    // The run stops here; a recovery that carries on starts counting again.
+    state.refusals = null;
     const detail = String(result?.error || 'the action was refused').replace(/\s+/g, ' ').trim().slice(0, 240);
     return `Stopped: WebBrain refused ${repeats >= 3 ? 'the same action three times' : 'six actions'} in a row without any action going through (${detail}). The task is not complete; nothing more was sent, and any draft is left as it is.`;
   }

@@ -1,4 +1,5 @@
 import { mkdtemp, writeFile, rm, open, lstat } from 'node:fs/promises';
+import { constants as FS } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename, isAbsolute } from 'node:path';
 
@@ -185,7 +186,12 @@ function unpackRemoteObjectValue(value) {
 // `connect`. point_input: vision mode's click_at and hover_at, trusted input
 // at a viewport point of the run's top document.
 export const COMPANION_CAPABILITIES = Object.freeze(['point_input', 'saved_download']);
-const SAVED_DOWNLOAD_MAX_BYTES = 25 * 1024 * 1024;
+// What a reply can carry as base64 within the 32 MiB native transfer limit
+// (native-messages.mjs), with room for its envelope. A larger download is
+// refused with SAVED_DOWNLOAD_TOO_LARGE, and the extension falls back to its
+// own size-checked route.
+const SAVED_DOWNLOAD_MAX_BYTES = 24 * 1024 * 1024 - 64 * 1024;
+export const SAVED_DOWNLOAD_TOO_LARGE = 'saved_download_too_large';
 // Vision mode's point actions (point_input).
 const POINT_ACTIONS = new Set(['click_at', 'hover_at']);
 
@@ -290,13 +296,20 @@ export class BidiSession {
     }
     const link = await lstat(download.filename);
     if (!link.isFile()) throw new Error('The saved download is not a regular file');
-    const file = await open(download.filename, 'r');
+    // Opened without following a link, and bound to the file lstat saw: a
+    // path swapped in between is refused, not read.
+    const file = await open(download.filename, FS.O_RDONLY | (FS.O_NOFOLLOW || 0) | (FS.O_NONBLOCK || 0));
     try {
       const before = await file.stat();
+      if (!before.isFile() || before.dev !== link.dev || before.ino !== link.ino) {
+        throw new Error('The saved download changed before it was read');
+      }
       if (Number.isSafeInteger(download.fileSize) && download.fileSize >= 0 && download.fileSize !== before.size) {
         throw new Error('The saved download no longer matches its browser record');
       }
-      if (before.size > SAVED_DOWNLOAD_MAX_BYTES) throw new Error('File size exceeds 25MB limit.');
+      if (before.size > SAVED_DOWNLOAD_MAX_BYTES) {
+        throw new Error(`${SAVED_DOWNLOAD_TOO_LARGE}: the saved download is larger than the companion can return.`);
+      }
       const bytes = Buffer.alloc(before.size);
       let offset = 0;
       while (offset < bytes.length) {
@@ -305,7 +318,7 @@ export class BidiSession {
         offset += part.bytesRead;
       }
       const after = await file.stat();
-      if (!this.runs.get(runId) || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ino !== before.ino) {
+      if (!this.runs.get(runId) || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
         throw new Error('The saved download or the run changed while it was read');
       }
       return { base64: bytes.toString('base64'), size: bytes.length, filename: basename(download.filename), mimeType: String(download.mime || '') };

@@ -721,6 +721,8 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     const stops = [1, 2, 3, 4, 5, 6].map(i => other._noteRefusalWithoutDispatch(tab, 'click', { x: i, y: i }, refusal));
     assert.deepEqual(stops.map(Boolean), [false, false, false, false, false, true]);
     assert.match(stops[5], /six actions/);
+    // A stop clears the count: a recovery that carries on starts again.
+    assert.equal(other._noteRefusalWithoutDispatch(tab, 'click', { x: 9, y: 9 }, refusal), null);
   });
 
   test(`${build}: a page that changed while the model decided refuses its points; a scroll gets them re-checked`, async () => {
