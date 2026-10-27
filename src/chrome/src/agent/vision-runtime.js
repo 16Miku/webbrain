@@ -866,7 +866,11 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
   proto._visionObserveAfterBatchOnce = async function _visionObserveAfterBatchOnce(tabId, messages, onUpdate, { state, toolCalls = [], force = false } = {}) {
     const session = this._visionSessionFor(tabId, state);
     const names = toolCalls.map(call => call?._vision?.tool || call?.function?.name).filter(Boolean);
-    const observe = force || names.some(name => !VISION_NO_OBSERVE_TOOLS.has(name)) || session.forceKeyframe;
+    // An accepted done ends the run before this point, so a batch with done
+    // only gets here when done was refused: the model is told to look again,
+    // and gets a screen to look at.
+    const observe = force || session.forceKeyframe
+      || names.some(name => !VISION_NO_OBSERVE_TOOLS.has(name) || name === 'done' || name === 'done_json');
     const zoomsOnly = !observe && session.pendingZooms?.length;
     if (zoomsOnly) {
       const zooms = this._visionTakePendingZooms(tabId);

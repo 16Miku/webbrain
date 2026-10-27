@@ -673,6 +673,22 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.equal(attempts, 1);
   });
 
+  test(`${build}: a refused done on its own is followed by a screen update`, async () => {
+    const ctx = runAgent(step => {
+      // No outcome: refused once, with nothing else in the response.
+      if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.' })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };
+      return { content: 'done' };
+    });
+    await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.requests.length, 2, 'the first done was refused');
+    const messages = ctx.requests[1].messages;
+    const refusal = messages.findLastIndex(message => message.role === 'tool');
+    const update = messages.findLastIndex(message => message.webbrainVisionFrame);
+    assert.ok(update > refusal, 'a screen update follows the refused done');
+    assert.ok(['none', 'patch', 'key'].includes(messages[update].webbrainVisionFrame.kind), textOf(messages[update]));
+  });
+
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };
