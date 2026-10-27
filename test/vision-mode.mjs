@@ -508,6 +508,23 @@ test('session: numbering continues across sessions and a retired screen refuses 
   assert.equal(session.resolvePoint({ x: 10, y: 10, image: 'f8' }).code, 'stale_image');
 });
 
+test('session: a failed update stays recorded until the model is shown the screen again', () => {
+  const session = new VisionSession();
+  assert.equal(session.observationFailed, false);
+  session.registerKeyframe({ imageWidth: 100, imageHeight: 50, cssWidth: 100, cssHeight: 50 }, new Uint8ClampedArray(100 * 50 * 4));
+  for (const shown of [
+    () => session.registerNoChange(),
+    () => session.registerPatches([{ x: 0, y: 0, width: 10, height: 10 }], new Uint8ClampedArray(100 * 50 * 4)),
+    () => session.registerKeyframe({ imageWidth: 100, imageHeight: 50, cssWidth: 100, cssHeight: 50 }, new Uint8ClampedArray(100 * 50 * 4)),
+  ]) {
+    session.observationFailed = true;
+    session.registerZoom({ x: 0, y: 0, width: 10, height: 10 }, 20, 20);
+    assert.equal(session.observationFailed, true, 'a zoom is not the screen');
+    shown();
+    assert.equal(session.observationFailed, false);
+  }
+});
+
 test('session: an image value that is not an id is refused, not read as the current screen', () => {
   const session = new VisionSession();
   session.registerKeyframe({ imageWidth: 1000, imageHeight: 500, cssWidth: 2000, cssHeight: 1000 });

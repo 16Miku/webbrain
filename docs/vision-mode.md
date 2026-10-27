@@ -53,11 +53,13 @@ A point is refused before any dispatch when:
 
 - its image belongs to an earlier frame (`stale_image`), or the area around it changed in a later patch (`stale_area`); a zoom taken after an earlier action of its batch already shows what that action changed, so it counts from the update the batch produced and only a change after the zoom's capture makes its points stale (a frame-scale capture beside the zoom tells, `_visionRefreshZooms`);
 - it lies outside the image;
-- it is the second or later coordinate action of one model turn and the live screen changed near it after the earlier action, or the screen could not be re-captured to check (`_visionStabilityBlock`, checked right before dispatch, after every gate; a `drag_at` is checked at both ends against one capture);
+- it is the second or later coordinate action of one model turn, or any coordinate action while the last screen update failed (`session.observationFailed`), and the live screen changed near it since the screen the model last saw, or the screen could not be re-captured to check (`_visionStabilityBlock`, checked right before dispatch, after every gate; a `drag_at` is checked at both ends against one capture);
 - the run has no frame of its own yet (`no_frame`);
 - the browser window was resized or zoomed (CSS viewport size or device pixel ratio) after its frame was taken (`viewport_changed`, `_visionStaleLayoutRefusal`): checked once before each batch that uses points, so a resize page feedback has not reported yet is caught too; a full frame follows. A resize page feedback did report while the model decided sets the decision aside for a fresh full frame before that (`visionScreenFeedback`).
 
 A refused point also stops the rest of the model's batch: the calls after it (a `type_text`, say) were planned on that point.
+
+Typing goes to whatever has focus, which only the screen shows. While the run has no frame of this page, or the last screen update failed (a capture or encoding error, or a re-check capture that failed; any later frame, patch or "no visible change" clears it), `type_text` and `press_keys` are refused before dispatch (`visionScreenUnverified`) unless a `click_at` earlier in the same response passed its check, in which case they type into the field it focused. The refusal stops the rest of the batch, and the model is told to take a screenshot or click the field first.
 
 Every run starts on a frame it captured itself: `_beginVisionRun` retires the previous run's screen, so if the first capture fails the model is told so, earlier screenshots leave the request, and coordinates are refused until `take_screenshot` succeeds. Image ids and epochs continue across sessions of one conversation (another model, a restarted worker), and the current screen is the last full frame in the history by position.
 

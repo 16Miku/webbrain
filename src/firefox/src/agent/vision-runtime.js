@@ -95,6 +95,21 @@ function visionUserMessage(content, tag) {
   return { role: 'user', content, webbrainAppOwned: true, webbrainAppOwnedKind: 'vision_frame', webbrainVisionFrame: tag };
 }
 
+// Typing goes to whatever has focus, which only the screen shows.
+const VISION_TYPING_TOOLS = new Set(['type_text', 'press_keys']);
+
+/** Typing refused while the model has not seen the current screen. */
+function visionScreenUnverifiedResult(name, { noFrame = false } = {}) {
+  const verb = name === 'press_keys' ? 'pressed' : 'typed';
+  const why = noFrame
+    ? 'no screenshot of this page has been taken yet'
+    : 'the screen could not be updated after the last action';
+  return {
+    success: false, dispatched: false, noDispatch: true, visionScreenUnverified: true,
+    error: `Not ${verb}: ${why}, so what has focus now is unknown. Call take_screenshot and look first, or click_at the field in the same response before typing.`,
+  };
+}
+
 // The page an upload handoff belongs to: its address without the fragment.
 function pageKey(url) {
   return String(url || '').split('#')[0];
@@ -718,8 +733,10 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     if (!observe) return null;
     const failed = (stage, error) => {
       // The next update is a full frame; until then the model knows the
-      // screen it last saw may be out of date.
+      // screen it last saw may be out of date, and its points and typing are
+      // checked against the live screen (_visionTranslateToolCalls).
       session.forceKeyframe = true;
+      session.observationFailed = true;
       messages.push(visionUserMessage(`[SCREEN: the screen could not be ${stage === 'observe' ? 'captured' : 'prepared'} after the action (${errorText(error).slice(0, 160)}). Call take_screenshot to look again.]`,
         { epoch: session.epoch, kind: 'error' }));
       this._visionTraceNote(tabId, 'vision_frame_error', { stage, error: errorText(error) });
@@ -844,8 +861,15 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
    */
   proto._visionTranslateToolCalls = function _visionTranslateToolCalls(tabId, toolCalls, { staleLayout = null } = {}) {
     const state = this._visionRunState(tabId);
-    if (!state.active || !Array.isArray(toolCalls) || !toolCalls.some(call => VISION_TOOL_NAMES.has(call?.function?.name))) return toolCalls;
+    if (!state.active || !Array.isArray(toolCalls)) return toolCalls;
+    const coordinates = toolCalls.some(call => VISION_TOOL_NAMES.has(call?.function?.name));
+    if (!coordinates && !toolCalls.some(call => VISION_TYPING_TOOLS.has(call?.function?.name))) return toolCalls;
     const session = this._visionSessionFor(tabId, state);
+    // No screen of this page yet, or the last update failed: the model does
+    // not know what the screen shows now. Its points are re-checked against
+    // the live screen, and typing waits for a fresh look or a checked click.
+    const unverified = !session.keyframe || session.observationFailed === true;
+    if (!coordinates && !unverified) return toolCalls;
     let actedBefore = false;
     // Where the last click_at of this batch landed: type_text / press_keys
     // after it type into the field that click focused.
@@ -856,7 +880,8 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       // A point is re-checked against the live screen when an earlier action
       // of the batch ran, or when the page changed while the model decided
       // (page feedback notes a response it kept despite that).
-      const recheck = actedBefore || (!!call && typeof call === 'object' && this._visionRecheckCalls?.has(call) === true);
+      const recheck = actedBefore || session.observationFailed === true
+        || (!!call && typeof call === 'object' && this._visionRecheckCalls?.has(call) === true);
       if (VISION_TRANSLATED_TOOLS.has(name) || VISION_NATIVE_TOOLS.has(name)) {
         let args = {};
         try { args = typeof call.function.arguments === 'string' ? JSON.parse(call.function.arguments || '{}') : (call.function.arguments || {}); }
@@ -884,8 +909,10 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
           translated = { ...call, _vision: { tool: name, needsStabilityCheck: recheck,
             ...(point?.ok ? { monitorPoint: { x: point.cssX, y: point.cssY } } : {}) } };
         }
-      } else if ((name === 'type_text' || name === 'press_keys') && clickedAt) {
+      } else if (VISION_TYPING_TOOLS.has(name) && clickedAt) {
         translated = { ...call, _vision: { tool: name, focusFollowUp: { ...clickedAt } } };
+      } else if (VISION_TYPING_TOOLS.has(name) && unverified) {
+        translated = { ...call, _vision: { tool: name, error: visionScreenUnverifiedResult(name, { noFrame: !session.keyframe }) } };
       }
       if (!VISION_NO_OBSERVE_TOOLS.has(name) && name !== 'take_screenshot') {
         actedBefore = true;
@@ -975,6 +1002,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       // The point was chosen before the earlier action; without a fresh
       // capture nothing shows it is still right.
       session.forceKeyframe = true;
+      session.observationFailed = true;
       return refuse(`WebBrain could not re-check the screen around ${which}`);
     }
     if (frame.probe.url !== session.keyframe.url) return refuse(`the page navigated since you read ${which}`);

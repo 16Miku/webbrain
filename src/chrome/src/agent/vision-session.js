@@ -53,6 +53,10 @@ export class VisionSession {
     this.patchChainLength = 0;
     this.seenPixels = null;
     this.forceKeyframe = false;
+    // The last screen update (or a re-check capture) failed: what the model
+    // last saw may no longer be the screen, until the next frame, patch or
+    // "no visible change" (vision-runtime.js gates points and typing on it).
+    this.observationFailed = false;
     this.pendingZooms = [];
     // Bumped each time the model is shown a screen that differs from the one
     // it saw (a patch, a new page or layout, a frame with other pixels), never
@@ -95,6 +99,7 @@ export class VisionSession {
     this.changes = [];
     this.patchChainLength = 0;
     this.forceKeyframe = false;
+    this.observationFailed = false;
     const id = this._nextId('f');
     for (const retired of this.retired.values()) if (!retired.replacedBy) retired.replacedBy = id;
     this.keyframe = {
@@ -143,6 +148,7 @@ export class VisionSession {
   registerPatches(regions = [], pixels = null) {
     if (!this.keyframe) throw new Error('A keyframe is required before patches.');
     this.updateSeq += 1;
+    this.observationFailed = false;
     if (regions.length) this.screenVersion += 1;
     const seq = this.updateSeq;
     const images = regions.map(region => {
@@ -172,7 +178,9 @@ export class VisionSession {
 
   /** The model was told nothing visible changed; the seen frame stays. */
   registerNoChange() {
-    if (this.keyframe) this.updateSeq += 1;
+    if (!this.keyframe) return;
+    this.updateSeq += 1;
+    this.observationFailed = false;
   }
 
   /**

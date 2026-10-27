@@ -460,6 +460,71 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     const latest = visionMessages(ctx.requests[2].messages).at(-1);
     assert.equal(latest.webbrainVisionFrame.kind, 'key', textOf(latest));
     assert.match(textOf(latest), /full viewport \(requested\)/);
+    // The next batch's first point was read from a screen that may be out of
+    // date: it was re-checked against the live screen before it went out.
+    const clicks = ctx.dispatched.filter(entry => entry.name === 'click');
+    assert.equal(clicks.length, 2);
+    assert.equal(clicks[0].vision.needsStabilityCheck, false);
+    assert.equal(clicks[1].vision.needsStabilityCheck, true);
+  });
+
+  test(`${build}: after a failed screen update, a point where the screen changed is not clicked`, async () => {
+    let failPatch = true;
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 648, y: 405 })] };
+      // Read from f1, which does not show what the first click opened.
+      if (step === 2) return { toolCalls: [call('click_at', { x: 600, y: 410 })] };
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Stopped.', outcome: 'partial' })] };
+      return { content: 'done' };
+    }, { onDispatch: (name, _args, scene) => { if (name === 'click') scene.rects.push({ x: 560, y: 380, w: 200, h: 120, color: [200, 40, 40] }); } });
+    const encode = ctx.agent._visionEncodeRegion;
+    ctx.agent._visionEncodeRegion = async (canvas, region, options) => {
+      if (region && failPatch) { failPatch = false; throw new Error('convertToBlob failed'); }
+      return encode(canvas, region, options);
+    };
+    await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.dispatched.filter(entry => entry.name === 'click').length, 1, 'the second point was refused');
+    const refusal = toolTexts(ctx.requests[2]).find(text => /Not dispatched/.test(text)) || '';
+    assert.match(refusal, /the screen changed near this point/, toolTexts(ctx.requests[2]).join('\n'));
+  });
+
+  test(`${build}: typing waits for a look at the screen when there is none or the last update failed`, async () => {
+    let failPatch = false;
+    const ctx = runAgent(step => {
+      // The first capture failed, and so did the update after this step:
+      // nothing shows what has focus.
+      if (step === 1) return { toolCalls: [call('type_text', { text: 'blind' })] };
+      if (step === 2) return { toolCalls: [call('press_keys', { key: 'Enter' })] };
+      if (step === 3) { failPatch = true; return { toolCalls: [call('take_screenshot', {})] }; }
+      if (step === 4) return { toolCalls: [call('click_at', { x: 200, y: 150 })] };
+      // That click's screen update failed.
+      if (step === 5) return { toolCalls: [call('type_text', { text: 'stale' })] };
+      // A click checked against the live screen focuses the field first.
+      if (step === 6) return { toolCalls: [call('click_at', { x: 200, y: 150 }), call('type_text', { text: 'checked' })] };
+      // The update after it succeeded: typing on its own is fine again.
+      if (step === 7) return { toolCalls: [call('type_text', { text: 'seen' })] };
+      if (step === 8) return { toolCalls: [call('done', { summary: 'Typed.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { maxSteps: 12, onDispatch: (name, _args, scene) => { if (name === 'click') scene.rects.push({ x: 900, y: 700 - scene.rects.length * 30, w: 60, h: 20, color: [0, 0, 200] }); } });
+    const capture = ctx.agent._visionPlatformCapture;
+    let failedCaptures = 0;
+    ctx.agent._visionPlatformCapture = async (tab, options) => {
+      if (failedCaptures < 2) { failedCaptures++; throw new Error('capture failed'); }
+      return capture(tab, options);
+    };
+    const encode = ctx.agent._visionEncodeRegion;
+    ctx.agent._visionEncodeRegion = async (canvas, region, options) => {
+      if (region && failPatch) { failPatch = false; throw new Error('convertToBlob failed'); }
+      return encode(canvas, region, options);
+    };
+    await runLoop(ctx.agent, nextTab++, false);
+    const typed = ctx.dispatched.filter(entry => ['type_text', 'press_keys'].includes(entry.name)).map(entry => entry.args.text || entry.args.key);
+    assert.deepEqual(typed, ['checked', 'seen']);
+    assert.match(toolTexts(ctx.requests[1]).at(-1), /Not typed: no screenshot of this page has been taken yet/);
+    assert.match(toolTexts(ctx.requests[2]).at(-1), /Not pressed: no screenshot/);
+    assert.match(toolTexts(ctx.requests[5]).at(-1), /Not typed: the screen could not be updated after the last action/);
+    const checked = ctx.dispatched.find(entry => entry.name === 'type_text' && entry.args.text === 'checked');
+    assert.deepEqual(Object.keys(checked.vision.focusFollowUp).sort(), ['x', 'y']);
   });
 
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
