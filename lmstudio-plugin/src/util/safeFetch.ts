@@ -34,7 +34,7 @@
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import * as http from "node:http";
 import * as https from "node:https";
-import type { LookupFunction } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 import { pipeline, Readable } from "node:stream";
 import * as zlib from "node:zlib";
 import {
@@ -96,12 +96,28 @@ function assertAddressesArePublic(host: string, addresses: LookupAddress[]): voi
 }
 
 /**
+ * Literal-IP hosts never reach `guardedLookup`: Node connects to them
+ * directly without calling the socket's `lookup` hook. Classify them here
+ * on every hop so this layer does not depend on `assertSafeUrl` alone.
+ */
+function assertLiteralIpIsPublic(url: URL): void {
+  let host = url.hostname;
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  const family = isIP(host);
+  if (family === 4 ? isPrivateIpv4(host) : family === 6 && isPrivateIpv6(host)) {
+    throw new Error(
+      `Refusing private IPv${family} ${host} — set allowPrivate to opt in.`,
+    );
+  }
+}
+
+/**
  * `lookup` hook for the request socket. Node calls it when connecting
  * and dials only the addresses it hands back, so the check and the use
  * are the same resolution — resolving first and then letting the HTTP
  * client resolve the name again would let a TTL=0 record answer public
  * to the check and private to the connection. Literal-IP hosts never
- * reach a lookup; the sync URL guard covers them.
+ * reach a lookup; `assertLiteralIpIsPublic` covers them.
  */
 const guardedLookup: LookupFunction = (hostname, options, callback) => {
   dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
@@ -208,6 +224,10 @@ function pinnedFetch(url: URL, init: HopInit, opts: UrlGuardOptions): Promise<Re
     if (signal?.aborted) {
       reject(abortReason(signal));
       return;
+    }
+
+    if (!opts.allowPrivate) {
+      try { assertLiteralIpIsPublic(url); } catch (e) { reject(e); return; }
     }
 
     let req: http.ClientRequest;

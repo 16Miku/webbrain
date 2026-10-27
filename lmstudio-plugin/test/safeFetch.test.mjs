@@ -139,3 +139,20 @@ test("aborting a pending request rejects with an AbortError", async () => {
     { name: "AbortError" },
   );
 });
+
+test("literal private IPs are refused by safeFetch itself, since they never reach the lookup hook", async () => {
+  // Disable the sync URL guard so only safeFetch's own literal-IP check is left.
+  const { createRequire } = await import("node:module");
+  const guard = createRequire(import.meta.url)("../dist/util/urlGuard.js");
+  const original = guard.assertSafeUrl;
+  guard.assertSafeUrl = (url) => new URL(url);
+  const before = hits.length;
+  try {
+    for (const host of ["127.0.0.1", "[::1]", "[::ffff:7f00:1]", "0.0.0.0", "169.254.169.254"]) {
+      await assert.rejects(safeFetch(`http://${host}:${port}/`), /Refusing private/, host);
+    }
+    assert.equal(hits.length, before, "no request may reach the loopback server");
+  } finally {
+    guard.assertSafeUrl = original;
+  }
+});

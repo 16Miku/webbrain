@@ -39,6 +39,12 @@ Settings → Advanced → **Cookie banners** (storage key `cookieBanners`):
 - On `init`, the host replies with the compact rules for that frame, WebBrain's
   own rules for that URL, and a fixed config: opt out only, the heuristic in
   reject-only mode, hide-only rules on, banner pre-hiding for at most 2 s.
+- The wrapper creates the `<style>` elements autoconsent hides with
+  (`autoconsent-prehide`, `autoconsent-css-rules`) and registers them with the
+  page monitor as WebBrain's own decorations, so adding them, filling them and
+  removing the pre-hide style 2 s later are not reported as page changes that
+  would refuse the agent's next action. A page's own element with the same id
+  is not claimed.
 - Some rules call the consent platform's own JavaScript. The host runs only
   autoconsent's fixed `evalSnippets`, by name, with
   `scripting.executeScript({ world: 'MAIN' })` in the frame that asked, once per

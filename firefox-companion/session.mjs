@@ -575,6 +575,9 @@ export class BidiSession {
           return false;
         };
         if (!r.width || !r.height || !reaches(hit, el)) return false;
+        // A press over an embedded frame lands in the frame's own document,
+        // another site the extension's permission for this page may not cover.
+        if ((action === 'click' || action === 'click_at') && /^(IFRAME|FRAME|OBJECT|EMBED)$/i.test(String(hit?.tagName || ''))) return false;
       }
       if (action === 'type' || action === 'field' || action === 'key') {
         el.focus({preventScroll:true});

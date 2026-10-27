@@ -401,10 +401,10 @@ const { transcribeAudio } = await import(
 // network-tools.js references chrome.* inside a try/catch at module load, so
 // it imports cleanly under Node — the storage init silently no-ops and
 // validateFetchUrl / registrableDomain are pure functions.
-const { validateFetchUrl, registrableDomain, filenameFromContentDisposition: filenameFromContentDispositionCh, fetchUrl: fetchUrlCh, researchUrl: researchUrlCh, downloadFiles: downloadFilesCh, downloadResourceFromPage: downloadResourceFromPageCh, executeHttpSkillTool: executeHttpSkillToolCh } = await import(
+const { validateFetchUrl, validateResolvedAddress: validateResolvedAddressCh, registrableDomain, filenameFromContentDisposition: filenameFromContentDispositionCh, fetchUrl: fetchUrlCh, readPageSource: readPageSourceCh, researchUrl: researchUrlCh, downloadFiles: downloadFilesCh, downloadResourceFromPage: downloadResourceFromPageCh, executeHttpSkillTool: executeHttpSkillToolCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/network/network-tools.js').replace(/\\/g, '/')
 );
-const { validateFetchUrl: validateFetchUrlFx, registrableDomain: registrableDomainFx, filenameFromContentDisposition: filenameFromContentDispositionFx, fetchUrl: fetchUrlFx, readPageSource: readPageSourceFx, researchUrl: researchUrlFx, downloadFiles: downloadFilesFx, downloadResourceFromPage: downloadResourceFromPageFx, executeHttpSkillTool: executeHttpSkillToolFx } = await import(
+const { validateFetchUrl: validateFetchUrlFx, validateResolvedAddress: validateResolvedAddressFx, registrableDomain: registrableDomainFx, filenameFromContentDisposition: filenameFromContentDispositionFx, fetchUrl: fetchUrlFx, readPageSource: readPageSourceFx, researchUrl: researchUrlFx, downloadFiles: downloadFilesFx, downloadResourceFromPage: downloadResourceFromPageFx, executeHttpSkillTool: executeHttpSkillToolFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/network/network-tools.js').replace(/\\/g, '/')
 );
 const { firefoxRestrictedDomainForUrl, firefoxRestrictedDomainFailure, firefoxHostPermissionFailure } = await import(
@@ -22751,6 +22751,264 @@ test('research_url rejects blocked redirect targets before returning hidden-tab 
         assert.equal(result.finalUrl, blockedUrl, `${label}/${blockedPhase}: final URL should be reported`);
         assert.equal(executeCalls, blockedPhase === 'loaded-tab' ? 0 : 1, `${label}/${blockedPhase}: extraction timing mismatch`);
         assert.equal(removeCalls, 1, `${label}/${blockedPhase}: hidden tab should always be closed`);
+      }
+    }
+  } finally {
+    globalThis.setTimeout = previousSetTimeout;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('resolved addresses use the same tiers as URL literals in both ports', () => {
+  const cases = [
+    ['127.0.0.1', false, false], ['127.0.0.1', true, true],
+    ['10.0.0.5', false, false], ['10.0.0.5', true, true],
+    ['172.16.0.1', false, false], ['192.168.1.1', false, false], ['192.168.1.1', true, true],
+    ['169.254.169.254', true, false], ['100.64.0.1', true, false],
+    ['0.0.0.0', true, false], ['224.0.0.1', true, false],
+    ['::1', false, false], ['::1', true, true], ['[::1]', false, false],
+    ['fd00::1', false, false], ['fd00::1', true, true], ['fe80::1', true, false],
+    ['::ffff:127.0.0.1', false, false], ['::ffff:7f00:1', false, false],
+    ['::ffff:169.254.169.254', true, false], ['::ffff:8.8.8.8', false, true],
+    ['93.184.216.34', false, true], ['2606:4700::6810:84e5', false, true],
+    ['', true, false], ['example.com', true, false],
+  ];
+  for (const [label, validate] of [['chrome', validateResolvedAddressCh], ['firefox', validateResolvedAddressFx]]) {
+    for (const [address, allowLocal, ok] of cases) {
+      assert.equal(validate(address, { allowLocalNetwork: allowLocal }).ok, ok,
+        `${label}: ${address || '(empty)'} (allowLocal=${allowLocal}) should ${ok ? 'pass' : 'be blocked'}`);
+    }
+  }
+});
+
+// webRequest stand-in for the resolved-address checks. Events respect the
+// tabId/types filter the production listener registers with.
+function makeAddressWebRequest() {
+  const listeners = {};
+  const api = {};
+  for (const name of ['onBeforeRedirect', 'onResponseStarted', 'onErrorOccurred']) {
+    listeners[name] = new Map();
+    api[name] = {
+      addListener: (fn, filter) => listeners[name].set(fn, filter || {}),
+      removeListener: fn => listeners[name].delete(fn),
+    };
+  }
+  return {
+    api,
+    emit(name, details) {
+      for (const [fn, filter] of [...listeners[name]]) {
+        if (filter.tabId != null && filter.tabId !== details.tabId) continue;
+        if (filter.types && !filter.types.includes(details.type)) continue;
+        fn(details);
+      }
+    },
+    count: () => Object.values(listeners).reduce((sum, map) => sum + map.size, 0),
+  };
+}
+
+test('fetch_url and read_page_source discard responses from a blocked resolved address', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const secret = 'INTERNAL-ADMIN-SECRET';
+  try {
+    for (const [label, apiName, fetchUrl, readPageSource] of [
+      ['chrome', 'chrome', fetchUrlCh, readPageSourceCh],
+      ['firefox', 'browser', fetchUrlFx, readPageSourceFx],
+    ]) {
+      for (const tool of ['fetch_url', 'read_page_source']) {
+        for (const [ip, proxyInfo, blocked] of [
+          ['127.0.0.1', null, true],
+          ['::ffff:a9fe:a9fe', null, true],
+          ['10.1.2.3', null, true],
+          ['93.184.216.34', null, false],
+          // Firefox reports the proxy's address for proxied requests; only its
+          // DNS check before sending applies there.
+          ...(apiName === 'browser' ? [['127.0.0.1', { type: 'http', host: '127.0.0.1', port: 8080 }, false]] : []),
+        ]) {
+          const webRequest = makeAddressWebRequest();
+          globalThis[apiName] = { webRequest: webRequest.api };
+          const url = 'https://rebind.example/admin#section';
+          let fetchCalls = 0;
+          globalThis.fetch = async (rawUrl) => {
+            fetchCalls++;
+            // The webRequest event can arrive after fetch() resolves.
+            setTimeout(() => webRequest.emit('onResponseStarted', {
+              url: 'https://rebind.example/admin', tabId: -1, type: 'xmlhttprequest', ip, proxyInfo,
+            }), 5);
+            return {
+              status: 200,
+              url: String(rawUrl).replace(/#.*$/, ''),
+              headers: new Headers({ 'content-type': 'text/html' }),
+              text: async () => `<html><title>admin</title><body>${secret}</body></html>`,
+            };
+          };
+          const result = tool === 'fetch_url' ? await fetchUrl(url) : await readPageSource(url);
+          const name = `${label}/${tool}/${ip}${proxyInfo ? '/proxied' : ''}`;
+          assert.equal(fetchCalls, 1, `${name}: request should be sent once`);
+          assert.equal(webRequest.count(), 0, `${name}: webRequest listeners must be removed`);
+          if (blocked) {
+            assert.equal(result.success, false, `${name}: blocked address must fail`);
+            assert.match(result.error || '', /^rebind\.example resolved to a blocked address\. Blocked /, `${name}: unexpected error`);
+            assert.doesNotMatch(JSON.stringify(result), new RegExp(secret), `${name}: body must be discarded`);
+          } else {
+            assert.equal(result.success, true, `${name}: public address must pass (${result.error || ''})`);
+            assert.match(JSON.stringify(result), new RegExp(secret), `${name}: body should be returned`);
+          }
+        }
+      }
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('Firefox network readers refuse hostnames that resolve to blocked addresses before sending', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [addresses, blocked] of [
+      [['93.184.216.34', '10.0.0.7'], true],
+      [['2606:4700::6810:84e5', 'fd12::1'], true],
+      [['169.254.169.254'], true],
+      [['93.184.216.34', '2606:4700::6810:84e5'], false],
+      [new Error('NS_ERROR_UNKNOWN_HOST'), false],
+    ]) {
+      let fetchCalls = 0;
+      let tabsCreated = 0;
+      const resolved = [];
+      globalThis.fetch = async (rawUrl) => {
+        fetchCalls++;
+        return {
+          status: 200,
+          url: String(rawUrl),
+          headers: new Headers({ 'content-type': 'text/html' }),
+          text: async () => '<html><title>ok</title><body>public body</body></html>',
+        };
+      };
+      globalThis.browser = {
+        dns: {
+          async resolve(host) {
+            resolved.push(host);
+            if (addresses instanceof Error) throw addresses;
+            return { addresses, isTRR: false };
+          },
+        },
+        tabs: {
+          async create() { tabsCreated++; throw new Error('stop after the pre-check'); },
+          async remove() {},
+        },
+      };
+      const name = addresses instanceof Error ? 'lookup failure' : addresses.join(',');
+      const results = [
+        await fetchUrlFx('https://rebind.example/data'),
+        await readPageSourceFx('https://rebind.example/data'),
+        await researchUrlFx('https://rebind.example/data'),
+      ];
+      assert.deepEqual(resolved, ['rebind.example', 'rebind.example', 'rebind.example'], `${name}: each tool should resolve the hostname`);
+      if (blocked) {
+        for (const result of results) {
+          assert.equal(result.success, false, `${name}: must be refused`);
+          assert.match(result.error || '', /rebind\.example resolved to a blocked address\. Blocked /, `${name}: unexpected error`);
+        }
+        assert.equal(fetchCalls, 0, `${name}: nothing may be sent`);
+        assert.equal(tabsCreated, 0, `${name}: no hidden tab may be opened`);
+      } else {
+        assert.equal(results[0].success, true, `${name}: fetch_url should proceed (${results[0].error || ''})`);
+        assert.equal(results[1].success, true, `${name}: read_page_source should proceed (${results[1].error || ''})`);
+        assert.equal(fetchCalls, 2, `${name}: both fetches should be sent`);
+        assert.equal(tabsCreated, 1, `${name}: research_url should open its hidden tab`);
+      }
+    }
+
+    // IP literals are classified by the URL check and are never looked up.
+    const resolved = [];
+    globalThis.browser = { dns: { async resolve(host) { resolved.push(host); return { addresses: [] }; } } };
+    globalThis.fetch = async (rawUrl) => ({
+      status: 200, url: String(rawUrl), headers: new Headers({ 'content-type': 'text/plain' }), text: async () => 'ok',
+    });
+    await fetchUrlFx('https://93.184.216.34/');
+    await fetchUrlFx('https://[2606:4700::6810:84e5]/');
+    assert.deepEqual(resolved, []);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('research_url discards a hidden tab whose top-level response came from a blocked address', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const previousSetTimeout = globalThis.setTimeout;
+  const nativeSetTimeout = previousSetTimeout;
+  // Skip the intentional 800 ms SPA hydration pause, as the redirect test does.
+  globalThis.setTimeout = (fn, ms, ...args) => nativeSetTimeout(fn, ms === 800 ? 0 : ms, ...args);
+  const publicUrl = 'https://public.example/start';
+  try {
+    for (const [label, researchUrl, apiName] of [
+      ['chrome', researchUrlCh, 'chrome'],
+      ['firefox', researchUrlFx, 'browser'],
+    ]) {
+      for (const scenario of ['response', 'redirect-hop', 'during-extraction', 'other-tab', 'public']) {
+        const webRequest = makeAddressWebRequest();
+        let executeCalls = 0;
+        let removeCalls = 0;
+        const mainFrame = (name, tabId, ip, url = publicUrl) =>
+          webRequest.emit(name, { url, tabId, type: 'main_frame', ip, proxyInfo: null });
+        const tabs = {
+          async create() {
+            // Navigation events start before tabs.create() resolves.
+            if (scenario === 'redirect-hop') mainFrame('onBeforeRedirect', 77, '192.168.0.10', 'https://hop.example/');
+            if (scenario === 'other-tab') mainFrame('onResponseStarted', 12, '127.0.0.1');
+            mainFrame('onResponseStarted', 77, scenario === 'response' ? '127.0.0.1' : '93.184.216.34');
+            return { id: 77, url: publicUrl };
+          },
+          async get() { return { id: 77, url: publicUrl }; },
+          async remove() { removeCalls++; },
+          onUpdated: {
+            addListener(fn) { nativeSetTimeout(() => fn(77, { status: 'complete' }), 0); },
+            removeListener() {},
+          },
+        };
+        const pageResult = { title: 'page', url: publicUrl, text: 'hidden tab text', originalLength: 15, links: [] };
+        const extract = () => {
+          executeCalls++;
+          if (scenario === 'during-extraction') mainFrame('onResponseStarted', 77, '169.254.169.254', 'https://public.example/next');
+        };
+        if (apiName === 'chrome') {
+          globalThis.chrome = {
+            tabs,
+            webRequest: webRequest.api,
+            scripting: { async executeScript() { extract(); return [{ result: pageResult }]; } },
+          };
+        } else {
+          globalThis.browser = {
+            webRequest: webRequest.api,
+            tabs: { ...tabs, async executeScript() { extract(); return [pageResult]; } },
+          };
+        }
+
+        const result = await researchUrl(publicUrl, { timeout: 1000 });
+        const name = `${label}/${scenario}`;
+        assert.equal(removeCalls, 1, `${name}: hidden tab should always be closed`);
+        assert.equal(webRequest.count(), 0, `${name}: webRequest listeners must be removed`);
+        if (scenario === 'public' || scenario === 'other-tab') {
+          assert.equal(result.success, true, `${name}: public address must pass (${result.error || ''})`);
+          assert.equal(result.text, 'hidden tab text');
+          continue;
+        }
+        assert.equal(result.success, false, `${name}: blocked address must fail`);
+        assert.match(result.error || '', /resolved to a blocked address\. Blocked /, `${name}: unexpected error`);
+        assert.equal(result.text, undefined, `${name}: page text must not be returned`);
+        assert.equal(executeCalls, scenario === 'during-extraction' ? 1 : 0, `${name}: extraction timing mismatch`);
       }
     }
   } finally {
@@ -57770,8 +58028,8 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.equal(
       (clarifySource.match(/scrollToBottom\(\{ force: true \}\);/g) || []).length,
-      8,
-      `${label}: workflow healing, submit, recipient, deletion, video-length, unverified-step, permission, and clarify prompts should override reading-first scroll suppression`,
+      9,
+      `${label}: workflow healing, submit, recipient, deletion, video-length, download-read, unverified-step, permission, and clarify prompts should override reading-first scroll suppression`,
     );
     assert.match(
       panel,
@@ -76061,7 +76319,7 @@ test('_defaultConfigs: every entry carries an explicit category', () => {
 test('extended provider catalog is complete, mirrored, safe, and excluded-provider clean', async () => {
   const expectedIds = `
     302ai abacus aihubmix alibaba-coding-plan alibaba-coding-plan-cn
-    azure-cognitive-services bailing baseten berget cerebras chutes clarifai
+    azure-cognitive-services bailing baseten berget cerebras cheaperinference chutes clarifai
     cloudferro-sherlock cohere cortecs deepinfra digitalocean dinference drun
     evroc fastrouter freebuff2api friendli google-vertex google-vertex-anthropic helicone
     iflowcn inception inference io-net jiekou kilo kimi-for-coding
@@ -76075,7 +76333,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 80);
+  assert.equal(expectedIds.length, 81);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -76090,8 +76348,8 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   ]) {
     const defaults = new PM()._defaultConfigs();
     // Includes the sidepanel-only WebBrain Compass XL runtime profile, which is
-    // deliberately omitted from the 114/113 Settings provider cards.
-    const expectedDefaultCount = label === 'chrome' ? 115 : 114;
+    // deliberately omitted from the 115/114 Settings provider cards.
+    const expectedDefaultCount = label === 'chrome' ? 116 : 115;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -76213,6 +76471,30 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.nearai.suggestions,
     ['z-ai/glm-5.3-flash', 'Qwen/Qwen3.8-27B'],
+  );
+  assert.deepEqual(
+    {
+      baseUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.baseUrl,
+      model: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.model,
+      contextWindow: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.contextWindow,
+      supportsVision: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.supportsVision,
+      supportsTools: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.supportsTools,
+      supportsAskStreaming: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.supportsAskStreaming,
+      apiKeyUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.apiKeyUrl,
+    },
+    {
+      baseUrl: 'https://api.cheaperinference.com/v1',
+      model: 'gpt-5.4-mini',
+      contextWindow: 400000,
+      supportsVision: true,
+      supportsTools: true,
+      supportsAskStreaming: true,
+      apiKeyUrl: 'https://cheaperinference.com',
+    },
+  );
+  assert.deepEqual(
+    ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.cheaperinference.suggestions,
+    ['gpt-5.4-mini', 'claude-sonnet-5', 'gemini-3.5-flash', 'deepseek-v4-flash'],
   );
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['kimi-for-coding'].suggestions,
@@ -82770,6 +83052,72 @@ for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
   }
 }
 
+for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+  for (const { name, stored, storageError, sitePrompt } of [
+    { name: 'an install without the marker keeps the earlier waiver', stored: {}, sitePrompt: false },
+    { name: 'the new-install marker keeps the site prompt', stored: { apiMutationSitePrompt: true }, sitePrompt: true },
+    { name: 'a malformed marker keeps the site prompt', stored: { apiMutationSitePrompt: 'false' }, sitePrompt: true },
+    { name: 'a storage read failure keeps the site prompt', storageError: true, sitePrompt: true },
+  ]) {
+    test(`${label} API mutation site prompt startup: ${name}`, async () => {
+      const source = fs.readFileSync(path.join(ROOT, `src/${label}/src/background.js`), 'utf8');
+      const start = source.indexOf('const ALWAYS_ALLOW_API_MUTATIONS_KEY =');
+      const end = source.indexOf('agent.setConversationScopeChangeListener(', start);
+      const agent = new AgentClass({});
+      const api = {
+        storage: {
+          local: {
+            get: async (defaults) => {
+              if (storageError) throw new Error('Storage unavailable');
+              return { ...defaults, ...stored };
+            },
+          },
+        },
+      };
+      const ready = vm.runInNewContext(
+        `${source.slice(start, end)}\nalwaysAllowApiMutationsReady;`,
+        { agent, [label === 'chrome' ? 'chrome' : 'browser']: api },
+      );
+      const tabId = 4897;
+      assert.equal(agent.isApiMutationPromptWaived(tabId), false, 'nothing is waived before storage hydration');
+      await ready;
+      assert.equal(agent.apiMutationSitePrompt, sitePrompt);
+      assert.equal(agent.isApiMutationPromptWaived(tabId), !storageError && !sitePrompt);
+    });
+  }
+}
+
+test('a new install keeps the per-site prompt for default-on API mutations; updates are not migrated', async () => {
+  for (const [label, apiName, AgentClass] of [['chrome', 'chrome', AgentCh], ['firefox', 'browser', AgentFx]]) {
+    const bg = fs.readFileSync(path.join(ROOT, `src/${label}/src/background.js`), 'utf8');
+    const start = bg.indexOf('// Always allow API mutations is on by default, so leaving it on');
+    const marker = `  ${apiName}.storage.local.set({ apiMutationSitePrompt: true }).catch(() => {});\n});\n`;
+    const end = bg.indexOf(marker, start);
+    assert.ok(start > -1 && end > start, `${label}: install marker block not found`);
+    for (const reason of ['install', 'update', `${apiName}_update`]) {
+      const stored = reason === 'install' ? {} : { alwaysAllowApiMutations: true };
+      const before = structuredClone(stored);
+      let onInstalled = null;
+      const api = {
+        runtime: { onInstalled: { addListener: (listener) => { onInstalled = listener; } } },
+        storage: { local: { set: async (values) => { Object.assign(stored, values); } } },
+      };
+      vm.runInNewContext(bg.slice(start, end + marker.length), { [apiName]: api });
+      onInstalled({ reason });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(stored, reason === 'install' ? { apiMutationSitePrompt: true } : before, `${label}: ${reason}`);
+    }
+    const onChanged = bg.match(/if \(changes\.apiMutationSitePrompt\) \{[\s\S]*?\n  \}/)?.[0];
+    assert.ok(onChanged, `${label}: live marker changes are not applied`);
+    for (const [newValue, expected] of [[true, true], [undefined, false], [false, false]]) {
+      const agent = new AgentClass({});
+      agent.setApiMutationSitePrompt(!expected);
+      vm.runInNewContext(onChanged, { agent, changes: { apiMutationSitePrompt: { newValue } } });
+      assert.equal(agent.apiMutationSitePrompt, expected, `${label}: live change to ${newValue}`);
+    }
+  }
+});
+
 test('persistent API mutation permission is global and independent of /allow-api lifecycle', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({});
@@ -83817,6 +84165,112 @@ test('iframe submit without urlFilter fails before confirmation or dispatch', as
     assert.equal(denied.invalidArguments, true, `${AgentClass.name}: failure should identify invalid arguments`);
     assert.equal(denied.noDispatch, true, `${AgentClass.name}: invalid iframe args should be marked no-dispatch`);
     assert.match(denied.detail, /urlFilter/, `${AgentClass.name}: detail should identify the missing urlFilter`);
+  }
+});
+
+// A coordinate click, type_text without a selector and press_keys go to the
+// document under the point or with focus. On Chrome (CDP) that can be an
+// embedded wallet frame, so a grant for the merchant page must not cover it.
+function receivingFrameGateAgent(AgentClass, tabId, { frameUrls = [], choice = 'deny' } = {}) {
+  const agent = new AgentClass({ getVisionProvider: async () => null });
+  const state = { executed: [], prompts: [], resolved: [] };
+  agent._ensureGateSetting = async () => false;
+  agent._skipPermissionGate = false;
+  agent._currentUrl = async () => 'https://merchant.example/checkout';
+  agent._recordProgressObservation = async () => null;
+  agent._autoRecordProgressAction = () => null;
+  agent._progressWarningForAction = () => '';
+  agent._persist = () => { };
+  agent._detectLikelySubmitAction = async () => null;
+  agent._iframeRectsForCoordinate = async () => [];
+  agent.permissions.hydrate = async () => { };
+  // The merchant page itself is already allowed for every capability.
+  agent.permissions.check = host => host === 'merchant.example'
+    ? { allowed: true, needsPrompt: false }
+    : { allowed: false, needsPrompt: true };
+  agent.permissions.record = async () => { };
+  agent._promptPermission = async (_tabId, capability, host) => {
+    state.prompts.push({ capability, host });
+    return choice;
+  };
+  agent._inputReceivingFrameUrl = async (_tabId, name) => {
+    state.resolved.push(name);
+    return frameUrls.length > 1 ? frameUrls.shift() : frameUrls[0];
+  };
+  agent.executeTool = async (_tabId, name) => {
+    state.executed.push(name);
+    return { success: true };
+  };
+  return { agent, state };
+}
+
+const RECEIVING_FRAME_CALLS = [
+  ['click', { x: 120, y: 80, coordinate_space: 'css' }, 'click'],
+  ['type_text', { text: '4242 4242 4242 4242' }, 'type'],
+  ['press_keys', { key: 'Enter' }, 'click'],
+];
+
+test('Chrome point and focus input is charged to the embedded frame it reaches', async () => {
+  for (const [name, args, capability] of RECEIVING_FRAME_CALLS) {
+    const { agent, state } = receivingFrameGateAgent(AgentCh, 5121, { frameUrls: ['https://wallet.example/pay'] });
+    const messages = [];
+    await agent._executeToolBatch(5121, [{ id: `frame_${name}`, function: { name, arguments: JSON.stringify(args) } }],
+      messages, () => { }, { supportsVision: false }, '', new Set([name]), 1);
+    assert.deepEqual(state.resolved, [name], `${name}: the receiving frame was not resolved before the gate`);
+    assert.deepEqual(state.prompts, [{ capability, host: 'wallet.example' }], `${name}: the merchant grant covered the wallet frame`);
+    assert.deepEqual(state.executed, [], `${name}: input reached the wallet frame without its permission`);
+    assert.match(JSON.parse(messages[0].content).error, /denied permission to .* wallet\.example/, name);
+  }
+});
+
+test('Chrome point and focus input stays on the page grant while it reaches the top document', async () => {
+  for (const [name, args] of RECEIVING_FRAME_CALLS) {
+    const { agent, state } = receivingFrameGateAgent(AgentCh, 5122, { frameUrls: ['https://merchant.example/checkout'] });
+    await agent._executeToolBatch(5122, [{ id: `top_${name}`, function: { name, arguments: JSON.stringify(args) } }],
+      [], () => { }, { supportsVision: false }, '', new Set([name]), 1);
+    assert.deepEqual(state.prompts, [], `${name}: a top-document input asked again`);
+    assert.deepEqual(state.executed, [name], `${name}: a top-document input did not run`);
+  }
+});
+
+test('Chrome point and focus input fails closed when its receiving document is unknown', async () => {
+  for (const [name, args] of RECEIVING_FRAME_CALLS) {
+    const { agent, state } = receivingFrameGateAgent(AgentCh, 5123, { frameUrls: [''] });
+    const messages = [];
+    await agent._executeToolBatch(5123, [{ id: `unknown_${name}`, function: { name, arguments: JSON.stringify(args) } }],
+      messages, () => { }, { supportsVision: false }, '', new Set([name]), 1);
+    assert.deepEqual(state.prompts, [], `${name}: an unidentified frame must not borrow a prompt or the page grant`);
+    assert.deepEqual(state.executed, [], `${name}: input ran without an identified receiving document`);
+    const result = JSON.parse(messages[0].content);
+    assert.equal(result.denied, true, name);
+    assert.match(result.error, /could not identify the site of the document/, name);
+  }
+});
+
+test('Chrome point and focus input is not sent when its document changed while the card was open', async () => {
+  for (const [name, args] of RECEIVING_FRAME_CALLS) {
+    const { agent, state } = receivingFrameGateAgent(AgentCh, 5124, {
+      frameUrls: ['https://wallet.example/pay', 'https://attacker.example/'],
+      choice: 'once',
+    });
+    const messages = [];
+    await agent._executeToolBatch(5124, [{ id: `moved_${name}`, function: { name, arguments: JSON.stringify(args) } }],
+      messages, () => { }, { supportsVision: false }, '', new Set([name]), 1);
+    assert.equal(state.prompts.length, 1, name);
+    assert.deepEqual(state.resolved, [name, name], `${name}: the receiver was not checked again after the card`);
+    assert.deepEqual(state.executed, [], `${name}: input followed the page into a document the user was not asked about`);
+    assert.match(JSON.parse(messages[0].content).error, /changed to one on attacker\.example/, name);
+  }
+});
+
+test('Firefox point and focus input is charged to the top document it stays in', async () => {
+  for (const [name, args] of RECEIVING_FRAME_CALLS) {
+    const { agent, state } = receivingFrameGateAgent(AgentFx, 5125);
+    await agent._executeToolBatch(5125, [{ id: `fx_${name}`, function: { name, arguments: JSON.stringify(args) } }],
+      [], () => { }, { supportsVision: false }, '', new Set([name]), 1);
+    assert.deepEqual(state.resolved, [], `${name}: Firefox has no CDP receiving-frame resolver`);
+    assert.deepEqual(state.prompts, [], name);
+    assert.deepEqual(state.executed, [name], name);
   }
 });
 
@@ -86754,6 +87208,62 @@ test('agent allows mutating fetch_url after conversation or persistent API appro
       assert.equal(executed, true, `${AgentClass.name}: mutating fetch_url did not run after ${approval}`);
       assert.equal(messages.length, 1, `${AgentClass.name}: expected executed tool result message after ${approval}`);
       assert.doesNotMatch(messages[0].content, /requiresApiAllow/, `${AgentClass.name}: ${approval} mutation was still blocked`);
+    }
+  }
+});
+
+test('default-on API mutation setting leaves the network prompt for each host on new installs', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    for (const { name, grant, sitePrompt, choice = 'once', prompted, ran } of [
+      { name: 'new install: the user allows the host', grant: 'persistent', sitePrompt: true, prompted: true, ran: true },
+      { name: 'new install: the user denies the host', grant: 'persistent', sitePrompt: true, choice: 'deny', prompted: true, ran: false },
+      { name: 'new install with /allow-api', grant: 'conversation', sitePrompt: true, prompted: false, ran: true },
+      { name: 'new install with a cloud run grant', grant: 'temporary', sitePrompt: true, prompted: false, ran: true },
+      { name: 'install from before the marker', grant: 'persistent', sitePrompt: false, prompted: false, ran: true },
+    ]) {
+      const agent = new AgentClass({ getVisionProvider: async () => null });
+      const tabId = 4908;
+      let executed = false;
+      agent.executeTool = async () => {
+        executed = true;
+        return { success: true };
+      };
+      agent._currentUrl = async () => 'https://shop.example/account';
+      agent._skipPermissionGate = false;
+      agent._ensureGateSetting = async () => false;
+      const prompts = [];
+      agent._promptPermission = async (_tabId, capability, host) => {
+        prompts.push({ capability, host });
+        return choice;
+      };
+      agent.setApiMutationSitePrompt(sitePrompt);
+      if (grant === 'persistent') agent.setAlwaysAllowApiMutations(true);
+      if (grant === 'conversation') agent.setApiMutationsAllowed(tabId, true);
+      if (grant === 'temporary') agent.setTemporaryApiMutationsAllowed(tabId, true);
+      const messages = [];
+
+      await agent._executeToolBatch(
+        tabId,
+        [{
+          id: 'api_write',
+          function: {
+            name: 'fetch_url',
+            arguments: JSON.stringify({ url: 'https://collector.example/api/events', method: 'POST', body: '{"a":1}' }),
+          },
+        }],
+        messages,
+        () => { },
+        { supportsVision: false },
+        '',
+        new Set(['fetch_url']),
+        1,
+      );
+
+      const label = `${AgentClass.name}: ${name}`;
+      assert.deepEqual(prompts, prompted ? [{ capability: Capability.NETWORK, host: 'collector.example' }] : [], `${label}: prompts`);
+      assert.equal(executed, ran, `${label}: dispatch`);
+      assert.equal(messages.length, 1, `${label}: one tool result`);
+      assert.doesNotMatch(messages[0].content, /requiresApiAllow/, `${label}: the write was authorized`);
     }
   }
 });
@@ -113508,6 +114018,33 @@ test('hostForCapability: navigate/network use target URL, others use current pag
   assert.equal(hostForCapability(Capability.NAVIGATE, { steps: 2 }, 'https://cur.com', 'go_forward'), 'cur.com');
 });
 
+test('point and focus input is charged to its receiving document, failing closed without one', () => {
+  for (const [label, Cap, reqHosts] of [['firefox', Capability, requiredHosts], ['chrome', CapabilityCh, requiredHostsCh]]) {
+    const page = 'https://merchant.example/checkout';
+    const wallet = { _inputFrameUrl: 'https://wallet.example/pay' };
+    for (const [name, args, capability] of [
+      ['click', { x: 10, y: 20, ...wallet }, Cap.CLICK],
+      ['type_text', { text: '4242', ...wallet }, Cap.TYPE],
+      ['press_keys', { key: 'Enter', ...wallet }, Cap.CLICK],
+    ]) {
+      assert.deepEqual(reqHosts(capability, args, page, name), ['wallet.example'], `${label}: ${name}`);
+      // No receiving document: never fall back to the page's grant.
+      const { _inputFrameUrl, ...unresolved } = args;
+      assert.deepEqual(reqHosts(capability, unresolved, page, name), [], `${label}: ${name} without a receiver`);
+      assert.deepEqual(reqHosts(capability, { ...args, _inputFrameUrl: '' }, page, name), [], `${label}: ${name} with an opaque receiver`);
+    }
+    // An element WebBrain resolved itself keeps the page host.
+    for (const [name, args, capability] of [
+      ['click', { selector: '#pay', ...wallet }, Cap.CLICK],
+      ['click', { ref_id: 'ref_4', ...wallet }, Cap.CLICK],
+      ['type_text', { selector: '#card', text: '4242', ...wallet }, Cap.TYPE],
+      ['type_ax', { ref_id: 'ref_5', text: '4242', ...wallet }, Cap.TYPE],
+    ]) {
+      assert.deepEqual(reqHosts(capability, args, page, name), ['merchant.example'], `${label}: ${name} ${JSON.stringify(args)}`);
+    }
+  }
+});
+
 test('generate_image permission and result trust are bound to the configured provider in both builds', () => {
   for (const [label, Cap, hostFor, reqHosts, untrustedTools] of [
     ['firefox', Capability, hostForCapability, requiredHosts, UNTRUSTED_CONTENT_TOOLS],
@@ -119961,6 +120498,38 @@ test('Chrome click_ax timeout after mouse press unwinds without completing the c
     cdpClientCh.dispatchMouseEvent = originals.dispatchMouseEvent;
     cdpClientCh.consumeFileInputClickGuard = originals.consumeFileInputClickGuard;
     cdpClientCh.sendCommand = originals.sendCommand;
+  }
+});
+
+test('agent activity effect is a General setting, portable, and read live by the page indicator', () => {
+  for (const [label, prefix, configTransfer, runtimeApi] of [
+    ['chrome', 'src/chrome', ConfigTransferCh, 'chrome'],
+    ['firefox', 'src/firefox', ConfigTransferFx, 'browser'],
+  ]) {
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const indicator = fs.readFileSync(path.join(ROOT, prefix, 'src/content/agent-visual-indicator.js'), 'utf8');
+
+    const select = settingsPanelHtml(settingsHtml, 'display').match(/<select id="select-agent-indicator-style"[\s\S]*?<\/select>/)?.[0];
+    assert.ok(select, `${label}: the effect choice belongs to Settings → General`);
+    assert.deepEqual([...select.matchAll(/<option value="([a-z]+)"/g)].map(match => match[1]),
+      ['circuit', 'aurora', 'scan', 'gears', 'classic'], `${label}: effect options changed`);
+    assert.match(settingsJs, new RegExp(`${runtimeApi}\\.storage\\.local\\.set\\(\\{ agentIndicatorStyle: style \\}\\)`), `${label}: the select must save agentIndicatorStyle`);
+    assert.match(indicator, /const STYLE_STORAGE_KEY = 'agentIndicatorStyle';/, `${label}: the indicator reads another key`);
+    assert.match(indicator, /const DEFAULT_STYLE = 'circuit';/, `${label}: Neural circuit should be the default effect`);
+    assert.match(indicator, new RegExp(`${runtimeApi}\\.storage\\?\\.onChanged`), `${label}: a new choice should apply to a running task`);
+    // The cursor animates through CSS transitions and Web Animations: the page
+    // monitor observes style attributes, so nothing may write them per frame.
+    const cursorClass = indicator.slice(indicator.indexOf('class AgentCursor'), indicator.indexOf('function createStopButton'));
+    assert.ok(cursorClass.length > 0, `${label}: AgentCursor missing`);
+    assert.doesNotMatch(cursorClass, /requestAnimationFrame/, `${label}: the cursor must not run a per-frame style loop`);
+
+    assert.equal(configTransfer.DEFAULT_CONFIG_SETTINGS.agentIndicatorStyle, 'circuit', `${label}: portable default changed`);
+    assert.ok(configTransfer.CONFIG_STORAGE_KEYS.includes('agentIndicatorStyle'), `${label}: config export/import omitted the effect`);
+    const exported = JSON.stringify(configTransfer.createConfigExport({ agentIndicatorStyle: 'gears' }));
+    assert.equal(configTransfer.parseConfigImport(exported).settings.agentIndicatorStyle, 'gears', `${label}: a chosen effect should survive export and import`);
+    const unknown = JSON.stringify({ ...JSON.parse(exported), settings: { ...JSON.parse(exported).settings, agentIndicatorStyle: 'sparkles' } });
+    assert.throws(() => configTransfer.parseConfigImport(unknown), /agentIndicatorStyle/, `${label}: an unknown effect should be rejected on import`);
   }
 });
 
