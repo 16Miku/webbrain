@@ -487,6 +487,26 @@ for (const build of ['chrome', 'firefox']) {
     agent._endVisionRun(tab, null);
   });
 
+  test(`${build}: the redaction helper says why an image came back unredacted`, async () => {
+    const agent = agentFor();
+    agent.screenshotRedaction = true;
+    const image = 'data:image/png;base64,AAAA';
+    const snapshot = regions => ({ coordinateSpace: 'page', viewport: { width: 100, height: 50 }, regions });
+    const redact = async (scan, opts = { imageWidth: 100, imageHeight: 50 }) => {
+      agent._captureScreenshotRedactionSnapshot = async () => scan;
+      const outcome = {};
+      const out = await agent._redactScreenshotDataUrl(1, image, { coordinateSpace: 'page', capturedCssBounds: { x: 0, y: 0, width: 100, height: 50 }, outcome, ...opts });
+      assert.equal(out, image);
+      return outcome.status;
+    };
+    assert.equal(await redact(null), 'scan_unavailable');
+    assert.equal(await redact(snapshot([])), 'no_regions');
+    assert.equal(await redact(snapshot([{ kind: 'input', rect: { x: 400, y: 400, w: 20, h: 10 } }])), 'no_regions_in_view');
+    // Node has no image decoding or canvas: the decode or the pixelation fails.
+    assert.equal(await redact(snapshot([{ kind: 'input', rect: { x: 10, y: 10, w: 20, h: 10 } }])), 'pixelate_failed');
+    assert.equal(await redact(snapshot([{ kind: 'input', rect: { x: 10, y: 10, w: 20, h: 10 } }]), {}), 'decode_failed');
+  });
+
   test(`${build}: Gmail's result counter, which takes no target, stays in the vision tool list`, () => {
     // Offered on a Gmail result list (getGmailResultCountPolicy).
     const names = getToolsForMode('act', { tier: 'full', gmailResultCounting: true, vision: { coordinates: 'pixel' } }).map(tool => tool.function.name);

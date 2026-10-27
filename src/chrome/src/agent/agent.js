@@ -13493,6 +13493,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return promptTier !== 'compact' || (this._userAttachmentHandles.get(tabId)?.size || 0) > 0;
   }
 
+  // Whether the tab is still loading: the redaction scan starts when the
+  // document is idle (vision-runtime.js _visionCaptureFrame waits for it).
+  async _visionTabLoading(tabId) {
+    try { return (await chrome.tabs.get(tabId))?.status === 'loading'; }
+    catch { return false; }
+  }
+
   // WhatsApp Web and Telegram keep the tree path (vision-mode.js).
   _visionNativeChatPage(tabId) {
     const url = this._lastTabUrls?.get(tabId) || '';
@@ -19633,6 +19640,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * @returns {Promise<string>}
    */
   async _redactScreenshotDataUrl(tabId, dataUrl, opts = {}) {
+    // `opts.outcome`, when given, receives why the image came back as it did:
+    // 'redacted', 'no_regions' or 'no_regions_in_view' (nothing to hide), or
+    // 'decode_failed', 'scan_unavailable' or 'pixelate_failed' (the image is
+    // returned unredacted; vision mode reports those).
+    const report = status => { if (opts.outcome && typeof opts.outcome === 'object') opts.outcome.status = status; };
     if (!this.screenshotRedaction || !dataUrl) return dataUrl;
 
     // Resolve the captured image's pixel dimensions. Callers that already
@@ -19654,6 +19666,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           try { bmp.close?.(); } catch {}
         }
       } catch {
+        report('decode_failed');
         return dataUrl;
       }
     }
@@ -19662,7 +19675,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const snapshot = opts.redactionSnapshot
       ? this._normalizeScreenshotRedactionSnapshot(opts.redactionSnapshot, coordinateSpace)
       : await this._captureScreenshotRedactionSnapshot(tabId, { coordinateSpace });
-    if (!snapshot) return dataUrl;
+    if (!snapshot) {
+      report('scan_unavailable');
+      return dataUrl;
+    }
 
     // The captured CSS box (CSS px) in the SAME space as the element rects.
     // A bounded full-page capture can be shorter than the live document, so
@@ -19688,7 +19704,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : (Number.isFinite(opts.offsetY) ? opts.offsetY : 0);
 
     const regions = snapshot.regions;
-    if (!regions.length) return dataUrl;
+    if (!regions.length) {
+      report('no_regions');
+      return dataUrl;
+    }
 
     const imageRegions = mapRegionsToImage(regions, {
       scaleX,
@@ -19698,10 +19717,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       imageWidth,
       imageHeight,
     });
-    if (!imageRegions.length) return dataUrl;
+    if (!imageRegions.length) {
+      report('no_regions_in_view');
+      return dataUrl;
+    }
 
     const redacted = await pixelateDataUrl(dataUrl, imageRegions);
-    if (redacted === dataUrl) return dataUrl; // pixelation was a no-op/failed
+    if (redacted === dataUrl) {
+      // Pixelation was a no-op or failed.
+      report('pixelate_failed');
+      return dataUrl;
+    }
+    report('redacted');
 
     // `pixelateDataUrl` re-encodes at a fixed quality, which can push the
     // result back over the provider's base64 ceiling (callers have already

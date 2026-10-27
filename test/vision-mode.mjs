@@ -683,6 +683,8 @@ test('both loops of both builds start or end an upload handoff before anything i
       assert.ok(tick < resumes[index], `${build}: tick before the tools`);
     }
   }
+  // Screenshot redaction's pixelation is the same module in both builds.
+  assert.equal(read('src/chrome/src/agent/screenshot-redaction.js'), read('src/firefox/src/agent/screenshot-redaction.js'));
   // Chrome's protocol guard marks a chooser only it saw.
   assert.match(read('src/chrome/src/cdp/cdp-client.js'), /selector: null,\s*protocolOnly: true,/);
 });

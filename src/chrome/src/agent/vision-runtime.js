@@ -57,6 +57,16 @@ const SETTLE_MAX_EXTRA_CAPTURES = 3;
 // this many times: a page whose upload never succeeds goes back to vision
 // and then reports the chooser instead of handing off again.
 const UPLOAD_HANDOFF_DECISIONS = 5;
+// Screenshot redaction scans the page from a content script that starts when
+// the document is idle: a capture right after a navigation often finds no
+// scan yet. While the tab loads, WebBrain waits this long for one, then
+// captures again.
+const REDACTION_SCAN_WAIT_MS = 1500;
+const REDACTION_SCAN_POLL_MS = 250;
+// Redaction outcomes (agent _redactScreenshotDataUrl) that leave the image as
+// captured although redaction is on. Redaction is best-effort: the image is
+// still sent, and the user and the trace are told (_visionReportUnredacted).
+const UNREDACTED_OUTCOMES = new Set(['decode_failed', 'scan_unavailable', 'pixelate_failed', 'error']);
 const UPLOAD_HANDOFFS_PER_RUN = 2;
 // A change this small between two captures (a blinking caret, a ticking
 // clock, a spinner: a few 16 px cells) is not the page still reacting to an
@@ -498,14 +508,16 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
    * return any size (device pixels, emulated DPR, zoom); rasterizeFrame
    * resamples to the plan so the coordinate map is exact.
    */
-  proto._visionCaptureFrame = async function _visionCaptureFrame(tabId, state) {
+  proto._visionCaptureFrame = async function _visionCaptureFrame(tabId, state, { redactionRetry = true } = {}) {
     const probe = await this._visionPlatformProbe(tabId);
     if (!probe || !(probe.cssWidth > 0) || !(probe.cssHeight > 0)) throw new Error('The page viewport could not be measured.');
     const profile = VISION_PROFILES[state.profileId] || VISION_PROFILES.default;
     const size = planVisionImageSize({ cssWidth: probe.cssWidth, cssHeight: probe.cssHeight, profile, quality: state.quality });
     let dataUrl = await this._visionPlatformCapture(tabId, { probe, outWidth: size.width, outHeight: size.height });
     if (!dataUrl) throw new Error('The browser returned no screenshot.');
+    let redaction = null;
     if (this.screenshotRedaction && typeof this._redactScreenshotDataUrl === 'function') {
+      const outcome = {};
       try {
         // The capture spans the visual viewport (no scrollbars), so the
         // redactor gets that box in page space rather than its own
@@ -513,12 +525,23 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
         dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, {
           coordinateSpace: 'page',
           capturedCssBounds: { x: probe.scrollX || 0, y: probe.scrollY || 0, width: probe.cssWidth, height: probe.cssHeight },
+          outcome,
         });
-      } catch { /* keep the capture */ }
+      } catch (error) {
+        if (isControlFlowError(error)) throw error;
+        outcome.status = 'error';
+      }
+      // No scan yet on a loading page: wait for it, then capture again so the
+      // scan and the image show the same page.
+      if (outcome.status === 'scan_unavailable' && redactionRetry && await this._visionTabLoading?.(tabId) === true) {
+        await this._visionAwaitRedactionScan(tabId);
+        return this._visionCaptureFrame(tabId, state, { redactionRetry: false });
+      }
+      redaction = outcome.status || 'error';
     }
     const raster = await this._visionRasterize(dataUrl, size.width, size.height);
     if (probe.url) (this._lastTabUrls ??= new Map()).set(tabId, String(probe.url));
-    return { raster, probe, size, profile };
+    return { raster, probe, size, profile, redaction };
   };
 
   // Indirections over vision-encoder.js so the Node suite can substitute
@@ -529,6 +552,42 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
 
   proto._visionEncodeRegion = function _visionEncodeRegion(canvas, region, options) {
     return encodeCanvasRegion(canvas, region, options);
+  };
+
+  /** Waits up to REDACTION_SCAN_WAIT_MS for the page's redaction scan to answer. */
+  proto._visionAwaitRedactionScan = async function _visionAwaitRedactionScan(tabId) {
+    const deadline = Date.now() + REDACTION_SCAN_WAIT_MS;
+    while (Date.now() < deadline) {
+      await sleep(REDACTION_SCAN_POLL_MS);
+      this._throwIfAborted?.(this._runAbortSignal?.(tabId));
+      let snapshot = null;
+      try { snapshot = await this._captureScreenshotRedactionSnapshot?.(tabId, { coordinateSpace: 'page' }); }
+      catch { snapshot = null; }
+      if (snapshot) return true;
+    }
+    return false;
+  };
+
+  /**
+   * Images sent to the model although screenshot redaction is on and could
+   * not run on them (UNREDACTED_OUTCOMES): each gets a coded trace note, and
+   * the side panel warns once per page and run. `entries` are
+   * { kind, redaction } for the images of one update.
+   */
+  proto._visionReportUnredacted = function _visionReportUnredacted(tabId, onUpdate, entries, url = '') {
+    const unredacted = entries.filter(entry => UNREDACTED_OUTCOMES.has(entry?.redaction));
+    if (!unredacted.length) return;
+    for (const entry of unredacted) this._visionTraceNote(tabId, 'vision_redaction_skipped', { code: entry.redaction, context: entry.kind });
+    const snapshot = this._visionRunSnapshots?.get(tabId);
+    const page = pageKey(url);
+    if (snapshot) {
+      snapshot.redactionWarned ??= new Set();
+      if (snapshot.redactionWarned.has(page)) return;
+      snapshot.redactionWarned.add(page);
+    }
+    try {
+      onUpdate?.('warning', { message: 'Screenshot redaction could not run on this page, so a screenshot was sent to the model unredacted. Redaction is best-effort; see Settings.' });
+    } catch { /* UI updates are best effort */ }
   };
 
   /**
@@ -653,6 +712,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       captureWidth: captured.raster.sourceWidth, captureHeight: captured.raster.sourceHeight,
       bytes: encoded.bytes, mimeType: encoded.mimeType, estimatedTokens: tokens, profile: captured.profile.id,
     });
+    this._visionReportUnredacted(tabId, onUpdate, [{ kind: 'keyframe', redaction: captured.redaction }], keyframe.url);
     await this._visionRecordObservation(tabId, keyframe.url);
     return keyframe;
   };
@@ -728,6 +788,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
         { epoch: session.epoch, kind: 'zoom', ids: zooms.map(zoom => zoom.id) }));
       this._visionEmitUpdate(tabId, onUpdate, { success: true, method: 'image_attach', vision: { kind: 'zoom', imageIds: zooms.map(zoom => zoom.id) } },
         zooms.map(zoom => ({ id: zoom.id, kind: 'zoom', dataUrl: zoom.dataUrl })));
+      this._visionReportUnredacted(tabId, onUpdate, zooms.map(zoom => ({ kind: 'zoom', redaction: zoom.redaction })), session.keyframe?.url || '');
       return { kind: 'zoom' };
     }
     if (!observe) return null;
@@ -805,6 +866,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       if (zooms.length) {
         messages.push(this._visionImageMessage([note, ...zooms.map(zoom => zoom.note)].join('\n'), zooms,
           { epoch: session.epoch, kind: 'zoom', ids: zooms.map(zoom => zoom.id) }));
+        this._visionReportUnredacted(tabId, onUpdate, zooms.map(zoom => ({ kind: 'zoom', redaction: zoom.redaction })), frame.probe.url);
       } else {
         messages.push(visionUserMessage(note, { epoch: session.epoch, kind: 'none' }));
       }
@@ -825,6 +887,8 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     const images = patches.map((patch, index) => ({ id: patch.id, kind: 'patch', dataUrl: encodedPatches[index].encoded.dataUrl }));
     messages.push(this._visionImageMessage([note, ...zooms.map(zoom => zoom.note)].join('\n'), [...images, ...zooms],
       { epoch: session.epoch, kind: 'patch', ids: [...patches.map(patch => patch.id), ...zooms.map(zoom => zoom.id)] }));
+    this._visionReportUnredacted(tabId, onUpdate, [{ kind: 'patch', redaction: frame.redaction },
+      ...zooms.map(zoom => ({ kind: 'zoom', redaction: zoom.redaction }))], frame.probe.url);
     const bytes = encodedPatches.reduce((sum, item) => sum + item.encoded.bytes, 0);
     this._visionEmitUpdate(tabId, onUpdate, {
       success: true,
@@ -1107,7 +1171,9 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       const plan = planZoomImageSize({ regionWidth: region.cssRegion.width, regionHeight: region.cssRegion.height, devicePixelRatio: probe?.devicePixelRatio || 1, profile });
       let dataUrl = await this._visionPlatformCapture(tabId, { probe, cssRegion: region.cssRegion, outWidth: plan.width, outHeight: plan.height });
       if (!dataUrl) throw new Error('The browser returned no screenshot.');
+      let redaction = null;
       if (this.screenshotRedaction && typeof this._redactScreenshotDataUrl === 'function') {
+        const outcome = {};
         try {
           // A crop is a page-space box; the redactor maps element rects into it.
           dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, {
@@ -1118,8 +1184,14 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
               width: region.cssRegion.width,
               height: region.cssRegion.height,
             },
+            outcome,
           });
-        } catch { /* keep the capture */ }
+        } catch (error) {
+          if (isControlFlowError(error)) throw error;
+          outcome.status = 'error';
+        }
+        // Reported when the zoom is sent (_visionReportUnredacted).
+        redaction = outcome.status || 'error';
       }
       const raster = await this._visionRasterize(dataUrl, plan.width, plan.height);
       const encoding = await this._visionEncoding(profile);
@@ -1129,6 +1201,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
         id: zoom.id, kind: 'zoom', dataUrl: encoded.dataUrl,
         note: visionZoomNote(zoom, session.keyframe, region.keyframeRegion, { coordinates: session.coordinates }),
         ...(base ? { base } : {}),
+        ...(redaction ? { redaction } : {}),
       });
       this._visionTraceNote(tabId, 'vision_frame', { kind: 'zoom', id: zoom.id, region: region.keyframeRegion, width: plan.width, height: plan.height, bytes: encoded.bytes });
       return { success: true, image: zoom.id, width: plan.width, height: plan.height, note: `Zoom ${zoom.id} follows this result.` };

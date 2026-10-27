@@ -165,6 +165,40 @@ for (const dpr of [1, 2, 3]) {
   });
 }
 
+test('screenshot redaction pixelates every region, or returns the image untouched when one region cannot be', async () => {
+  const browser = await chromium.launch({ channel: 'chromium' });
+  try {
+    const page = await (await browser.newContext()).newPage();
+    await page.goto(`${origin}/fixture`);
+    const result = await page.evaluate(async () => {
+      const { pixelateDataUrl } = await import('/agent/screenshot-redaction.js');
+      const canvas = new OffscreenCanvas(200, 100);
+      const context = canvas.getContext('2d');
+      // Fine stripes: pixelation averages them away.
+      for (let x = 0; x < 200; x += 2) { context.fillStyle = x % 4 ? '#000' : '#fff'; context.fillRect(x, 0, 2, 100); }
+      const blob = await canvas.convertToBlob({ type: 'image/png' });
+      const dataUrl = await new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob); });
+      const regions = [{ rect: { x: 0, y: 0, w: 60, h: 40 } }, { rect: { x: 100, y: 40, w: 60, h: 40 } }];
+      const redacted = await pixelateDataUrl(dataUrl, regions);
+      // The second region's scratch canvas cannot draw.
+      const getContext = OffscreenCanvas.prototype.getContext;
+      let scratch = 0;
+      OffscreenCanvas.prototype.getContext = function (...args) {
+        if (this.width < 50 && ++scratch === 2) return null;
+        return getContext.apply(this, args);
+      };
+      const partial = await pixelateDataUrl(dataUrl, regions);
+      OffscreenCanvas.prototype.getContext = getContext;
+      return { changed: redacted !== dataUrl, untouched: partial === dataUrl, scratch };
+    });
+    assert.equal(result.changed, true, 'both regions pixelated');
+    assert.equal(result.scratch, 2, 'the failure hit the second region');
+    assert.equal(result.untouched, true, 'a region left sharp fails the whole redaction');
+  } finally {
+    await browser.close();
+  }
+});
+
 test('content-script vision input (Firefox path) clicks, double-clicks, focuses, scrolls and drags at the exact point', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
   try {

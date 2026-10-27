@@ -527,6 +527,83 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.deepEqual(Object.keys(checked.vision.focusFollowUp).sort(), ['x', 'y']);
   });
 
+  // Screenshot redaction stubbed per test: the helper reports its outcome
+  // (agent _redactScreenshotDataUrl `opts.outcome`).
+  function redactWith(ctx, outcomes) {
+    const updates = [];
+    const notes = [];
+    let index = 0;
+    ctx.agent.screenshotRedaction = true;
+    ctx.agent._redactScreenshotDataUrl = async (_tab, dataUrl, opts) => {
+      opts.outcome.status = typeof outcomes === 'function' ? outcomes(index++) : outcomes;
+      return dataUrl;
+    };
+    const traceNote = ctx.agent._visionTraceNote;
+    ctx.agent._visionTraceNote = function (tab, note, data) { notes.push({ note, ...data }); return traceNote.call(this, tab, note, data); };
+    return { updates, notes, onUpdate: (type, data) => updates.push({ type, data }) };
+  }
+  const redactionWarnings = updates => updates.filter(update => update.type === 'warning' && /Screenshot redaction could not run on this page/.test(update.data?.message));
+
+  test(`${build}: a screenshot redaction could not run on is still sent, with one warning per page and a coded trace note per image`, async () => {
+    let clicks = 0;
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      if (step === 2) return { toolCalls: [call('zoom', { x: 0, y: 0, width: 400, height: 240 })] };
+      if (step === 3) return { toolCalls: [call('click_at', { x: 320, y: 220 })] };
+      if (step === 4) return { toolCalls: [call('done', { summary: 'Done.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { onDispatch: (name, _args, scene) => {
+      if (name !== 'click') return;
+      scene.rects.push({ x: 900, y: 600 - clicks * 40, w: 80, h: 30, color: [0, 120, 0] });
+      if (clicks++ === 1) scene.url = `${PAGE}?next`;
+    } });
+    const { updates, notes, onUpdate } = redactWith(ctx, 'scan_unavailable');
+    ctx.agent._visionTabLoading = async () => false;
+    await ctx.agent.processMessage(nextTab++, 'Fill the form.', onUpdate, 'act', [], { detachedRequestId: `vision-redaction-${build}` });
+    ctx.scene.url = PAGE;
+    assert.equal(redactionWarnings(updates).length, 2, 'once for each page');
+    const skipped = notes.filter(note => note.note === 'vision_redaction_skipped');
+    assert.deepEqual(skipped.map(note => note.context), ['keyframe', 'patch', 'zoom', 'keyframe']);
+    assert.ok(skipped.every(note => note.code === 'scan_unavailable'));
+    // Best-effort: the screenshots still reached the model.
+    assert.ok(totalImages(ctx.requests[0]) === 1 && totalImages(ctx.requests[1]) >= 2);
+  });
+
+  test(`${build}: a redacted screenshot or one with nothing to hide gives no warning`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'Done.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { onDispatch: (name, _args, scene) => { if (name === 'click') scene.rects.push({ x: 900, y: 600, w: 80, h: 30, color: [0, 120, 0] }); } });
+    const { updates, notes, onUpdate } = redactWith(ctx, index => (index === 0 ? 'redacted' : 'no_regions_in_view'));
+    await ctx.agent.processMessage(nextTab++, 'Fill the form.', onUpdate, 'act', [], { detachedRequestId: `vision-redacted-${build}` });
+    assert.equal(redactionWarnings(updates).length, 0);
+    assert.equal(notes.filter(note => note.note === 'vision_redaction_skipped').length, 0);
+  });
+
+  test(`${build}: on a loading page the frame waits for the redaction scan and is captured again`, async () => {
+    const ctx = runAgent(step => (step === 1 ? { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] } : { content: 'done' }));
+    const { updates, notes, onUpdate } = redactWith(ctx, index => (index === 0 ? 'scan_unavailable' : 'redacted'));
+    ctx.agent._visionTabLoading = async () => true;
+    let scans = 0;
+    ctx.agent._captureScreenshotRedactionSnapshot = async () => (++scans < 2 ? null : { coordinateSpace: 'page', viewport: { width: 1440, height: 900 }, regions: [] });
+    const started = Date.now();
+    await ctx.agent.processMessage(nextTab++, 'Look.', onUpdate, 'act', [], { detachedRequestId: `vision-scan-wait-${build}` });
+    assert.equal(scans, 2, 'polled until the scan answered');
+    assert.equal(ctx.scene.captures, 2, 'captured again once the scan was ready');
+    assert.ok(Date.now() - started >= 2 * 250);
+    assert.equal(redactionWarnings(updates).length, 0);
+    assert.equal(notes.filter(note => note.note === 'vision_redaction_skipped').length, 0);
+    // A page that has finished loading gets no wait: the frame is sent and reported.
+    const loaded = runAgent(step => (step === 1 ? { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] } : { content: 'done' }));
+    const report = redactWith(loaded, 'scan_unavailable');
+    loaded.agent._visionTabLoading = async () => false;
+    loaded.agent._captureScreenshotRedactionSnapshot = async () => { throw new Error('no wait on a loaded page'); };
+    await loaded.agent.processMessage(nextTab++, 'Look.', report.onUpdate, 'act', [], { detachedRequestId: `vision-scan-loaded-${build}` });
+    assert.equal(loaded.scene.captures, 1);
+    assert.equal(redactionWarnings(report.updates).length, 1);
+  });
+
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };
