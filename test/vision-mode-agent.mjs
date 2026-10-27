@@ -767,6 +767,26 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.ok(runTwo.messages.some(message => /Screenshots from earlier vision steps are not shown/.test(textOf(message))));
   });
 
+  test(`${build}: Stop while the layout before a batch is measured still answers every call of the batch`, async () => {
+    let tab;
+    const ctx = runAgent(step => (step === 1 ? { toolCalls: [call('click_at', { x: 300, y: 200 })] } : { content: 'done' }));
+    const probe = ctx.agent._visionPlatformProbe;
+    let probes = 0;
+    ctx.agent._visionPlatformProbe = async (...args) => {
+      // The second measurement is the layout check before the click's batch: Stop arrives while it hangs.
+      if (++probes === 2) { setTimeout(() => ctx.agent.abort(tab), 20); return new Promise(() => {}); }
+      return probe(...args);
+    };
+    tab = nextTab++;
+    await runLoop(ctx.agent, tab, false);
+    const conversation = ctx.agent.conversations.get(tab) || [];
+    const calls = conversation.filter(message => message.role === 'assistant').flatMap(message => message.tool_calls || []).map(item => item.id);
+    const answered = new Set(conversation.filter(message => message.role === 'tool').map(message => message.tool_call_id));
+    assert.ok(calls.length >= 1);
+    assert.deepEqual(calls.filter(id => !answered.has(id)), [], 'no tool call is left without a result');
+    assert.equal(ctx.dispatched.filter(entry => entry.name === 'click').length, 0, 'nothing was clicked');
+  });
+
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };

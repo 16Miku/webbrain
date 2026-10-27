@@ -1160,7 +1160,9 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     let probe = null;
     try { probe = await this._visionBounded(tabId, 'viewport measurement', () => this._visionPlatformProbe(tabId)); }
     catch (error) {
-      if (isControlFlowError(error)) throw error;
+      // Stop: this runs before the batch can answer its calls on a throw;
+      // the batch's per-call abort check answers every one of them instead.
+      if (isControlFlowError(error) && error?.name !== 'AbortError') throw error;
       return null;
     }
     if (!probe) return null;
