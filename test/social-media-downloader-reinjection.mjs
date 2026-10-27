@@ -111,12 +111,12 @@ for (const browser of ['chrome', 'firefox']) {
     const api = browser === 'chrome'
       ? { tabs: {}, scripting: { async executeScript(options) {
         assert.equal(options.world, 'MAIN');
-        if (options.files) { assert.deepEqual(Array.from(options.files), ['src/agent/social-media-downloader.js']); load(source, realm); return []; }
+        if (options.files) { assert.deepEqual(Array.from(options.files), ['/src/agent/social-media-downloader.js']); load(source, realm); return []; }
         captures++; return [{ result: options.func() }];
       } } }
       : { tabs: { async executeScript(tabId, options) {
         assert.equal(tabId, 7);
-        if (options.file) { assert.equal(options.file, 'src/agent/social-media-downloader.js'); load(source, realm); return []; }
+        if (options.file) { assert.equal(options.file, '/src/agent/social-media-downloader.js'); load(source, realm); return []; }
         captures++; return [vm.runInContext(options.code, realm.context)];
       } } };
     const observation = await realm.context.captureMediaState(api, 7);

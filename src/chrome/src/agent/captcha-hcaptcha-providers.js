@@ -1,7 +1,7 @@
 // Current contracts: https://nopecha.com/api-reference/ and
 // https://nonecap.com/api-reference/. Token and recognition transports share the documented v1 lifecycle.
-const API_BASES = { nopecha: 'https://api.nopecha.com', nonecap: 'https://api.nonecap.com' };
-const NAMES = { nopecha: 'NopeCHA', nonecap: 'NoneCap' };
+const API_BASES = { nopecha: 'https://api.nopecha.com', nonecap: 'https://api.nonecap.com', solvecha: 'https://api.solvecha.com' };
+const NAMES = { nopecha: 'NopeCHA', nonecap: 'NoneCap', solvecha: 'Solvecha' };
 const POLL_MS = 2000;
 const TIMEOUT_MS = 180_000;
 
@@ -21,7 +21,7 @@ async function request(id, apiKey, path, { body, timeoutMs = 30_000, allowPendin
   // terminal even if their body happens to contain a pending code.
   const code = result.code ?? result.error?.code ?? result.error;
   const incomplete = code === 14 || code === '14';
-  if (allowPending && !body && id === 'nopecha' && incomplete
+  if (allowPending && !body && id !== 'nonecap' && incomplete
       && (response.ok || response.status === 409)) return null;
   if (!response.ok || result.error || result.code) {
     const message = String(result.error?.message || result.message || result.error?.code || 'Request failed')
@@ -70,21 +70,23 @@ export async function getHcaptchaProviderBalance(id, apiKey) {
   return { balance, unit: 'credits' };
 }
 
-export async function solveNopechaTask(apiKey, path, body) {
-  if (!/^\/v1\/(token|recognition)\/[a-z0-9_]+$/.test(path)) throw new Error('Invalid NopeCHA solving route.');
-  const created = await request('nopecha', apiKey, path, { body });
+export async function solveNopechaTask(apiKey, path, body, id = 'nopecha') {
+  const name = NAMES[id];
+  // Solvecha implements only the NopeCHA-compatible recognition routes.
+  if (!/^\/v1\/(token|recognition)\/[a-z0-9_]+$/.test(path) || (id === 'solvecha' && !path.startsWith('/v1/recognition/'))) throw new Error(`Invalid ${name} solving route.`);
+  const created = await request(id, apiKey, path, { body });
   const taskId = created.data;
-  if (typeof taskId !== 'string' || !taskId.trim()) throw new Error('NopeCHA: missing task ID.');
+  if (typeof taskId !== 'string' || !taskId.trim()) throw new Error(`${name}: missing task ID.`);
   const deadline = Date.now() + TIMEOUT_MS;
   while (Date.now() + POLL_MS < deadline) {
     await new Promise(resolve => setTimeout(resolve, POLL_MS));
-    const result = await request('nopecha', apiKey, `${path}?id=${encodeURIComponent(taskId)}`, { allowPending: true, timeoutMs: Math.min(30_000, deadline - Date.now()) });
+    const result = await request(id, apiKey, `${path}?id=${encodeURIComponent(taskId)}`, { allowPending: true, timeoutMs: Math.min(30_000, deadline - Date.now()) });
     if (!result) continue;
-    if (path.includes('/token/') && (typeof result.data !== 'string' || !result.data.trim())) throw new Error('NopeCHA: missing solution token.');
-    if (result.data == null) throw new Error('NopeCHA: missing recognition result.');
+    if (path.includes('/token/') && (typeof result.data !== 'string' || !result.data.trim())) throw new Error(`${name}: missing solution token.`);
+    if (result.data == null) throw new Error(`${name}: missing recognition result.`);
     return { taskId, solution: result.data };
   }
-  throw new Error('NopeCHA: timed out waiting for solution.');
+  throw new Error(`${name}: timed out waiting for solution.`);
 }
 
 export async function solveNonecapTask(apiKey, body) {

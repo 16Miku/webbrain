@@ -45,7 +45,7 @@ export async function initCaptchaSettings(storage, sendToBackground, t) {
     const validKey = () => {
       const key = keyInput.value.trim();
       if (isValidCaptchaApiKey(provider.id, key)) return key;
-      show('fail', provider.id === 'capsolver' ? t('st.captcha.need_key') : t(['nopecha', 'nonecap'].includes(provider.id) ? 'st.captcha.hcaptcha_need_key' : 'st.captcha.provider_need_key', { provider: provider.name }));
+      show('fail', provider.id === 'capsolver' ? t('st.captcha.need_key') : t(['nopecha', 'nonecap', 'solvecha'].includes(provider.id) ? 'st.captcha.hcaptcha_need_key' : 'st.captcha.provider_need_key', { provider: provider.name }));
       return null;
     };
     // Typing opts in by default, but an explicit unchecked box wins for this edit.

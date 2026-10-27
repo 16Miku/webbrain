@@ -147,11 +147,11 @@ async function captureMediaState(api, tabId) {
   try {
     let result;
     if (typeof api.tabs.executeScript === 'function') {
-      await api.tabs.executeScript(tabId, { file: 'src/agent/social-media-downloader.js' });
+      await api.tabs.executeScript(tabId, { file: '/src/agent/social-media-downloader.js' });
       stage = 'capture_failed';
       result = (await api.tabs.executeScript(tabId, { code: `(${captureMediaDownloadStateInPage.toString()})()` }))?.[0];
     } else {
-      await api.scripting.executeScript({ target: { tabId }, world: 'MAIN', files: ['src/agent/social-media-downloader.js'] });
+      await api.scripting.executeScript({ target: { tabId }, world: 'MAIN', files: ['/src/agent/social-media-downloader.js'] });
       stage = 'capture_failed';
       result = (await api.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: captureMediaDownloadStateInPage }))?.[0]?.result;
     }

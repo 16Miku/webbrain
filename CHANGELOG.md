@@ -6,6 +6,9 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+### Fixed
+- Firefox: **download_social_media** saves media instead of stopping with "An unexpected error occurred", and after WebBrain is updated or reloaded, actions in tabs that were already open no longer fail because WebBrain could not load its page scripts into them again. Firefox looks up a script the background page injects from the background page's own folder, not from the extension's root, so every such injection named a file that does not exist. They now name the file from the root.
+
 ## [42.4.0] - 2026-10-24
 
 ### Added
