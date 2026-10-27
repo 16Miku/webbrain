@@ -26,7 +26,7 @@ for (const build of ['chrome', 'firefox']) {
   const solver = await import(`../src/${build}/src/agent/captcha-solver.js`);
   const extra = await import(`../src/${build}/src/agent/captcha-additional-providers.js`);
   const transfer = await import(`../src/${build}/src/config-transfer.js`);
-  const originalProviders = config.CAPTCHA_PROVIDERS.filter(p => !['nopecha', 'nonecap'].includes(p.id));
+  const originalProviders = config.CAPTCHA_PROVIDERS.filter(p => !['nopecha', 'nonecap', 'solvecha'].includes(p.id));
   const all = Object.fromEntries(originalProviders.flatMap(p => [[p.key, p.id === 'capsolver' ? 'CAP-0123456789abcdefghij' : key], [p.enabled, true]]));
   const ids = value => config.getCaptchaProviders(value).map(p => p.id);
 
@@ -123,6 +123,23 @@ for (const build of ['chrome', 'firefox']) {
       });
     }
   }
+
+  test(`${build}: Solvecha solves text images through createTask and rejects token types before any request`, async t => {
+    const calls = api(t, call => call.path === '/createTask' ? { errorId: 0, taskId: 'task-id' }
+      : { errorId: 0, status: 'ready', solution: { text: 'AbC123' } });
+    const providers = [{ id: 'solvecha', apiKey: 'solvecha_key' }];
+    const result = await solver.solveCaptchaWithProviders(providers, { type: 'image_to_text', body: 'base64-image' });
+    assert.equal(result.provider, 'solvecha');
+    assert.equal(result.token, 'AbC123');
+    assert.deepEqual(calls.map(c => c.host + c.path), ['api.solvecha.com/createTask', 'api.solvecha.com/getTaskResult']);
+    assert.equal(calls[0].body.clientKey, 'solvecha_key');
+    assert.deepEqual(calls[0].body.task, { type: 'ImageToTextTask', body: 'base64-image' });
+    for (const type of ['recaptcha_v2', 'turnstile', 'hcaptcha']) {
+      assert.equal(config.captchaProviderSupportsType('solvecha', type), false);
+      await assert.rejects(solver.solveCaptchaWithProviders(providers, { ...params, type }), /No enabled provider supports/);
+    }
+    assert.equal(calls.length, 2);
+  });
 
   test(`${build}: synchronous CapSolver OCR without task ID does not poll or fall back`, async t => {
     const calls = api(t, () => ({ errorId: 0, status: 'ready', solution: { text: 'AbC123' } }));

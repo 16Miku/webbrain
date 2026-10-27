@@ -57,7 +57,7 @@ try {
         await openSettings();
         const card = page.locator('#captcha-card');
         await card.scrollIntoViewIfNeeded();
-        assert.equal(await card.locator('section').count(), 7);
+        assert.equal(await card.locator('section').count(), 8);
         assert.equal(await card.evaluate(el => el.textContent.includes('st.captcha.') || el.textContent.includes('{provider}')), false);
         assert.equal(await card.locator('.captcha-advanced[open]').count(), 0);
         for (const id of ['captcha','two-captcha','capmonster','solve-captcha','anti-captcha']) {
@@ -69,7 +69,7 @@ try {
         assert.ok((await page.locator('#nopecha-coverage').textContent()).includes('hCaptcha'));
         assert.ok((await page.locator('#nopecha-coverage').textContent()).includes('reCAPTCHA v2'));
         assert.equal(await page.locator('#nonecap-coverage').textContent(), 'hCaptcha');
-        for (const [id, defaultWeight] of [['captcha', 100], ['two-captcha', 99], ['capmonster', 98], ['solve-captcha', 97], ['anti-captcha', 96], ['nopecha', 95], ['nonecap', 94]]) {
+        for (const [id, defaultWeight] of [['captcha', 100], ['two-captcha', 99], ['capmonster', 98], ['solve-captcha', 97], ['anti-captcha', 96], ['nopecha', 95], ['nonecap', 94], ['solvecha', 93]]) {
           assert.equal(await page.locator(`#${id}-weight`).isVisible(), false);
           assert.equal(await page.locator(`#${id}-weight`).locator('xpath=ancestor::details[1]/summary').evaluate(el => getComputedStyle(el, '::after').content), '"+"');
           assert.equal(await page.locator(`#${id}-weight`).inputValue(), String(defaultWeight));
@@ -116,6 +116,7 @@ try {
           ['anti-captcha', 'antiCaptchaApiKey', 'antiCaptchaEnabled', 'antiCaptchaWeight'],
           ['nopecha', 'nopechaApiKey', 'nopechaEnabled', 'nopechaWeight'],
           ['nonecap', 'nonecapApiKey', 'nonecapEnabled', 'nonecapWeight'],
+          ['solvecha', 'solvechaApiKey', 'solvechaEnabled', 'solvechaWeight'],
         ]) {
           await page.locator(`#${id}-api-key`).fill(id === 'nonecap' ? 'nc_live_' + key : key);
           assert.equal(await page.locator(`#${id}-enabled`).isChecked(), true);

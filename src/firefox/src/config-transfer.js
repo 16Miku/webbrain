@@ -104,6 +104,9 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   nonecapApiKey: '',
   nonecapEnabled: false,
   nonecapWeight: 94,
+  solvechaApiKey: '',
+  solvechaEnabled: false,
+  solvechaWeight: 93,
   // Unset: decision-config.js maps a profile from before modes (On when
   // systemOneEnabled is true, else Auto), so old exports keep their meaning.
   decisionMode: '',
@@ -163,6 +166,7 @@ const BOOLEAN_KEYS = new Set([
   'antiCaptchaEnabled',
   'nopechaEnabled',
   'nonecapEnabled',
+  'solvechaEnabled',
   'decisionVisionSupported', 'systemOneDoneEnabled',
   'systemOneEnabled',
   'systemOneWatchEnabled',
@@ -178,6 +182,7 @@ const NUMBER_KEYS = new Set([
   'antiCaptchaWeight',
   'nopechaWeight',
   'nonecapWeight',
+  'solvechaWeight',
   'maxAgentSteps',
   'requestTimeoutMs',
   'clarifyTimeoutSec',
@@ -210,6 +215,7 @@ const STRING_KEYS = new Set([
   'antiCaptchaApiKey',
   'nopechaApiKey',
   'nonecapApiKey',
+  'solvechaApiKey',
   'decisionMode', 'decisionProvider', 'decisionModel', 'decisionBaseUrl', 'decisionApiKey', 'decisionLocalApiKey', 'decisionVisionMode',
   'typesafeApiKey',
 ]);
