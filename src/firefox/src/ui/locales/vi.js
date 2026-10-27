@@ -1327,4 +1327,11 @@ export default {
   'sp.activity.retrying_response': "Đang thử lại câu trả lời…",
   'sp.response.incomplete_retrying': "Câu trả lời chưa hoàn chỉnh · đang thử lại…",
   'sp.response.incomplete': "Câu trả lời chưa hoàn chỉnh",
+  "st.display.agent_indicator.label": "Hiệu ứng khi tác tử hoạt động",
+  "st.display.agent_indicator.desc": "Giao diện viền trang khi WebBrain làm việc trên một thẻ. Mọi kiểu đều cho cú nhấp của bạn đi xuyên qua và không xuất hiện trong ảnh chụp màn hình.",
+  "st.display.agent_indicator.circuit": "Mạch thần kinh",
+  "st.display.agent_indicator.aurora": "Cực quang",
+  "st.display.agent_indicator.scan": "Quét",
+  "st.display.agent_indicator.gears": "Bánh răng",
+  "st.display.agent_indicator.classic": "Viền sáng cổ điển",
 };

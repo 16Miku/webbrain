@@ -1372,4 +1372,11 @@ export default {
   'sp.activity.retrying_response': "Sinusubukang muli ang sagot…",
   'sp.response.incomplete_retrying': "Hindi kumpletong sagot · sinusubukang muli…",
   'sp.response.incomplete': "Hindi kumpletong sagot",
+  "st.display.agent_indicator.label": "Epekto habang gumagana ang agent",
+  "st.display.agent_indicator.desc": "Ang itsura ng mga gilid ng page habang gumagana ang WebBrain sa isang tab. Lahat ng istilo ay nagpapadaan ng iyong mga click sa page at hindi lumalabas sa mga screenshot.",
+  "st.display.agent_indicator.circuit": "Neural na circuit",
+  "st.display.agent_indicator.aurora": "Aurora",
+  "st.display.agent_indicator.scan": "Pag-scan",
+  "st.display.agent_indicator.gears": "Mga gear",
+  "st.display.agent_indicator.classic": "Klasikong liwanag",
 };

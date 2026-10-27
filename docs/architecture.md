@@ -57,7 +57,7 @@ This doc covers the shared architecture and calls out where the builds diverge.
 │                                                      │
 │  accessibility-tree.js  — AX tree builder + ref_ids  │
 │  content.js             — DOM reader, clicker, typer │
-│  agent-visual-indicator.js — pulsing border + Stop   │
+│  agent-visual-indicator.js — edge effect + Stop      │
 └─────────────────────────────────────────────────────┘
 ```
 

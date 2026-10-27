@@ -1306,4 +1306,11 @@ export default {
   'sp.activity.retrying_response': "Повторная попытка ответа…",
   'sp.response.incomplete_retrying': "Неполный ответ · повторная попытка…",
   'sp.response.incomplete': "Неполный ответ",
+  "st.display.agent_indicator.label": "Эффект активности агента",
+  "st.display.agent_indicator.desc": "Как выглядят края страницы, пока WebBrain работает во вкладке. Все стили пропускают ваши клики и не попадают на скриншоты.",
+  "st.display.agent_indicator.circuit": "Нейронная схема",
+  "st.display.agent_indicator.aurora": "Сияние",
+  "st.display.agent_indicator.scan": "Сканирование",
+  "st.display.agent_indicator.gears": "Шестерёнки",
+  "st.display.agent_indicator.classic": "Классическое свечение",
 };

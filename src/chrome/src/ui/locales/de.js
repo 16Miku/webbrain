@@ -1344,4 +1344,11 @@ export default {
   'sp.activity.retrying_response': "Antwort wird erneut versucht…",
   'sp.response.incomplete_retrying': "Unvollständige Antwort · erneuter Versuch…",
   'sp.response.incomplete': "Unvollständige Antwort",
+  "st.display.agent_indicator.label": "Effekt bei Agentenaktivität",
+  "st.display.agent_indicator.desc": "Legt fest, wie die Seitenränder aussehen, während WebBrain in einem Tab arbeitet. Jeder Stil lässt Ihre Klicks durch und erscheint nicht auf Screenshots.",
+  "st.display.agent_indicator.circuit": "Neuronaler Schaltkreis",
+  "st.display.agent_indicator.aurora": "Polarlicht",
+  "st.display.agent_indicator.scan": "Scan",
+  "st.display.agent_indicator.gears": "Zahnräder",
+  "st.display.agent_indicator.classic": "Klassisches Leuchten",
 };

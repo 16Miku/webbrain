@@ -119964,6 +119964,38 @@ test('Chrome click_ax timeout after mouse press unwinds without completing the c
   }
 });
 
+test('agent activity effect is a General setting, portable, and read live by the page indicator', () => {
+  for (const [label, prefix, configTransfer, runtimeApi] of [
+    ['chrome', 'src/chrome', ConfigTransferCh, 'chrome'],
+    ['firefox', 'src/firefox', ConfigTransferFx, 'browser'],
+  ]) {
+    const settingsHtml = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.html'), 'utf8');
+    const settingsJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/settings.js'), 'utf8');
+    const indicator = fs.readFileSync(path.join(ROOT, prefix, 'src/content/agent-visual-indicator.js'), 'utf8');
+
+    const select = settingsPanelHtml(settingsHtml, 'display').match(/<select id="select-agent-indicator-style"[\s\S]*?<\/select>/)?.[0];
+    assert.ok(select, `${label}: the effect choice belongs to Settings → General`);
+    assert.deepEqual([...select.matchAll(/<option value="([a-z]+)"/g)].map(match => match[1]),
+      ['circuit', 'aurora', 'scan', 'gears', 'classic'], `${label}: effect options changed`);
+    assert.match(settingsJs, new RegExp(`${runtimeApi}\\.storage\\.local\\.set\\(\\{ agentIndicatorStyle: style \\}\\)`), `${label}: the select must save agentIndicatorStyle`);
+    assert.match(indicator, /const STYLE_STORAGE_KEY = 'agentIndicatorStyle';/, `${label}: the indicator reads another key`);
+    assert.match(indicator, /const DEFAULT_STYLE = 'circuit';/, `${label}: Neural circuit should be the default effect`);
+    assert.match(indicator, new RegExp(`${runtimeApi}\\.storage\\?\\.onChanged`), `${label}: a new choice should apply to a running task`);
+    // The cursor animates through CSS transitions and Web Animations: the page
+    // monitor observes style attributes, so nothing may write them per frame.
+    const cursorClass = indicator.slice(indicator.indexOf('class AgentCursor'), indicator.indexOf('function createStopButton'));
+    assert.ok(cursorClass.length > 0, `${label}: AgentCursor missing`);
+    assert.doesNotMatch(cursorClass, /requestAnimationFrame/, `${label}: the cursor must not run a per-frame style loop`);
+
+    assert.equal(configTransfer.DEFAULT_CONFIG_SETTINGS.agentIndicatorStyle, 'circuit', `${label}: portable default changed`);
+    assert.ok(configTransfer.CONFIG_STORAGE_KEYS.includes('agentIndicatorStyle'), `${label}: config export/import omitted the effect`);
+    const exported = JSON.stringify(configTransfer.createConfigExport({ agentIndicatorStyle: 'gears' }));
+    assert.equal(configTransfer.parseConfigImport(exported).settings.agentIndicatorStyle, 'gears', `${label}: a chosen effect should survive export and import`);
+    const unknown = JSON.stringify({ ...JSON.parse(exported), settings: { ...JSON.parse(exported).settings, agentIndicatorStyle: 'sparkles' } });
+    assert.throws(() => configTransfer.parseConfigImport(unknown), /agentIndicatorStyle/, `${label}: an unknown effect should be rejected on import`);
+  }
+});
+
 test('page Stop WebBrain clears stale indicators without stopping recordings', () => {
   for (const [label, prefix, runtimeApi] of [
     ['chrome', 'src/chrome', 'chrome'],

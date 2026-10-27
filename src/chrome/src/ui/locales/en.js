@@ -1377,4 +1377,11 @@ export default {
   'st.providers.webgpu_download.resume': 'Resume',
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected text model before using WebGPU in standalone chat.',
+  "st.display.agent_indicator.label": "Agent activity effect",
+  "st.display.agent_indicator.desc": "How the page edges look while WebBrain works on a tab. Every style lets your clicks through and stays out of screenshots.",
+  "st.display.agent_indicator.circuit": "Neural circuit",
+  "st.display.agent_indicator.aurora": "Aurora",
+  "st.display.agent_indicator.scan": "Scan",
+  "st.display.agent_indicator.gears": "Gears",
+  "st.display.agent_indicator.classic": "Classic glow",
 };

@@ -1280,4 +1280,11 @@ export default {
   'sp.activity.retrying_response': "Antwoord opnieuw proberen…",
   'sp.response.incomplete_retrying': "Onvolledig antwoord · opnieuw proberen…",
   'sp.response.incomplete': "Onvolledig antwoord",
+  "st.display.agent_indicator.label": "Effect bij agentactiviteit",
+  "st.display.agent_indicator.desc": "Hoe de paginaranden eruitzien terwijl WebBrain in een tabblad werkt. Elke stijl laat je klikken door en blijft buiten schermafbeeldingen.",
+  "st.display.agent_indicator.circuit": "Neuraal circuit",
+  "st.display.agent_indicator.aurora": "Poollicht",
+  "st.display.agent_indicator.scan": "Scan",
+  "st.display.agent_indicator.gears": "Tandwielen",
+  "st.display.agent_indicator.classic": "Klassieke gloed",
 };

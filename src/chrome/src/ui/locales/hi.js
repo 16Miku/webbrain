@@ -1371,4 +1371,11 @@ export default {
   'sp.activity.retrying_response': "उत्तर के लिए फिर प्रयास हो रहा है…",
   'sp.response.incomplete_retrying': "अधूरा उत्तर · फिर प्रयास हो रहा है…",
   'sp.response.incomplete': "अधूरा उत्तर",
+  "st.display.agent_indicator.label": "एजेंट गतिविधि प्रभाव",
+  "st.display.agent_indicator.desc": "WebBrain जब किसी टैब पर काम करता है तब पेज के किनारे कैसे दिखें। हर शैली आपके क्लिक पेज तक जाने देती है और स्क्रीनशॉट में नहीं आती।",
+  "st.display.agent_indicator.circuit": "न्यूरल सर्किट",
+  "st.display.agent_indicator.aurora": "ऑरोरा",
+  "st.display.agent_indicator.scan": "स्कैन",
+  "st.display.agent_indicator.gears": "गियर",
+  "st.display.agent_indicator.classic": "क्लासिक चमक",
 };

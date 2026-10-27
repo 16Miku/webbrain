@@ -2255,6 +2255,59 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     } finally { await browser.close(); }
   });
 
+  test(`${build}: agent cursor, target ring and every activity effect stay out of page feedback`, async () => {
+    const { browser, page } = await fixture(engine, build);
+    try {
+      // The settings select writes `agentIndicatorStyle`; the indicator applies it live.
+      await page.evaluate(() => {
+        window.storageListeners = [];
+        chrome.storage = {
+          local: { get: async defaults => ({ ...defaults, agentIndicatorStyle: 'scan' }) },
+          onChanged: { addListener: fn => storageListeners.push(fn) },
+        };
+      });
+      await page.addScriptTag({ content: read(build, 'content/agent-visual-indicator.js') });
+      await page.evaluate(() => {
+        feedback = [];
+        messageListeners.forEach(listener => listener({ type: 'WB_SHOW_AGENT_INDICATORS' }, {}, () => {}));
+      });
+      await page.waitForTimeout(300);
+      // Glide, press and ripple, then the resting breath (opacity only, via Web Animations).
+      await page.evaluate(() => window.__webbrainAgentIndicator.showTarget(document.getElementById('agent'), 'click_ax'));
+      await page.waitForTimeout(500);
+      await page.evaluate(() => window.__webbrainAgentIndicator.showTarget(document.getElementById('field'), 'type_text'));
+      await page.waitForTimeout(2200);
+      const resting = await page.evaluate(() => {
+        const cursor = document.getElementById('webbrain-agent-target-cursor');
+        const effect = document.getElementById('webbrain-agent-effect');
+        return {
+          cursorPointerEvents: getComputedStyle(cursor).pointerEvents,
+          cursorShown: getComputedStyle(cursor).opacity === '1',
+          breathing: cursor.firstElementChild.getAnimations().some(animation => animation.effect.getComputedTiming().iterations === Infinity),
+          effectPointerEvents: getComputedStyle(effect).pointerEvents,
+          effectDisplay: getComputedStyle(effect).display,
+        };
+      });
+      assert.deepEqual(resting, {
+        cursorPointerEvents: 'none', cursorShown: true, breathing: true, effectPointerEvents: 'none', effectDisplay: 'block',
+      });
+      for (const style of ['aurora', 'gears', 'classic', 'circuit']) {
+        await page.evaluate(style => storageListeners.forEach(fn => fn({ agentIndicatorStyle: { newValue: style } }, 'local')), style);
+        await page.evaluate(() => window.__webbrainAgentIndicator.showTarget(document.getElementById('select'), 'click_coordinates'));
+        await page.waitForTimeout(650);
+      }
+      assert.equal(await page.evaluate(() => document.querySelectorAll('#webbrain-agent-effect').length), 1, 'the previous effect is removed after a switch');
+      assert.equal((await page.evaluate(() => feedback)).length, 0, JSON.stringify(await page.evaluate(() => feedback)));
+      // Screenshot capture hides every part, and nothing intercepts real input.
+      await page.evaluate(() => messageListeners.forEach(listener => listener({ type: 'WB_HIDE_FOR_TOOL_USE' }, {}, () => {})));
+      assert.deepEqual(await page.evaluate(() => ['webbrain-agent-effect', 'webbrain-agent-target-cursor', 'webbrain-agent-stop-container']
+        .map(id => getComputedStyle(document.getElementById(id)).display)), ['none', 'none', 'none']);
+      await page.evaluate(() => messageListeners.forEach(listener => listener({ type: 'WB_SHOW_AFTER_TOOL_USE' }, {}, () => {})));
+      await page.locator('#human').click();
+      assert.ok((await page.evaluate(() => feedback)).some(event => event.kind === 'click' && event.source === 'user'));
+    } finally { await browser.close(); }
+  });
+
   test(`${build}: companion native markers renew per key without hiding a later human edit`, async () => {
     const { browser, page } = await fixture(engine, build);
     try {

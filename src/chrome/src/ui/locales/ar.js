@@ -1372,4 +1372,11 @@ export default {
   'sp.activity.retrying_response': "جارٍ إعادة محاولة الإجابة…",
   'sp.response.incomplete_retrying': "إجابة غير مكتملة · جارٍ إعادة المحاولة…",
   'sp.response.incomplete': "إجابة غير مكتملة",
+  "st.display.agent_indicator.label": "تأثير نشاط الوكيل",
+  "st.display.agent_indicator.desc": "مظهر حواف الصفحة أثناء عمل WebBrain في علامة تبويب. كل الأنماط تمرّر نقراتك إلى الصفحة ولا تظهر في لقطات الشاشة.",
+  "st.display.agent_indicator.circuit": "دائرة عصبية",
+  "st.display.agent_indicator.aurora": "شفق قطبي",
+  "st.display.agent_indicator.scan": "مسح",
+  "st.display.agent_indicator.gears": "تروس",
+  "st.display.agent_indicator.classic": "توهج كلاسيكي",
 };

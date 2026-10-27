@@ -1306,4 +1306,11 @@ export default {
   'sp.activity.retrying_response': "답변 다시 시도 중…",
   'sp.response.incomplete_retrying': "미완성 답변 · 다시 시도 중…",
   'sp.response.incomplete': "미완성 답변",
+  "st.display.agent_indicator.label": "에이전트 작업 효과",
+  "st.display.agent_indicator.desc": "WebBrain이 탭에서 작업하는 동안 페이지 가장자리의 모습입니다. 모든 스타일은 클릭을 페이지로 통과시키며 스크린샷에 나타나지 않습니다.",
+  "st.display.agent_indicator.circuit": "신경 회로",
+  "st.display.agent_indicator.aurora": "오로라",
+  "st.display.agent_indicator.scan": "스캔",
+  "st.display.agent_indicator.gears": "톱니바퀴",
+  "st.display.agent_indicator.classic": "클래식 글로우",
 };

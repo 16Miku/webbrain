@@ -1306,4 +1306,11 @@ export default {
   'sp.activity.retrying_response': "回答を再試行中…",
   'sp.response.incomplete_retrying': "未完の回答 · 再試行中…",
   'sp.response.incomplete': "未完の回答",
+  "st.display.agent_indicator.label": "エージェント動作エフェクト",
+  "st.display.agent_indicator.desc": "WebBrain がタブで作業している間のページ端の表示です。どのスタイルでもクリックはページに届き、スクリーンショットには写りません。",
+  "st.display.agent_indicator.circuit": "ニューラル回路",
+  "st.display.agent_indicator.aurora": "オーロラ",
+  "st.display.agent_indicator.scan": "スキャン",
+  "st.display.agent_indicator.gears": "歯車",
+  "st.display.agent_indicator.classic": "クラシックな光",
 };
