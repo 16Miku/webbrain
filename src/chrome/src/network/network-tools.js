@@ -2550,49 +2550,85 @@ function retainGenericDownloadStage(downloadId, releaseToken, signal) {
   findDownloadItem(downloadId).then(item => { if (['complete', 'interrupted'].includes(item?.state)) void finish(); }).catch(() => {});
 }
 
+// download_resource_from_page reads the element's resource in the page. A
+// blob is read into memory for chrome.downloads (which cannot follow blob:
+// URLs), so it is bounded and cancelled past maxBytes. A streaming playlist
+// (HLS .m3u8, DASH .mpd) is not the media it plays: saving it would save
+// only its text, so it is refused. Runs in the page: self-contained.
+export async function readPageResourceForDownload(selector, maxBytes) {
+  const playlistError = 'This element plays a streaming playlist (HLS .m3u8 or DASH .mpd), not a media file: saving it would save only the playlist text. Tell the user this stream cannot be saved as one file, or use a media-download skill for the site if one is enabled.';
+  const playlistType = /^(?:application\/(?:vnd\.apple\.mpegurl|x-mpegurl|dash\+xml)|audio\/(?:x-)?mpegurl)\b/i;
+  const el = document.querySelector(selector);
+  if (!el) return { ok: false, error: 'element not found' };
+  // Try every common URL-bearing attribute.
+  const url = el.src || el.href || el.currentSrc ||
+            el.getAttribute('data-src') || el.getAttribute('data-url') || '';
+  if (!url) return { ok: false, error: 'element has no src/href/currentSrc/data-src' };
+  if (/\.(?:m3u8|mpd)(?:[?#]|$)/i.test(url)) return { ok: false, streamingPlaylist: true, error: playlistError };
+  if (url.startsWith('blob:')) {
+    try {
+      const res = await fetch(url);
+      const type = res.headers.get('content-type') || '';
+      if (playlistType.test(type)) return { ok: false, streamingPlaylist: true, error: playlistError };
+      const tooLarge = { ok: false, tooLarge: true, error: `The blob is larger than ${Math.round(maxBytes / 1048576)} MB, more than WebBrain reads into memory; nothing was saved.` };
+      const declared = Number(res.headers.get('content-length'));
+      if (Number.isFinite(declared) && declared > maxBytes) return tooLarge;
+      const chunks = [];
+      let total = 0;
+      if (res.body && typeof res.body.getReader === 'function') {
+        const reader = res.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > maxBytes) {
+            try { await reader.cancel(); } catch (e) {}
+            return tooLarge;
+          }
+          chunks.push(value);
+        }
+      } else {
+        const whole = await res.blob();
+        if (whole.size > maxBytes) return tooLarge;
+        chunks.push(whole);
+      }
+      const blob = new Blob(chunks, { type });
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(fr.error);
+        fr.readAsDataURL(blob);
+      });
+      return { ok: true, url: dataUrl, isBlob: true, mime: blob.type, size: blob.size };
+    } catch (e) {
+      return { ok: false, error: 'failed to read blob URL: ' + e.message };
+    }
+  }
+  // Flag cross-origin resources: the permission gate charged this
+  // download to the PAGE host, but a cross-origin resource is fetched
+  // from a different host — route those through download_files, which
+  // gates on the resource's own host.
+  let crossOrigin = false;
+  try { crossOrigin = new URL(url, location.href).origin !== location.origin; } catch (e) {}
+  return { ok: true, url, isBlob: false, crossOrigin };
+}
+
+const PAGE_BLOB_MAX_BYTES = 25 * 1024 * 1024;
+
 export async function downloadResourceFromPage(tabId, args = {}, ctx = {}) {
   const { selector, filename } = args;
   if (!selector) return { success: false, error: 'selector is required' };
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: async (sel) => {
-        const el = document.querySelector(sel);
-        if (!el) return { ok: false, error: 'element not found' };
-        // Try every common URL-bearing attribute.
-        let url = el.src || el.href || el.currentSrc ||
-                  el.getAttribute('data-src') || el.getAttribute('data-url') || '';
-        if (!url) return { ok: false, error: 'element has no src/href/currentSrc/data-src' };
-
-        // Blob URLs need to be read into a data URL because chrome.downloads
-        // can't follow blob:// from background context.
-        if (url.startsWith('blob:')) {
-          try {
-            const res = await fetch(url);
-            const blob = await res.blob();
-            const dataUrl = await new Promise((resolve, reject) => {
-              const fr = new FileReader();
-              fr.onload = () => resolve(fr.result);
-              fr.onerror = () => reject(fr.error);
-              fr.readAsDataURL(blob);
-            });
-            return { ok: true, url: dataUrl, isBlob: true, mime: blob.type, size: blob.size };
-          } catch (e) {
-            return { ok: false, error: 'failed to read blob URL: ' + e.message };
-          }
-        }
-        // Flag cross-origin resources: the permission gate charged this
-        // download to the PAGE host, but a cross-origin resource is fetched
-        // from a different host — route those through download_files, which
-        // gates on the resource's own host.
-        let crossOrigin = false;
-        try { crossOrigin = new URL(url, location.href).origin !== location.origin; } catch (e) {}
-        return { ok: true, url, isBlob: false, crossOrigin };
-      },
-      args: [selector],
+      func: readPageResourceForDownload,
+      args: [selector, PAGE_BLOB_MAX_BYTES],
     });
     const r = results?.[0]?.result;
-    if (!r?.ok) return { success: false, error: r?.error || 'extraction failed' };
+    if (!r?.ok) {
+      return { success: false, error: r?.error || 'extraction failed',
+        ...(r?.streamingPlaylist ? { streamingPlaylist: true } : {}), ...(r?.tooLarge ? { tooLarge: true } : {}) };
+    }
     if (!r.isBlob && r.crossOrigin) {
       return {
         success: false,
