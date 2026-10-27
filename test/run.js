@@ -66766,6 +66766,13 @@ test('MCP bridge settings are Chromium-only, live under Bridge, and keep setup g
   assert.match(bridgePanel, />MCP</, 'Bridge pill labels should use plain destination names');
   assert.match(bridgePanel, /data-i18n-title="st\.cb\.preset_mcp_hint"/, 'Bridge pills should explain their destination on hover');
   assert.match(bridgePanel, /id="cb-approval-details"/, 'Bridge approval fields should hide behind progressive disclosure');
+  assert.match(bridgePanel, /type="password" id="cb-pairing-key"/, 'Bridge tab should expose a masked pairing key for the MCP / LM Studio bridges');
+  assert.ok(bridgePanel.indexOf('id="cb-pairing-key"') < bridgePanel.indexOf('id="cb-approval-details"'), 'the required pairing key should not hide behind the optional approval disclosure');
+  assert.match(firefoxHtml, /type="password" id="cb-pairing-key"/, 'Firefox Bridge tab should expose the pairing key');
+  for (const source of [chromeBridgeSettings, firefoxBridgeSettings]) {
+    assert.match(source, /pairingKey: 'webbrainCloudBridgePairingKey'/, 'Bridge tab should own the pairing key storage key');
+    assert.match(source, /\[KEYS\.pairingKey\]: pairingKeyInput\.value\.trim\(\)/, 'saving Settings should store the pasted pairing key');
+  }
   assert.match(bridgePanel, /id="toggle-webmcp"/, 'Bridge tab should expose the WebMCP toggle');
   assert.match(bridgePanel, /id="toggle-webmcp"\s+checked/, 'WebMCP must default on in Bridge tab');
   assert.match(bridgePanel, /id="cb-status"[^>]*role="status"[^>]*aria-live="polite"/, 'bridge status should be announced accessibly');

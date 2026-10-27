@@ -201,6 +201,10 @@ The Cloud Bridge lets a controller send `cloud_*` run commands to the browser. B
 
 **Where it stops.** The permission prompts raised during a cloud run (navigate, click, …) are answered by the backend through `cloud_respond`, including "always". An approved backend is therefore effectively an operator of that browser. Approval is per socket and is not persisted. The backend can revoke it with `connection_rejected`, which closes the socket and stops auto-reconnect. Disabling the bridge or changing its URL or identity also closes the active socket; a replacement needs fresh approval if a token remains configured. Details: [cloud-bridge-browser-approval.md](cloud-bridge-browser-approval.md).
 
+### Local Bridge Pairing
+
+The MCP server and the LM Studio plugin listen on loopback, where any local process can connect and send the extension's `hello`. They therefore pair with the extension through a shared key: each new socket gets a random nonce and is trusted only after returning an HMAC-SHA256 of it keyed with the pairing key. The key is generated on the user's machine (`~/.webbrain/bridge-key`, owner-only), pasted once under **Settings → Bridge → Pairing key**, stored in `chrome.storage.local`, never sent over the socket, and never included in the bridge `status`. An unpaired socket receives no commands and cannot replace the paired extension; a wrong proof closes it with code `4001`, after which the extension stops reconnecting until the settings change. This protects the bridges from impostor clients; it does not authenticate the bridge to the extension.
+
 ---
 
 ## Prompt Injection Defenses

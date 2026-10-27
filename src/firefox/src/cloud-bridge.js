@@ -21,6 +21,20 @@ const ALLOWED_BRIDGE_ACTIONS = new Set([
   'cloud_pause',
   'cloud_resume',
 ]);
+// Local bridges (the MCP server and the LM Studio plugin) challenge each new
+// socket with a nonce and only trust it after it returns this HMAC, keyed by
+// the pairing key the user pasted in Settings. The key never crosses the
+// socket. Keep in sync with mcp-server/src/pairing.ts.
+const PAIRING_SCHEME = 'hmac-sha256-v1';
+const PAIRING_PROOF_LABEL = 'webbrain-bridge-pairing-v1:';
+const PAIRING_CLOSE_CODE = 4001;
+
+async function pairingProof(key, nonce) {
+  const encoder = new TextEncoder();
+  const hmacKey = await crypto.subtle.importKey('raw', encoder.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const mac = await crypto.subtle.sign('HMAC', hmacKey, encoder.encode(PAIRING_PROOF_LABEL + nonce));
+  return Array.from(new Uint8Array(mac), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 
 export function createCloudBridge({ dispatch, WebSocketImpl = globalThis.WebSocket, nav = globalThis.navigator } = {}) {
   let socket = null;
@@ -31,7 +45,7 @@ export function createCloudBridge({ dispatch, WebSocketImpl = globalThis.WebSock
   let lastError = '';
   // With a token configured the backend must approve each new socket before
   // any cloud_* command runs; without one the legacy local behaviour is kept.
-  let identity = { token: '', browserId: '', installationId: '', extensionVersion: '' };
+  let identity = { token: '', browserId: '', installationId: '', extensionVersion: '', pairingKey: '' };
   let approval = 'not_required'; // not_required | pending | approved | rejected
 
   function browserInfo() {
@@ -70,6 +84,16 @@ export function createCloudBridge({ dispatch, WebSocketImpl = globalThis.WebSock
     } catch (e) {
       lastError = e.message || String(e);
     }
+  }
+
+  // A pairing failure needs the user to fix Settings; reconnecting would only
+  // repeat it. Saving Settings or "Save & test" starts a fresh attempt.
+  function failPairing(target, reason) {
+    approval = 'rejected';
+    lastError = reason;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    try { target.close(); } catch {}
   }
 
   function scheduleReconnect() {
@@ -124,6 +148,24 @@ export function createCloudBridge({ dispatch, WebSocketImpl = globalThis.WebSock
           return;
         }
 
+        if (msg.type === 'auth_challenge') {
+          if (msg.scheme !== PAIRING_SCHEME || typeof msg.nonce !== 'string' || !msg.nonce || msg.nonce.length > 256) return;
+          if (!identity.pairingKey) {
+            failPairing(nextSocket, 'This bridge requires a pairing key. Paste it under Settings → Bridge → Pairing key.');
+            return;
+          }
+          let proof;
+          try {
+            proof = await pairingProof(identity.pairingKey, msg.nonce);
+          } catch (e) {
+            failPairing(nextSocket, `Could not compute the pairing proof: ${e.message || e}`);
+            return;
+          }
+          if (socket !== nextSocket) return;
+          sendJson({ type: 'auth', scheme: PAIRING_SCHEME, proof }, nextSocket);
+          return;
+        }
+
         if (msg.type === 'connection_pending' || msg.type === 'connection_approved' || msg.type === 'connection_rejected') {
           if (!identity.token) return;
           if (msg.browserId && msg.browserId !== identity.browserId) return;
@@ -173,9 +215,13 @@ export function createCloudBridge({ dispatch, WebSocketImpl = globalThis.WebSock
           sendJson({ id, ok: false, error: e.message || String(e) }, nextSocket);
         }
       });
-      nextSocket.addEventListener('close', () => {
+      nextSocket.addEventListener('close', (event) => {
         if (socket !== nextSocket) return;
         socket = null;
+        if (event?.code === PAIRING_CLOSE_CODE) {
+          failPairing(nextSocket, String(event.reason || 'Pairing rejected by the bridge'));
+          return;
+        }
         // A rejected browser stays rejected until the settings change.
         if (approval === 'rejected') return;
         approval = identity.token ? 'pending' : 'not_required';
@@ -205,6 +251,7 @@ export function createCloudBridge({ dispatch, WebSocketImpl = globalThis.WebSock
       browserId: String(msg.browserId || ''),
       installationId: String(msg.installationId || ''),
       extensionVersion: String(msg.extensionVersion || ''),
+      pairingKey: String(msg.pairingKey || '').trim(),
     };
     const identityChanged = JSON.stringify(nextIdentity) !== JSON.stringify(identity);
     const changed = (bridgeUrl && bridgeUrl !== nextUrl) || identityChanged;

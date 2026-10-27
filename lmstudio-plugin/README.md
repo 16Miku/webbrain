@@ -112,14 +112,26 @@ Firefox, `browser_task` will always return the not-connected response.
 `fetch_url` and `research_url` are unaffected and work everywhere.
 
 1. Install the extension and open your browser.
-2. In **WebBrain → Settings → Bridge**, set the URL to
-   `ws://127.0.0.1:17375/extension` and enable it.
-3. Ask the model to call `browser_status` to confirm.
+2. Enable the plugin once so it creates its pairing key, then copy the key
+   from `~/.webbrain/bridge-key` (`%USERPROFILE%\.webbrain\bridge-key` on
+   Windows). The file is readable only by you. If you also use the MCP server,
+   it is the same key (`npx -y @webbrain/mcp-server pairing-key` prints it).
+3. In **WebBrain → Settings → Bridge**, set the URL to
+   `ws://127.0.0.1:17375/extension`, paste the key into **Pairing key**, and
+   enable it.
+4. Ask the model to call `browser_status` to confirm.
 
 > **One bridge at a time.** The extension holds exactly one outbound bridge
 > socket. Pointing it here means it is *not* pointed at WebBrain Cloud
 > (`17373`) or the MCP server (`17374`). Override the port with
-> `WEBBRAIN_BRIDGE_PORT`.
+> `WEBBRAIN_BRIDGE_PORT`, and the key with `WEBBRAIN_BRIDGE_KEY` or
+> `WEBBRAIN_BRIDGE_KEY_FILE`.
+
+**Upgrading from an unpaired version.** Earlier plugin versions accepted any
+socket that sent the right `hello`. Update the WebBrain extension first (a
+version without the **Pairing key** field cannot pair and is disconnected after
+10 seconds), then paste the key as in step 3. "Rejected by the backend: Pairing
+key mismatch" under Settings means the pasted key is not the plugin's.
 
 Try it:
 
@@ -172,11 +184,13 @@ Node project.
         ├── htmlToText.ts   ← regex HTML stripper
         ├── safeFetch.ts    ← redirect-revalidating wrapper + streaming cap
         ├── urlGuard.ts     ← private-IP / file:// blocker
-        └── bridgeClient.ts ← WebSocket listener the extension dials into
+        ├── bridgeClient.ts ← WebSocket listener the extension dials into
+        └── pairing.ts      ← pairing key file and challenge proof
 ```
 
-`bridgeClient.ts` is a deliberate standalone copy of the same protocol in
-[`mcp-server/src/bridge.ts`](../mcp-server/src/bridge.ts). The two ship to
+`bridgeClient.ts` and `pairing.ts` are deliberate standalone copies of the same
+protocol in [`mcp-server/src/bridge.ts`](../mcp-server/src/bridge.ts) and
+[`mcp-server/src/pairing.ts`](../mcp-server/src/pairing.ts). The two ship to
 different registries — LM Studio Hub and npm — and sharing a package would
 drag the monorepo into both installs. **Change the protocol in one, change
 it in the other.**
@@ -198,10 +212,13 @@ Everything below concerns `fetch_url` / `research_url`. For `browser_task`:
 - The bridge listener binds `127.0.0.1` only. Anything that can reach that
   port can drive your signed-in browser — never expose it to a network or a
   container bridge.
-- Connections must send the extension's `hello` frame with
-  `client: "webbrain-extension"`; anything else is closed. This is **not**
-  authentication — the shipping extension sends no shared secret, so a local
-  process could impersonate it. Treat the port as trusted-local.
+- Connections must send the extension's `hello` frame and answer a pairing
+  challenge: the plugin sends a random nonce and the extension returns an
+  HMAC-SHA256 of it keyed with the pairing key, so the key never crosses the
+  socket. Until a socket has done both it receives no commands and cannot
+  replace the connected extension; a wrong answer closes it with code `4001`.
+  The protocol is the MCP server's; see
+  [its Pairing section](../mcp-server/README.md#pairing).
 - `browser_task` delegates a *goal*, never individual clicks. WebBrain's
   capability × origin permission gate runs inside its own agent loop, so
   every approval prompt a human would see still fires. That is why this

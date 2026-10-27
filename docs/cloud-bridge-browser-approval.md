@@ -113,6 +113,18 @@ contract, credential handling, and image-upgrade checks.
 
 Approval belongs to one WebSocket. Every new socket (reconnect, URL/identity change) starts `pending`, resends `hello`, and must be approved again.
 
+## Local bridge pairing (MCP server, LM Studio plugin)
+
+Pairing is separate from approval and does not need a token. The MCP server
+(`17374`) and the LM Studio plugin (`17375`) authenticate the extension's socket
+before trusting its `hello`:
+
+1. On connect the bridge sends `{ "type": "auth_challenge", "scheme": "hmac-sha256-v1", "nonce": "…" }`.
+2. The extension answers `{ "type": "auth", "scheme": "hmac-sha256-v1", "proof": "…" }`, where `proof` is the hex HMAC-SHA256 of `"webbrain-bridge-pairing-v1:" + nonce`, keyed with the pairing key from `webbrainCloudBridgePairingKey` (**Settings → Bridge → Pairing key**). The key itself is never sent.
+3. Without a key the extension closes the socket. A bridge that refuses the proof closes with code `4001`. Either way `status().approval` becomes `rejected` with the reason in `lastError`, and auto-reconnect stops until the settings change.
+
+Backends that never send `auth_challenge` (WebBrain Cloud, the example server below) are unaffected. The bridges read the key from `~/.webbrain/bridge-key`, `WEBBRAIN_BRIDGE_KEY_FILE` or `WEBBRAIN_BRIDGE_KEY`; see the [MCP server README](../mcp-server/README.md#pairing).
+
 ## Local test server
 
 `examples/cloud-bridge-approval-server.mjs` is a dependency-free backend for testing:

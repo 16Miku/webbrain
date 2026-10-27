@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import WebSocket from 'ws';
+import { createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -11,12 +12,28 @@ const allocator = createServer();
 allocator.listen(0, '127.0.0.1');
 await once(allocator, 'listening');
 process.env.WEBBRAIN_BRIDGE_PORT = String(allocator.address().port);
+const PAIRING_KEY = 'task-memory-test-pairing-key-0123';
+process.env.WEBBRAIN_BRIDGE_KEY = PAIRING_KEY;
 allocator.close();
 await once(allocator, 'close');
 const { WebBrainBridge } = await import('../dist/bridge.js');
 const { startRun, getStatus, describeSnapshot } = await import('../dist/runs.js');
 const { bridgeUrl } = await import('../dist/config.js');
 const { validateTaskMemory, redactTaskMemory, redactMemoryRunResponse, taskMemoryPrivateValues } = await import('../dist/task-memory.js');
+
+// Stand-in extension socket: sends hello and answers the pairing challenge.
+// The tests' own message handlers also see the challenge and skip frames without an action.
+function pairedExtension(url, capabilities) {
+  const socket = new WebSocket(url);
+  socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities })));
+  socket.on('message', raw => {
+    const msg = JSON.parse(raw.toString());
+    if (msg.type !== 'auth_challenge') return;
+    const proof = createHmac('sha256', PAIRING_KEY).update('webbrain-bridge-pairing-v1:' + msg.nonce).digest('hex');
+    socket.send(JSON.stringify({ type: 'auth', scheme: msg.scheme, proof }));
+  });
+  return socket;
+}
 
 const memory = {
   version: 1, botId: 'bot-owned', runId: 'app-run-1', policyVersion: 1,
@@ -79,9 +96,8 @@ test('direct bridge rejects invalid, misplaced, or unsupported memory without se
   const bridge = new WebBrainBridge();
   await bridge.start();
   const seen = [];
-  const extension = new WebSocket(bridgeUrl());
-  extension.on('open', () => extension.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities: [] })));
-  extension.on('message', raw => { seen.push(JSON.parse(raw.toString())); });
+  const extension = pairedExtension(bridgeUrl(), []);
+  extension.on('message', raw => { const msg = JSON.parse(raw.toString()); if (msg.action) seen.push(msg); });
   try {
     assert.equal(await bridge.waitForExtension(3000), true);
     await assert.rejects(bridge.request('cloud_run', { task: 'Read', taskMemory: memory }), error => error.status === 409);
@@ -97,13 +113,12 @@ test('memory values survive failure and reconnect, with capability downgrade sti
   await bridge.start();
   const privateMemory = { ...memory, context: { notes: 'private-reconnect-note' } };
   const connect = capabilities => {
-    const socket = new WebSocket(bridgeUrl());
-    socket.on('open', () => socket.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities })));
-    return socket;
+    return pairedExtension(bridgeUrl(), capabilities);
   };
   const first = connect(['bot_memory_v1']);
   first.on('message', raw => {
     const msg = JSON.parse(raw.toString());
+    if (!msg.action) return;
     first.send(JSON.stringify({ id: msg.id, ok: true, result: { runId: 'reconnect-protected', status: 'running' } }));
   });
   let second;
@@ -114,7 +129,7 @@ test('memory values survive failure and reconnect, with capability downgrade sti
     second = connect([]);
     const received = [];
     second.on('message', raw => {
-      const msg = JSON.parse(raw.toString()); received.push(msg);
+      const msg = JSON.parse(raw.toString()); if (!msg.action) return; received.push(msg);
       const ordinary = msg.payload.runId === 'reconnect-ordinary';
       second.send(JSON.stringify(msg.action === 'cloud_respond'
         ? { id: msg.id, ok: false, status: 500, error: 'failed private-reconnect-note ' + memory.callbackToken }
@@ -149,10 +164,10 @@ test('MCP transports memory outside prompts and redacts credentials from status 
   await bridge.start();
   const seen = [];
   let rejectNext = false;
-  const extension = new WebSocket(bridgeUrl());
-  extension.on('open', () => extension.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities: ['bot_memory_v1'] })));
+  const extension = pairedExtension(bridgeUrl(), ['bot_memory_v1']);
   extension.on('message', raw => {
     const message = JSON.parse(raw.toString());
+    if (!message.action) return;
     seen.push(message);
     const ordinary = message.action === 'cloud_run' && !message.payload.taskMemory;
     extension.send(JSON.stringify(rejectNext
@@ -199,10 +214,9 @@ test('real MCP stdio run forwards the optional envelope privately and preserves 
     assert.equal(unsupported.isError, true);
     assert.match(JSON.stringify(unsupported), /Update the browser extension/);
     assert.equal(JSON.stringify(unsupported).includes(memory.callbackToken), false);
-    extension = new WebSocket(`ws://127.0.0.1:${port}/extension`);
-    extension.on('open', () => extension.send(JSON.stringify({ type: 'hello', client: 'webbrain-extension', protocolVersion: 2, capabilities: ['bot_memory_v1'] })));
+    extension = pairedExtension(`ws://127.0.0.1:${port}/extension`, ['bot_memory_v1']);
     extension.on('message', raw => {
-      const msg = JSON.parse(raw.toString()); seen.push(msg);
+      const msg = JSON.parse(raw.toString()); if (!msg.action) return; seen.push(msg);
       const protectedRun = !!msg.payload.taskMemory;
       extension.send(JSON.stringify({ id: msg.id, ok: true, result: {
         runId: msg.payload.runId, status: 'completed',
