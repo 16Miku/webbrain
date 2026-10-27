@@ -21,7 +21,7 @@ import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationCon
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, getVisionActPrompt } from './tools.js';
 import { installVisionRuntime } from './vision-runtime.js';
-import { VISION_NATIVE_TOOLS, VISION_SITE_NOTES_PREFACE, visionCaptchaSolverNote, visionFilePickerBlockedResult, visionUniversalPreamble } from './vision-tools.js';
+import { VISION_CAPTCHA_MANUAL_NOTE, VISION_CAPTCHA_UNAPPLIED_NOTE, VISION_NATIVE_TOOLS, VISION_SITE_NOTES_PREFACE, visionCaptchaSolverNote, visionFilePickerBlockedResult, visionUniversalPreamble } from './vision-tools.js';
 import { visionDomProbeExpression } from './vision-dom-probe.js';
 import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
@@ -12793,6 +12793,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _captchaRoutingMessage(tabId, captchaGateDecision, captchaSolveOutcome, toolResult = {}, onUpdate = () => {}) {
+    // A vision run cannot apply a native answer: its notes end at the user.
+    const visionRun = this._visionRunState?.(tabId)?.active === true;
     let resultContent = '';
     const gate = captchaGateDecision || captchaSolveOutcome;
     if (gate && gate.status !== 'cleared' && !this._captchaToolsAvailable(tabId)) {
@@ -12806,12 +12808,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : captchaGateDecision.nativeDispatchInterrupted === true
         ? '\n[TRUSTED CAPTCHA GATE: A native solve was already dispatched for this document, but its answer is unavailable after restart. Do not send another paid request or submit the page; ask the user to complete the challenge manually.]'
         : captchaGateDecision.cloudflareManagedChallenge === true
-        ? '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Inspect get_captcha_capabilities for a Cloudflare native method; use one solve_captcha providerTasks dispatch only with all required observed inputs, otherwise ask for manual completion. Do not submit; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]'
+        ? (visionRun ? VISION_CAPTCHA_MANUAL_NOTE : '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Inspect get_captcha_capabilities for a Cloudflare native method; use one solve_captcha providerTasks dispatch only with all required observed inputs, otherwise ask for manual completion. Do not submit; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]')
         : captchaGateDecision.awsWaf === true
         ? '\n[TRUSTED CAPTCHA GATE: AWS verification requires manual completion because no untried compatible provider or complete observed input set is available. Do not buy another answer for this unresolved challenge. After manual completion, read the page so the runtime can resume.]'
         : captchaGateDecision.activeChallengeAfterSolve === true
         ? '\n[TRUSTED CAPTCHA GATE: The active challenge frame is visible again after the one automatic solve. The site may have rejected the token. Do not call solve_captcha again; stop automation and ask the user to complete the challenge manually.]'
-        : '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable automatic widget was detected. Inspect get_captcha_capabilities and use one native providerTasks solve only if its required parameters can be observed. Otherwise ask for manual completion. Do not dismiss, close, or resubmit the challenge.]';
+        : (visionRun ? VISION_CAPTCHA_MANUAL_NOTE : '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable automatic widget was detected. Inspect get_captcha_capabilities and use one native providerTasks solve only if its required parameters can be observed. Otherwise ask for manual completion. Do not dismiss, close, or resubmit the challenge.]');
       onUpdate('warning', { message: 'Verification challenge requires manual completion.' });
     } else if (captchaGateDecision?.status === 'cleared') {
       if (captchaGateDecision.clearedByNavigation === true) {
@@ -12827,13 +12829,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     } else if ((captchaGateDecision || captchaSolveOutcome)?.status === 'verification_pending'
         && this._hasUnappliedNativeCaptchaSolution(tabId)) {
-      resultContent += '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. If the prior tool result is no longer in this chat, call get_captcha_capabilities to retrieve the pending paid answer without another solve. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
+      resultContent += visionRun ? VISION_CAPTCHA_UNAPPLIED_NOTE : '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. If the prior tool result is no longer in this chat, call get_captcha_capabilities to retrieve the pending paid answer without another solve. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
     } else if (toolResult?.type === 'aws_waf' && toolResult?.injected === true) {
       resultContent += '\n[TRUSTED CAPTCHA GATE: The AWS cookie was applied. Reload the observed page once with navigate, then read it to verify clearance. Do not call solve_captcha again for this unresolved challenge.]';
     } else if (captchaGateDecision?.status === 'verification_pending') {
       resultContent += '\n[TRUSTED CAPTCHA GATE: Verification is still pending because the exact widget has no response token or its frame state could not be inspected conclusively. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
     } else if (toolResult?.applicationRequired === true && captchaSolveOutcome?.status === 'verification_pending') {
-      resultContent += '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
+      resultContent += visionRun ? VISION_CAPTCHA_UNAPPLIED_NOTE : '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
     } else if (captchaSolveOutcome?.status === 'verification_pending') {
       resultContent += '\n[TRUSTED CAPTCHA GATE: The supported CAPTCHA token was injected, but clearance must be confirmed from the exact widget token and active challenge-frame state. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
     } else if (captchaSolveOutcome?.status === 'manual_required') {
@@ -12910,7 +12912,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           manualCompletionRequired: true,
           cloudflareManagedChallenge: true,
           captchaDiagnostics: gate.publicGate?.diagnostics || null,
-          error: 'A full-page Cloudflare managed challenge is active. Use get_captcha_capabilities to inspect a compatible Cloudflare native method. A single solve_captcha call with observed providerTasks is allowed before any solve attempt; otherwise ask for manual completion. Navigate only to abandon the challenged page. Read the page again after Cloudflare resumes the destination.',
+          error: this._visionRunState?.(tabId)?.active === true
+            ? 'A full-page Cloudflare managed challenge is active and cannot be solved automatically in this mode. Ask the user to complete it manually; do not dismiss it or submit the page.'
+            : 'A full-page Cloudflare managed challenge is active. Use get_captcha_capabilities to inspect a compatible Cloudflare native method. A single solve_captcha call with observed providerTasks is allowed before any solve attempt; otherwise ask for manual completion. Navigate only to abandon the challenged page. Read the page again after Cloudflare resumes the destination.',
         };
       }
       return {
@@ -45255,7 +45259,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               ...(result.solution?.userAgent ? { solverUserAgent: result.solution.userAgent } : {}),
               note: application.success
                 ? 'AWS cookie applied. Reload this page once with navigate, then read it to verify clearance. A provider answer is not site acceptance; do not buy another solve for the same unresolved challenge.'
-                : 'AWS answer received but could not be applied. Inspect the binding and use apply_captcha_solution; do not buy another answer.' };
+                : (this._visionRunState?.(tabId)?.active === true ? 'AWS answer received but could not be applied, and this mode has no tool to apply it. Ask the user to complete verification manually; do not buy another answer.' : 'AWS answer received but could not be applied. Inspect the binding and use apply_captcha_solution; do not buy another answer.') };
           }
           return { success: true, dispatched: true, type: result.family, provider: result.provider, method: result.method, taskId: result.taskId,
             solution: result.solution, ...((result.userAgent || result.solution?.userAgent) ? { solverUserAgent: result.userAgent || result.solution.userAgent } : {}),
@@ -45581,7 +45585,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(pendingAutomaticAnswer ? { applicationRequired: true } : {}),
           injection,
           note: pendingAutomaticAnswer
-            ? 'Token returned without injection. Inspect the page and call apply_captcha_solution with observed frame/field or callback bindings and path: token. The paid answer is saved; do not request another solve.'
+            ? (this._visionRunState?.(tabId)?.active === true ? 'Token returned without injection, and this mode has no tool to place it in the page. The paid answer is saved; do not request another solve. Ask the user to complete verification manually.' : 'Token returned without injection. Inspect the page and call apply_captcha_solution with observed frame/field or callback bindings and path: token. The paid answer is saved; do not request another solve.')
             : !wantInject ? 'Recognition answer returned without page injection.'
             : injection?.success
               ? (injection.calledCallback

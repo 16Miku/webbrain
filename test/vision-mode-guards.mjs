@@ -624,6 +624,30 @@ for (const build of ['chrome', 'firefox']) {
     assert.doesNotMatch(visionPrompt.slice(visionPrompt.indexOf('[CAPTCHA SOLVER')), /get_captcha_capabilities|apply_captcha_solution|accessibility-tree/);
     agent.visionMode = 'off';
     assert.match(agent._buildSystemPrompt('act', 1), /call get_captcha_capabilities/);
+    // No token-only answer either, and no field description that points at the removed route.
+    assert.equal('inject' in solve.function.parameters.properties, false);
+    assert.doesNotMatch(JSON.stringify(solve.function.parameters), /providerTasks|apply_captcha_solution|get_captcha_capabilities/);
+    // The runtime notes for an answer WebBrain could not place, or a challenge it cannot solve, end at the user.
+    const removed = /get_captcha_capabilities|apply_captcha_solution|providerTasks/;
+    for (const vision of [true, false]) {
+      agent._visionRunState = () => ({ active: vision });
+      agent._hasUnappliedNativeCaptchaSolution = () => true;
+      const unapplied = agent._captchaRoutingMessage(1, { status: 'verification_pending', publicGate: { status: 'verification_pending' } }, null, {});
+      const cloudflare = agent._captchaRoutingMessage(1, { status: 'manual_required', cloudflareManagedChallenge: true, publicGate: { status: 'manual_required' } }, null, {});
+      agent._hasUnappliedNativeCaptchaSolution = () => false;
+      agent._captchaGateStates.set(1, { status: 'manual_required', publicGate: { status: 'manual_required', cloudflareManagedChallenge: true } });
+      const refused = agent._captchaGateBlockResult(1, 'click', {});
+      agent._captchaGateStates.delete(1);
+      assert.match(refused?.error || '', /Cloudflare managed challenge is active/, 'the gate refuses the click');
+      if (vision) {
+        assert.match(unapplied, /could not be placed in the page in this mode/);
+        assert.match(cloudflare, /cannot be solved automatically in this mode/);
+        for (const text of [unapplied, cloudflare, refused?.error || '']) assert.doesNotMatch(text, removed, text);
+      } else {
+        assert.match(unapplied, /get_captcha_capabilities/);
+        assert.match(cloudflare, /get_captcha_capabilities/);
+      }
+    }
   });
 
   if (build === 'firefox') test('firefox: upload_file({downloadId}) uses the saved bytes when the companion can read them', async () => {

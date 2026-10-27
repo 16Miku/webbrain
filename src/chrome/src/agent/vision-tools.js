@@ -198,9 +198,15 @@ export function visionTypeTextTool(baseTool) {
 
 const VISION_SOLVE_CAPTCHA_DESCRIPTION = 'Solve the CAPTCHA blocking this page with the providers enabled in Settings → CAPTCHA, in descending weight order; one call may charge several providers on fallback. Call it once, normally with no arguments: WebBrain finds the widget in the page itself (reCAPTCHA v2/v3, hCaptcha with NopeCHA or NoneCap, Turnstile, AWS WAF, image CAPTCHAs) and checks that the challenge cleared before the next page-changing action; look at the next screen. If the result lists ambiguous candidates, call it again with the exact frameUrl, frameId or framePath it names. Never call it again for the same unresolved challenge: if it fails or the challenge stays, ask the user to complete it.';
 
-/** solve_captcha for a vision run: the automatic route, without native provider tasks. */
+/**
+ * solve_captcha for a vision run: the automatic route, without native
+ * provider tasks or a token-only answer (both need apply_captcha_solution).
+ */
 export function visionSolveCaptchaTool(baseTool) {
-  const { providerTasks, ...properties } = baseTool?.function?.parameters?.properties || {};
+  const { providerTasks, inject, ...properties } = baseTool?.function?.parameters?.properties || {};
+  if (properties.metadata) {
+    properties.metadata = { ...properties.metadata, description: 'Turnstile only. Values observed in the selected widget configuration; never invent them. action and cdata are detected from widget data attributes when present.' };
+  }
   return {
     ...baseTool,
     function: {
@@ -358,6 +364,12 @@ export function visionUniversalPreamble(preamble) {
  * come with this line, so the model keeps their facts about the site and
  * does not reach for tools it does not have.
  */
+// A vision run has no apply_captcha_solution or native methods: when WebBrain
+// cannot finish a CAPTCHA itself, the model asks the user (agent
+// _captchaRoutingMessage, _captchaGateBlockResult, solve_captcha).
+export const VISION_CAPTCHA_MANUAL_NOTE = '\n[TRUSTED CAPTCHA GATE: This verification challenge cannot be solved automatically in this mode. Do not dismiss it, submit the page or call solve_captcha again; ask the user to complete it manually, and report blocked work with done({outcome:"partial"}) if they cannot.]';
+export const VISION_CAPTCHA_UNAPPLIED_NOTE = '\n[TRUSTED CAPTCHA GATE: The paid answer could not be placed in the page in this mode. Do not call solve_captcha again or submit the page; ask the user to complete the verification manually, and report blocked work with done({outcome:"partial"}) if they cannot.]';
+
 /** The [CAPTCHA SOLVER] system-prompt note for a vision run (agent _buildSystemPrompt). */
 export function visionCaptchaSolverNote(coverage) {
   return `[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. Enabled coverage: ${coverage} When a CAPTCHA or verification dialog blocks a step, do not dismiss it: call solve_captcha once, normally with no arguments. WebBrain reads the page itself to find the widget, and checks that the dialog cleared before any page-changing action; look at the next screen. If the family is not covered, the solve fails, or the dialog remains, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha. These limits apply per challenge: a new CAPTCHA that appears later, such as after a submit or on a newly loaded page, is a separate challenge. Solve it once with solve_captcha before asking the user.]`;
