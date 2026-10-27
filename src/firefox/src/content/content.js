@@ -3759,8 +3759,10 @@
     const clickedRect = rememberInteractionPoint(el, 'click');
     if (actionDeadlineExpired()) return deadlineFailure();
     if (params._bidiPrepare) {
+      const prepared = prepareBidiTarget(el, params._bidiPrepare);
+      if (!prepared.bidiPrepared) return prepared;
       const coordinateClick = !params.text && !params.selector && params.index == null && Number.isFinite(params.x) && Number.isFinite(params.y);
-      return { ...prepareBidiTarget(el, params._bidiPrepare),
+      return { ...prepared,
         ...(coordinateClick ? { point: { x: Math.round(params.x), y: Math.round(params.y) } } : {}),
         _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId };
     }
@@ -4561,7 +4563,10 @@
       ? focusedTarget
       : document;
 
-    if (params._bidiPrepare) return prepareBidiTarget(focusedTarget || document.body, params._bidiPrepare);
+    // Tab and Escape stay ungated (permission-gate.js capabilityFor) and may
+    // reach a frame that has focus; any other key may not.
+    if (params._bidiPrepare) return prepareBidiTarget(focusedTarget || document.body, params._bidiPrepare,
+      { allowEmbeddedFrame: key === 'Tab' || key === 'Escape' });
 
     const moveTabFocus = () => {
       const focusables = Array.from(document.querySelectorAll(
@@ -7028,9 +7033,17 @@
   // conversation before a message can be sent. It deliberately ignores input
   // values and ordinary page text: a searched recipient name is not proof that
   // the corresponding conversation is active.
-  function prepareBidiTarget(el, token) {
+  function prepareBidiTarget(el, token, { allowEmbeddedFrame = false } = {}) {
     if (!/^[a-f0-9-]{36}$/.test(token || '') || !el?.isConnected) {
       return { success: false, dispatched: false, noDispatch: true, error: 'Invalid trusted-input target' };
+    }
+    // Trusted input on a frame element (a click on it, or keys while focus is
+    // inside it) acts in the frame's own document, which can be another site
+    // (a payment, identity or wallet frame) that the permission for this page
+    // does not cover. The iframe tools charge that frame's host instead.
+    if (!allowEmbeddedFrame && /^(IFRAME|FRAME|OBJECT|EMBED)$/i.test(String(el.tagName || ''))) {
+      return { success: false, dispatched: false, noDispatch: true, embeddedFrameTarget: true,
+        error: 'Not sent: the target is an embedded frame, and trusted input there would act in the frame\'s own document. Use iframe_click or iframe_type with a urlFilter naming the frame\'s domain.' };
     }
     el.setAttribute('data-webbrain-bidi', token);
     setTimeout(() => { if (el.getAttribute('data-webbrain-bidi') === token) el.removeAttribute('data-webbrain-bidi'); }, 10000);
@@ -10685,7 +10698,8 @@
           const r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
           const cy = r.top + r.height / 2;
-          if (msg.params?._bidiPrepare) return prepareBidiTarget(el, msg.params._bidiPrepare);
+          // Hover is ungated, like Tab and Escape (pressKeys).
+          if (msg.params?._bidiPrepare) return prepareBidiTarget(el, msg.params._bidiPrepare, { allowEmbeddedFrame: true });
           const eventInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
           const dispatchHover = (EventType, type) => {
             if (actionDeadlineExpired()) return false;

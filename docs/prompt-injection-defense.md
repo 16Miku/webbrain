@@ -37,6 +37,27 @@ them in sync — the test suite asserts the pure modules are byte-identical.
    the human is the trust anchor.
    - Code: `permission-gate.js` (`capabilityFor`, `requiredHosts`,
      `PermissionManager`); the gate loop in `agent.js _executeToolBatch`.
+   - Point and focus input is charged to the document it reaches, not to the
+     top-level page. A coordinate click (a vision `click_at` runs as one),
+     `type_text` without a selector and `press_keys`
+     (`inputReachesReceivingFrame`) go to whatever is under the point or has
+     focus, which can be an embedded payment, identity or wallet frame on
+     another site. Chrome's CDP input reaches such frames, so before the gate
+     `cdp-client.js resolveInputFrame` finds the receiving document (hit test
+     or focus, descending into process-isolated frames) and reads its origin;
+     focus, scroll offsets and origin are read in an isolated world the page
+     cannot redefine. The gate charges that origin's host, so an about:blank
+     or srcdoc editor frame stays with the page. A frame it cannot identify
+     or attach to (another extension's frame, for example), or one with an
+     opaque origin (sandboxed, `data:`), fails closed instead of using the
+     page's grant. After a permission card it checks again, and does not send
+     the input if the page moved it to another document meanwhile. On Firefox
+     this input stays in the top document (or, for a vision click, a
+     same-origin frame): synthetic events cannot enter a cross-origin frame,
+     and trusted companion input on a frame element is refused (`content.js
+     prepareBidiTarget`, the companion's point check). The explicit
+     `iframe_click` / `iframe_type` tools charge the frame named by
+     `urlFilter`.
    - User control: the Permissions page (review/revoke grants + the master
      switch "Ask before consequential actions"). The warning button in the side panel's
      composer toolbar toggles the same master switch; it never answers a pending
@@ -107,8 +128,10 @@ Map it in `permission-gate.js`:
   depends on args — see `set_field`/`press_keys`/`fetch_url`);
 - make sure `hostForCapability` / `requiredHosts` resolves the **real target
   host** (destination URL for navigate/network/download; current page for
-  click/type; the **frame** host for iframe tools; **every** host for a
-  multi-URL tool like `download_files`);
+  click/type on an element WebBrain resolved; the **receiving document** for
+  point or focus input, see `inputReachesReceivingFrame`; the **frame** host
+  for iframe tools; **every** host for a multi-URL tool like
+  `download_files`);
 - if the host can't be determined, return `''` / `[]` so the gate **fails
   closed** (see the iframe-without-`urlFilter` case).
 
@@ -218,25 +241,19 @@ field unwrapped is a hole.
 
 These are conscious trade-offs, not oversights.
 
-- **Generic interaction is charged to the top-level page host, not the frame
-  it lands in.** `click({x,y})` (CDP coordinate clicks), `type_text`, and
-  `press_keys` go to whatever pixel/element is targeted or focused — which
-  *can* be inside a cross-origin iframe (e.g. an embedded Stripe/PayPal frame).
-  The gate charges these to the page host, so a grant for `merchant.com` also
-  covers a coordinate click that lands in an embedded `stripe.com` frame.
-  - Why accepted: (1) selector/text clicks **can't** reach cross-origin frames
-    (same-origin policy blocks `querySelector` from piercing them), so this is
-    limited to coordinate clicks (Chrome/CDP only — Firefox clicks the
-    `<iframe>` element, not into it) and focus-based typing; (2) for legitimate
-    embedded flows the user grants the merchant page *expecting* checkout —
-    including its payment iframe — to work, so prompting for the provider's
-    host mid-flow is arguably worse UX than the residual risk. The **explicit**
-    `iframe_click` / `iframe_type` tools DO gate on the frame host
-    (`frameHostMatches`), because there the model deliberately names a frame.
-  - If you want to close it: resolve the target frame for coordinate clicks
-    (CDP hit-test) and the focused-frame for keystrokes, then gate on that
-    frame host or fail closed when it's cross-origin. Non-trivial and
-    Chrome/CDP-specific; needs real-browser testing.
+- **Element clicks stay charged to the top-level page host.** A click or
+  `type_text` on an element named by selector, text, index or ref is resolved
+  in the top document and charged to the page host. On Chrome two edge cases
+  can still reach a frame of another host: the CDP selector fallback for
+  closed shadow roots also searches same-process (same-site) child documents,
+  and a CDP click at the centre of an element that an embedded frame covers
+  lands in that frame. Point and focus input (Layer 3) is charged to the
+  frame it reaches.
+
+- **The receiving document is checked before dispatch, not at it.** On
+  Chrome, a page that moves a frame under the point, or focus into one, after
+  the gate's check (or its re-check after a permission card) and before the
+  CDP input is sent is not caught.
 
 - **`solve_captcha` is ungated** (on the `KNOWN_SAFE_TOOLS` allowlist). It
   spends CapSolver quota and injects a token (firing the widget's
