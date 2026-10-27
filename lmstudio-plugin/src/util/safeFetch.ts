@@ -32,8 +32,10 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 import {
   assertSafeUrl,
+  isCloudMetadataHost,
   isPrivateIpv4,
   isPrivateIpv6,
+  PRIVATE_NETWORK_HINT,
   type UrlGuardOptions,
 } from "./urlGuard.js";
 
@@ -75,13 +77,14 @@ function stripCrossOriginHeaders(
  * fetch will use: defense-in-depth against accidentally-misconfigured
  * dual-stack hosts and against future fetch-implementation changes
  * about which family wins in `lookup({ all: false })`.
+ *
+ * With allowPrivate the lookup still runs, because a hostname that
+ * resolves to a cloud metadata address stays blocked.
  */
 async function assertHostnameDoesNotResolveToPrivate(
   parsed: URL,
   opts: UrlGuardOptions,
 ): Promise<void> {
-  if (opts.allowPrivate) return;
-
   // Strip the [..] wrapper IPv6 URL syntax adds.
   let host = parsed.hostname;
   if (host.startsWith("[") && host.endsWith("]")) {
@@ -102,14 +105,20 @@ async function assertHostnameDoesNotResolveToPrivate(
   }
 
   for (const { address, family } of addresses) {
+    if (isCloudMetadataHost(address)) {
+      throw new Error(
+        `Refusing ${host} — resolves to cloud metadata endpoint ${address}, which stays blocked even with private network access on.`,
+      );
+    }
+    if (opts.allowPrivate) continue;
     if (family === 4 && isPrivateIpv4(address)) {
       throw new Error(
-        `Refusing ${host} — resolves to private IPv4 ${address}. Set allowPrivate to opt in.`,
+        `Refusing ${host} — resolves to private IPv4 ${address}; ${PRIVATE_NETWORK_HINT}`,
       );
     }
     if (family === 6 && isPrivateIpv6(address)) {
       throw new Error(
-        `Refusing ${host} — resolves to private IPv6 ${address}. Set allowPrivate to opt in.`,
+        `Refusing ${host} — resolves to private IPv6 ${address}; ${PRIVATE_NETWORK_HINT}`,
       );
     }
   }
@@ -120,7 +129,11 @@ export interface SafeFetchInit {
   headers?: Record<string, string>;
   body?: string | undefined;
   signal?: AbortSignal;
-  /** Allow private/loopback/link-local destinations. Default false. */
+  /**
+   * Allow private/loopback/link-local destinations. Default false. Set
+   * from the user's plugin setting, never from tool arguments. Cloud
+   * metadata endpoints stay blocked regardless.
+   */
   allowPrivate?: boolean;
   /** Cap manual redirect hops. Default 5. */
   maxRedirects?: number;
