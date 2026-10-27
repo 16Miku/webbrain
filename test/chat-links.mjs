@@ -54,6 +54,45 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(html, /help<\/a>!/);
   });
 
+  test(`${build}: closing quotes and prose punctuation never become part of a plain URL`, () => {
+    const post = '“Introducing WebBrain — an open-source AI browser agent that lives in your browser. Try it: https://webbrain.one”\n\nVerified post URL: https://x.com/EmreSokullu/status/2114988545588736396';
+    const escapeText = text => text.replace(/[&<>"']/g, character => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[character]);
+    // Live replies, saved chat, and restored DOM text each escape quotes differently.
+    for (const render of [formatMarkdown, renderSkillMarkdown, text => links.linkifyPlainUrls(escapeText(text))]) {
+      const html = render(post);
+      assert.deepEqual(hrefs(html), ['https://webbrain.one', 'https://x.com/EmreSokullu/status/2114988545588736396']);
+      assert.equal(new URL(hrefs(html)[0]).hostname, 'webbrain.one');
+      assert.match(html, /webbrain\.one<\/a>”/);
+      for (const closer of ['”', '’', '»', '›', '」', '』', ')', ']', '}', '.', ',', ';', ':', '!', '?', '…', '"', "'"]) {
+        for (const after of ['', ' next']) {
+          const source = `Open https://example.com/path${closer}${after}`;
+          assert.deepEqual(hrefs(render(source)), ['https://example.com/path'], JSON.stringify(source));
+        }
+      }
+      for (const [open, close] of [['“', '”'], ['‘', '’'], ['«', '»'], ['»', '«'], ['‹', '›'], ['„', '“'], ['「', '」'], ['『', '』'], ['（', '）'], ['"', '"'], ["'", "'"]]) {
+        const source = `${open}https://example.com/path${close}を参照。`;
+        assert.deepEqual(hrefs(render(source)), ['https://example.com/path'], JSON.stringify(source));
+      }
+      for (const source of [
+        '“https://en.wikipedia.org/wiki/Python_(programming_language)”.',
+        '(see https://en.wikipedia.org/wiki/Python_(programming_language)).',
+        '«https://en.wikipedia.org/wiki/Python_(programming_language)»',
+      ]) {
+        assert.deepEqual(hrefs(render(source)), ['https://en.wikipedia.org/wiki/Python_(programming_language)'], JSON.stringify(source));
+      }
+    }
+  });
+
+  test(`${build}: quoted Markdown links end at their own closing parenthesis`, () => {
+    for (const render of [formatMarkdown, renderSkillMarkdown]) {
+      const html = render('“[Try WebBrain](https://webbrain.one)” and “[Python](https://en.wikipedia.org/wiki/Python_(programming_language))”.');
+      assert.deepEqual(hrefs(html), ['https://webbrain.one', 'https://en.wikipedia.org/wiki/Python_(programming_language)']);
+      assert.match(html, /Try WebBrain<\/a>”/);
+    }
+  });
+
   test(`${build}: angle-bracket links preserve escaped surrounding text`, () => {
     const html = formatMarkdown('See <https://example.com/path>.');
     assert.deepEqual(hrefs(html), ['https://example.com/path']);
@@ -562,6 +601,114 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(page.url(), 'http://chat-links.test/');
       assert.equal(popup.url(), 'https://www.google.com/finance/quote/BZ:NASDAQ');
       await page.evaluate(() => window.stopChatLinkIcons());
+    } finally {
+      await browser.close();
+    }
+  });
+
+  if (process.env.WEBBRAIN_CHAT_LINKS_DOM === '1') test(`${build}: link icons stay on the line where a wrapped link starts`, async () => {
+    const { chromium, firefox } = await import('playwright');
+    const browser = await (build === 'chrome' ? chromium : firefox).launch({ headless: true });
+    try {
+      // The reported side panel was too narrow for the post URL after its label.
+      const page = await browser.newPage({ viewport: { width: 380, height: 600 } });
+      await page.route('**/*', async route => {
+        const file = new URL(route.request().url()).pathname.slice(1);
+        if (/^[\w-]+\.js$/.test(file)) await route.fulfill({ contentType: 'text/javascript', body: readUi(build, file) });
+        else await route.fulfill({ contentType: 'text/html', body: '<html data-theme="light"><body><div id="messages" style="width: 340px"><div class="message assistant"><div class="message-content"><div id="chat-test-content" class="message-text"></div></div></div></div></body></html>' });
+      });
+      await page.goto('http://chat-links.test/');
+      await page.addStyleTag({ content: fs.readFileSync(new URL(`../src/${build}/styles/sidepanel.css`, import.meta.url), 'utf8') });
+      await page.evaluate(async ({ formatter }) => {
+        const helpers = await import('/markdown-render.js');
+        const links = await import('/markdown-link.js');
+        const { escapeHtml } = await import('/utils.js');
+        const { installChatLinkIcons } = await import('/chat-link-icons.js');
+        const dependencies = { ...helpers, ...links, escapeHtml, t: key => key, scheduleMathRender() {} };
+        const format = new Function(...Object.keys(dependencies), `return (${formatter})`)(...Object.values(dependencies));
+        // x.com gets a favicon image; the other hosts keep the CSS globe.
+        document.querySelector('#chat-test-content').innerHTML = format([
+          'Verified post URL: https://x.com/EmreSokullu/status/2114988545588736396',
+          'Try it: https://webbrain.one',
+          'Fallback icon URL: https://twitter.com/EmreSokullu/status/2114988545588736396',
+        ].join('\n\n'), { enhance: false });
+        const canvas = document.createElement('canvas');
+        canvas.width = 14; canvas.height = 14;
+        canvas.getContext('2d').fillRect(0, 0, 14, 14);
+        const png = Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]), char => char.charCodeAt(0));
+        installChatLinkIcons(document.querySelector('#messages'), {
+          intersectionObserverImpl: null,
+          fetchImpl: async url => String(url).endsWith('/x.com.ico')
+            ? new Response(png, { headers: { 'content-type': 'image/png' } })
+            : new Response('', { status: 404 }),
+        });
+      }, { formatter: formatterSource(build) });
+      await page.waitForFunction(() => document.querySelector('#chat-test-content a.chat-link-icon-ready > img')?.complete);
+      const layout = await page.evaluate(() => {
+        const box = ({ left, right, top, bottom }) => ({ left, right, top, bottom });
+        const content = box(document.querySelector('#chat-test-content').getBoundingClientRect());
+        return [...document.querySelectorAll('#chat-test-content a')].map(link => {
+          const firstCharacter = document.createRange();
+          firstCharacter.setStart(document.createTreeWalker(link, NodeFilter.SHOW_TEXT).nextNode(), 0);
+          firstCharacter.setEnd(firstCharacter.startContainer, 1);
+          const label = document.createRange();
+          label.selectNodeContents(link.previousSibling);
+          const icon = link.classList.contains('chat-link-icon-ready') ? link.querySelector('img.chat-link-icon') : null;
+          return {
+            href: link.href,
+            content,
+            fragments: [...link.getClientRects()].map(box),
+            firstCharacter: box(firstCharacter.getBoundingClientRect()),
+            label: box([...label.getClientRects()].at(-1)),
+            icon: icon && box(icon.getBoundingClientRect()),
+            fallbackIcon: icon ? null : getComputedStyle(link, '::before').position,
+          };
+        });
+      });
+      const sameLine = (a, b) => a.top < b.bottom && b.top < a.bottom;
+      assert.equal(layout.length, 3);
+      for (const link of layout) {
+        const [first] = link.fragments;
+        assert.ok(sameLine(first, link.firstCharacter), `${link.href}: the link's first line holds its first character`);
+        assert.ok(link.firstCharacter.left - first.left >= 14, `${link.href}: icon space precedes the first character`);
+        for (const fragment of link.fragments) {
+          assert.ok(fragment.left >= link.content.left - 1 && fragment.right <= link.content.right + 1, `${link.href}: no overflow`);
+        }
+        if (link.icon) {
+          assert.ok(sameLine(link.icon, link.firstCharacter), `${link.href}: favicon shares the first line`);
+          assert.ok(Math.abs(link.icon.left - first.left) <= 1 && link.icon.right <= link.firstCharacter.left, `${link.href}: favicon leads the link`);
+        } else {
+          assert.equal(link.fallbackIcon, 'absolute', `${link.href}: the CSS icon is drawn in the reserved space`);
+        }
+      }
+      const [post, tryIt, fallback] = layout;
+      assert.ok(post.icon, 'the x.com link uses its favicon image');
+      assert.ok(post.fragments.length > 1 && fallback.fragments.length > 1, 'long post URLs wrap inside the panel');
+      assert.equal(tryIt.fragments.length, 1);
+      assert.ok(sameLine(tryIt.label, tryIt.fragments[0]), '"Try it:" and its short link share one line');
+
+      // Links keep the text color; a dotted underline turns solid on hover and focus.
+      const linkStyle = () => page.evaluate(() => {
+        const link = document.querySelector('#chat-test-content a');
+        const style = getComputedStyle(link);
+        return {
+          color: style.color,
+          textColor: getComputedStyle(link.parentElement).color,
+          underline: style.textDecorationStyle,
+          outline: `${style.outlineStyle} ${style.outlineWidth}`,
+        };
+      });
+      const idle = await linkStyle();
+      assert.equal(idle.color, idle.textColor);
+      assert.equal(idle.underline, 'dotted');
+      await page.hover('#chat-test-content a');
+      assert.equal((await linkStyle()).underline, 'solid');
+      await page.mouse.move(0, 0);
+      await page.keyboard.press('Shift');
+      await page.focus('#chat-test-content a');
+      const focused = await linkStyle();
+      assert.equal(focused.underline, 'solid');
+      assert.equal(focused.outline, 'solid 2px');
     } finally {
       await browser.close();
     }

@@ -29,6 +29,12 @@ const SAFE_SCHEMES = new Set(['http', 'https', 'mailto']);
 
 const MD_LINK_RE = /\[([^\]]+)\]\(((?:[^()]|\([^()]*\))*)\)/g;
 
+// A bare URL ends at whitespace, markup, an escaped quote, or punctuation that
+// only closes prose. Curly quotes, guillemets and CJK punctuation appear
+// percent-encoded in real URLs; inside a host they would be IDN-encoded, so
+// “https://example.com” must not link to example.xn--com-….
+const PLAIN_URL_RE = /\bhttps?:\/\/(?:(?!&(?:lt|gt|quot|apos|#39|#34);)[^\s<>"'`“”‘’„‚«»‹›「」『』【】〔〕〈〉《》（）［］｛｝、。，；：！？])+/gi;
+
 /**
  * Sanitize a single markdown link. Returns either a safe <a> string or
  * the bare label text when the URL is unsafe / unrecognized.
@@ -121,7 +127,7 @@ export function linkifyPlainUrls(html, precedingText = '') {
       return token;
     }
     if (protectedDepth) return token;
-    return token.replace(/\bhttps?:\/\/(?:(?!&(?:lt|gt|quot|apos|#39|#34);)[^\s<>"'`])+/gi, (candidate, offset, source) => {
+    return token.replace(PLAIN_URL_RE, (candidate, offset, source) => {
       const absoluteOffset = precedingText.length + tokenOffset + offset;
       if (imageRanges.some(([start, end]) => absoluteOffset >= start && absoluteOffset < end)) return candidate;
       // Do not turn a URL embedded in another scheme or word into a new link.
@@ -143,7 +149,7 @@ export function linkifyPlainUrls(html, precedingText = '') {
           continue;
         }
         if (last === ';' && /&(?:amp|#\d+|#x[\da-f]+);$/i.test(candidate.slice(0, end))) break;
-        if (/[.,!?;:]/.test(last)) { end--; continue; }
+        if (/[.,!?;:…]/.test(last)) { end--; continue; }
         const opening = pairs[last];
         if (opening && balance[opening] < 0) { balance[opening]++; end--; continue; }
         break;
