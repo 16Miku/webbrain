@@ -24,7 +24,7 @@ Pour la divulgation de vulnérabilités, voir [SECURITY.md](../SECURITY.md).
 ```
 
 (Ceci est le manifeste Chrome MV3. Firefox MV2 accorde un ensemble plus restreint —
-`activeTab`, `menus`, `webNavigation`, `webRequest`, `storage`,
+`activeTab`, `menus`, `webNavigation`, `webRequest`, `dns`, `storage`,
 `unlimitedStorage`, `tabs`, `tabGroups`, `downloads`, `alarms`, `clipboard*`,
 `<all_urls>` — et n'a pas `debugger`/`offscreen`/`tabCapture`, voir Différences
 Firefox ci-dessous.)
@@ -109,7 +109,7 @@ La menace principale : une page malveillante conçoit un contenu qui, lorsqu'il 
 | **Détection de boucle** | Trois détecteurs indépendants arrêtent l'agent s'il répète la même action ou oscille. Les boucles de clics répétés peuvent inclure un indice URL+méthode XHR/fetch exact sur le même onglet afin que l'agent puisse utiliser `fetch_url` au lieu de cliquer indéfiniment. Limite les dommages d'un prompt injecté persistant. |
 | **Adaptateurs financiers** | Les adaptateurs avec `category: 'finance'` injectent des conseils de confirmation supplémentaires et une bannière d'avertissement. |
 | **Gestion stricte des secrets** | Empêche l'exfiltration d'identifiants même si le modèle est jailbreaké pour citer des secrets. |
-| **Blocage réseau local** | L’accès au réseau local est désactivé par défaut. Lorsque cet accès est désactivé, les URL contenant une adresse IP privée ou de boucle locale écrite directement et les noms localhost sont bloqués. La résolution DNS n’est pas vérifiée : d’autres noms peuvent encore atteindre des adresses locales. Les adresses IP littérales de métadonnées cloud (169.254.169.254) et les noms de métadonnées répertoriés ou `*.internal`/`*.local` restent bloqués même lorsque l’accès local est activé. |
+| **Blocage réseau local** | L’accès au réseau local est désactivé par défaut. Lorsque cet accès est désactivé, les URL contenant une adresse IP privée ou de boucle locale écrite directement et les noms localhost sont bloqués. `fetch_url`, `read_page_source` et `research_url` bloquent aussi les noms d’hôte résolus vers ces adresses : la réponse d’une adresse bloquée est écartée avant que le modèle ne la voie, et Firefox refuse le nom dès sa résolution, avant tout envoi. Dans Chrome, la requête a déjà atteint l’adresse lorsque sa réponse est écartée. Les adresses IP littérales de métadonnées cloud (169.254.169.254) et les noms de métadonnées répertoriés ou `*.internal`/`*.local` restent bloqués même lorsque l’accès local est activé. |
 
 ### Ce qui n'est PAS défendu
 

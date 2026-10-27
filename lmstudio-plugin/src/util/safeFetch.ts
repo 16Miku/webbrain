@@ -30,6 +30,7 @@
  */
 
 import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import {
   assertSafeUrl,
   isPrivateIpv4,
@@ -68,8 +69,7 @@ function stripCrossOriginHeaders(
 
 /**
  * Resolve a hostname's A/AAAA records and reject if any address is in
- * a private range. Literal IPs are short-circuited (the sync URL guard
- * already covered them).
+ * a private range. Literal IPs skip DNS and are classified directly.
  *
  * Why we check ALL returned addresses rather than just the first one
  * fetch will use: defense-in-depth against accidentally-misconfigured
@@ -88,9 +88,17 @@ async function assertHostnameDoesNotResolveToPrivate(
     host = host.slice(1, -1);
   }
 
-  // Literal IP — the sync guard already validated. Skip DNS.
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return;
-  if (host.includes(":")) return; // literal IPv6
+  // Literal IP — nothing to resolve, but classify it here as well
+  // rather than trusting the sync guard ran with the same rules.
+  const literal = isIP(host);
+  if (literal === 4 || literal === 6) {
+    if (literal === 4 ? isPrivateIpv4(host) : isPrivateIpv6(host)) {
+      throw new Error(
+        `Refusing private IPv${literal} ${host} — set allowPrivate to opt in.`,
+      );
+    }
+    return;
+  }
 
   let addresses: Array<{ address: string; family: number }>;
   try {

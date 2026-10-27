@@ -297,6 +297,133 @@ export function validateFetchUrl(rawUrl, opts = {}) {
   return { ok: true };
 }
 
+// ─── Resolved-address check ─────────────────────────────────────────────
+
+// validateFetchUrl() sees only the URL text, so a public hostname whose DNS
+// answer is loopback, RFC1918, unique-local or link-local (cloud metadata)
+// passes it. Firefox can resolve the name first (the "dns" permission), so a
+// hostname with any blocked answer is refused before anything is sent.
+// fetch() cannot pin that answer, and redirects reach other names, so the
+// tools also read the address the browser actually connected to from
+// webRequest (details.ip) and discard the response when it is blocked.
+// Chrome has no DNS API and relies on the webRequest check alone.
+const RESPONSE_ADDRESS_WAIT_MS = 1500;
+const RESPONSE_ADDRESS_EVENTS = ['onBeforeRedirect', 'onResponseStarted', 'onErrorOccurred'];
+
+/**
+ * Classify a resolved address with the same tiers as validateFetchUrl():
+ * metadata/link-local, CGNAT, multicast and unspecified are always blocked;
+ * loopback, RFC1918 and unique-local only while local-network access is off.
+ * IPv4-mapped IPv6 is decoded and classified as IPv4.
+ */
+export function validateResolvedAddress(address, opts = {}) {
+  let ip = String(address || '').trim().toLowerCase();
+  if (ip.startsWith('[') && ip.endsWith(']')) ip = ip.slice(1, -1);
+  const literal = ip.includes(':') ? `[${ip}]` : ip;
+  let host = '';
+  try { host = new URL(`http://${literal}/`).hostname; } catch (_) {}
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(host) && !host.startsWith('[')) {
+    return { ok: false, error: `Invalid resolved address: ${address}` };
+  }
+  return validateFetchUrl(`http://${host}/`, opts);
+}
+
+function blockedAddressError(url, reason) {
+  let host = '';
+  try { host = new URL(url).hostname; } catch (_) {}
+  return `${host || url} resolved to a blocked address. ${reason}`;
+}
+
+/**
+ * Resolve the URL's hostname before sending and refuse it when any answer is
+ * blocked: the browser may connect to any of them. A failed lookup is left
+ * to the request itself, since a configured proxy may still reach the host;
+ * the response address check still applies.
+ */
+async function resolvedHostFailure(rawUrl, allowLocal) {
+  if (typeof globalThis.browser?.dns?.resolve !== 'function') return null;
+  let host;
+  try { host = new URL(rawUrl).hostname; } catch (_) { return null; }
+  // IP literals were already classified by validateFetchUrl().
+  if (!host || host.startsWith('[') || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return null;
+  let record;
+  try { record = await globalThis.browser.dns.resolve(host); } catch (_) { return null; }
+  for (const address of record?.addresses || []) {
+    const check = validateResolvedAddress(address, { allowLocalNetwork: allowLocal });
+    if (!check.ok) return blockedAddressError(rawUrl, check.error);
+  }
+  return null;
+}
+
+/**
+ * Record the address each matching webRequest event reports. keyOf(details)
+ * names the request or tab an event belongs to (null to ignore it). Returns
+ * null when webRequest is unavailable.
+ */
+function watchResponseAddresses(filter, keyOf, allowLocal) {
+  const webRequest = globalThis.browser?.webRequest;
+  if (RESPONSE_ADDRESS_EVENTS.some(name => typeof webRequest?.[name]?.addListener !== 'function')) return null;
+  const seen = new Set();
+  const failures = new Map();
+  const waiters = new Set();
+  const listener = (details) => {
+    const key = keyOf(details);
+    if (key == null) return;
+    seen.add(key);
+    // A proxied request reports the proxy's address, not the destination's;
+    // only the DNS check before sending applies to it.
+    const proxied = details.proxyInfo && details.proxyInfo.type !== 'direct';
+    if (details.ip && !proxied && !failures.has(key)) {
+      const check = validateResolvedAddress(details.ip, { allowLocalNetwork: allowLocal });
+      if (!check.ok) failures.set(key, blockedAddressError(details.url, check.error));
+    }
+    for (const wake of waiters) wake();
+  };
+  const added = [];
+  try {
+    for (const name of RESPONSE_ADDRESS_EVENTS) {
+      webRequest[name].addListener(listener, { urls: ['<all_urls>'], ...filter });
+      added.push(name);
+    }
+  } catch (_) {
+    for (const name of added) webRequest[name].removeListener(listener);
+    return null;
+  }
+  return {
+    failure: key => failures.get(key) || null,
+    // fetch() and webRequest events are delivered separately, so fetch() can
+    // resolve before the response's event arrives. Wait briefly for it.
+    async settledFailure(key, timeoutMs = RESPONSE_ADDRESS_WAIT_MS) {
+      if (!seen.has(key)) {
+        await new Promise((resolve) => {
+          const done = () => { clearTimeout(timer); waiters.delete(wake); resolve(); };
+          const wake = () => { if (seen.has(key)) done(); };
+          const timer = setTimeout(done, timeoutMs);
+          waiters.add(wake);
+        });
+      }
+      return failures.get(key) || null;
+    },
+    close() {
+      for (const name of added) {
+        try { webRequest[name].removeListener(listener); } catch (_) {}
+      }
+    },
+  };
+}
+
+// The extension's own background fetch: tab -1, keyed by its URL (webRequest
+// reports URLs without the fragment).
+function watchFetchAddresses(url, allowLocal) {
+  let target;
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    target = u.href;
+  } catch (_) { return null; }
+  return watchResponseAddresses({ tabId: -1 }, d => (d.url === target ? 'fetch' : null), allowLocal);
+}
+
 // ─── Same-eTLD+1 cookie policy ──────────────────────────────────────────
 
 /**
@@ -1971,8 +2098,11 @@ export async function readPageSource(url, opts = {}, ctx = {}) {
   }
 
   const deadline = networkRequestDeadline(ctx);
+  const addresses = watchFetchAddresses(targetUrl, allowLocal);
   let res;
   try {
+    const hostFailure = await resolvedHostFailure(targetUrl, allowLocal);
+    if (hostFailure) return { success: false, error: hostFailure };
     if (deadline.signal.aborted) throw responseAbortError(deadline.signal);
     res = await fetch(targetUrl, {
       method: 'GET',
@@ -1981,6 +2111,8 @@ export async function readPageSource(url, opts = {}, ctx = {}) {
       signal: deadline.signal,
     });
     rejectNetworkRedirect(res);
+    const addressFailure = await addresses?.settledFailure('fetch');
+    if (addressFailure) return { success: false, error: addressFailure };
 
     if (res.url && res.url !== targetUrl) {
       const v2 = validateFetchUrl(res.url, { allowLocalNetwork: allowLocal });
@@ -2052,6 +2184,7 @@ export async function readPageSource(url, opts = {}, ctx = {}) {
   } catch (e) {
     return { success: false, error: `read_page_source failed: ${e.message}` };
   } finally {
+    addresses?.close();
     deadline.dispose();
     try { Promise.resolve(res?.body?.cancel()).catch(() => {}); } catch {}
   }
@@ -2094,8 +2227,11 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
   }
 
   const deadline = networkRequestDeadline(ctx);
+  const addresses = watchFetchAddresses(url, allowLocal);
   let res;
   try {
+    const hostFailure = await resolvedHostFailure(url, allowLocal);
+    if (hostFailure) return { success: false, error: hostFailure };
     if (deadline.signal.aborted) throw responseAbortError(deadline.signal);
     res = await fetch(url, {
       method: opts.method || 'GET',
@@ -2106,6 +2242,8 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
       signal: deadline.signal,
     });
     rejectNetworkRedirect(res);
+    const addressFailure = await addresses?.settledFailure('fetch');
+    if (addressFailure) return { success: false, error: addressFailure };
 
     if (res.url && res.url !== url) {
       const v2 = validateFetchUrl(res.url, { allowLocalNetwork: allowLocal });
@@ -2179,6 +2317,7 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
   } catch (e) {
     return { success: false, error: `Fetch failed: ${e.message}` };
   } finally {
+    addresses?.close();
     deadline.dispose();
     try { Promise.resolve(res?.body?.cancel()).catch(() => {}); } catch {}
   }
@@ -2209,7 +2348,13 @@ export async function researchUrl(url, opts = {}) {
   // substitute (fetch_url still applies this check after a grant).
   const urlCheck = validateFetchUrl(url, { allowLocalNetwork: getAllowLocalNetwork() });
   if (!urlCheck.ok) return { success: false, error: `URL is blocked: ${urlCheck.error}` };
+  const hostFailure = await resolvedHostFailure(url, getAllowLocalNetwork());
+  if (hostFailure) return { success: false, error: `URL is blocked: ${hostFailure}` };
   const timeoutMs = Math.min(opts.timeout || 8000, 30000);
+  // Addresses of the hidden tab's top-level responses, redirect hops
+  // included. The tab id exists only after tabs.create() has started the
+  // navigation, so record main frames by tab from the start.
+  const addresses = watchResponseAddresses({ types: ['main_frame'] }, d => d.tabId, getAllowLocalNetwork());
   let createdTab = null;
   try {
     const createProps = { url, active: false };
@@ -2253,6 +2398,8 @@ export async function researchUrl(url, opts = {}) {
     if (!loadedUrlCheck.ok) {
       return { success: false, error: `Redirect to blocked URL: ${loadedUrlCheck.error}`, finalUrl: loadedTab?.url || '' };
     }
+    const loadedAddress = addresses?.failure(tabId);
+    if (loadedAddress) return { success: false, error: loadedAddress, finalUrl: loadedTab?.url || '' };
 
     const code = `
       (() => {
@@ -2283,6 +2430,8 @@ export async function researchUrl(url, opts = {}) {
     if (!resultUrlCheck.ok) {
       return { success: false, error: `Redirect to blocked URL: ${resultUrlCheck.error}`, finalUrl: result.url || '' };
     }
+    const resultAddress = addresses?.failure(tabId);
+    if (resultAddress) return { success: false, error: resultAddress, finalUrl: result.url || '' };
 
     return {
       success: true,
@@ -2299,6 +2448,7 @@ export async function researchUrl(url, opts = {}) {
   } catch (e) {
     return { success: false, error: `research_url failed: ${e.message}` };
   } finally {
+    addresses?.close();
     if (createdTab?.id != null) {
       browser.tabs.remove(createdTab.id).catch(() => {});
     }
