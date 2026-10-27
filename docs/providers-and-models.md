@@ -504,16 +504,16 @@ times the standard rate.
 
 ### Extended provider catalog
 
-WebBrain also ships 80 disabled-by-default provider cards. Most are sourced
+WebBrain also ships 81 disabled-by-default provider cards. Most are sourced
 from the OpenCode provider catalog snapshot at commit
 `62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
 their official API documentation. Together with the original cards, the
-Providers page lists **114 built-in providers on Chromium** and **113 on Firefox**; the
+Providers page lists **115 built-in providers on Chromium** and **114 on Firefox**; the
 difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs                                                                                                                                                                                                                                                                                                                        |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
+| `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `cheaperinference`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
 | `freebuff2api`, `google-vertex`, `google-vertex-anthropic`, `helicone`, `iflowcn`, `inception`, `inference`, `io-net`, `jiekou`, `kilo`, `kimi-for-coding`, `kuae-cloud-coding-plan`, `llama`, `lucidquery`, `meganova`, `minimax-cn-coding-plan`, `minimax-coding-plan`, `moark`, `modelscope`, `morph`                       |
 | `nano-gpt`, `nearai`, `nebius`, `nova`, `novita-ai`, `ollama-cloud`, `opencode`, `opencode-go`, `orcarouter`, `ovhcloud`, `perplexity`, `perplexity-agent`, `poe`, `pollinations`, `privatemode-ai`, `qihang-ai`, `qiniu-ai`, `requesty`, `scaleway`, `siliconflow`, `siliconflow-cn`, `stackit`                               |
 | `stepfun`, `submodel`, `synthetic`, `tencent-coding-plan`, `upstage`, `v0`, `venice`, `vercel`, `vivgrid`, `vultr`, `wandb`, `xiaomi`, `zai-coding-plan`, `zenmux`, `zhipuai`, `zhipuai-coding-plan`                                                                                                                       |
@@ -568,6 +568,19 @@ Connection**. If selecting a model with a smaller context window, such as
 `Qwen/Qwen3.8-27B` (262144 tokens), set **Context window** to its documented
 limit. Interactive Ask streaming, tool calls, and vision work through the
 existing OpenAI-compatible path.
+
+#### Cheaper Inference
+
+[Cheaper Inference](https://cheaperinference.com) is an OpenAI-compatible LLM
+gateway at `https://api.cheaperinference.com/v1`. One API key gives access to
+models from several labs; model IDs are bare (such as `gpt-5.4-mini`,
+`claude-sonnet-5`, `gemini-3.5-flash`, and `deepseek-v4-flash`). See the
+[docs](https://cheaperinference.com/docs).
+
+In WebBrain, open **Providers -> LLM -> Cheaper Inference**. Paste an API key
+into the card, keep the default `gpt-5.4-mini` model (400000 tokens), then
+click **Test Connection**. Interactive Ask streaming, tool calls, and vision
+work through the existing OpenAI-compatible path.
 
 ### Ask response streaming
 

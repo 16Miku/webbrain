@@ -22,7 +22,7 @@ flowchart LR
     BG --> AG --> TAB
   end
   subgraph Backend["Backend (aujourd'hui : ws:// en local uniquement)"]
-    SRV["Serveur WebSocket<br/>vérifie le token<br/>approuve / refuse"]
+    SRV["Serveur WebSocket<br/>prouve le token, vérifie la preuve du navigateur<br/>approuve / refuse"]
   end
   OFF <== "WebSocket initié par l'extension" ==> SRV
 ```
@@ -35,11 +35,17 @@ sequenceDiagram
   participant B as Backend
   participant U as Utilisateur
   E->>B: connexion WebSocket
-  E->>B: hello {auth.token, browserId, installationId, navigateur, version, plateforme, capabilities}
-  alt token invalide
+  E->>B: hello {auth.nonce, navigateur, version, plateforme, capabilities}
+  B-->>E: auth_challenge {nonce serveur, preuve HMAC(token)}
+  alt preuve du serveur invalide
+    Note over E: rien n'est envoyé, socket fermée, nouvel essai avec délai croissant
+  else preuve du serveur valide
+    E->>B: auth_response {preuve HMAC(token), browserId, installationId}
+  end
+  alt preuve du navigateur invalide
     B-->>E: connection_rejected
     Note over E: socket fermée, pas de reconnexion auto
-  else token valide
+  else preuve du navigateur valide
     B-->>E: connection_pending
     B->>E: cloud_run (avant approbation)
     E-->>B: ok:false, connection_not_approved (403)
@@ -54,7 +60,7 @@ sequenceDiagram
     B->>E: cloud_status {runId}
     E-->>B: status completed + résultat
   end
-  Note over E,B: coupure réseau → nouvelle socket → nouveau hello → repart en pending
+  Note over E,B: coupure réseau → nouvelle socket → nouveau hello et nouveau challenge → repart en pending
 ```
 
 ## 1. Prérequis
@@ -102,7 +108,7 @@ node examples/cloud-bridge-approval-server.mjs --token dev-token
 
 Vous devez voir : `Listening on ws://127.0.0.1:17374/extension`.
 
-Options : `--port 17374` (défaut), `--auto-approve` (approuve automatiquement, pratique pour tester les commandes).
+Options : `--port 17374` (défaut), `--auto-approve` (approuve automatiquement, pratique pour tester les commandes), `--legacy-bearer` (accepte aussi l'ancien `hello` qui contenait le token, voir le scénario G).
 
 Ce terminal sert à la fois de **backend** (il affiche tout ce que l'extension envoie, préfixé par `<-`) et de **console d'approbation**.
 
@@ -118,15 +124,17 @@ Ce terminal sert à la fois de **backend** (il affiche tout ce que l'extension e
 
 Le statut passe à : *Connected — waiting for the backend to approve this browser.*
 
-Dans le terminal du serveur, vous voyez le `hello` reçu, par exemple :
+Dans le terminal du serveur, vous voyez le `hello` reçu, puis la réponse au challenge, par exemple :
 
 ```json
 {"type":"hello","client":"webbrain-extension","protocolVersion":2,
  "capabilities":["saved_workflows_v1","run_modes_v1","scheduled_jobs_v1"],
- "auth":{"type":"bearer","token":"dev-token"},
- "browserId":"mon-chrome","installationId":"…",
+ "auth":{"type":"challenge","method":"hmac-sha256-v1","nonce":"…"},
  "browser":{"name":"Chrome","version":"…"},"extensionVersion":"38.0.13","platform":"Linux", …}
+{"type":"auth_response","method":"hmac-sha256-v1","proof":"…","browserId":"mon-chrome","installationId":"…"}
 ```
+
+Le token n'apparaît jamais : le serveur prouve d'abord qu'il le connaît (`auth_challenge`), puis l'extension envoie sa propre preuve avec `browserId` et `installationId`.
 
 ## 5. Scénarios à tester
 
@@ -167,17 +175,21 @@ Dans le terminal : `reject`. Le statut devient *Rejected by the backend: …*, l
 ### D. Reconnexion
 
 1. Arrêter le serveur (Ctrl+C) puis le relancer : l'extension se reconnecte automatiquement (délai croissant, jusqu'à 30 s).
-2. Elle renvoie un `hello`, et la connexion est de nouveau **en attente** : toute commande est refusée tant que vous n'avez pas retapé `approve`.
+2. Elle renvoie un `hello` avec un nouveau nonce, refait le challenge, et la connexion est de nouveau **en attente** : toute commande est refusée tant que vous n'avez pas retapé `approve`.
 
 Note connue : juste après une reconnexion, le texte de statut de la page Settings peut rester sur « approved » alors que la connexion est repassée en attente ; les commandes sont bien refusées. Cliquer sur **Save & test connection** pour resynchroniser l'affichage.
 
 ### E. Mauvais token
 
-Mettre un autre token dans Settings puis **Save & test connection** : le serveur répond `connection_rejected` (« Invalid token »).
+Mettre un autre token dans Settings puis **Save & test connection** : la preuve du serveur ne correspond plus, l'extension ferme la socket sans rien envoyer d'autre et affiche *Connection error: Bridge controller failed authentication*. Elle réessaie ensuite avec un délai croissant (jusqu'à 30 s), sans jamais passer en *approved*.
 
 ### F. Mode historique (sans token)
 
-Vider le champ token et sauvegarder : plus aucune approbation n'est exigée, le comportement est celui d'avant la feature (serveur MCP local inchangé). Le serveur de test ne l'acceptera pas (il exige un token) ; ce mode se teste avec le serveur MCP du dépôt (`mcp-server/`).
+Vider le champ token et sauvegarder : plus aucune approbation n'est exigée, le comportement est celui d'avant la feature (serveur MCP local inchangé). Le serveur de test ne l'acceptera pas (il exige un token) ; ce mode se teste avec le serveur MCP du dépôt (`mcp-server/`). Attention : sans token, n'importe quel programme qui écoute le premier sur le port configuré peut piloter le navigateur.
+
+### G. Ancien `hello` avec token (déprécié)
+
+Pour un backend qui n'implémente pas encore le challenge : lancer le serveur avec `--legacy-bearer`, puis dans la console du service worker `chrome.storage.local.set({webbrainCloudBridgeLegacyBearerAuth: true})`. Le `hello` contient alors de nouveau `"auth":{"type":"bearer","token":"dev-token"}`. Sans ce drapeau, l'extension n'envoie jamais le token. Le retirer ensuite : `chrome.storage.local.remove('webbrainCloudBridgeLegacyBearerAuth')`.
 
 ## 6. Inspecter / déboguer
 
@@ -199,19 +211,21 @@ Problèmes fréquents :
 | *Backend unreachable* | Le serveur n'est pas lancé, mauvais port, ou URL autre que `ws://127.0.0.1/localhost` |
 | Rien ne change après modification du code | Extension non rechargée (↻ sur `chrome://extensions`) |
 | Reste « Rejected » | Normal : pas de reconnexion auto après un refus, cliquer sur **Save & test connection** |
+| *Connection error: Bridge controller failed authentication* | Le token du serveur diffère de celui de Settings, ou un autre programme occupe le port |
+| *Rejected by the backend: Invalid token* avec un ancien backend | Le backend attend encore le token dans le `hello` : l'adapter au challenge, ou scénario G |
 | Port 17374 déjà utilisé | Un serveur MCP tourne déjà : l'arrêter ou utiliser `--port` (et changer l'URL dans Settings) |
 
 ## 7. Tests automatisés
 
 ```bash
-npm run test:cloud-bridge-approval   # 18 tests (Chrome + Firefox) : hello, pending, approved, rejected, commande avant/après, reconnexion, minuteur annulé après refus, mode sans token, identité unique, e2e vs serveur d'exemple
+npm run test:cloud-bridge-approval   # Chrome + Firefox : hello, challenge, faux serveur sur le port, mauvais token, pending, approved, rejected, commande avant/après, reconnexion, minuteur annulé après refus, mode sans token, drapeau historique, identité unique, e2e vs serveur d'exemple
 node test/run.js                     # suite complète existante (≈ 2400 tests)
 ```
 
 ## 8. Bonnes pratiques de sécurité pour vos essais
 
 - Utilisez un token de test (`dev-token`), jamais une vraie clé API de provider : le token du Cloud Bridge est distinct.
-- Le token est stocké en clair dans `chrome.storage.local` et envoyé dans le `hello` (en local uniquement).
+- Le token est stocké en clair dans `chrome.storage.local` mais n'est jamais envoyé sur la socket (sauf avec le drapeau historique du scénario G).
 - Le serveur d'exemple est un outil de test local, pas un backend de production.
 
 ## 9. Test réel : lancer une vraie tâche (`cloud_run`)
@@ -232,6 +246,6 @@ status run_xxxxx            # état d'un run (l'id est dans la réponse de cloud
 
 Votre backend doit :
 1. **Écouter en WebSocket** sur une URL `ws://127.0.0.1` / `localhost` / `::1` (l'extension se connecte *vers* lui). Un backend distant n'est pas accepté tel quel : utilisez un relais local ou voyez la décision « URL localhost uniquement » dans la doc technique.
-2. À la réception du `hello`, vérifier `auth.token`, puis répondre `{"type":"connection_pending"}` puis, après validation côté utilisateur, `{"type":"connection_approved"}` (ou `connection_rejected`).
+2. À la réception du `hello`, répondre `auth_challenge` avec son propre nonce et sa preuve HMAC, puis vérifier la preuve de l'`auth_response` (calcul exact dans la doc technique, section « Messages »). Ensuite seulement répondre `{"type":"connection_pending"}` puis, après validation côté utilisateur, `{"type":"connection_approved"}` (ou `connection_rejected`). L'extension ignore toute approbation reçue avant que le serveur ait prouvé le token.
 3. Envoyer ensuite les commandes `{"id","action","payload"}` et lire les réponses `{"id","ok","result"|"error"}`.
 

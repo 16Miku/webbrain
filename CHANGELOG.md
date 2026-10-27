@@ -6,6 +6,12 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+### Added
+- Settings → General → **Agent activity effect** chooses how a tab looks while WebBrain works on it: **Neural circuit**, the new default, where circuit traces grow in from the edges and signals run along them toward each element WebBrain acts on; **Aurora**, a soft purple band that drifts around the frame; **Scan**, corner brackets with a slow scanning beam; **Gears**, meshing cog trains turning in the corners; or **Classic glow**, the pulsing border used until now. Every style lets clicks, typing and scrolling through to the page, is hidden while WebBrain takes a screenshot, and holds still when your system asks to reduce motion. A new choice applies to a running task at once and is included in settings export and import. Chrome and Firefox.
+
+### Changed
+- The agent cursor no longer disappears three seconds after an action. It now keeps one, smaller size: it glides from target to target, presses once with a ripple when WebBrain clicks, and between actions stays where it last acted, slowly fading in and out until the task ends. The ring around the target still fades after a moment. Chrome and Firefox.
+
 ## [44.0.0] - 2026-10-27
 
 ### Added

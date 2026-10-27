@@ -7,6 +7,8 @@ import { after, before, test } from "node:test";
 import { main, readNetworkOptions } from "../dist/index.js";
 import { fetchUrl } from "../dist/tools/fetchUrl.js";
 import { researchUrl } from "../dist/tools/researchUrl.js";
+import { assertSafeUrl, isCloudMetadataHost } from "../dist/util/urlGuard.js";
+import { safeFetch } from "../dist/util/safeFetch.js";
 import { sharedBridge } from "../dist/util/bridgeClient.js";
 
 let toolsProvider;
@@ -153,4 +155,47 @@ test("cloud metadata endpoints stay blocked with private network access on", asy
   assert.equal(redirected.success, false);
   assert.match(redirected.error, /cloud metadata endpoint/);
   assert.equal(requests, 1);
+});
+
+test("cloud metadata endpoints are matched on address bytes, in every IPv6 form that embeds them", () => {
+  const blocked = [
+    "169.254.169.254",
+    "[::ffff:a9fe:a9fe]",         // IPv4-mapped (WHATWG form)
+    "[::ffff:169.254.169.254]",   // IPv4-mapped, dotted
+    "[0:0:0:0:0:ffff:a9fe:a9fe]", // IPv4-mapped, uncompressed
+    "[::a9fe:a9fe]",              // IPv4-compatible
+    "[::ffff:0:a9fe:a9fe]",       // IPv4-translated
+    "[64:ff9b::a9fe:a9fe]",       // NAT64
+    "[64:ff9b::169.254.169.254]", // NAT64, dotted
+    "[2002:a9fe:a9fe::1]",        // 6to4
+    "[2001:0:a9fe:a9fe::f7f7:f7f7]", // Teredo server
+    "[::ffff:6464:64c8]",         // mapped Alibaba 100.100.100.200
+    "[fd00:ec2:0:0:0:0:0:254]",   // AWS IPv6, uncompressed
+    "[FD00:EC2::23]",             // AWS EKS IPv6, upper-case
+    "metadata.google.internal.",  // trailing dot
+  ];
+  for (const host of blocked) {
+    assert.equal(isCloudMetadataHost(host), true, host);
+    assert.throws(() => assertSafeUrl(`http://${host}/`, { allowPrivate: true }), /cloud metadata/, host);
+  }
+  for (const host of ["8.8.8.8", "[::ffff:808:808]", "[64:ff9b::808:808]", "[2002:808:808::1]",
+    "169.254.169.253", "[fd00:ec2::255]", "192.168.1.1", "[::1]"]) {
+    assert.equal(isCloudMetadataHost(host), false, host);
+    assert.doesNotThrow(() => assertSafeUrl(`http://${host}/`, { allowPrivate: true }), host);
+  }
+});
+
+test("with the setting on, safeFetch's own literal-IP check lets loopback through but not metadata", async () => {
+  requests = 0;
+  const loopback = origin.replace("localhost", "127.0.0.1");
+  const res = await safeFetch(`${loopback}/`, { allowPrivate: true });
+  assert.equal(res.status, 200);
+  await res.body?.cancel();
+  assert.equal(requests, 1);
+  await assert.rejects(safeFetch(`${loopback}/`), /private network access is off/);
+  assert.equal(requests, 1, "still blocked with the setting off");
+  await assert.rejects(
+    safeFetch("http://[64:ff9b::a9fe:a9fe]/latest/meta-data/", { allowPrivate: true }),
+    /cloud metadata/,
+  );
 });

@@ -213,7 +213,11 @@ Everything below concerns `fetch_url` / `research_url`. For `browser_task`:
 - **URL guard, structural (sync).** Requests to RFC1918 (`10.*`,
   `172.16-31.*`, `192.168.*`), loopback (`127.*`, `::1`), link-local
   (`169.254.*`, `fe80::/10`), unique-local IPv6 (`fc00::/7`),
-  cloud-metadata IPs, and `*.local` / `*.internal` / `*.lan` /
+  carrier-grade NAT (`100.64.0.0/10`), unspecified (`0.0.0.0/8`, `::`),
+  multicast, cloud-metadata IPs, IPv6 addresses that embed any of
+  those IPv4 ranges (IPv4-mapped `::ffff:7f00:1` in any spelling,
+  IPv4-compatible, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`, Teredo),
+  and `*.local` / `*.internal` / `*.lan` /
   `*.home` / `*.corp` / `*.intranet` are blocked. Non-`http(s)`
   protocols (`file://`, `ftp://`, `gopher://`, `javascript:`) too.
 - **DNS resolution check.** Before each hop, the hostname is
