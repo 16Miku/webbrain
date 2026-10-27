@@ -1,6 +1,6 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 42.4.3 · Manifest V2 · Background Page
+> Version 44.0.2 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
@@ -118,6 +118,7 @@ Notable absences vs Chrome: no `cdp/`, no `offscreen/`, no `recorder/`, no `prov
     "menus",
     "webNavigation",
     "webRequest",
+    "dns",
     "storage",
     "unlimitedStorage",
     "tabs",
@@ -137,6 +138,7 @@ Notably **missing** vs Chrome: `debugger`, `sidePanel`, `scripting`, `offscreen`
 - No `offscreen` → no HTTP fetch proxy; direct fetch from background page only
 - No `privateNetworkAccess` → localhost LLM servers must send CORS headers themselves
 - `webRequest` is used for the same in-memory API shortcut observer as Chrome. The setting is on by default and can be disabled in Settings.
+- `dns` (Firefox only) lets `fetch_url`, `read_page_source` and `research_url` resolve the target hostname and refuse a blocked answer before sending; both builds also check the server address webRequest reports for the response. See Local network blocking in `docs/security-model.md`.
 - Uses `sidebar_action` (MV2) instead of `side_panel` (MV3)
 - Uses `browser.tabs.executeScript()` / `browser.tabs.sendMessage()` instead of `chrome.scripting.executeScript()`
 

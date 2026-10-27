@@ -328,6 +328,109 @@ export function validateFetchUrl(rawUrl, opts = {}) {
   return { ok: true };
 }
 
+// ─── Resolved-address check ─────────────────────────────────────────────
+
+// validateFetchUrl() sees only the URL text, so a public hostname whose DNS
+// answer is loopback, RFC1918, unique-local or link-local (cloud metadata)
+// passes it. Chrome gives extensions no DNS API and fetch() cannot pin a
+// socket, so the tools read the address the browser actually connected to
+// from webRequest (details.ip, also reported for HTTP-cache hits) and discard
+// the response when that address is blocked. The request itself has already
+// reached that address by then. With a proxy, details.ip is the proxy's
+// address, so a proxy on a private address needs local-network access.
+const RESPONSE_ADDRESS_WAIT_MS = 1500;
+const RESPONSE_ADDRESS_EVENTS = ['onBeforeRedirect', 'onResponseStarted', 'onErrorOccurred'];
+
+/**
+ * Classify a resolved address with the same tiers as validateFetchUrl():
+ * metadata/link-local, CGNAT, multicast and unspecified are always blocked;
+ * loopback, RFC1918 and unique-local only while local-network access is off.
+ * IPv4-mapped IPv6 is decoded and classified as IPv4.
+ */
+export function validateResolvedAddress(address, opts = {}) {
+  let ip = String(address || '').trim().toLowerCase();
+  if (ip.startsWith('[') && ip.endsWith(']')) ip = ip.slice(1, -1);
+  const literal = ip.includes(':') ? `[${ip}]` : ip;
+  let host = '';
+  try { host = new URL(`http://${literal}/`).hostname; } catch (_) {}
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(host) && !host.startsWith('[')) {
+    return { ok: false, error: `Invalid resolved address: ${address}` };
+  }
+  return validateFetchUrl(`http://${host}/`, opts);
+}
+
+function blockedAddressError(url, reason) {
+  let host = '';
+  try { host = new URL(url).hostname; } catch (_) {}
+  return `${host || url} resolved to a blocked address. ${reason}`;
+}
+
+/**
+ * Record the address each matching webRequest event reports. keyOf(details)
+ * names the request or tab an event belongs to (null to ignore it). Returns
+ * null when webRequest is unavailable.
+ */
+function watchResponseAddresses(filter, keyOf, allowLocal) {
+  const webRequest = globalThis.chrome?.webRequest;
+  if (RESPONSE_ADDRESS_EVENTS.some(name => typeof webRequest?.[name]?.addListener !== 'function')) return null;
+  const seen = new Set();
+  const failures = new Map();
+  const waiters = new Set();
+  const listener = (details) => {
+    const key = keyOf(details);
+    if (key == null) return;
+    seen.add(key);
+    if (details.ip && !failures.has(key)) {
+      const check = validateResolvedAddress(details.ip, { allowLocalNetwork: allowLocal });
+      if (!check.ok) failures.set(key, blockedAddressError(details.url, check.error));
+    }
+    for (const wake of waiters) wake();
+  };
+  const added = [];
+  try {
+    for (const name of RESPONSE_ADDRESS_EVENTS) {
+      webRequest[name].addListener(listener, { urls: ['<all_urls>'], ...filter });
+      added.push(name);
+    }
+  } catch (_) {
+    for (const name of added) webRequest[name].removeListener(listener);
+    return null;
+  }
+  return {
+    failure: key => failures.get(key) || null,
+    // fetch() and webRequest events are delivered separately, so fetch() can
+    // resolve before the response's event arrives. Wait briefly for it.
+    async settledFailure(key, timeoutMs = RESPONSE_ADDRESS_WAIT_MS) {
+      if (!seen.has(key)) {
+        await new Promise((resolve) => {
+          const done = () => { clearTimeout(timer); waiters.delete(wake); resolve(); };
+          const wake = () => { if (seen.has(key)) done(); };
+          const timer = setTimeout(done, timeoutMs);
+          waiters.add(wake);
+        });
+      }
+      return failures.get(key) || null;
+    },
+    close() {
+      for (const name of added) {
+        try { webRequest[name].removeListener(listener); } catch (_) {}
+      }
+    },
+  };
+}
+
+// The extension's own background fetch: tab -1, keyed by its URL (webRequest
+// reports URLs without the fragment).
+function watchFetchAddresses(url, allowLocal) {
+  let target;
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    target = u.href;
+  } catch (_) { return null; }
+  return watchResponseAddresses({ tabId: -1 }, d => (d.url === target ? 'fetch' : null), allowLocal);
+}
+
 // ─── Same-eTLD+1 cookie policy ──────────────────────────────────────────
 
 /**
@@ -1991,6 +2094,7 @@ export async function readPageSource(url, opts = {}, ctx = {}) {
   }
 
   const deadline = networkRequestDeadline(ctx);
+  const addresses = watchFetchAddresses(targetUrl, allowLocal);
   let res;
   try {
     if (deadline.signal.aborted) throw responseAbortError(deadline.signal);
@@ -2001,6 +2105,8 @@ export async function readPageSource(url, opts = {}, ctx = {}) {
       signal: deadline.signal,
     });
     rejectNetworkRedirect(res);
+    const addressFailure = await addresses?.settledFailure('fetch');
+    if (addressFailure) return { success: false, error: addressFailure };
 
     if (res.url && res.url !== targetUrl) {
       const v2 = validateFetchUrl(res.url, { allowLocalNetwork: allowLocal });
@@ -2072,6 +2178,7 @@ export async function readPageSource(url, opts = {}, ctx = {}) {
   } catch (e) {
     return { success: false, error: `read_page_source failed: ${e.message}` };
   } finally {
+    addresses?.close();
     deadline.dispose();
     try { Promise.resolve(res?.body?.cancel()).catch(() => {}); } catch {}
   }
@@ -2126,6 +2233,7 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
   }
 
   const deadline = networkRequestDeadline(ctx);
+  const addresses = watchFetchAddresses(url, allowLocal);
   let res;
   try {
     if (deadline.signal.aborted) throw responseAbortError(deadline.signal);
@@ -2138,6 +2246,8 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
       signal: deadline.signal,
     });
     rejectNetworkRedirect(res);
+    const addressFailure = await addresses?.settledFailure('fetch');
+    if (addressFailure) return { success: false, error: addressFailure };
 
     // Re-validate the final URL after redirects. If a redirect landed on a
     // blocked host, discard the body. If cookies were attached and the
@@ -2230,6 +2340,7 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
   } catch (e) {
     return { success: false, error: `Fetch failed: ${e.message}` };
   } finally {
+    addresses?.close();
     deadline.dispose();
     try { Promise.resolve(res?.body?.cancel()).catch(() => {}); } catch {}
   }
@@ -2261,6 +2372,10 @@ export async function researchUrl(url, opts = {}) {
   const urlCheck = validateFetchUrl(url, { allowLocalNetwork: getAllowLocalNetwork() });
   if (!urlCheck.ok) return { success: false, error: `URL is blocked: ${urlCheck.error}` };
   const timeoutMs = Math.min(opts.timeout || 8000, 30000);
+  // Addresses of the hidden tab's top-level responses, redirect hops
+  // included. The tab id exists only after tabs.create() has started the
+  // navigation, so record main frames by tab from the start.
+  const addresses = watchResponseAddresses({ types: ['main_frame'] }, d => d.tabId, getAllowLocalNetwork());
   let createdTab = null;
   try {
     const createProps = { url, active: false };
@@ -2305,6 +2420,8 @@ export async function researchUrl(url, opts = {}) {
     if (!loadedUrlCheck.ok) {
       return { success: false, error: `Redirect to blocked URL: ${loadedUrlCheck.error}`, finalUrl: loadedTab?.url || '' };
     }
+    const loadedAddress = addresses?.failure(tabId);
+    if (loadedAddress) return { success: false, error: loadedAddress, finalUrl: loadedTab?.url || '' };
 
     // Extract content via injected script. Strips chrome (header/nav/footer)
     // so we get the actual article/main content rather than navigation.
@@ -2339,6 +2456,8 @@ export async function researchUrl(url, opts = {}) {
     if (!resultUrlCheck.ok) {
       return { success: false, error: `Redirect to blocked URL: ${resultUrlCheck.error}`, finalUrl: result.url || '' };
     }
+    const resultAddress = addresses?.failure(tabId);
+    if (resultAddress) return { success: false, error: resultAddress, finalUrl: result.url || '' };
 
     return {
       success: true,
@@ -2355,6 +2474,7 @@ export async function researchUrl(url, opts = {}) {
   } catch (e) {
     return { success: false, error: `research_url failed: ${e.message}` };
   } finally {
+    addresses?.close();
     if (createdTab?.id != null) {
       chrome.tabs.remove(createdTab.id).catch(() => {});
     }
@@ -2363,21 +2483,32 @@ export async function researchUrl(url, opts = {}) {
 
 // ─── list_downloads ─────────────────────────────────────────────────────
 
-export async function listDownloads(opts = {}) {
+// The browser's download history is the user's own: unrelated files, their
+// source URLs and full local paths (which name the OS account). The model
+// sees only the downloads its conversation produced (`downloadIds`, kept by
+// the agent), and each file only by its basename.
+export function downloadBasename(filename) {
+  return String(filename || '').split(/[\\/]/).pop() || '';
+}
+
+export async function listDownloads(opts = {}, { downloadIds = [] } = {}) {
   try {
     const limit = Math.min(opts.limit || 10, 50);
-    const items = await chrome.downloads.search({
-      orderBy: ['-startTime'],
-      limit,
-      exists: true,
-    });
+    const ids = [...new Set(downloadIds)].filter(id => Number.isSafeInteger(id) && id >= 0).sort((a, b) => b - a);
+    const items = [];
+    for (const id of ids) {
+      if (items.length >= limit) break;
+      const found = (await chrome.downloads.search({ id })).find(item => item.id === id);
+      if (found && found.exists !== false) items.push(found);
+    }
     return {
       success: true,
       count: items.length,
+      ...(items.length ? {} : { note: 'No downloads from this conversation. Only files WebBrain downloaded, or that downloaded while it was working, in this conversation are listed; the browser\'s download history is not. If the user wants another downloaded file read, ask them to attach it.' }),
       downloads: items.map(d => ({
         id: d.id,
         url: d.url,
-        filename: d.filename,
+        filename: downloadBasename(d.filename),
         state: d.state,
         bytesReceived: d.bytesReceived,
         totalBytes: d.totalBytes,
@@ -2426,7 +2557,7 @@ function downloadedFileContent(item, payload, contentSource, savedFileVerified) 
     return { success: false, code: 'saved_download_read_incomplete', error: 'The downloaded-file byte window could not be verified.' };
   }
   const ct = String(item.mime || payload.mimeType || '').toLowerCase();
-  const common = { success: true, filename: item.filename, contentType: ct, sizeBytes: size,
+  const common = { success: true, filename: downloadBasename(item.filename), contentType: ct, sizeBytes: size,
     contentSource, savedFileVerified, sourceRefetched: false, bytesRead: bytes.length };
   if (downloadedFileIsText(item, ct)) {
     // Do not invent the full character count of a bounded byte prefix. A
@@ -2438,7 +2569,7 @@ function downloadedFileContent(item, payload, contentSource, savedFileVerified) 
   }
   if (size > READ_FILE_BASE64_LIMIT * 0.75) {
     return { ...common, note: savedFileVerified
-      ? `Binary file too large to inline (${size} bytes). It is on disk at: ${item.filename}`
+      ? `Binary file too large to inline (${size} bytes). It is saved as ${downloadBasename(item.filename)}.`
       : `Captured binary payload too large to inline (${size} bytes). Firefox cannot verify the current on-disk file.` };
   }
   if (payload.dataTruncated) return { success: false, code: 'saved_download_read_incomplete', error: 'The small binary payload was not read completely.' };
@@ -2550,49 +2681,85 @@ function retainGenericDownloadStage(downloadId, releaseToken, signal) {
   findDownloadItem(downloadId).then(item => { if (['complete', 'interrupted'].includes(item?.state)) void finish(); }).catch(() => {});
 }
 
+// download_resource_from_page reads the element's resource in the page. A
+// blob is read into memory for chrome.downloads (which cannot follow blob:
+// URLs), so it is bounded and cancelled past maxBytes. A streaming playlist
+// (HLS .m3u8, DASH .mpd) is not the media it plays: saving it would save
+// only its text, so it is refused. Runs in the page: self-contained.
+export async function readPageResourceForDownload(selector, maxBytes) {
+  const playlistError = 'This element plays a streaming playlist (HLS .m3u8 or DASH .mpd), not a media file: saving it would save only the playlist text. Tell the user this stream cannot be saved as one file, or use a media-download skill for the site if one is enabled.';
+  const playlistType = /^(?:application\/(?:vnd\.apple\.mpegurl|x-mpegurl|dash\+xml)|audio\/(?:x-)?mpegurl)\b/i;
+  const el = document.querySelector(selector);
+  if (!el) return { ok: false, error: 'element not found' };
+  // Try every common URL-bearing attribute.
+  const url = el.src || el.href || el.currentSrc ||
+            el.getAttribute('data-src') || el.getAttribute('data-url') || '';
+  if (!url) return { ok: false, error: 'element has no src/href/currentSrc/data-src' };
+  if (/\.(?:m3u8|mpd)(?:[?#]|$)/i.test(url)) return { ok: false, streamingPlaylist: true, error: playlistError };
+  if (url.startsWith('blob:')) {
+    try {
+      const res = await fetch(url);
+      const type = res.headers.get('content-type') || '';
+      if (playlistType.test(type)) return { ok: false, streamingPlaylist: true, error: playlistError };
+      const tooLarge = { ok: false, tooLarge: true, error: `The blob is larger than ${Math.round(maxBytes / 1048576)} MB, more than WebBrain reads into memory; nothing was saved.` };
+      const declared = Number(res.headers.get('content-length'));
+      if (Number.isFinite(declared) && declared > maxBytes) return tooLarge;
+      const chunks = [];
+      let total = 0;
+      if (res.body && typeof res.body.getReader === 'function') {
+        const reader = res.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > maxBytes) {
+            try { await reader.cancel(); } catch (e) {}
+            return tooLarge;
+          }
+          chunks.push(value);
+        }
+      } else {
+        const whole = await res.blob();
+        if (whole.size > maxBytes) return tooLarge;
+        chunks.push(whole);
+      }
+      const blob = new Blob(chunks, { type });
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(fr.error);
+        fr.readAsDataURL(blob);
+      });
+      return { ok: true, url: dataUrl, isBlob: true, mime: blob.type, size: blob.size };
+    } catch (e) {
+      return { ok: false, error: 'failed to read blob URL: ' + e.message };
+    }
+  }
+  // Flag cross-origin resources: the permission gate charged this
+  // download to the PAGE host, but a cross-origin resource is fetched
+  // from a different host — route those through download_files, which
+  // gates on the resource's own host.
+  let crossOrigin = false;
+  try { crossOrigin = new URL(url, location.href).origin !== location.origin; } catch (e) {}
+  return { ok: true, url, isBlob: false, crossOrigin };
+}
+
+const PAGE_BLOB_MAX_BYTES = 25 * 1024 * 1024;
+
 export async function downloadResourceFromPage(tabId, args = {}, ctx = {}) {
   const { selector, filename } = args;
   if (!selector) return { success: false, error: 'selector is required' };
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: async (sel) => {
-        const el = document.querySelector(sel);
-        if (!el) return { ok: false, error: 'element not found' };
-        // Try every common URL-bearing attribute.
-        let url = el.src || el.href || el.currentSrc ||
-                  el.getAttribute('data-src') || el.getAttribute('data-url') || '';
-        if (!url) return { ok: false, error: 'element has no src/href/currentSrc/data-src' };
-
-        // Blob URLs need to be read into a data URL because chrome.downloads
-        // can't follow blob:// from background context.
-        if (url.startsWith('blob:')) {
-          try {
-            const res = await fetch(url);
-            const blob = await res.blob();
-            const dataUrl = await new Promise((resolve, reject) => {
-              const fr = new FileReader();
-              fr.onload = () => resolve(fr.result);
-              fr.onerror = () => reject(fr.error);
-              fr.readAsDataURL(blob);
-            });
-            return { ok: true, url: dataUrl, isBlob: true, mime: blob.type, size: blob.size };
-          } catch (e) {
-            return { ok: false, error: 'failed to read blob URL: ' + e.message };
-          }
-        }
-        // Flag cross-origin resources: the permission gate charged this
-        // download to the PAGE host, but a cross-origin resource is fetched
-        // from a different host — route those through download_files, which
-        // gates on the resource's own host.
-        let crossOrigin = false;
-        try { crossOrigin = new URL(url, location.href).origin !== location.origin; } catch (e) {}
-        return { ok: true, url, isBlob: false, crossOrigin };
-      },
-      args: [selector],
+      func: readPageResourceForDownload,
+      args: [selector, PAGE_BLOB_MAX_BYTES],
     });
     const r = results?.[0]?.result;
-    if (!r?.ok) return { success: false, error: r?.error || 'extraction failed' };
+    if (!r?.ok) {
+      return { success: false, error: r?.error || 'extraction failed',
+        ...(r?.streamingPlaylist ? { streamingPlaylist: true } : {}), ...(r?.tooLarge ? { tooLarge: true } : {}) };
+    }
     if (!r.isBlob && r.crossOrigin) {
       return {
         success: false,

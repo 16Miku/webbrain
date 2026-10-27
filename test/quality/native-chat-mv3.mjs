@@ -280,7 +280,7 @@ try {
         nativeRuns[event.requestId].events.push({ type: event.type, data: event.data });
     });
     await chrome.storage.local.set({ helpImproveWebBrain: false, planBeforeActMode: 'off', planBeforeAct: false,
-      planReviewMode: 'never', screenshotFallback: false, autoScreenshot: false, maxAgentSteps: 40,
+      planReviewMode: 'never', screenshotFallback: false, autoScreenshot: false, visionMode: 'off', maxAgentSteps: 40,
       systemOneEnabled: false, tracingEnabled: false, agentAllowLocalNetwork: true,
       askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false });
   });

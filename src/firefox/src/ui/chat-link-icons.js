@@ -21,12 +21,16 @@ function publicHostname(href, baseURI) {
   } catch { return ''; }
 }
 
-function rasterSignature(bytes, mime) {
-  if (mime === 'image/png') return [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value);
-  if (mime === 'image/jpeg') return bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+// The type the bytes really have, or '' when they do not match the declared
+// one. Many sites serve a PNG as favicon.ico, so an icon type accepts PNG too.
+function rasterType(bytes, mime) {
+  const png = [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value);
+  if (mime === 'image/png') return png ? mime : '';
+  if (mime === 'image/jpeg') return bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 ? mime : '';
   if (mime === 'image/webp') return String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF'
-    && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP';
-  return bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 1 && bytes[3] === 0;
+    && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP' ? mime : '';
+  if (png) return 'image/png';
+  return bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 1 && bytes[3] === 0 ? mime : '';
 }
 
 async function readIcon(response) {
@@ -58,14 +62,21 @@ async function readIcon(response) {
   const bytes = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  if (!rasterSignature(bytes, mime)) throw new Error('Invalid favicon');
-  return new Blob([bytes], { type: mime });
+  const type = rasterType(bytes, mime);
+  if (!type) throw new Error('Invalid favicon');
+  return new Blob([bytes], { type });
+}
+
+// A link whose favicon cannot load shows no icon and gives back its space.
+function hideIcon(link) {
+  link.classList.remove('chat-link-icon-ready');
+  link.classList.add('chat-link-no-icon');
 }
 
 /**
  * Decorate chat links without allowing model text to choose an image URL.
  * Only a public hostname reaches the fixed favicon service; paths, queries,
- * fragments, cookies and referrers are never sent. Failures retain the CSS icon.
+ * fragments, cookies and referrers are never sent. A failed icon shows nothing.
  * The returned function releases observers, requests and local image URLs.
  */
 export function installChatLinkIcons(root, {
@@ -104,7 +115,7 @@ export function installChatLinkIcons(root, {
       if (stillCurrent(image, entry)) image.parentElement.classList.add('chat-link-icon-ready');
     };
     image.onerror = () => {
-      if (stillCurrent(image, entry)) image.parentElement.classList.remove('chat-link-icon-ready');
+      if (stillCurrent(image, entry)) hideIcon(image.parentElement);
       image.removeAttribute('src');
     };
     image.src = entry.url;
@@ -135,6 +146,7 @@ export function installChatLinkIcons(root, {
       for (const image of entry.images) applyImage(image, entry);
     } catch {
       entry.status = 'failed';
+      for (const image of entry.images) if (stillCurrent(image, entry)) hideIcon(image.parentElement);
     } finally {
       clearTimeout(timer);
       controllers.delete(controller);
@@ -160,13 +172,14 @@ export function installChatLinkIcons(root, {
     if (!entry) {
       // A hard per-panel bound prevents long chats or streamed replacements
       // from causing unbounded lookups or an eviction/re-fetch loop.
-      if (entries.size >= cacheLimit || typeof fetchImpl !== 'function') return;
+      if (entries.size >= cacheLimit || typeof fetchImpl !== 'function') { hideIcon(link); return; }
       entry = { hostname: state.hostname, status: 'queued', url: '', images: new Set() };
       entries.set(state.hostname, entry);
       queue.push(entry);
     }
     if (entry.status === 'ready') applyImage(state.image, entry);
-    else if (entry.status !== 'failed') {
+    else if (entry.status === 'failed') hideIcon(link);
+    else {
       for (const image of entry.images) if (!stillCurrent(image, entry)) entry.images.delete(image);
       entry.images.add(state.image);
     }
@@ -222,7 +235,7 @@ export function installChatLinkIcons(root, {
     previous?.image?.remove();
     // Restored chat HTML may contain an object URL from a closed panel.
     for (const image of link.querySelectorAll('.chat-link-icon')) image.remove();
-    link.classList.remove('chat-link-icon-ready');
+    link.classList.remove('chat-link-icon-ready', 'chat-link-no-icon');
     link.classList.toggle('chat-link', Boolean(hostname));
     const state = { href, hostname, image: null };
     decorated.set(link, state);

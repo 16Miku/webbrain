@@ -8,7 +8,14 @@ const FRESH_READS = new Set([
   'iframe_read', 'get_window_info', 'list_webmcp_tools', 'inspect_viewport', 'screenshot',
   'wait_for_element', 'wait_for_stable', 'read_console', 'inspect_network_requests',
   'inspect_element_styles', 'verify_form', 'chat_observe', 'read_pdf', 'get_captcha_capabilities', 'find_text',
+  // Vision mode (vision-tools.js): a fresh frame, a zoomed crop, a pause.
+  'take_screenshot', 'zoom', 'wait',
 ]);
+// Vision mode: a point read from a screenshot has no tree binding. Right before
+// dispatch WebBrain compares the live pixels around it with what the model saw
+// (vision-runtime.js _visionStabilityBlock) and refuses it if they changed, so
+// page churn elsewhere does not supersede the decision.
+const VISION_POINT_TOOLS = new Set(['click_at', 'hover_at', 'drag_at']);
 const DETACHED_TOOLS = new Set([
   'calculate', 'list_downloads', 'read_downloaded_file', 'scratchpad_write', 'progress_read',
   'progress_update', 'recall_memcode', 'clarify', 'generate_image', 'schedule_task', 'schedule_resume', 'resize_window',
@@ -260,6 +267,9 @@ function axTargetContext(page, refId) {
 export function pageFeedbackCallPolicy(name, args = {}, state = {}, currentPage = null, events = []) {
   if (FRESH_READS.has(name)) return { kind: 'observe' };
   if (DETACHED_TOOLS.has(name)) return { kind: 'independent' };
+  if (VISION_POINT_TOOLS.has(name)) return { kind: 'vision_point' };
+  // Vision-mode wheel scrolling explores the document like scroll does.
+  if (name === 'scroll_at') return { kind: 'scroll' };
   // Scrolling explores the current document. A counter or animation changing
   // while the model thinks does not invalidate that intent. The content monitor
   // resolves its live pane and checks intervention, viewport and target identity
@@ -357,8 +367,11 @@ export function isPageIndependentCalculationCompletion(calls, state, events) {
 // These tools inspect the current top-level document without acting on focus.
 // Read-preparation tools that can click a profile or wait/scroll remain excluded
 // after page focus or synthetic input changed the interactive page state.
+// Vision mode's fresh frame, zoom and pause act on nothing either: each shows
+// the screen as it is after the change.
 const PAGE_ACTIVITY_READS = new Set([
   'get_accessibility_tree', 'get_interactive_elements', 'read_page', 'read_page_source', 'verify_form',
+  'take_screenshot', 'zoom', 'wait',
 ]);
 
 export function canRetainPageFeedbackCalls(calls, state, currentPage, events, { pending = false } = {}) {
@@ -368,11 +381,18 @@ export function canRetainPageFeedbackCalls(calls, state, currentPage, events, { 
   const automatic = !passive && isAutomaticPageFeedback(events);
   if (!passive && !calculation && !automatic) return false;
   const interactive = !passive && events.some(event => ['activity', 'input'].includes(event?.kind));
+  // Vision mode: keyboard input after a click_at of the same response goes
+  // to the field that click focuses, checked at dispatch like its point.
+  let visionClicked = false;
   return calls.every(call => {
     let args;
     try { args = JSON.parse(call.function?.arguments); } catch { return false; }
     if (!args || typeof args !== 'object' || Array.isArray(args)) return false;
-    const policy = pageFeedbackCallPolicy(call.function?.name, args, state, currentPage, events);
+    const name = call.function?.name;
+    if (name === 'click_at') visionClicked = true;
+    else if (visionClicked && (name === 'type_text' || name === 'press_keys')) return true;
+    else if (!['take_screenshot', 'zoom', 'wait'].includes(name)) visionClicked = false;
+    const policy = pageFeedbackCallPolicy(name, args, state, currentPage, events);
     if (policy.terminal && calls.length !== 1) return false;
     // An Act completion survives automatic churn (ad frames, page focus,
     // unattributed scroll or DOM): superseding it on every tick would end a

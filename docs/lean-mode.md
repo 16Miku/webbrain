@@ -99,6 +99,8 @@ These quality guards keep running, each because a hard check depends on it (`LEA
 | `action-no-progress-classification` | It feeds the loop detector, a budget. |
 | `terminal-recovery-no-success` | It is the ending of the step-limit and observation budgets. |
 
+In a vision run (docs/vision-mode.md) lean mode also keeps `done-invariant-shape-checks` (`_guardSkipped`): the model sees what an action did only in the screen update after its batch, so `done(success)` in the same response as the action, a click on Send and done together, reports a result nobody has looked at. It is refused once with a note, as in a full run.
+
 ## What to expect
 
 - **The model checks its own work.** WebBrain does not tell it that a write could not be read back or that the page still shows a form; the prompt asks it to read the page again before `done`. A strong model does this with a tree read or `inspect_viewport`; a weak one may report success too early, which is why Auto keeps lean mode off for local and small models.

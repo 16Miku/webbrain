@@ -12,6 +12,9 @@ const PROTECTED_DOM_TOOLS = new Set([
   'press_keys', 'scroll', 'extract_data', 'inspect_element_styles',
   'patch_element', 'revert_patch', 'highlight_element', 'hover', 'drag_drop',
   'wait_for_element', 'wait_for_stable', 'get_selection', 'find_text',
+  // Vision mode's debugger input and region capture (click_at runs as click;
+  // take_screenshot only asks for the frame the next update captures).
+  'hover_at', 'drag_at', 'scroll_at', 'zoom',
 ]);
 
 export function isChromeProtectedPageDomTool(toolName) {

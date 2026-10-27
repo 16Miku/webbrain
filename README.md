@@ -147,6 +147,10 @@ required; turning the existing switch off also purges queued diagnostics.
   elements, via the accessibility tree rather than brittle selectors
 - **Acts on it** — click, type, scroll, navigate, upload, download, and verify
   forms, with per-site permission prompts before consequential actions
+- **Vision mode** — with a model that takes images, Act runs see the page as
+  screenshots and click, type and scroll at coordinates; only the changed part
+  of the screen is sent after each action, and retina displays and browser
+  zoom are handled ([details](docs/vision-mode.md))
 - **Plan before Act** — Act and Dev can generate a structured plan, show it for
   approval, and pin the approved plan to the scratchpad before any tool runs
 - **Multi-step agent** — autonomous tool-use loop, configurable up to 195 steps

@@ -6,6 +6,7 @@ import { OTP_EMAIL_TOOL, OTP_EMAIL_TOOL_NAME } from './otp-email-tool.js';
 import { BOT_MEMORY_TOOLS } from './bot-memory.js';
 import { MAX_BATCH_ACTIONS, BATCHABLE_ACTION_TOOLS, BATCH_TRAILING_OBSERVATION_TOOLS } from './browser-batch.js';
 import { REQUEST_ACTION_MODE_TOOL_NAME, requestActionModeTool } from './auto-mode.js';
+import { VISION_TOOL_NAMES, buildVisionToolSet, buildVisionActPrompt } from './vision-tools.js';
 
 /**
  * Tool definitions for the WebBrain agent.
@@ -1111,7 +1112,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'list_downloads',
-      description: 'List the user\'s most recent downloads with state, filename, source URL, and bytes received. Use this to verify a download you triggered actually completed.',
+      description: 'List this conversation\'s downloads (files you downloaded, or that downloaded while you worked) with state, file name, source URL, and bytes received. Use this to verify a download you triggered actually completed. The user\'s other download history is not listed.',
       parameters: {
         type: 'object',
         properties: {
@@ -1125,7 +1126,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'read_downloaded_file',
-      description: 'Read actual saved bytes of a completed browser download through an isolated local-file reader; never re-fetch its source URL. Returns at most 16k text characters, base64 for small binaries, or saved-file metadata for large binaries. Pass downloadId from list_downloads or download_files. A missing file or unavailable local reader returns an error.',
+      description: 'Read actual saved bytes of a completed browser download through an isolated local-file reader; never re-fetch its source URL. Returns at most 16k text characters, base64 for small binaries, or saved-file metadata for large binaries. Pass downloadId from list_downloads or download_files. A missing file or unavailable local reader returns an error. A download from outside this conversation is read only if the user approves that exact file on WebBrain\'s card.',
       parameters: {
         type: 'object',
         properties: {
@@ -1551,7 +1552,7 @@ export const RETIRED_AGENT_TOOL_NAMES = new Set([
   'screenshot', 'full_page_screenshot', 'record_tab', 'stop_recording',
   'new_tab', 'list_tabs', 'activate_tab',
 ]);
-export const RESERVED_AGENT_TOOL_NAMES = new Set([...AGENT_TOOL_NAMES, ...RETIRED_AGENT_TOOL_NAMES, OTP_EMAIL_TOOL_NAME, 'done_json', 'load_skill', 'beep', REQUEST_ACTION_MODE_TOOL_NAME, ...BOT_MEMORY_TOOLS.map(tool => tool.function.name)]);
+export const RESERVED_AGENT_TOOL_NAMES = new Set([...AGENT_TOOL_NAMES, ...RETIRED_AGENT_TOOL_NAMES, ...VISION_TOOL_NAMES, OTP_EMAIL_TOOL_NAME, 'done_json', 'load_skill', 'beep', REQUEST_ACTION_MODE_TOOL_NAME, ...BOT_MEMORY_TOOLS.map(tool => tool.function.name)]);
 export const DEV_ONLY_TOOL_NAMES = new Set([
   'read_page_source',
   'inspect_element_styles',
@@ -2086,6 +2087,11 @@ export function getToolsForMode(mode, opts = {}) {
       return true;
     });
     base = [...base, ...extras];
+  }
+  // Vision mode (vision-mode.js): an Act run whose model sees screenshots
+  // gets coordinate tools instead of the tree/ref/selector tools.
+  if (opts.vision && normalizedMode === 'act' && !devCompactBlocked) {
+    base = buildVisionToolSet(base, { coordinates: opts.vision.coordinates === 'normalized' ? 'normalized' : 'pixel' });
   }
   const advertisedNames = new Set(base.map(tool => tool.function.name));
   base = base.map(tool => tool.function.name !== 'browser_batch' ? tool : {
@@ -2712,3 +2718,17 @@ LISTINGS:
  * prompt; WebBrain skips its quality checks, so the model checks its own work.
  */
 export const SYSTEM_PROMPT_LEAN_NOTE = `LEAN MODE: WebBrain does not re-check your typing or your result for you. Check your own work: after an action that changes the page, read the page again and compare what you see with the request before calling done.`;
+
+/**
+ * Act prompt of a vision run (vision-mode.js). Replaces the tier's
+ * tree-centred Act prompt; the shared policy sections are reused verbatim.
+ */
+export function getVisionActPrompt({ coordinates = 'pixel', tier = 'full' } = {}) {
+  return buildVisionActPrompt({
+    coordinates,
+    tier,
+    sensitiveGuidance: SENSITIVE_PAGE_DATA_GUIDANCE,
+    planGuidance: tier === 'compact' ? PLAN_TO_EXECUTION_GUIDANCE_COMPACT : PLAN_TO_EXECUTION_GUIDANCE,
+    tabLimitation: BROWSER_TAB_LIMITATION,
+  });
+}

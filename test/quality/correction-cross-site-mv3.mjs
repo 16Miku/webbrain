@@ -427,7 +427,7 @@ async function runVariant(variant, script) {
     const message = (action, data = {}) => settings.evaluate(({ action, data }) => chrome.runtime.sendMessage({ target: 'background', action, ...data }), { action, data });
     await settings.evaluate(() => chrome.storage.local.set({ helpImproveWebBrain: false, userMemoryEnabled: false, tracingEnabled: false,
       autoScreenshot: false, screenshotFallback: false, planBeforeActMode: 'off', planBeforeAct: false, planReviewMode: 'never',
-      maxAgentSteps: 30, systemOneEnabled: false, agentAllowLocalNetwork: true, askBeforeConsequentialActions: false,
+      visionMode: 'off', maxAgentSteps: 30, systemOneEnabled: false, agentAllowLocalNetwork: true, askBeforeConsequentialActions: false,
       openaiAskStreamingEnabled: false }));
     assert.equal((await message('update_provider', { providerId: 'openrouter', config: { apiKey: 'owned-fixture-fake-key',
       baseUrl: `${base}/v1`, model: 'minimax/minimax-m3', enabled: true, contextWindow: 1000000,

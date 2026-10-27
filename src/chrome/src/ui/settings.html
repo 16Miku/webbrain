@@ -66,6 +66,19 @@
       </div>
       <div class="setting-row">
         <div class="setting-info">
+          <div class="setting-label" data-i18n="st.display.agent_indicator.label"></div>
+          <div class="setting-desc" data-i18n="st.display.agent_indicator.desc"></div>
+        </div>
+        <select id="select-agent-indicator-style" data-i18n-aria-label="st.display.agent_indicator.label" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-family:inherit;cursor:pointer;">
+          <option value="circuit" data-i18n="st.display.agent_indicator.circuit"></option>
+          <option value="aurora" data-i18n="st.display.agent_indicator.aurora"></option>
+          <option value="scan" data-i18n="st.display.agent_indicator.scan"></option>
+          <option value="gears" data-i18n="st.display.agent_indicator.gears"></option>
+          <option value="classic" data-i18n="st.display.agent_indicator.classic"></option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
           <div class="setting-label" data-i18n="st.display.download_directory.label"></div>
           <div class="setting-desc" data-i18n="st.display.download_directory.desc"></div>
         </div>
@@ -911,6 +924,27 @@
           <option value="auto" data-i18n="st.display.lean_mode.auto"></option>
           <option value="on" data-i18n="st.display.lean_mode.on"></option>
           <option value="off" data-i18n="st.display.lean_mode.off"></option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label" data-i18n="st.display.vision_mode.label"></div>
+          <div class="setting-desc" data-i18n="st.display.vision_mode.desc"></div>
+        </div>
+        <select id="select-vision-mode" data-i18n-aria-label="st.display.vision_mode.label">
+          <option value="auto" data-i18n="st.display.vision_mode.auto"></option>
+          <option value="off" data-i18n="st.display.vision_mode.off"></option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-label" data-i18n="st.display.vision_quality.label"></div>
+          <div class="setting-desc" data-i18n="st.display.vision_quality.desc"></div>
+        </div>
+        <select id="select-vision-quality" data-i18n-aria-label="st.display.vision_quality.label">
+          <option value="economy" data-i18n="st.display.vision_quality.economy"></option>
+          <option value="balanced" data-i18n="st.display.vision_quality.balanced"></option>
+          <option value="sharp" data-i18n="st.display.vision_quality.sharp"></option>
         </select>
       </div>
       <div class="setting-row">

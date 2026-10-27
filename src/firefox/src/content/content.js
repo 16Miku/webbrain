@@ -1988,6 +1988,903 @@
     return list.slice();
   }
 
+  // ── Vision mode input (vision-runtime.js) ──────────────────────────────
+  // Pointer, wheel and drag input at an exact viewport point, for builds or
+  // pages without trusted CDP input (Firefox). Events carry real client
+  // coordinates, so canvases, sliders and maps see where the model pointed;
+  // the default action of a press (focus) and of a click (activation) is
+  // reproduced the way a browser does it. Same-origin iframes are entered.
+  //
+  // What is under a top-level viewport point: the element, its document and
+  // window, the point in that document's client coordinates (cx, cy), and
+  // toDoc(x, y), which maps any top-level point into that document the same
+  // way. A point on a same-origin frame that no scale maps (_visionFrameMap)
+  // gives { el: the frame, unmappable: true }.
+  function _visionTargetAt(x, y) {
+    let doc = document;
+    let view = window;
+    let cx = x;
+    let cy = y;
+    const maps = [];
+    for (let depth = 0; depth < 6; depth++) {
+      let el = doc.elementFromPoint(cx, cy);
+      const seen = new Set();
+      while (el && el.shadowRoot && !seen.has(el)) {
+        seen.add(el);
+        let inner = null;
+        try { inner = el.shadowRoot.elementFromPoint(cx, cy); } catch {}
+        if (!inner || inner === el) break;
+        el = inner;
+      }
+      if (!el) return null;
+      if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+        let inner = null;
+        try { inner = el.contentDocument; } catch { inner = null; }
+        if (inner?.documentElement) {
+          const map = _visionFrameMap(el, view, inner.defaultView);
+          if (!map) return { el, doc, view, cx, cy, unmappable: true };
+          ({ x: cx, y: cy } = map(cx, cy));
+          maps.push(map);
+          doc = inner;
+          view = inner.defaultView || view;
+          continue;
+        }
+      }
+      const toDoc = (px, py) => maps.reduce((point, map) => map(point.x, point.y), { x: px, y: py });
+      return { el, doc, view, cx, cy, toDoc };
+    }
+    return null;
+  }
+
+  // How a point of a document maps into a same-origin frame drawn in it:
+  // the frame's position, borders and padding are taken off, and whatever
+  // scale a CSS transform or zoom draws it at (on itself or an ancestor) is
+  // undone, by comparing its drawn box with the size of its own viewport.
+  // Null when the frame or an ancestor is rotated, skewed, flipped, set on
+  // a motion path or drawn in 3D, which no scale maps.
+  function _visionFrameMap(frame, view, innerView) {
+    const length = value => Number.parseFloat(value) || 0;
+    for (let node = frame, depth = 0; node?.nodeType === 1 && depth < 256; node = node.parentElement || node.getRootNode?.()?.host, depth++) {
+      const style = view.getComputedStyle(node);
+      const transform = String(style.transform || 'none');
+      if (transform !== 'none') {
+        const matrix = /^matrix\(([^)]*)\)$/.exec(transform);
+        const [a, b, c, d] = matrix ? matrix[1].split(',').map(Number) : [];
+        if (!matrix || Math.abs(b) > 1e-6 || Math.abs(c) > 1e-6 || !(a > 0) || !(d > 0)) return null;
+      }
+      const rotate = String(style.rotate || 'none');
+      if (rotate !== 'none' && !/^0(deg|rad|grad|turn)?$/.test(rotate)) return null;
+      const scale = String(style.scale || 'none');
+      if (scale !== 'none' && scale.split(/\s+/).some(part => !(length(part) > 0))) return null;
+      // A motion path turns the element along it.
+      if (String(style.offsetPath || 'none') !== 'none') return null;
+    }
+    const rect = frame.getBoundingClientRect();
+    const style = view.getComputedStyle(frame);
+    const left = length(style.borderLeftWidth) + length(style.paddingLeft);
+    const top = length(style.borderTopWidth) + length(style.paddingTop);
+    const right = length(style.borderRightWidth) + length(style.paddingRight);
+    const bottom = length(style.borderBottomWidth) + length(style.paddingBottom);
+    const width = (Number(innerView?.innerWidth) || Math.max(0, frame.clientWidth - length(style.paddingLeft) - length(style.paddingRight))) + left + right;
+    const height = (Number(innerView?.innerHeight) || Math.max(0, frame.clientHeight - length(style.paddingTop) - length(style.paddingBottom))) + top + bottom;
+    // An unscaled frame's drawn box differs from that size by rounding only.
+    const sx = width > 0 && Math.abs(rect.width - width) > 1 ? rect.width / width : 1;
+    const sy = height > 0 && Math.abs(rect.height - height) > 1 ? rect.height / height : 1;
+    return (x, y) => ({ x: (x - rect.left) / sx - left, y: (y - rect.top) / sy - top });
+  }
+
+  function _visionFocusable(el) {
+    for (let node = el; node && node.nodeType === 1; node = node.parentElement || node.getRootNode?.()?.host) {
+      if (node.matches?.('input:not([disabled]),textarea:not([disabled]),select:not([disabled]),button:not([disabled]),a[href],[tabindex],[contenteditable=""],[contenteditable="true"],summary')) return node;
+    }
+    return null;
+  }
+
+  // Where a wheel delta along `axis` goes, routed as the browser routes it:
+  // the nearest scroll container under the point that can still move that
+  // way (an exhausted one passes the wheel on unless its overscroll-behavior
+  // keeps it), then the document unless its overflow locks it (a page
+  // behind a modal), then the page around a same-origin frame. Null when
+  // nothing would scroll. A programmatic scroll ignores all of this (it
+  // scrolls a locked page too), so it is checked here.
+  function _visionWheelTarget(el, axis, delta) {
+    const x = axis === 'x';
+    const canMove = node => {
+      const max = x ? node.scrollWidth - node.clientWidth : node.scrollHeight - node.clientHeight;
+      const at = Math.abs(x ? node.scrollLeft : node.scrollTop);
+      return max > 1 && (delta < 0 ? at > 0.5 : at < max - 0.5);
+    };
+    const contains = style => /contain|none/.test(String((x ? style.overscrollBehaviorX : style.overscrollBehaviorY) || ''));
+    let node = el;
+    for (let depth = 0; node && depth < 8; depth++) {
+      const doc = node.ownerDocument;
+      const view = doc?.defaultView;
+      if (!view) return null;
+      const root = doc.scrollingElement || doc.documentElement;
+      // The viewport's overflow is the root element's, or the body's when
+      // the root's is visible (the body is then no scroller of its own).
+      const htmlStyle = view.getComputedStyle(doc.documentElement);
+      const htmlOverflow = x ? htmlStyle.overflowX : htmlStyle.overflowY;
+      const bodyIsViewport = !!doc.body && htmlOverflow === 'visible';
+      for (let n = node; n && n.nodeType === 1 && n !== doc.documentElement; n = n.parentElement || n.getRootNode?.()?.host) {
+        if (n === doc.body && bodyIsViewport) break;
+        const style = view.getComputedStyle(n);
+        if (!/(auto|scroll|overlay)/.test(x ? style.overflowX : style.overflowY)) continue;
+        if (canMove(n)) return n;
+        if (contains(style)) return null;
+      }
+      const bodyStyle = bodyIsViewport ? view.getComputedStyle(doc.body) : null;
+      const viewportOverflow = bodyStyle ? (x ? bodyStyle.overflowX : bodyStyle.overflowY) : htmlOverflow;
+      if (!/hidden|clip/.test(viewportOverflow) && root && canMove(root)) return root;
+      if (contains(htmlStyle)) return null;
+      let frame = null;
+      try { frame = view.frameElement; } catch { frame = null; }
+      node = frame;
+    }
+    return null;
+  }
+
+  // A native range input moves its thumb only for trusted input, so under a
+  // synthetic drag the value the pointer gives is set the way the browser
+  // sets it: from the point's place along the track (the thumb's centre
+  // spans the track less half a thumb at each end), snapped to the step by
+  // the input's own sanitization, with an `input` event per change and a
+  // `change` event on release. Points are in the input's document. Null
+  // when `el` is not an enabled range input.
+  function _visionRangeDrag(el) {
+    const view = el?.ownerDocument?.defaultView;
+    // Disabled also by an enclosing disabled fieldset (:disabled).
+    if (!view || !(el instanceof view.HTMLInputElement) || String(el.type).toLowerCase() !== 'range' || el.matches(':disabled')) return null;
+    const setter = Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, 'value')?.set;
+    const style = view.getComputedStyle(el);
+    // Vertical by writing mode runs from the inline start (top, or bottom
+    // when right-to-left); the legacy vertical forms put the minimum at the bottom.
+    const legacyVertical = el.getAttribute('orient') === 'vertical' || /slider-vertical/.test(style.appearance || '');
+    const vertical = legacyVertical || /^vertical/.test(style.writingMode || '');
+    const reversed = legacyVertical || style.direction === 'rtl';
+    const number = (value, fallback) => (Number.isFinite(Number.parseFloat(value)) ? Number.parseFloat(value) : fallback);
+    const startValue = el.value;
+    const fire = type => el.dispatchEvent(new view.Event(type, { bubbles: true, composed: type === 'input' }));
+    return {
+      to(px, py) {
+        const rect = el.getBoundingClientRect();
+        const min = number(el.min, 0);
+        const max = Math.max(min, number(el.max, 100));
+        const length = vertical ? rect.height : rect.width;
+        const thumb = Math.min(16, vertical ? rect.width : rect.height, length / 2);
+        const along = vertical ? py - rect.top : px - rect.left;
+        let fraction = Math.min(1, Math.max(0, (along - thumb / 2) / Math.max(1, length - thumb)));
+        if (reversed) fraction = 1 - fraction;
+        const before = el.value;
+        const value = String(min + fraction * (max - min));
+        if (setter) setter.call(el, value); else el.value = value;
+        if (el.value !== before) fire('input');
+      },
+      release() {
+        if (el.value !== startValue) fire('change');
+        return el.value;
+      },
+    };
+  }
+
+  // An HTML5 draggable item (draggable="true") under a press starts the
+  // browser's drag and drop, which synthetic pointer events never do. This
+  // runs that sequence the way the browser does: dragstart on the item with
+  // a DataTransfer the page fills (cancelled: no drag), then per pointer
+  // step drag on the item, dragenter on a newly entered element (then
+  // dragleave on the one left) and dragover on the current one, whose
+  // cancelling makes it a drop target for its dropEffect; on release drop
+  // there (or dragleave when nothing accepted it) and dragend on the item.
+  // Null when no draggable item is under `el`.
+  function _visionHtmlDrag(el) {
+    const source = el?.closest?.('[draggable="true"]');
+    const view = source?.ownerDocument?.defaultView;
+    if (!view || typeof view.DragEvent !== 'function' || typeof view.DataTransfer !== 'function') return null;
+    let transfer;
+    try { transfer = new view.DataTransfer(); } catch { return null; }
+    let current = null;
+    let accepted = false;
+    // Whether this engine lets a constructed DataTransfer carry a drop
+    // effect (Chromium ignores it outside a real drag); without one, a
+    // cancelled dragover alone makes the drop target.
+    let effects = false;
+    try { transfer.dropEffect = 'copy'; effects = transfer.dropEffect === 'copy'; transfer.dropEffect = 'none'; } catch { effects = false; }
+    // The operation a dragenter or dragover starts from (HTML drag-and-drop
+    // processing model), which the page may change before cancelling.
+    const initialEffect = () => {
+      const allowed = String(transfer.effectAllowed || 'uninitialized');
+      return allowed === 'none' ? 'none' : allowed === 'move' ? 'move' : /^link/.test(allowed) ? 'link' : 'copy';
+    };
+    const fire = (target, type, init, cancelable = true) => target.dispatchEvent(new view.DragEvent(type, {
+      bubbles: true, cancelable, composed: true, view, button: 0, buttons: 1, ...init, dataTransfer: transfer,
+    }));
+    const offer = (target, type, init) => {
+      if (effects) transfer.dropEffect = initialEffect();
+      return !fire(target, type, init) && (!effects || transfer.dropEffect !== 'none');
+    };
+    return {
+      start: init => fire(source, 'dragstart', init),
+      move(target, init) {
+        fire(source, 'drag', init);
+        if (target !== current) {
+          offer(target, 'dragenter', init);
+          if (current) fire(current, 'dragleave', { ...init, relatedTarget: target }, false);
+          current = target;
+        }
+        accepted = offer(current, 'dragover', init);
+      },
+      end(init) {
+        let handled = false;
+        if (current && accepted) handled = !fire(current, 'drop', { ...init, buttons: 0 });
+        else if (current) fire(current, 'dragleave', { ...init, buttons: 0 }, false);
+        if (effects && !(current && accepted)) transfer.dropEffect = 'none';
+        fire(source, 'dragend', { ...init, buttons: 0 }, false);
+        return { started: true, dropped: !!(current && accepted), dropHandled: handled };
+      },
+    };
+  }
+
+  // Where a caret would go at a point of `doc` (its client coordinates, kept
+  // inside its viewport): { node, offset }, the node being the text field
+  // itself when the point is in one.
+  function _visionCaretAt(doc, x, y) {
+    const view = doc.defaultView;
+    const px = Math.min(Math.max(0, x), Math.max(0, (view?.innerWidth || 1) - 1));
+    const py = Math.min(Math.max(0, y), Math.max(0, (view?.innerHeight || 1) - 1));
+    try {
+      const position = doc.caretPositionFromPoint?.(px, py);
+      if (position?.offsetNode) return { node: position.offsetNode, offset: position.offset };
+    } catch { /* fall back to the WebKit form */ }
+    try {
+      const range = doc.caretRangeFromPoint?.(px, py);
+      if (range?.startContainer) return { node: range.startContainer, offset: range.startOffset };
+    } catch { /* no caret here */ }
+    return null;
+  }
+
+  // A synthetic press selects no text either. A drag a person's would turn
+  // into a selection (a press on selectable text or in a text field) selects
+  // from the press to the pointer, after a cancelable `selectstart` like the
+  // browser's. Null where a press would not select: a link, image, draggable
+  // item or other control, `user-select: none`, or no text at the point.
+  // Points are in the element's document.
+  function _visionTextSelection(el) {
+    const doc = el?.ownerDocument;
+    const view = doc?.defaultView;
+    if (!view) return null;
+    const tag = String(el.tagName || '').toUpperCase();
+    const field = !el.matches?.(':disabled') && (tag === 'TEXTAREA'
+      || (tag === 'INPUT' && /^(text|search|url|tel|password)?$/.test(String(el.getAttribute('type') || '').toLowerCase()))) ? el : null;
+    if (!field) {
+      if (el.closest?.('a[href],img,[draggable="true"],button,select,option,summary,input,textarea')) return null;
+      // `user-select: auto` takes the parent's; the nearest other value decides.
+      for (let node = el, depth = 0; node?.nodeType === 1 && depth < 64; node = node.parentElement, depth++) {
+        const style = view.getComputedStyle(node);
+        const value = style.userSelect || style.webkitUserSelect || 'auto';
+        if (value === 'none') return null;
+        if (value !== 'auto') break;
+      }
+    }
+    let start = null;
+    const caret = (px, py) => {
+      if (!field) return _visionCaretAt(doc, px, py);
+      // Past the field's edge the selection runs to the edge, as it does.
+      const rect = field.getBoundingClientRect();
+      const at = _visionCaretAt(doc, Math.min(Math.max(px, rect.left + 1), rect.right - 1), Math.min(Math.max(py, rect.top + 1), rect.bottom - 1));
+      return at?.node === field ? at : null;
+    };
+    const to = (px, py) => {
+      const at = start && caret(px, py);
+      if (!at) return;
+      try {
+        if (field) field.setSelectionRange(Math.min(start.offset, at.offset), Math.max(start.offset, at.offset), at.offset < start.offset ? 'backward' : 'forward');
+        else doc.getSelection()?.setBaseAndExtent(start.node, start.offset, at.node, at.offset);
+      } catch { /* a node the selection cannot hold */ }
+    };
+    return {
+      begin(px, py) {
+        const at = caret(px, py);
+        if (!at || (!field && at.node.nodeType !== 3)) return false;
+        if (!el.dispatchEvent(new view.Event('selectstart', { bubbles: true, cancelable: true }))) return false;
+        start = at;
+        to(px, py);
+        return true;
+      },
+      to,
+      selectedChars() {
+        if (field) return Math.abs((field.selectionEnd || 0) - (field.selectionStart || 0));
+        return String(doc.getSelection() || '').length;
+      },
+    };
+  }
+
+  // A person's press in a text field or in editable text puts the caret
+  // under the pointer; focus() alone leaves it wherever it was, and typing
+  // would land there instead of where the model clicked.
+  function _visionPlaceCaret(el, cx, cy) {
+    const tag = String(el?.tagName || '').toUpperCase();
+    const caret = el ? _visionCaretAt(el.ownerDocument, cx, cy) : null;
+    if (!caret) return;
+    try {
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
+        if (caret.node === el) el.setSelectionRange(caret.offset, caret.offset);
+      } else if (caret.node.nodeType === 3 && caret.node.parentElement?.isContentEditable) {
+        el.ownerDocument.getSelection()?.collapse(caret.node, caret.offset);
+      }
+    } catch { /* a field type without a caret (email, number) */ }
+  }
+
+  // What a double click selects around a caret `offset` in `text`: the word
+  // (or the run of spaces, or the punctuation mark) under the pointer, which
+  // is the character after the caret, or the one before it when that one is
+  // part of a word and the next is not (the right half of a word's last
+  // letter). Returns [start, end].
+  function _visionWordAt(text, offset) {
+    const value = String(text || '');
+    if (!value) return [0, 0];
+    const wordChar = ch => /[\p{L}\p{N}\p{M}_']/u.test(ch || '');
+    let index = Math.min(Math.max(0, Number(offset) || 0), value.length);
+    if (index >= value.length || (!wordChar(value[index]) && wordChar(value[index - 1]))) index = Math.max(0, index - 1);
+    if (typeof Intl?.Segmenter === 'function') {
+      try {
+        for (const part of new Intl.Segmenter(undefined, { granularity: 'word' }).segment(value)) {
+          if (index >= part.index && index < part.index + part.segment.length) return [part.index, part.index + part.segment.length];
+        }
+      } catch { /* character classes below */ }
+    }
+    const kind = ch => (wordChar(ch) ? 'word' : /\s/.test(ch) ? 'space' : 'mark');
+    const at = kind(value[index]);
+    if (at === 'mark') return [index, index + 1];
+    let start = index;
+    let end = index + 1;
+    while (start > 0 && kind(value[start - 1]) === at) start--;
+    while (end < value.length && kind(value[end]) === at) end++;
+    return [start, end];
+  }
+
+  // What a triple click in a textarea selects: the line around the caret.
+  function _visionLineAt(text, offset) {
+    const value = String(text || '');
+    const index = Math.min(Math.max(0, Number(offset) || 0), value.length);
+    const end = value.indexOf('\n', index);
+    return [index > 0 ? value.lastIndexOf('\n', index - 1) + 1 : 0, end < 0 ? value.length : end];
+  }
+
+  // What the vision pointer was last over, so the next input moves off it
+  // the way a mouse does (out and leave events) instead of appearing on the
+  // new target: a hover menu or tooltip that closes on mouseleave closes.
+  let _visionPointerOver = null;
+
+  // An element and its ancestors, through shadow roots to their hosts.
+  function _visionPointerChain(node) {
+    const chain = [];
+    for (let n = node, depth = 0; n?.nodeType === 1 && depth < 256; n = n.parentElement || n.getRootNode?.()?.host, depth++) chain.push(n);
+    return chain;
+  }
+
+  // ── :hover for the synthetic pointer ──
+  // Synthetic events run a page's hover listeners but give nothing :hover,
+  // so a menu or tooltip only CSS reveals (`.menu:hover .submenu`) would stay
+  // hidden. While the vision pointer rests on an element, that element and
+  // its ancestors (through shadow roots and out of same-origin frames) carry
+  // an attribute, and every :hover in the selectors of the style rules this
+  // world can read also accepts that attribute, in place:
+  // `.menu:hover .submenu, .save` reads
+  // `.menu:is(:hover, [data-webbrain-hover]) .submenu, .save`. Each rule keeps
+  // its place in the cascade, its specificity (:is takes its argument's),
+  // its conditions (@media, @supports, @layer, @container, nesting) and the
+  // other selectors of its list; `:not(:hover)` stays its negation. The
+  // pointer moving on moves the attribute; a person's own pointer moving
+  // ends the emulation (the real :hover then follows them) and puts the
+  // page's selectors back. Another origin's style sheets cannot be read, so
+  // their :hover rules stay unmatched.
+  const _VISION_HOVER_ATTRIBUTE = 'data-webbrain-hover';
+  const _VISION_HOVER_MATCH = `:is(:hover, [${_VISION_HOVER_ATTRIBUTE}])`;
+  let _visionHoverChain = [];
+  // rule -> { original, rewritten } selector text, to put back.
+  const _visionHoverRewritten = new Map();
+  // A sheet is read again only when its rule count changed since.
+  let _visionHoverScanned = new WeakMap();
+  let _visionHoverListening = false;
+
+  function _visionHoverRewrite(rules, depth = 0) {
+    if (!rules || depth > 12) return;
+    for (const rule of Array.from(rules)) {
+      try {
+        const original = typeof rule.selectorText === 'string' ? rule.selectorText : '';
+        if (original && !_visionHoverRewritten.has(rule) && /:hover(?![\w-])/i.test(original) && !original.includes(_VISION_HOVER_ATTRIBUTE)) {
+          // A selector the result would not parse in is left as it was.
+          rule.selectorText = original.replace(/:hover(?![\w-])/gi, _VISION_HOVER_MATCH);
+          const rewritten = rule.selectorText;
+          if (rewritten !== original) _visionHoverRewritten.set(rule, { original, rewritten });
+        }
+        if (rule.styleSheet) {
+          let imported = null;
+          try { imported = rule.styleSheet.cssRules; } catch { imported = null; }
+          _visionHoverRewrite(imported, depth + 1);
+        } else if (rule.cssRules?.length) {
+          _visionHoverRewrite(rule.cssRules, depth + 1);
+        }
+      } catch { /* a rule this world cannot read or change */ }
+    }
+  }
+
+  function _visionHoverPrepare(root) {
+    for (const sheet of [...Array.from(root.styleSheets || []), ...Array.from(root.adoptedStyleSheets || [])]) {
+      let rules = null;
+      try { rules = sheet.cssRules; } catch { rules = null; }
+      if (!rules || _visionHoverScanned.get(sheet) === rules.length) continue;
+      _visionHoverRewrite(rules);
+      _visionHoverScanned.set(sheet, rules.length);
+    }
+  }
+
+  function _visionHoverRestore() {
+    for (const [rule, { original, rewritten }] of _visionHoverRewritten) {
+      try { if (rule.selectorText === rewritten) rule.selectorText = original; } catch { /* gone */ }
+    }
+    _visionHoverRewritten.clear();
+    _visionHoverScanned = new WeakMap();
+  }
+
+  // Rest the emulated :hover on `target` (null ends it). `prepared` collects
+  // the roots this input already read, so a drag's moves read them once.
+  function _visionHoverAt(target, prepared = new Set()) {
+    const next = [];
+    for (let node = target, depth = 0; node?.nodeType === 1 && depth < 512; depth++) {
+      next.push(node);
+      let frame = null;
+      if (!node.parentElement && !node.getRootNode?.()?.host) {
+        try { frame = node.ownerDocument?.defaultView?.frameElement || null; } catch { frame = null; }
+      }
+      node = node.parentElement || node.getRootNode?.()?.host || frame;
+    }
+    // The rules that can see these elements hovered: their documents' and
+    // shadow roots', and the :host rules of the shadow roots they host.
+    for (const element of next) {
+      for (const root of [element.getRootNode?.(), element.shadowRoot || element.openOrClosedShadowRoot]) {
+        if ((root?.nodeType === 9 || root?.nodeType === 11) && !prepared.has(root)) {
+          prepared.add(root);
+          try { _visionHoverPrepare(root); } catch { /* left as the page wrote it */ }
+        }
+      }
+    }
+    // Elements are marked only where some :hover rule could be read.
+    const marked = _visionHoverRewritten.size ? next : [];
+    const kept = new Set(marked);
+    for (const element of _visionHoverChain) {
+      if (!kept.has(element)) { try { element.removeAttribute(_VISION_HOVER_ATTRIBUTE); } catch { /* gone */ } }
+    }
+    for (const element of marked) {
+      try { if (!element.hasAttribute(_VISION_HOVER_ATTRIBUTE)) element.setAttribute(_VISION_HOVER_ATTRIBUTE, ''); } catch { /* not settable */ }
+    }
+    _visionHoverChain = marked;
+    if (!marked.length) _visionHoverRestore();
+    if (marked.length && !_visionHoverListening) {
+      _visionHoverListening = true;
+      window.addEventListener('pointermove', event => {
+        if (event.isTrusted && (_visionHoverChain.length || _visionHoverRewritten.size)) _visionHoverAt(null);
+      }, true);
+    }
+  }
+
+  // The pointerId of the vision pointer's events (a mouse's in Chrome).
+  const _VISION_POINTER_ID = 1;
+
+  // A slider, canvas or press-and-hold control often calls setPointerCapture
+  // on the pointerdown it gets, then reads the moves and the release from
+  // the capturing element wherever the pointer goes. A synthetic pointer is
+  // no active browser pointer: Firefox throws for its id (a handler that
+  // captures or releases first stops there), and no engine routes its
+  // events. So while a vision click or drag runs, the capture methods of
+  // the press's window answer for the vision pointer here (other ids still
+  // reach the page's own methods, which are put back by end()), and the
+  // sequence sends each later pointer event, with its compatibility mouse
+  // event, to target(): the capturing element, if any. As in the browser,
+  // gotpointercapture comes before the first of those events and
+  // lostpointercapture right after the release; `fire(target, type, init)`
+  // dispatches them.
+  function _visionPointerCapture(view, fire) {
+    let active = true;
+    let pressed = false;
+    let pending = null;
+    let captured = null;
+    const restore = [];
+    let proto = null;
+    let exported = fn => fn;
+    try {
+      // A Firefox content script reaches the page's own prototype through
+      // wrappedJSObject, and hands it functions with exportFunction.
+      const page = view.wrappedJSObject;
+      if (page && typeof exportFunction === 'function') {
+        proto = page.Element?.prototype || null;
+        exported = fn => exportFunction(fn, view);
+      } else {
+        proto = view.Element?.prototype || null;
+      }
+    } catch { proto = null; }
+    const answers = {
+      // As for a mouse: a pressed pointer can be captured, a hovering one not.
+      setPointerCapture: element => { if (pressed) pending = element; },
+      releasePointerCapture: element => { if (pending === element) pending = null; },
+      hasPointerCapture: element => pending === element,
+    };
+    for (const name of Object.keys(answers)) {
+      try {
+        const original = proto?.[name];
+        if (typeof original !== 'function') continue;
+        proto[name] = exported(function (pointerId, ...rest) {
+          // An element out of the document cannot take capture: the page's
+          // method throws for it, as the browser's does.
+          if (active && this?.nodeType === 1 && Math.trunc(Number(pointerId)) === _VISION_POINTER_ID
+            && (name !== 'setPointerCapture' || this.isConnected)) return answers[name](this);
+          return original.call(this, pointerId, ...rest);
+        });
+        restore.push(() => { proto[name] = original; });
+      } catch { /* the page keeps its own method */ }
+    }
+    const settle = init => {
+      // A capturing element taken out of the document loses capture, which
+      // its document is told of.
+      if (captured && !captured.isConnected) {
+        const doc = captured.ownerDocument;
+        if (pending === captured) pending = null;
+        captured = null;
+        if (doc) fire(doc, 'lostpointercapture', init);
+      }
+      if (pending && !pending.isConnected) pending = null;
+      const next = pending;
+      if (captured && captured !== next) fire(captured, 'lostpointercapture', init);
+      if (next && next !== captured) fire(next, 'gotpointercapture', init);
+      captured = next;
+      return captured;
+    };
+    return {
+      press() { pressed = true; },
+      // Before each pointer event after the press: the element it goes to,
+      // or null for the element under the pointer.
+      target: settle,
+      // Right after the pointerup or pointercancel: capture ends.
+      release(init) { pressed = false; pending = null; settle(init); },
+      end() {
+        active = false;
+        pressed = false;
+        for (const undo of restore.splice(0)) { try { undo(); } catch { /* left to the page */ } }
+      },
+    };
+  }
+
+  // Trusted input (the Firefox companion, bidi/client.js visionInput) takes
+  // the element the top document shows at a viewport point, the one the page
+  // monitor prepared there, and marks it for the companion, which moves (and
+  // for a click presses) the real pointer there itself; the monitor knows
+  // that input by the mark. A point over an embedded frame, or inside an open
+  // shadow root (the monitor binds its host, but sees the events come from
+  // inside, where it cannot tell them from a person's), stays with the
+  // synthetic sequence, which reaches into both.
+  function _visionBidiPrepare(x, y, token) {
+    if (!/^[a-f0-9-]{36}$/.test(String(token || ''))) {
+      return { success: false, dispatched: false, noDispatch: true, error: 'Invalid trusted-input target.' };
+    }
+    const el = document.elementFromPoint(x, y);
+    if (!el) return { success: false, dispatched: false, noDispatch: true, error: 'Nothing is rendered at that point.' };
+    const inner = el.shadowRoot?.elementFromPoint?.(x, y);
+    if (/^(IFRAME|FRAME|OBJECT|EMBED)$/i.test(String(el.tagName || '')) || (inner && inner !== el)) {
+      return { bidiUnavailable: true, success: false, dispatched: false, noDispatch: true };
+    }
+    el.setAttribute('data-webbrain-bidi', token);
+    setTimeout(() => { if (el.getAttribute('data-webbrain-bidi') === token) el.removeAttribute('data-webbrain-bidi'); }, 10000);
+    // The companion takes whole CSS pixels.
+    return { bidiPrepared: true, success: false, dispatched: false, noDispatch: true, url: location.href,
+      point: { x: Math.min(Math.round(x), Math.max(0, innerWidth - 1)), y: Math.min(Math.round(y), Math.max(0, innerHeight - 1)) } };
+  }
+
+  function visionInput(params = {}, actionDeadlineExpired = () => false) {
+    const type = String(params.type || 'click');
+    const x = Number(params.x);
+    const y = Number(params.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
+      return { success: false, dispatched: false, noDispatch: true, error: 'The point is outside the viewport.' };
+    }
+    const hit = _visionTargetAt(x, y);
+    if (!hit) return { success: false, dispatched: false, noDispatch: true, error: 'Nothing is rendered at that point.' };
+    if (hit.unmappable) {
+      return {
+        success: false, dispatched: false, noDispatch: true, visionInputRefused: 'frame_unmappable',
+        error: 'Not dispatched: the point is inside an embedded frame drawn rotated, skewed, flipped or in 3D, so it cannot be placed on the frame\'s content. Use a control outside that frame.',
+      };
+    }
+    // A frame this world cannot enter (another site's, a plugin, or one
+    // still loading): a click or drag sent here would stop at its element
+    // and reach nothing inside it.
+    if ((type === 'click' || type === 'drag') && /^(IFRAME|FRAME|OBJECT|EMBED)$/i.test(String(hit.el.tagName || ''))) {
+      return {
+        success: false, dispatched: false, noDispatch: true, visionInputRefused: 'opaque_frame',
+        error: `Not dispatched: the point is inside an embedded frame whose content this browser's vision input cannot reach (another site's frame, a plugin, or a frame still loading): the ${type} would stop at the frame and do nothing inside it. Use a control outside that frame, or take a screenshot and try again if it was still loading.`,
+      };
+    }
+    if (actionDeadlineExpired()) return { success: false, dispatched: false, noDispatch: true, deadlineExpired: true, error: 'The action deadline expired before dispatch.' };
+    const { el, view, cx, cy } = hit;
+    const button = params.button === 'right' ? 2 : params.button === 'middle' ? 1 : 0;
+    const buttonsMask = button === 2 ? 2 : button === 1 ? 4 : 1;
+    const clicks = Math.min(3, Math.max(1, Math.floor(Number(params.clickCount) || 1)));
+    const init = (extra = {}) => ({
+      bubbles: true, cancelable: true, composed: true, view,
+      clientX: cx, clientY: cy, screenX: cx + (view.screenX || 0), screenY: cy + (view.screenY || 0),
+      ...extra,
+    });
+    const PointerCtor = view.PointerEvent || view.MouseEvent;
+    const pointer = (target, name, extra = {}) => target.dispatchEvent(new PointerCtor(name, init({ pointerId: _VISION_POINTER_ID, pointerType: 'mouse', isPrimary: true, ...extra })));
+    const mouse = (target, name, extra = {}) => target.dispatchEvent(new view.MouseEvent(name, init(extra)));
+    // The pointer moving onto `target` (with `extra` init, e.g. a drag's
+    // point and buttons): out and leave on what it left, over and enter on
+    // what it entered (shared ancestors get neither), pointer events before
+    // mouse events, then the move. Arriving with no known previous target,
+    // or again on the same one (`arrive`), over and enter go to the target.
+    // Documents and shadow roots whose :hover rules this input read (_visionHoverAt).
+    const hoverPrepared = new Set();
+    // A press whose pointerdown the page cancelled gets no compatibility
+    // mousemove (`compatMouse` off) until its release; the boundary events
+    // (over, out, enter, leave) still go out, as the Pointer Events spec has it.
+    const moveOnto = (target, extra = {}, { arrive = false, compatMouse = true } = {}) => {
+      // :hover follows the pointer before its events go out, as it does for
+      // a mouse (_visionHoverAt).
+      _visionHoverAt(target, hoverPrepared);
+      const last = _visionPointerOver;
+      if (last !== target || arrive) {
+        const previous = last && last !== target && last.isConnected ? last : null;
+        const related = (a, b) => (a && b && a.ownerDocument === b.ownerDocument ? a : null);
+        const targetChain = _visionPointerChain(target);
+        const previousChain = previous ? _visionPointerChain(previous) : [];
+        const kept = new Set(targetChain);
+        const leaving = [];
+        for (const node of previousChain) { if (kept.has(node)) break; leaving.push(node); }
+        const left = new Set(previousChain);
+        const entering = previous ? targetChain.filter(node => !left.has(node)).reverse() : [target];
+        for (const [send, prefix] of [[pointer, 'pointer'], [mouse, 'mouse']]) {
+          if (previous) {
+            send(previous, `${prefix}out`, { ...extra, relatedTarget: related(target, previous) });
+            for (const node of leaving) send(node, `${prefix}leave`, { ...extra, bubbles: false, cancelable: false, relatedTarget: related(target, node) });
+          }
+          send(target, `${prefix}over`, { ...extra, relatedTarget: related(previous, target) });
+          for (const node of entering) send(node, `${prefix}enter`, { ...extra, bubbles: false, cancelable: false, relatedTarget: related(previous, node) });
+        }
+      }
+      pointer(target, 'pointermove', extra);
+      if (compatMouse) mouse(target, 'mousemove', extra);
+      _visionPointerOver = target;
+    };
+    const hover = target => moveOnto(target, {}, { arrive: true });
+    const tag = String(el.tagName || '').toLowerCase();
+    const role = el.getAttribute?.('role') || '';
+    const describe = { tag, ...(role ? { role: role.slice(0, 32) } : {}) };
+    // A disabled native control (itself, or by its fieldset) takes no press
+    // and no click from a person, and el.click() honours that, but
+    // dispatched events reach its listeners all the same: a click or a drag
+    // that would press one is refused before anything is sent.
+    const disabled = type === 'click' || type === 'drag' ? el.closest?.(':disabled:not(fieldset)') : null;
+    if (disabled) {
+      const what = String(disabled.tagName || 'control').toLowerCase();
+      return {
+        success: false, dispatched: false, noDispatch: true, visionInputRefused: 'disabled_control', target: { ...describe, disabled: what },
+        error: `Not dispatched: the ${what} at this point is disabled, so a person's ${type} there would do nothing. Wait until it is enabled, or use another control.`,
+      };
+    }
+    if (params._bidiPrepare) {
+      if (type !== 'click' && type !== 'hover') {
+        return { success: false, dispatched: false, noDispatch: true, error: `Trusted vision input does not send a ${type}.` };
+      }
+      const prepared = _visionBidiPrepare(x, y, params._bidiPrepare);
+      if (!prepared.bidiPrepared) return prepared;
+      // The real pointer is there after this; a later synthetic sequence
+      // starts as one arriving from elsewhere.
+      _visionPointerOver = null;
+      // A click runs inside the native file-chooser guard, as the synthetic
+      // click does (settled by the agent like that one).
+      return { ...prepared, target: describe,
+        ...(type === 'click' ? { _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId } : {}) };
+    }
+    // A click or drag presses the pointer, which the page may capture
+    // (_visionPointerCapture); its capture methods are the page's own again
+    // once the sequence ends.
+    const capture = type === 'click' || type === 'drag'
+      ? _visionPointerCapture(view, (target, name, extra) => pointer(target, name, { ...extra, cancelable: false, composed: false }))
+      : null;
+    const dispatchSequence = () => {
+      if (type === 'hover') {
+        hover(el);
+        return { success: true, dispatched: true, method: 'synthetic-vision-pointer', target: describe };
+      }
+      if (type === 'wheel') {
+        const deltaX = Number(params.deltaX) || 0;
+        const deltaY = Number(params.deltaY) || 0;
+        // A wheel turns where the mouse is: it moves there first.
+        hover(el);
+        const notCancelled = el.dispatchEvent(new view.WheelEvent('wheel', init({ deltaX, deltaY, deltaMode: 0 })));
+        let moved = false;
+        if (notCancelled) {
+          for (const [axis, delta] of [['x', deltaX], ['y', deltaY]]) {
+            if (!delta) continue;
+            const target = _visionWheelTarget(el, axis, delta);
+            if (!target) continue;
+            const before = axis === 'x' ? target.scrollLeft : target.scrollTop;
+            target.scrollBy({ left: axis === 'x' ? delta : 0, top: axis === 'y' ? delta : 0, behavior: 'instant' });
+            const after = axis === 'x' ? target.scrollLeft : target.scrollTop;
+            moved = moved || Math.abs(after - before) >= 1;
+          }
+        }
+        return { success: true, dispatched: true, method: 'synthetic-vision-wheel', moved, target: describe };
+      }
+      if (type === 'drag') {
+        const toX = Number(params.toX);
+        const toY = Number(params.toY);
+        const steps = Math.min(40, Math.max(2, Math.floor(Number(params.steps) || 12)));
+        hover(el);
+        capture.press();
+        // A page that cancels the pointerdown gets no compatibility mousedown,
+        // mousemove or mouseup for this press, and none of the press's
+        // defaults below, as in a browser.
+        const pointerAllowed = pointer(el, 'pointerdown', { button: 0, buttons: 1 });
+        const pressAllowed = pointerAllowed && mouse(el, 'mousedown', { button: 0, buttons: 1, detail: 1 });
+        // The press focuses what it lands on, as a click's does, and starts
+        // what a person's press would: on a native range input it takes the
+        // thumb (_visionRangeDrag), on selectable text or in a text field a
+        // selection (_visionTextSelection). Either then follows the pointer
+        // in that element's own document wherever it goes.
+        if (pressAllowed) {
+          const focusable = _visionFocusable(el);
+          if (focusable && focusable !== el.ownerDocument.activeElement) focusable.focus({ preventScroll: true });
+          else if (!focusable) el.ownerDocument.activeElement?.blur?.();
+        }
+        const range = pressAllowed ? _visionRangeDrag(el) : null;
+        let selection = pressAllowed && !range ? _visionTextSelection(el) : null;
+        // A draggable item starts HTML5 drag and drop at the first step
+        // (_visionHtmlDrag); from then on, as for a person's drag, the page
+        // gets drag events instead of pointer and mouse events.
+        const html = pressAllowed && !range ? _visionHtmlDrag(el) : null;
+        let htmlStarted = false;
+        range?.to(cx, cy);
+        if (selection && !selection.begin(cx, cy)) selection = null;
+        // Every point, the release included, is given in the coordinates of
+        // the document under it (a same-origin frame has its own, scaled as
+        // the frame is drawn), so the events a slider or canvas reads all
+        // agree. A point with nothing under it, or on a frame no scale maps,
+        // is mapped into the last document that had something.
+        let lastToDoc = hit.toDoc;
+        const pointAt = (at, px, py) => {
+          if (at) lastToDoc = at.toDoc;
+          const local = at ? { x: at.cx, y: at.cy } : lastToDoc(px, py);
+          return { clientX: local.x, clientY: local.y, screenX: px + (window.screenX || 0), screenY: py + (window.screenY || 0) };
+        };
+        const mappedAt = (px, py) => {
+          const at = _visionTargetAt(px, py);
+          return at && !at.unmappable ? at : null;
+        };
+        // An element holding the pointer's capture gets the events wherever
+        // the pointer is, in its own document's coordinates: the press's,
+        // whose window alone answered the capture call.
+        const heldAt = (point, px, py) => {
+          const local = hit.toDoc(px, py);
+          return { ...point, clientX: local.x, clientY: local.y };
+        };
+        let last = el;
+        for (let i = 1; i <= steps; i++) {
+          const px = x + (toX - x) * (i / steps);
+          const py = y + (toY - y) * (i / steps);
+          const at = mappedAt(px, py);
+          last = at?.el || last;
+          const point = pointAt(at, px, py);
+          if (html && i === 1) {
+            htmlStarted = html.start(point);
+            if (htmlStarted) {
+              const holder = capture.target({ ...heldAt(point, px, py), buttons: 1 });
+              const cancelInit = { ...(holder ? heldAt(point, px, py) : point), buttons: 0, cancelable: false };
+              pointer(holder || el, 'pointercancel', cancelInit);
+              capture.release(cancelInit);
+            }
+          }
+          if (htmlStarted) { html.move(last, point); continue; }
+          const holder = capture.target({ button: 0, buttons: 1, ...heldAt(point, px, py) });
+          moveOnto(holder || last, { button: 0, buttons: 1, ...(holder ? heldAt(point, px, py) : point) }, { compatMouse: pointerAllowed });
+          const local = hit.toDoc(px, py);
+          range?.to(local.x, local.y);
+          selection?.to(local.x, local.y);
+        }
+        const end = mappedAt(toX, toY);
+        const endPoint = pointAt(end, toX, toY);
+        const holder = htmlStarted ? null : capture.target({ button: 0, buttons: 1, ...heldAt(endPoint, toX, toY) });
+        const releaseTarget = holder || end?.el || last;
+        const endInit = { button: 0, buttons: 0, ...(holder ? heldAt(endPoint, toX, toY) : endPoint) };
+        if (htmlStarted) {
+          const html5Drag = html.end(endInit);
+          _visionPointerOver = releaseTarget;
+          return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe, html5Drag };
+        }
+        if (releaseTarget !== _visionPointerOver) moveOnto(releaseTarget, { ...endInit, buttons: 1 }, { compatMouse: pointerAllowed });
+        pointer(releaseTarget, 'pointerup', endInit);
+        capture.release(endInit);
+        if (pointerAllowed) mouse(releaseTarget, 'mouseup', { ...endInit, detail: 1 });
+        const rangeValue = range?.release();
+        return { success: true, dispatched: true, method: 'synthetic-vision-drag', target: describe,
+          ...(range ? { rangeValue } : {}), ...(selection ? { selectedChars: selection.selectedChars() } : {}) };
+      }
+      hover(el);
+      // Like any agent click, a vision click must not open a native file
+      // chooser (a file input, its label, an upload button that clicks one):
+      // the guard blocks it, and the agent settles the guard afterwards.
+      let rangeValue;
+      // Whether the last press went through to its mousedown: a double or
+      // triple click's selection is that press's default.
+      let lastPressAllowed = true;
+      const filePickerGuard = clickWithoutNativeFilePicker(() => {
+        for (let count = 1; count <= clicks; count++) {
+          capture.press();
+          // A page that cancels the pointerdown gets no compatibility
+          // mousedown or mouseup for the press, and none of its defaults
+          // (focus, the caret, a range thumb); its click still fires.
+          const pointerAllowed = pointer(el, 'pointerdown', { button, buttons: buttonsMask });
+          const pressAllowed = pointerAllowed && mouse(el, 'mousedown', { button, buttons: buttonsMask, detail: count });
+          lastPressAllowed = pressAllowed;
+          // A primary press on a native range input moves its thumb to the
+          // point, as a drag's does (_visionRangeDrag): `input` now, `change`
+          // on release.
+          let range = null;
+          if (count === 1 && button === 0 && pressAllowed) {
+            const focusable = _visionFocusable(el);
+            if (focusable && focusable !== el.ownerDocument.activeElement) focusable.focus({ preventScroll: true });
+            else if (!focusable) el.ownerDocument.activeElement?.blur?.();
+            if (focusable) _visionPlaceCaret(el, cx, cy);
+            range = _visionRangeDrag(el);
+            range?.to(cx, cy);
+          }
+          // A press the page captured is released on the capturing element.
+          const holder = capture.target({ button, buttons: buttonsMask }) || el;
+          pointer(holder, 'pointerup', { button, buttons: 0 });
+          capture.release({ button, buttons: 0 });
+          if (pointerAllowed) mouse(holder, 'mouseup', { button, buttons: 0, detail: count });
+          if (range) rangeValue = range.release();
+          if (button === 0) mouse(el, 'click', { button: 0, buttons: 0, detail: count });
+          else if (button === 1) mouse(el, 'auxclick', { button: 1, buttons: 0, detail: count });
+        }
+        if (button === 0 && clicks >= 2) {
+          mouse(el, 'dblclick', { button: 0, buttons: 0, detail: 2 });
+          // Browsers select the word under the pointer (two clicks), or its
+          // line or the whole field (three), as the default action of the
+          // last press; synthetic events need it done. A double click never
+          // takes a whole field: the typing that usually follows would
+          // replace all of it.
+          if (lastPressAllowed) try {
+            const caret = _visionCaretAt(el.ownerDocument, cx, cy);
+            if (typeof el.setSelectionRange === 'function' && /^(input|textarea)$/.test(tag)) {
+              if (clicks >= 3 && tag === 'input') el.select();
+              else if (caret?.node === el) {
+                const [start, end] = (clicks >= 3 ? _visionLineAt : _visionWordAt)(el.value, caret.offset);
+                el.setSelectionRange(start, end);
+              }
+            } else {
+              const selection = el.ownerDocument.getSelection();
+              if (clicks >= 3) selection.selectAllChildren(el.closest('p,li,td,th,div,section,article,h1,h2,h3,h4,h5,h6') || el);
+              else if (caret?.node?.nodeType === 3) {
+                const [start, end] = _visionWordAt(caret.node.nodeValue, caret.offset);
+                selection.setBaseAndExtent(caret.node, start, caret.node, end);
+              }
+            }
+          } catch { /* selection is best effort */ }
+        }
+        if (button === 2) mouse(el, 'contextmenu', { button: 2, buttons: 0 });
+      });
+      if (filePickerGuard.blocked) return { ...filePickerBlockedResponse(filePickerGuard.blocked), target: describe };
+      return { success: true, dispatched: true, method: 'synthetic-vision-pointer', clicks, target: describe,
+        ...(rangeValue !== undefined ? { rangeValue } : {}),
+        ...(filePickerGuard.guardId ? { _filePickerGuardId: filePickerGuard.guardId } : {}) };
+    };
+    try {
+      return withLocalPageDispatch(dispatchSequence);
+    } finally {
+      capture?.end();
+    }
+  }
+
   let _lastClickIdent = null;
   let _lastEditableTarget = null;
 
@@ -2862,8 +3759,10 @@
     const clickedRect = rememberInteractionPoint(el, 'click');
     if (actionDeadlineExpired()) return deadlineFailure();
     if (params._bidiPrepare) {
+      const prepared = prepareBidiTarget(el, params._bidiPrepare);
+      if (!prepared.bidiPrepared) return prepared;
       const coordinateClick = !params.text && !params.selector && params.index == null && Number.isFinite(params.x) && Number.isFinite(params.y);
-      return { ...prepareBidiTarget(el, params._bidiPrepare),
+      return { ...prepared,
         ...(coordinateClick ? { point: { x: Math.round(params.x), y: Math.round(params.y) } } : {}),
         _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId };
     }
@@ -3664,7 +4563,10 @@
       ? focusedTarget
       : document;
 
-    if (params._bidiPrepare) return prepareBidiTarget(focusedTarget || document.body, params._bidiPrepare);
+    // Tab and Escape stay ungated (permission-gate.js capabilityFor) and may
+    // reach a frame that has focus; any other key may not.
+    if (params._bidiPrepare) return prepareBidiTarget(focusedTarget || document.body, params._bidiPrepare,
+      { allowEmbeddedFrame: key === 'Tab' || key === 'Escape' });
 
     const moveTabFocus = () => {
       const focusables = Array.from(document.querySelectorAll(
@@ -6131,9 +7033,17 @@
   // conversation before a message can be sent. It deliberately ignores input
   // values and ordinary page text: a searched recipient name is not proof that
   // the corresponding conversation is active.
-  function prepareBidiTarget(el, token) {
+  function prepareBidiTarget(el, token, { allowEmbeddedFrame = false } = {}) {
     if (!/^[a-f0-9-]{36}$/.test(token || '') || !el?.isConnected) {
       return { success: false, dispatched: false, noDispatch: true, error: 'Invalid trusted-input target' };
+    }
+    // Trusted input on a frame element (a click on it, or keys while focus is
+    // inside it) acts in the frame's own document, which can be another site
+    // (a payment, identity or wallet frame) that the permission for this page
+    // does not cover. The iframe tools charge that frame's host instead.
+    if (!allowEmbeddedFrame && /^(IFRAME|FRAME|OBJECT|EMBED)$/i.test(String(el.tagName || ''))) {
+      return { success: false, dispatched: false, noDispatch: true, embeddedFrameTarget: true,
+        error: 'Not sent: the target is an embedded frame, and trusted input there would act in the frame\'s own document. Use iframe_click or iframe_type with a urlFilter naming the frame\'s domain.' };
     }
     el.setAttribute('data-webbrain-bidi', token);
     setTimeout(() => { if (el.getAttribute('data-webbrain-bidi') === token) el.removeAttribute('data-webbrain-bidi'); }, 10000);
@@ -8319,6 +9229,7 @@
       'get_interactive_elements_cdp': () => getInteractiveElementsFull(msg.params || {}),
       'get_file_input_targets': () => getFileInputTargets(),
       'click': () => clickElement(msg.params || {}, actionDeadlineExpired),
+      'vision_input': () => visionInput(msg.params || {}, actionDeadlineExpired),
       'consume_file_picker_guard': () => consumeFilePickerGuard(msg.params?.guardId),
       'type': () => typeText(msg.params || {}, actionDeadlineExpired),
       'probe_rich_text_toolbar_retry_target': () => _probeRichTextToolbarRetryTarget(msg.params || {}),
@@ -9787,7 +10698,8 @@
           const r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
           const cy = r.top + r.height / 2;
-          if (msg.params?._bidiPrepare) return prepareBidiTarget(el, msg.params._bidiPrepare);
+          // Hover is ungated, like Tab and Escape (pressKeys).
+          if (msg.params?._bidiPrepare) return prepareBidiTarget(el, msg.params._bidiPrepare, { allowEmbeddedFrame: true });
           const eventInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
           const dispatchHover = (EventType, type) => {
             if (actionDeadlineExpired()) return false;
