@@ -888,6 +888,8 @@ test('Firefox vision input goes through the companion when the run has one, and 
   const contentMessages = [];
   globalThis.browser = { tabs: { sendMessage: async (_tab, message) => { contentMessages.push(message); return { success: true, dispatched: true, method: 'synthetic-vision-pointer' }; } } };
   const agent = Object.create(Agent.prototype);
+  // No run to stop: _visionContentInput checks Stop first.
+  agent._runAbortStates = new Map();
   try {
     firefoxBidi.runs.set(31, { runId: id(), bound: true });
     firefoxBidi.visionInput = async () => ({ success: true, dispatched: true, method: 'firefox-bidi' });
