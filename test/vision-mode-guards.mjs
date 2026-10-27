@@ -584,6 +584,28 @@ for (const build of ['chrome', 'firefox']) {
     agent._endVisionRun(tab, null);
   });
 
+  test(`${build}: an observation is tried again only after a passing capture failure`, async () => {
+    const { classifyVisionCaptureError } = await import(`../src/${build}/src/agent/vision-runtime.js`);
+    for (const [message, kind] of [
+      ['Execution context was destroyed.', 'transient'], ['Cannot find context with specified id', 'transient'],
+      ['The page viewport could not be measured.', 'transient'], ['Unable to capture screenshot', 'transient'],
+      ['Cannot access a chrome:// URL', 'restricted'], ['Target closed', ''], ['Permission denied', ''], ['boom', ''],
+    ]) assert.equal(classifyVisionCaptureError(new Error(message)), kind, message);
+    assert.equal(classifyVisionCaptureError(Object.assign(new Error('The screenshot did not finish within 15 s.'), { code: 'vision_capture_timeout' })), '');
+    assert.equal(classifyVisionCaptureError(Object.assign(new Error('Execution context was destroyed.'), { name: 'AbortError' })), '');
+    const agent = agentFor();
+    let calls = 0;
+    const fail = message => async () => { calls++; throw new Error(message); };
+    await assert.rejects(agent._visionCaptureRetrying(40, fail('Execution context was destroyed.')), /destroyed/);
+    assert.equal(calls, 4, 'four attempts at most');
+    calls = 0;
+    await assert.rejects(agent._visionCaptureRetrying(40, fail('Cannot access a chrome:// URL')), /chrome/);
+    assert.equal(calls, 1, 'a restricted page is not tried again');
+    calls = 0;
+    assert.equal(await agent._visionCaptureRetrying(40, async () => { if (++calls < 2) throw new Error('Execution context was destroyed.'); return 'frame'; }), 'frame');
+    assert.equal(calls, 2);
+  });
+
   test(`${build}: Gmail's result counter, which takes no target, stays in the vision tool list`, () => {
     // Offered on a Gmail result list (getGmailResultCountPolicy).
     const names = getToolsForMode('act', { tier: 'full', gmailResultCounting: true, vision: { coordinates: 'pixel' } }).map(tool => tool.function.name);
@@ -636,6 +658,7 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: the opening frame is the run's first look at the page`, async () => {
     const agent = agentFor();
     agent._visionRunState = () => ({ active: true, coordinates: 'pixel' });
+    agent._visionCaptureFrame = async () => ({});
     agent._visionPushKeyframe = async () => ({ id: 'f1' });
     const marked = [];
     agent._markPlanExecutionToolCall = (_tab, name, result) => marked.push({ name, success: result?.success });

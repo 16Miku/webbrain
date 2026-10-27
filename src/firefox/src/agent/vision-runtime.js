@@ -67,6 +67,13 @@ const REDACTION_SCAN_WAIT_MS = 1500;
 // error code (never a control-flow one), and is not retried; Stop ends the
 // wait at once (_visionBounded).
 const VISION_CAPTURE_DEADLINE_MS = 15000;
+// An observation whose capture failed for a passing reason (a navigation
+// destroyed the page context, the page was not ready to paint) is tried
+// again, within this many attempts and this much time. Input is never
+// retried, nor a timeout, a privacy failure or anything not recognized here.
+const OBSERVE_RETRY_ATTEMPTS = 4;
+const OBSERVE_RETRY_BUDGET_MS = 3000;
+const OBSERVE_RETRY_DELAY_MS = 250;
 const REDACTION_SCAN_POLL_MS = 250;
 // Redaction outcomes (agent _redactScreenshotDataUrl) that leave the image as
 // captured although redaction is on. Redaction is best-effort: the image is
@@ -123,6 +130,28 @@ function visionScreenUnverifiedResult(name, { noFrame = false } = {}) {
     success: false, dispatched: false, noDispatch: true, visionScreenUnverified: true,
     error: `Not ${verb}: ${why}, so what has focus now is unknown. Call take_screenshot and look first, or click_at the field in the same response before typing.`,
   };
+}
+
+/**
+ * Why a viewport measurement or screenshot failed, from a closed list:
+ * 'restricted' (a browser page screenshots cannot capture), 'transient' (the
+ * page context changed or was not ready; worth one more look), or '' (any
+ * other failure, a timeout, Stop).
+ */
+export function classifyVisionCaptureError(error) {
+  if (!error || error.name === 'AbortError' || error.code === 'vision_capture_timeout') return '';
+  const message = errorText(error);
+  if (/cannot access (?:a )?(?:chrome(?:-extension|-untrusted)?|devtools):\/\/ URL\b/i.test(message)) return 'restricted';
+  if (/permission|denied|not allowed|not attached|disconnected|no tab|target closed|session closed|tab (?:was |is )?closed/i.test(message)) return '';
+  if (/execution context (?:was )?destroyed|cannot find (?:default )?(?:execution )?context|no such (?:realm|frame)|page changed during screenshot capture|unable to capture screenshot|cannot take screenshot with 0 (?:width|height)|page viewport could not be measured/i.test(message)) return 'transient';
+  return '';
+}
+
+// What the model is told to do after a capture failure.
+function captureFailureAdvice(error, retry = 'Call take_screenshot to look again.') {
+  return classifyVisionCaptureError(error) === 'restricted'
+    ? 'This is a browser page that screenshots cannot capture: open a web page with navigate({url}), or ask the user.'
+    : retry;
 }
 
 // The page an upload handoff belongs to: its address without the fragment.
@@ -340,11 +369,11 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     if (!state.active) return null;
     this._visionSessions?.get(tabId)?.retireKeyframe?.();
     try {
-      const frame = await this._visionCaptureSettled(tabId, state);
+      const frame = await this._visionCaptureRetrying(tabId, () => this._visionCaptureSettled(tabId, state));
       return await this._visionPushKeyframe(tabId, messages, onUpdate, { state, frame, reason: 'vision resumed' });
     } catch (error) {
       if (isControlFlowError(error)) throw error;
-      const message = `[SCREEN: the screen could not be captured on returning to screenshots (${errorText(error).slice(0, 160)}). Earlier screenshots show an older screen and cannot be used for coordinates. Call take_screenshot to try again.]`;
+      const message = `[SCREEN: the screen could not be captured on returning to screenshots (${errorText(error).slice(0, 160)}). Earlier screenshots show an older screen and cannot be used for coordinates. ${captureFailureAdvice(error, 'Call take_screenshot to try again.')}]`;
       messages.push(visionUserMessage(message, { epoch: 0, kind: 'retire' }));
       this._visionTraceNote(tabId, 'vision_frame_error', { stage: 'resume', error: String(error?.message || error).slice(0, 200) });
       return null;
@@ -590,6 +619,26 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     }
   };
 
+  /**
+   * An observation's capture, tried again while it fails for a transient
+   * reason (classifyVisionCaptureError), within OBSERVE_RETRY_ATTEMPTS and
+   * OBSERVE_RETRY_BUDGET_MS. Only screen reads come through here.
+   */
+  proto._visionCaptureRetrying = async function _visionCaptureRetrying(tabId, capture) {
+    const deadline = Date.now() + OBSERVE_RETRY_BUDGET_MS;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await capture();
+      } catch (error) {
+        if (isControlFlowError(error) || attempt >= OBSERVE_RETRY_ATTEMPTS
+          || classifyVisionCaptureError(error) !== 'transient' || Date.now() + OBSERVE_RETRY_DELAY_MS > deadline) throw error;
+        this._visionTraceNote(tabId, 'vision_capture_retry', { attempt, code: 'transient' });
+        await sleep(OBSERVE_RETRY_DELAY_MS);
+        this._throwIfAborted?.(this._runAbortSignal?.(tabId));
+      }
+    }
+  };
+
   /** Waits up to REDACTION_SCAN_WAIT_MS for the page's redaction scan to answer. */
   proto._visionAwaitRedactionScan = async function _visionAwaitRedactionScan(tabId) {
     const deadline = Date.now() + REDACTION_SCAN_WAIT_MS;
@@ -761,7 +810,8 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     const state = this._visionRunState(tabId, mode);
     if (!state.active) return null;
     try {
-      const keyframe = await this._visionPushKeyframe(tabId, messages, onUpdate, { state, reason });
+      const frame = await this._visionCaptureRetrying(tabId, () => this._visionCaptureFrame(tabId, state));
+      const keyframe = await this._visionPushKeyframe(tabId, messages, onUpdate, { state, frame, reason });
       // The opening frame is the run's first look at the page, as a read is on
       // the tree path: a question answered from it has task evidence.
       try { this._markPlanExecutionToolCall?.(tabId, 'take_screenshot', { success: true, method: 'image_attach' }); } catch {}
@@ -770,7 +820,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       if (isControlFlowError(error)) throw error;
       // The run starts with no screen (_beginVisionRun retired the last one);
       // the tag retires the last frame in the history for the model too.
-      const message = `[SCREEN: the first screenshot could not be captured (${errorText(error).slice(0, 160)}). Earlier screenshots show an older screen and cannot be used for coordinates. Call take_screenshot to try again.]`;
+      const message = `[SCREEN: the first screenshot could not be captured (${errorText(error).slice(0, 160)}). Earlier screenshots show an older screen and cannot be used for coordinates. ${captureFailureAdvice(error, 'Call take_screenshot to try again.')}]`;
       messages.push(visionUserMessage(message, { epoch: 0, kind: 'retire' }));
       this._visionTraceNote(tabId, 'vision_frame_error', { stage: 'start', error: String(error?.message || error).slice(0, 200) });
       return null;
@@ -834,7 +884,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       // checked against the live screen (_visionTranslateToolCalls).
       session.forceKeyframe = true;
       session.observationFailed = true;
-      messages.push(visionUserMessage(`[SCREEN: the screen could not be ${stage === 'observe' ? 'captured' : 'prepared'} after the action (${errorText(error).slice(0, 160)}). Call take_screenshot to look again.]`,
+      messages.push(visionUserMessage(`[SCREEN: the screen could not be ${stage === 'observe' ? 'captured' : 'prepared'} after the action (${errorText(error).slice(0, 160)}). ${captureFailureAdvice(error)}]`,
         { epoch: session.epoch, kind: 'error' }));
       this._visionTraceNote(tabId, 'vision_frame_error', { stage, error: errorText(error) });
       return { kind: 'error' };
@@ -849,8 +899,8 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     await rerouteLateTab();
     let frame;
     try {
-      frame = await this._visionCaptureSettled(tabId, state);
-      if ((await rerouteLateTab())?.redirected) frame = await this._visionCaptureSettled(tabId, state);
+      frame = await this._visionCaptureRetrying(tabId, () => this._visionCaptureSettled(tabId, state));
+      if ((await rerouteLateTab())?.redirected) frame = await this._visionCaptureRetrying(tabId, () => this._visionCaptureSettled(tabId, state));
     } catch (error) {
       if (isControlFlowError(error)) throw error;
       return failed('observe', error);

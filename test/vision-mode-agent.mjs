@@ -645,6 +645,34 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.equal(hangs, 1, 'a timed-out capture is not tried again');
   });
 
+  test(`${build}: a navigation that destroys the page context mid-capture costs one more look, not a failed update`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'Done.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { onDispatch: (name, _args, scene) => { if (name === 'click') scene.rects.push({ x: 900, y: 600, w: 80, h: 30, color: [0, 120, 0] }); } });
+    const capture = ctx.agent._visionPlatformCapture;
+    let failed = false;
+    ctx.agent._visionPlatformCapture = async (tab, options) => {
+      if (ctx.scene.captures >= 1 && !failed) { failed = true; throw new Error('Execution context was destroyed.'); }
+      return capture(tab, options);
+    };
+    await runLoop(ctx.agent, nextTab++, false);
+    const update = visionMessages(ctx.requests[1].messages).at(-1);
+    assert.equal(update.webbrainVisionFrame.kind, 'patch', textOf(update));
+  });
+
+  test(`${build}: a browser page screenshots cannot capture gets advice the model can act on`, async () => {
+    const ctx = runAgent(step => (step === 1 ? { toolCalls: [call('done', { summary: 'Could not see.', outcome: 'partial' })] } : { content: 'done' }));
+    let attempts = 0;
+    ctx.agent._visionPlatformCapture = async () => { attempts++; throw new Error('Cannot access a chrome:// URL'); };
+    await runLoop(ctx.agent, nextTab++, false);
+    const note = textOf(visionMessages(ctx.requests[0].messages).at(-1));
+    assert.match(note, /browser page that screenshots cannot capture: open a web page with navigate\(\{url\}\), or ask the user/);
+    assert.doesNotMatch(note, /Call take_screenshot/);
+    assert.equal(attempts, 1);
+  });
+
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };
