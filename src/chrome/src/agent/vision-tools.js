@@ -30,6 +30,9 @@ export const VISION_REMOVED_TOOLS = Object.freeze(new Set([
   'iframe_read', 'iframe_click', 'iframe_type', 'get_frames', 'get_shadow_dom',
   'shadow_dom_query', 'promote_iframe', 'carousel_navigate', 'upload_file',
   'download_resource_from_page',
+  // A CAPTCHA's native methods are applied to frame and field bindings only
+  // the tree names; solve_captcha's automatic route needs neither.
+  'get_captcha_capabilities', 'apply_captcha_solution',
 ]));
 
 // Tools after which WebBrain does not need to look at the screen again.
@@ -193,6 +196,21 @@ export function visionTypeTextTool(baseTool) {
   };
 }
 
+const VISION_SOLVE_CAPTCHA_DESCRIPTION = 'Solve the CAPTCHA blocking this page with the providers enabled in Settings → CAPTCHA, in descending weight order; one call may charge several providers on fallback. Call it once, normally with no arguments: WebBrain finds the widget in the page itself (reCAPTCHA v2/v3, hCaptcha with NopeCHA or NoneCap, Turnstile, AWS WAF, image CAPTCHAs) and checks that the challenge cleared before the next page-changing action; look at the next screen. If the result lists ambiguous candidates, call it again with the exact frameUrl, frameId or framePath it names. Never call it again for the same unresolved challenge: if it fails or the challenge stays, ask the user to complete it.';
+
+/** solve_captcha for a vision run: the automatic route, without native provider tasks. */
+export function visionSolveCaptchaTool(baseTool) {
+  const { providerTasks, ...properties } = baseTool?.function?.parameters?.properties || {};
+  return {
+    ...baseTool,
+    function: {
+      ...baseTool.function,
+      description: VISION_SOLVE_CAPTCHA_DESCRIPTION,
+      parameters: { ...baseTool.function.parameters, properties },
+    },
+  };
+}
+
 /**
  * Turn a tier's Act tool list into the vision tool list: DOM-targeting
  * tools out, coordinate tools in (after `type_text`, so the list reads in
@@ -203,7 +221,7 @@ export function buildVisionToolSet(baseTools, { coordinates = 'pixel' } = {}) {
   for (const tool of Array.isArray(baseTools) ? baseTools : []) {
     const name = tool?.function?.name;
     if (!name || VISION_REMOVED_TOOLS.has(name) || VISION_TOOL_NAMES.has(name)) continue;
-    kept.push(name === 'type_text' ? visionTypeTextTool(tool) : tool);
+    kept.push(name === 'type_text' ? visionTypeTextTool(tool) : name === 'solve_captcha' ? visionSolveCaptchaTool(tool) : tool);
   }
   const vision = visionToolDefinitions({ coordinates });
   const anchor = kept.findIndex(tool => tool.function.name === 'navigate');
@@ -340,6 +358,11 @@ export function visionUniversalPreamble(preamble) {
  * come with this line, so the model keeps their facts about the site and
  * does not reach for tools it does not have.
  */
+/** The [CAPTCHA SOLVER] system-prompt note for a vision run (agent _buildSystemPrompt). */
+export function visionCaptchaSolverNote(coverage) {
+  return `[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. Enabled coverage: ${coverage} When a CAPTCHA or verification dialog blocks a step, do not dismiss it: call solve_captcha once, normally with no arguments. WebBrain reads the page itself to find the widget, and checks that the dialog cleared before any page-changing action; look at the next screen. If the family is not covered, the solve fails, or the dialog remains, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha. These limits apply per challenge: a new CAPTCHA that appears later, such as after a submit or on a newly loaded page, is a separate challenge. Solve it once with solve_captcha before asking the user.]`;
+}
+
 export const VISION_SITE_NOTES_PREFACE = '(Written for WebBrain\'s element tools: click_ax, set_field, type_ax, ref ids, selectors and the accessibility tree are not available in this run. Apply the facts about the site with click_at, type_text, press_keys and scroll_at on what the screenshots show.)';
 
 /**

@@ -606,6 +606,26 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(calls, 2);
   });
 
+  test(`${build}: a vision run gets the automatic CAPTCHA route only, in its tools and its note`, () => {
+    const names = getToolsForMode('act', { tier: 'full', vision: { coordinates: 'pixel' } });
+    const solve = names.find(tool => tool.function.name === 'solve_captcha');
+    assert.ok(solve, 'solve_captcha stays');
+    assert.equal('providerTasks' in solve.function.parameters.properties, false);
+    assert.doesNotMatch(solve.function.description, /get_captcha_capabilities|apply_captcha_solution/);
+    for (const removed of ['get_captcha_capabilities', 'apply_captcha_solution']) assert.ok(!names.some(tool => tool.function.name === removed), removed);
+    const agent = new Agent({ getActive: () => ({ ...seeing, promptTier: 'full' }) });
+    agent.conversationModes.set(1, 'act');
+    agent.captchaSolverEnabled = true;
+    agent.captchaProviderIds = ['nonecap'];
+    agent.visionMode = 'auto';
+    const visionPrompt = agent._buildSystemPrompt('act', 1);
+    assert.match(visionPrompt, /\[CAPTCHA SOLVER — /);
+    assert.match(visionPrompt, /call solve_captcha once, normally with no arguments/);
+    assert.doesNotMatch(visionPrompt.slice(visionPrompt.indexOf('[CAPTCHA SOLVER')), /get_captcha_capabilities|apply_captcha_solution|accessibility-tree/);
+    agent.visionMode = 'off';
+    assert.match(agent._buildSystemPrompt('act', 1), /call get_captcha_capabilities/);
+  });
+
   test(`${build}: Gmail's result counter, which takes no target, stays in the vision tool list`, () => {
     // Offered on a Gmail result list (getGmailResultCountPolicy).
     const names = getToolsForMode('act', { tier: 'full', gmailResultCounting: true, vision: { coordinates: 'pixel' } }).map(tool => tool.function.name);
