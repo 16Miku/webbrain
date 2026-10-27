@@ -1327,4 +1327,11 @@ export default {
   'sp.activity.retrying_response': "Tentando novamente a resposta…",
   'sp.response.incomplete_retrying': "Resposta incompleta · tentando novamente…",
   'sp.response.incomplete': "Resposta incompleta",
+  "st.display.agent_indicator.label": "Efeito de atividade do agente",
+  "st.display.agent_indicator.desc": "Como as bordas da página ficam enquanto o WebBrain trabalha em uma guia. Todos os estilos deixam seus cliques passarem e não aparecem nas capturas de tela.",
+  "st.display.agent_indicator.circuit": "Circuito neural",
+  "st.display.agent_indicator.aurora": "Aurora",
+  "st.display.agent_indicator.scan": "Varredura",
+  "st.display.agent_indicator.gears": "Engrenagens",
+  "st.display.agent_indicator.classic": "Brilho clássico",
 };

@@ -1372,4 +1372,11 @@ export default {
   'sp.activity.retrying_response': "Mencuba semula jawapan…",
   'sp.response.incomplete_retrying': "Jawapan tidak lengkap · mencuba semula…",
   'sp.response.incomplete': "Jawapan tidak lengkap",
+  "st.display.agent_indicator.label": "Kesan aktiviti ejen",
+  "st.display.agent_indicator.desc": "Rupa tepi halaman semasa WebBrain bekerja dalam tab. Semua gaya membenarkan klik anda sampai ke halaman dan tidak muncul dalam tangkapan skrin.",
+  "st.display.agent_indicator.circuit": "Litar saraf",
+  "st.display.agent_indicator.aurora": "Aurora",
+  "st.display.agent_indicator.scan": "Imbas",
+  "st.display.agent_indicator.gears": "Gear",
+  "st.display.agent_indicator.classic": "Cahaya klasik",
 };

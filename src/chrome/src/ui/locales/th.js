@@ -1372,4 +1372,11 @@ export default {
   'sp.activity.retrying_response': "กำลังลองตอบอีกครั้ง…",
   'sp.response.incomplete_retrying': "คำตอบยังไม่สมบูรณ์ · กำลังลองอีกครั้ง…",
   'sp.response.incomplete': "คำตอบยังไม่สมบูรณ์",
+  "st.display.agent_indicator.label": "เอฟเฟกต์ขณะเอเจนต์ทำงาน",
+  "st.display.agent_indicator.desc": "ลักษณะขอบหน้าเว็บขณะที่ WebBrain ทำงานในแท็บ ทุกสไตล์ปล่อยให้การคลิกของคุณผ่านไปยังหน้าเว็บ และไม่ปรากฏในภาพหน้าจอ",
+  "st.display.agent_indicator.circuit": "วงจรประสาท",
+  "st.display.agent_indicator.aurora": "แสงออโรรา",
+  "st.display.agent_indicator.scan": "สแกน",
+  "st.display.agent_indicator.gears": "เฟือง",
+  "st.display.agent_indicator.classic": "แสงเรืองแบบคลาสสิก",
 };

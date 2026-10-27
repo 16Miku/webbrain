@@ -1372,4 +1372,11 @@ export default {
   'sp.activity.retrying_response': "Повторна спроба відповіді…",
   'sp.response.incomplete_retrying': "Неповна відповідь · повторна спроба…",
   'sp.response.incomplete': "Неповна відповідь",
+  "st.display.agent_indicator.label": "Ефект активності агента",
+  "st.display.agent_indicator.desc": "Як виглядають краї сторінки, поки WebBrain працює у вкладці. Усі стилі пропускають ваші кліки й не потрапляють на знімки екрана.",
+  "st.display.agent_indicator.circuit": "Нейронна схема",
+  "st.display.agent_indicator.aurora": "Сяйво",
+  "st.display.agent_indicator.scan": "Сканування",
+  "st.display.agent_indicator.gears": "Шестерні",
+  "st.display.agent_indicator.classic": "Класичне світіння",
 };

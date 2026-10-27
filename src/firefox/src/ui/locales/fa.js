@@ -1327,4 +1327,11 @@ export default {
   'sp.activity.retrying_response': "در حال تلاش دوباره برای پاسخ…",
   'sp.response.incomplete_retrying': "پاسخ ناقص · تلاش دوباره…",
   'sp.response.incomplete': "پاسخ ناقص",
+  "st.display.agent_indicator.label": "جلوهٔ فعالیت عامل",
+  "st.display.agent_indicator.desc": "ظاهر لبه‌های صفحه هنگامی که WebBrain در یک زبانه کار می‌کند. همهٔ سبک‌ها کلیک‌های شما را به صفحه می‌رسانند و در عکس‌های صفحه دیده نمی‌شوند.",
+  "st.display.agent_indicator.circuit": "مدار عصبی",
+  "st.display.agent_indicator.aurora": "شفق قطبی",
+  "st.display.agent_indicator.scan": "اسکن",
+  "st.display.agent_indicator.gears": "چرخ‌دنده‌ها",
+  "st.display.agent_indicator.classic": "درخشش کلاسیک",
 };

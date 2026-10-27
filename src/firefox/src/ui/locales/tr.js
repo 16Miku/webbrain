@@ -1305,4 +1305,11 @@ export default {
   "st.sync.consent.legacy": "Şifreli senkronizasyon açılsın mı? WebBrain, anılarınızın, profil otomatik doldurmanızın ve API anahtarı sağlayıcı ayarlarınızın uçtan uca şifrelenmiş bir kopyasını WebBrain Compass'a iletecektir. Sohbet geçmişi ve OAuth oturum açma işlemleri senkronize edilmez.",
   "st.sync.consent.denied": "Şifrelenmiş senkronizasyon izni verilmedi.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
+  "st.display.agent_indicator.label": "Ajan çalışma efekti",
+  "st.display.agent_indicator.desc": "WebBrain bir sekmede çalışırken sayfa kenarlarının nasıl görüneceğini seçin. Tüm stiller tıklamalarınızı sayfaya geçirir ve ekran görüntülerine girmez.",
+  "st.display.agent_indicator.circuit": "Sinir devresi",
+  "st.display.agent_indicator.aurora": "Aurora",
+  "st.display.agent_indicator.scan": "Tarama",
+  "st.display.agent_indicator.gears": "Dişliler",
+  "st.display.agent_indicator.classic": "Klasik parıltı",
 };

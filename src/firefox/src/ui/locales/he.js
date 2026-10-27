@@ -1259,4 +1259,11 @@ export default {
   'sp.activity.retrying_response': "מנסה שוב להשיב…",
   'sp.response.incomplete_retrying': "תשובה חלקית · מנסה שוב…",
   'sp.response.incomplete': "תשובה חלקית",
+  "st.display.agent_indicator.label": "אפקט פעילות הסוכן",
+  "st.display.agent_indicator.desc": "איך נראים שולי הדף בזמן ש-WebBrain עובד בכרטיסייה. כל הסגנונות מעבירים את הלחיצות שלך לדף ואינם מופיעים בצילומי מסך.",
+  "st.display.agent_indicator.circuit": "מעגל עצבי",
+  "st.display.agent_indicator.aurora": "זוהר קוטבי",
+  "st.display.agent_indicator.scan": "סריקה",
+  "st.display.agent_indicator.gears": "גלגלי שיניים",
+  "st.display.agent_indicator.classic": "הילה קלאסית",
 };

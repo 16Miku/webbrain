@@ -1267,4 +1267,11 @@ export default {
   'sp.activity.retrying_response': "Ponawianie odpowiedzi…",
   'sp.response.incomplete_retrying': "Niepełna odpowiedź · ponawianie…",
   'sp.response.incomplete': "Niepełna odpowiedź",
+  "st.display.agent_indicator.label": "Efekt aktywności agenta",
+  "st.display.agent_indicator.desc": "Wygląd krawędzi strony, gdy WebBrain pracuje na karcie. Każdy styl przepuszcza Twoje kliknięcia i nie pojawia się na zrzutach ekranu.",
+  "st.display.agent_indicator.circuit": "Obwód neuronowy",
+  "st.display.agent_indicator.aurora": "Zorza",
+  "st.display.agent_indicator.scan": "Skanowanie",
+  "st.display.agent_indicator.gears": "Zębatki",
+  "st.display.agent_indicator.classic": "Klasyczna poświata",
 };

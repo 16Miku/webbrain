@@ -1306,4 +1306,11 @@ export default {
   'sp.activity.retrying_response': "正在重试回答…",
   'sp.response.incomplete_retrying': "回答未完成 · 正在重试…",
   'sp.response.incomplete': "回答未完成",
+  "st.display.agent_indicator.label": "智能体活动效果",
+  "st.display.agent_indicator.desc": "WebBrain 在标签页中工作时页面边缘的样式。所有样式都会让点击穿透到页面，且不会出现在截图中。",
+  "st.display.agent_indicator.circuit": "神经回路",
+  "st.display.agent_indicator.aurora": "极光",
+  "st.display.agent_indicator.scan": "扫描",
+  "st.display.agent_indicator.gears": "齿轮",
+  "st.display.agent_indicator.classic": "经典光晕",
 };

@@ -1327,4 +1327,11 @@ export default {
   'sp.activity.retrying_response': "উত্তর আবার চেষ্টা করা হচ্ছে…",
   'sp.response.incomplete_retrying': "অসম্পূর্ণ উত্তর · আবার চেষ্টা করা হচ্ছে…",
   'sp.response.incomplete': "অসম্পূর্ণ উত্তর",
+  "st.display.agent_indicator.label": "এজেন্ট কার্যকলাপ ইফেক্ট",
+  "st.display.agent_indicator.desc": "WebBrain কোনো ট্যাবে কাজ করার সময় পেজের কিনারা কেমন দেখাবে। প্রতিটি স্টাইল আপনার ক্লিক পেজে পৌঁছাতে দেয় এবং স্ক্রিনশটে আসে না।",
+  "st.display.agent_indicator.circuit": "নিউরাল সার্কিট",
+  "st.display.agent_indicator.aurora": "অরোরা",
+  "st.display.agent_indicator.scan": "স্ক্যান",
+  "st.display.agent_indicator.gears": "গিয়ার",
+  "st.display.agent_indicator.classic": "ক্লাসিক আভা",
 };

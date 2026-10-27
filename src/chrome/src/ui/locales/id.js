@@ -1372,4 +1372,11 @@ export default {
   'sp.activity.retrying_response': "Mencoba ulang jawaban…",
   'sp.response.incomplete_retrying': "Jawaban belum lengkap · mencoba ulang…",
   'sp.response.incomplete': "Jawaban belum lengkap",
+  "st.display.agent_indicator.label": "Efek aktivitas agen",
+  "st.display.agent_indicator.desc": "Tampilan tepi halaman saat WebBrain bekerja di sebuah tab. Semua gaya meneruskan klik Anda ke halaman dan tidak muncul di tangkapan layar.",
+  "st.display.agent_indicator.circuit": "Sirkuit saraf",
+  "st.display.agent_indicator.aurora": "Aurora",
+  "st.display.agent_indicator.scan": "Pindai",
+  "st.display.agent_indicator.gears": "Roda gigi",
+  "st.display.agent_indicator.classic": "Cahaya klasik",
 };
