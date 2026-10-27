@@ -166,6 +166,58 @@ function projectClickAxTiming(data) {
   };
 }
 
+// Vision mode's notes (agent/vision-runtime.js _visionTraceNote). Metadata
+// traces keep their codes from closed lists and their bounded numbers, never
+// an error text, a region or a page size string: a capture failure must read
+// as one, not as the generic note stage 'model'.
+const VISION_NOTES = new Set([
+  'vision_frame', 'vision_frame_error', 'vision_tool_error', 'vision_upload_handoff',
+  'vision_redaction_skipped', 'vision_capture_retry', 'vision_layout_changed',
+]);
+const VISION_NOTE_ENUMS = {
+  kind: ['keyframe', 'patch', 'none', 'zoom'],
+  stage: ['start', 'observe', 'encode', 'resume', 'armed', 'ended'],
+  reason: ['start of turn', 'requested', 'page changed', 'layout changed', 'first frame', 'vision resumed',
+    'forced', 'not comparable', 'no visible change', 'patch chain limit', 'large change', 'patch cost', 'local change',
+    'page_changed', 'scrolled', 'uploaded', 'navigated', 'expired'],
+  code: ['decode_failed', 'scan_unavailable', 'pixelate_failed', 'error', 'transient'],
+  context: ['keyframe', 'patch', 'zoom'],
+  tool: ['take_screenshot', 'zoom', 'scroll_at', 'hover_at', 'drag_at', 'wait', 'click_at'],
+  mimeType: ['image/webp', 'image/jpeg', 'image/png'],
+};
+const VISION_NOTE_NUMBERS = {
+  width: 20_000, height: 20_000, cssWidth: 20_000, cssHeight: 20_000, captureWidth: 40_000, captureHeight: 40_000,
+  devicePixelRatio: 8, bytes: 50_000_000, estimatedTokens: 1_000_000, frameTokens: 1_000_000, changedRatio: 1,
+  count: 100, attempt: 100,
+};
+const VISION_IMAGE_ID = /^[fpz]\d{1,7}$/;
+
+function projectVisionNote(data) {
+  const source = data?.extra && typeof data.extra === 'object' && !Array.isArray(data.extra) ? data.extra : {};
+  const extra = {};
+  for (const [key, allowed] of Object.entries(VISION_NOTE_ENUMS)) {
+    if (allowed.includes(source[key])) extra[key] = source[key];
+  }
+  for (const [key, max] of Object.entries(VISION_NOTE_NUMBERS)) {
+    const value = source[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) extra[key] = Math.min(value, max);
+  }
+  for (const key of ['id', 'keyframe', 'frame']) {
+    if (typeof source[key] === 'string' && VISION_IMAGE_ID.test(source[key])) extra[key] = source[key];
+  }
+  if (Array.isArray(source.ids)) {
+    const ids = source.ids.filter(id => typeof id === 'string' && VISION_IMAGE_ID.test(id)).slice(0, 16);
+    if (ids.length) extra.ids = ids;
+  }
+  if (typeof source.dispatched === 'boolean') extra.dispatched = source.dispatched;
+  if (typeof source.profile === 'string' && /^[a-z0-9_-]{1,32}$/i.test(source.profile)) extra.profile = source.profile;
+  return {
+    step: Number.isFinite(data?.step) ? data.step : 0,
+    note: data.note,
+    ...(Object.keys(extra).length ? { extra } : {}),
+  };
+}
+
 function pick(source, fields) {
   if (!source || typeof source !== 'object' || Array.isArray(source)) return {};
   const output = {};
@@ -326,6 +378,7 @@ export function projectTraceEventData(kind, data, { includeContent = false } = {
   }
   if (kind === 'error') return pick(source, ['step', 'phase', 'code']);
   if (kind === 'streaming') return pick(source, STREAMING_METADATA_FIELDS);
+  if (kind === 'note' && VISION_NOTES.has(source.note)) return projectVisionNote(source);
   if (kind === 'note') {
     const projected = pick(source, ['step', 'note']);
     const extra = projectNoteExtra(source.extra);

@@ -557,6 +557,25 @@ test('session: only the newest four zooms stay usable', () => {
   for (const zoom of zooms.slice(1)) assert.equal(session.resolvePoint({ x: 5, y: 5, image: zoom.id }).ok, true, zoom.id);
 });
 
+test('traces: metadata traces keep vision notes as vision notes, without error texts', async () => {
+  const { projectTraceEventData } = await import('../src/chrome/src/trace/privacy.js');
+  assert.equal(read('src/chrome/src/trace/privacy.js'), read('src/firefox/src/trace/privacy.js'));
+  const failed = projectTraceEventData('note', { step: 3, note: 'vision_frame_error', extra: { stage: 'observe', error: 'Cannot read https://bank.example/account?id=42' } });
+  assert.deepEqual(failed, { step: 3, note: 'vision_frame_error', extra: { stage: 'observe' } });
+  const frame = projectTraceEventData('note', { step: 1, note: 'vision_frame', extra: {
+    kind: 'keyframe', id: 'f4', reason: 'vision resumed', width: 1356, height: 847, devicePixelRatio: 2, bytes: 81234,
+    mimeType: 'image/webp', profile: 'anthropic', regions: [{ x: 1, y: 2, width: 3, height: 4 }], url: 'https://bank.example/',
+  } });
+  assert.deepEqual(frame.extra, { kind: 'keyframe', reason: 'vision resumed', width: 1356, height: 847, devicePixelRatio: 2, bytes: 81234, mimeType: 'image/webp', id: 'f4', profile: 'anthropic' });
+  const skipped = projectTraceEventData('note', { step: 2, note: 'vision_redaction_skipped', extra: { code: 'scan_unavailable', context: 'zoom' } });
+  assert.deepEqual(skipped.extra, { code: 'scan_unavailable', context: 'zoom' });
+  // Values outside the closed lists are dropped, not passed through.
+  assert.equal(projectTraceEventData('note', { step: 2, note: 'vision_frame', extra: { kind: 'secret text', reason: 'typed: hunter2' } }).extra, undefined);
+  // The opt-in content tier keeps the note as recorded.
+  const raw = { step: 3, note: 'vision_frame_error', extra: { stage: 'observe', error: 'details' } };
+  assert.deepEqual(projectTraceEventData('note', raw, { includeContent: true }), raw);
+});
+
 test('session: an image value that is not an id is refused, not read as the current screen', () => {
   const session = new VisionSession();
   session.registerKeyframe({ imageWidth: 1000, imageHeight: 500, cssWidth: 2000, cssHeight: 1000 });
