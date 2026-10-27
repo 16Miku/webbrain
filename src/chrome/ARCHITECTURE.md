@@ -270,10 +270,12 @@ only the `cloud_*` run actions. `cloud-runs.js` reads the persistent identity
 (`webbrainCloudBridgeToken`, `…BrowserId`, `…InstallationId`) from
 `chrome.storage.local` and passes it with `cloud-bridge-start`, because the
 offscreen page has no storage access. With a token configured, each new socket
-sends an authenticated `hello` and stays *pending* until the backend answers
-`connection_approved`; commands before that get `connection_not_approved`.
-Approval is per socket and never carries over a reconnect. Without a token the
-legacy behaviour is unchanged. Protocol and limits:
+sends a `hello` with a nonce instead of the token; the backend must prove it
+holds the token before the extension answers with its own proof and IDs. The
+socket then stays *pending* until the backend answers `connection_approved`;
+commands before that get `connection_not_approved`. Authentication and approval are per
+socket and never carry over a reconnect. Without a token the legacy behaviour
+is unchanged. Protocol and limits:
 [docs/cloud-bridge-browser-approval.md](../../docs/cloud-bridge-browser-approval.md).
 
 ### Why a shared offscreen document

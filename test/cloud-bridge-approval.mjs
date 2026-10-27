@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import { createHmac, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { startApprovalServer } from '../examples/cloud-bridge-approval-server.mjs';
 
@@ -11,7 +12,28 @@ const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/cloud-b
 const IDENTITY = { token: 'secret-token', browserId: 'browser-1', installationId: 'install-1', extensionVersion: '1.2.3' };
 const tick = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms));
 
-function harness({ WebSocketImpl, sendMessage = async () => ({ runId: 'r1', status: 'running' }) } = {}) {
+// Wire format pinned independently of the example server.
+const hmacProof = (token, ...parts) => createHmac('sha256', token)
+  .update(JSON.stringify(['webbrain-bridge-auth-v1', ...parts])).digest('hex');
+
+// Plays the controller's half of the challenge and returns the browser's answer.
+async function authenticate(socket, token = IDENTITY.token, overrides = {}) {
+  const hello = socket.sent.filter(m => m.type === 'hello').at(-1);
+  const nonce = randomBytes(32).toString('hex');
+  const before = socket.sent.length;
+  await socket.receive({
+    type: 'auth_challenge',
+    method: 'hmac-sha256-v1',
+    nonce,
+    proof: hmacProof(token, 'controller', hello.auth.nonce, nonce),
+    ...overrides,
+  });
+  return { clientNonce: hello.auth.nonce, serverNonce: nonce, response: socket.sent.slice(before).find(m => m.type === 'auth_response') };
+}
+
+const leaksSecretOrIdentity = (messages) => /secret-token|browser-1|install-1/.test(JSON.stringify(messages));
+
+function harness({ WebSocketImpl, cryptoImpl = globalThis.crypto, sendMessage = async () => ({ runId: 'r1', status: 'running' }) } = {}) {
   const sockets = [];
   const timers = [];
   const runtimeCalls = [];
@@ -31,6 +53,8 @@ function harness({ WebSocketImpl, sendMessage = async () => ({ runId: 'r1', stat
   }
   vm.runInNewContext(source, {
     URL,
+    TextEncoder,
+    crypto: cryptoImpl,
     WebSocket: WebSocketImpl || FakeWebSocket,
     navigator: { userAgent: 'Mozilla/5.0 Chrome/126.0.1 Safari/537.36', platform: 'Linux x86_64' },
     chrome: { runtime: {
@@ -49,21 +73,59 @@ function harness({ WebSocketImpl, sendMessage = async () => ({ runId: 'r1', stat
 
 const cmd = { id: 'c1', action: 'cloud_status', payload: { runId: 'r1' } };
 
-test('hello carries identity, token, browser, version and platform', () => {
+test('hello carries a challenge and browser info but never the token or identity', () => {
   const h = harness();
   h.start();
   h.sockets[0].emit('open');
   const hello = h.sockets[0].sent[0];
   assert.equal(hello.type, 'hello');
-  assert.deepEqual(hello.auth, { type: 'bearer', token: 'secret-token' });
-  assert.equal(hello.browserId, 'browser-1');
-  assert.equal(hello.installationId, 'install-1');
+  assert.equal(hello.auth.type, 'challenge');
+  assert.equal(hello.auth.method, 'hmac-sha256-v1');
+  assert.match(hello.auth.nonce, /^[0-9a-f]{64}$/);
+  assert.equal(hello.auth.token, undefined);
+  assert.equal(hello.browserId, undefined);
+  assert.equal(hello.installationId, undefined);
+  assert.equal(leaksSecretOrIdentity(hello), false, 'the controller has not proved anything yet');
   assert.deepEqual({ ...hello.browser }, { name: 'Chrome', version: '126.0.1' });
   assert.equal(hello.extensionVersion, '1.2.3');
   assert.equal(hello.platform, 'Linux x86_64');
   assert.deepEqual([...hello.capabilities], ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1', 'run_provider_v1', 'private_results_v1', 'bot_memory_v1', 'run_handoff_v1']);
-  assert.equal(JSON.stringify(hello.status).includes('secret-token'), false, 'status must not leak the token');
   assert.equal(JSON.stringify(h.status()).includes('secret-token'), false);
+});
+
+test('a controller that proves the token gets the identity and a proof bound to both nonces', async () => {
+  const h = harness();
+  h.start();
+  const s = h.sockets[0];
+  s.emit('open');
+  const { clientNonce, serverNonce, response } = await authenticate(s);
+  assert.deepEqual({ ...response }, {
+    type: 'auth_response',
+    method: 'hmac-sha256-v1',
+    proof: hmacProof('secret-token', 'extension', clientNonce, serverNonce, 'browser-1', 'install-1'),
+    browserId: 'browser-1',
+    installationId: 'install-1',
+  });
+  assert.notEqual(response.proof, hmacProof('secret-token', 'controller', clientNonce, serverNonce), 'roles must not be interchangeable');
+  assert.equal(JSON.stringify(s.sent).includes('secret-token'), false, 'the token itself never crosses the socket');
+  const again = await authenticate(s);
+  assert.equal(again.response, undefined, 'one challenge per socket');
+});
+
+test('the extension proof matches the documented test vector', async () => {
+  // docs/cloud-bridge-browser-approval.md: hello nonce 00 x 32, backend nonce 11 x 32.
+  const h = harness({ cryptoImpl: { subtle: globalThis.crypto.subtle, getRandomValues: bytes => bytes.fill(0) } });
+  h.start();
+  const s = h.sockets[0];
+  s.emit('open');
+  assert.equal(s.sent[0].auth.nonce, '00'.repeat(32));
+  await s.receive({
+    type: 'auth_challenge',
+    method: 'hmac-sha256-v1',
+    nonce: '11'.repeat(32),
+    proof: '04734662625940a90c0e3aeed5a653b6fb2e24779baa71b6dccab394601937d4',
+  });
+  assert.equal(s.sent.find(m => m.type === 'auth_response').proof, '5670c5e30c40e94ed27cd0e99148310d44a3efe54d668b2f9fd21efe9a8e913e');
 });
 
 test('pending connection refuses cloud commands without calling the background', async () => {
@@ -71,6 +133,7 @@ test('pending connection refuses cloud commands without calling the background',
   h.start();
   const s = h.sockets[0];
   s.emit('open');
+  await authenticate(s);
   s.receive({ type: 'connection_pending', browserId: 'browser-1' });
   assert.equal(h.status().approval, 'pending');
   s.receive(cmd);
@@ -96,6 +159,7 @@ test('approved connection runs commands with the unchanged payload format', asyn
   h.start();
   const s = h.sockets[0];
   s.emit('open');
+  await authenticate(s);
   s.receive({ type: 'connection_pending' });
   s.receive({ type: 'connection_approved', browserId: 'browser-1' });
   assert.equal(h.status().approval, 'approved');
@@ -111,6 +175,7 @@ test('approval for another browserId is ignored', async () => {
   const h = harness();
   h.start();
   h.sockets[0].emit('open');
+  await authenticate(h.sockets[0]);
   h.sockets[0].receive({ type: 'connection_approved', browserId: 'someone-else' });
   assert.equal(h.status().approval, 'pending');
 });
@@ -130,23 +195,29 @@ test('rejected connection closes, blocks commands and does not reconnect', async
   assert.equal(h.runtimeCalls.length, 0);
 });
 
-test('reconnect requires a fresh approval', async () => {
+test('reconnect requires a fresh challenge and a fresh approval', async () => {
   const h = harness();
   h.start();
   const first = h.sockets[0];
   first.emit('open');
+  await authenticate(first);
   first.receive({ type: 'connection_approved' });
+  assert.equal(h.status().approval, 'approved');
   first.close();
   assert.equal(h.status().approval, 'pending');
   h.timers[0].callback();
   const second = h.sockets[1];
   second.emit('open');
   assert.equal(second.sent[0].type, 'hello');
-  assert.equal(second.sent[0].auth.token, 'secret-token');
+  assert.equal(second.sent[0].auth.token, undefined);
+  assert.notEqual(second.sent[0].auth.nonce, first.sent[0].auth.nonce, 'every socket gets a new nonce');
   second.receive(cmd);
   await tick();
   assert.equal(second.sent.find(m => m.id === 'c1').code, 'connection_not_approved');
+  second.receive({ type: 'connection_approved' });
+  assert.equal(h.status().approval, 'pending', 'approval before the new challenge is ignored');
   assert.equal(h.runtimeCalls.length, 0);
+  await authenticate(second);
   second.receive({ type: 'connection_approved' });
   second.receive(cmd);
   await tick();
@@ -186,7 +257,9 @@ test('end to end against the example server', async () => {
     for (let i = 0; i < 50 && ![...server.sessions].some(s => s.state === 'pending'); i++) await tick(20);
     const session = [...server.sessions][0];
     assert.equal(session.state, 'pending');
-    assert.equal(session.hello.browserId, 'browser-1');
+    assert.equal(session.browserId, 'browser-1');
+    assert.equal(session.installationId, 'install-1');
+    assert.equal(JSON.stringify(received).includes('secret-token'), false, 'the server verified the browser without receiving the token');
     session.send(cmd);
     for (let i = 0; i < 50 && !received.some(m => m.id === 'c1'); i++) await tick(20);
     assert.equal(received.find(m => m.id === 'c1').code, 'connection_not_approved');
@@ -196,6 +269,39 @@ test('end to end against the example server', async () => {
     assert.equal(received.find(m => m.id === 'c2').ok, true);
   } finally {
     await server.close();
+  }
+});
+
+test('end to end: an example server holding another token is refused by the browser', async () => {
+  const received = [];
+  const server = await startApprovalServer({ port: 0, token: 'other-token', onMessage: m => received.push(m) });
+  const h = harness({ WebSocketImpl: WebSocket });
+  try {
+    h.start(IDENTITY, `ws://127.0.0.1:${server.port}/extension`);
+    for (let i = 0; i < 50 && !/failed authentication/.test(h.status().lastError); i++) await tick(20);
+    assert.match(h.status().lastError, /failed authentication/);
+    assert.equal(received.some(m => m.type === 'auth_response'), false);
+    assert.equal(leaksSecretOrIdentity(received), false);
+  } finally {
+    await server.close();
+  }
+});
+
+test('end to end: the legacy bearer flag still works against a --legacy-bearer server', async () => {
+  const strict = await startApprovalServer({ port: 0, token: 'secret-token' });
+  const legacy = await startApprovalServer({ port: 0, token: 'secret-token', legacyBearer: true, autoApprove: true });
+  const h = harness({ WebSocketImpl: WebSocket });
+  try {
+    h.start({ ...IDENTITY, legacyBearerAuth: true }, `ws://127.0.0.1:${strict.port}/extension`);
+    for (let i = 0; i < 50 && h.status().approval !== 'rejected'; i++) await tick(20);
+    assert.equal(h.status().approval, 'rejected', 'a challenge-only server refuses the bearer hello');
+    h.start({ ...IDENTITY, legacyBearerAuth: true }, `ws://127.0.0.1:${legacy.port}/extension`);
+    for (let i = 0; i < 50 && h.status().approval !== 'approved'; i++) await tick(20);
+    assert.equal(h.status().approval, 'approved');
+    assert.equal([...legacy.sessions][0].browserId, 'browser-1');
+  } finally {
+    await strict.close();
+    await legacy.close();
   }
 });
 
@@ -223,6 +329,78 @@ function fxHarness({ WebSocketImpl, dispatch } = {}) {
   return { bridge, sockets, calls };
 }
 
+for (const [label, make, startBridge, statusOf, callsOf] of [
+  ['chrome', () => harness(), (h, extra) => h.start({ ...IDENTITY, ...extra }), h => h.status(), h => h.runtimeCalls],
+  ['firefox', () => fxHarness(), (h, extra) => h.bridge.start({ url: 'ws://127.0.0.1:17374/extension', ...IDENTITY, ...extra }), h => h.bridge.status(), h => h.calls],
+]) {
+  test(`${label}: a process squatting the port cannot get approved or learn the token`, async () => {
+    const h = make();
+    try {
+      startBridge(h);
+      const s = h.sockets[0];
+      s.emit('open');
+      // The old protocol let any listener echo these and run commands.
+      await s.receive({ type: 'connection_pending' });
+      await s.receive({ type: 'connection_approved' });
+      await s.receive({ type: 'connection_approved', browserId: 'browser-1' });
+      assert.equal(statusOf(h).approval, 'pending');
+      await s.receive({ id: 'squat', action: 'cloud_run', payload: { task: 'x', mode: 'act' } });
+      assert.equal(s.sent.find(m => m.id === 'squat').code, 'connection_not_approved');
+      assert.equal(callsOf(h).length, 0);
+      assert.equal(leaksSecretOrIdentity(s.sent), false, 'nothing reusable reaches an unauthenticated controller');
+    } finally { if (label === 'firefox') h.bridge.stop(); }
+  });
+
+  test(`${label}: a controller with the wrong token gets no answer and is retried with growing backoff`, async () => {
+    const h = make();
+    try {
+      startBridge(h);
+      const s = h.sockets[0];
+      s.emit('open');
+      const { response } = await authenticate(s, 'guessed-token');
+      assert.equal(response, undefined, 'no extension proof for a controller that failed');
+      assert.equal(s.readyState, 3, 'socket closed');
+      assert.equal(statusOf(h).approval, 'pending', 'not a rejection: the real controller may come back');
+      assert.match(statusOf(h).lastError, /failed authentication/);
+      await s.receive({ type: 'connection_approved' });
+      assert.equal(statusOf(h).approval, 'pending');
+      assert.equal(leaksSecretOrIdentity(s.sent), false);
+      assert.equal(callsOf(h).length, 0);
+      if (label === 'chrome') {
+        assert.equal(h.timers[0].delay, 500);
+        const malformed = [{ method: 'bearer' }, { nonce: 'short' }, { proof: 'zz' }, { proof: 'A'.repeat(64) }];
+        for (const [i, bad] of malformed.entries()) {
+          h.timers[i].callback();
+          const next = h.sockets[i + 1];
+          next.emit('open');
+          assert.equal((await authenticate(next, IDENTITY.token, bad)).response, undefined, JSON.stringify(bad));
+          assert.equal(next.readyState, 3, JSON.stringify(bad));
+          // Opening a socket must not reset the backoff before the controller proves itself.
+          assert.equal(h.timers[i + 1].delay, 500 * 2 ** (i + 1));
+        }
+        assert.equal(callsOf(h).length, 0);
+      }
+    } finally { if (label === 'firefox') h.bridge.stop(); }
+  });
+
+  test(`${label}: the deprecated bearer hello needs the explicit legacy flag`, async () => {
+    const h = make();
+    try {
+      startBridge(h, { legacyBearerAuth: true });
+      const s = h.sockets[0];
+      s.emit('open');
+      const hello = s.sent[0];
+      assert.deepEqual({ ...hello.auth }, { type: 'bearer', token: 'secret-token' });
+      assert.equal(hello.browserId, 'browser-1');
+      assert.equal(hello.installationId, 'install-1');
+      await s.receive({ type: 'connection_approved', browserId: 'browser-1' });
+      await s.receive(cmd);
+      assert.equal(s.sent.find(m => m.id === 'c1').ok, true);
+      assert.equal(callsOf(h).length, 1);
+    } finally { if (label === 'firefox') h.bridge.stop(); }
+  });
+}
+
 for (const build of ['chrome', 'firefox']) {
   test(`${build}: handoff commands require approval and preserve their run and note payload`, async () => {
     const h = build === 'chrome' ? harness() : fxHarness();
@@ -238,6 +416,7 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(socket.sent.find(reply => reply.id === `unapproved-${action}`).status, 403);
       }
       assert.equal(calls.length, 0);
+      await authenticate(socket);
       await socket.receive({ type: 'connection_approved', browserId: IDENTITY.browserId });
       await socket.receive({ id: 'pause', action: 'cloud_pause', payload: { runId: 'r1' } });
       await socket.receive({ id: 'resume', action: 'cloud_resume', payload: { runId: 'r1', note: 'I signed in' } });
@@ -256,6 +435,7 @@ for (const build of ['chrome', 'firefox']) {
     else h.bridge.start({ url: 'ws://127.0.0.1:17374/extension', ...IDENTITY });
     const socket = h.sockets[0];
     socket.emit('open');
+    await authenticate(socket);
     await socket.receive({ type: 'connection_approved', browserId: IDENTITY.browserId });
     for (const malformed of [null, [], 'cloud_status', 0, true]) {
       const before = socket.sent.length;
@@ -279,10 +459,17 @@ test('firefox: hello, pending refusal, approval, rejection', async () => {
   s.emit('open');
   const hello = s.sent[0];
   assert.deepEqual({ ...hello.browser }, { name: 'Firefox', version: '140.0' });
-  assert.equal(hello.auth.token, 'secret-token');
-  assert.equal(hello.browserId, 'browser-1');
+  assert.equal(hello.auth.type, 'challenge');
+  assert.match(hello.auth.nonce, /^[0-9a-f]{64}$/);
+  assert.equal(leaksSecretOrIdentity(hello), false);
   assert.equal(hello.platform, 'Linux x86_64');
   assert.equal(JSON.stringify(h.bridge.status()).includes('secret-token'), false);
+
+  const { clientNonce, serverNonce, response } = await authenticate(s);
+  assert.equal(response.browserId, 'browser-1');
+  assert.equal(response.installationId, 'install-1');
+  assert.equal(response.proof, hmacProof('secret-token', 'extension', clientNonce, serverNonce, 'browser-1', 'install-1'));
+  assert.equal(JSON.stringify(s.sent).includes('secret-token'), false);
 
   s.receive({ type: 'connection_pending' });
   s.receive(cmd);
@@ -311,7 +498,9 @@ test('firefox: reconnect requires a fresh approval', async () => {
   h.bridge.start({ url: 'ws://127.0.0.1:17374/extension', ...IDENTITY });
   const first = h.sockets[0];
   first.emit('open');
+  await authenticate(first);
   first.receive({ type: 'connection_approved' });
+  assert.equal(h.bridge.status().approval, 'approved');
   first.close();
   assert.equal(h.bridge.status().approval, 'pending');
   await tick(700); // first backoff is 500 ms
@@ -421,5 +610,29 @@ for (const [label, createController] of [['chrome', null], ['firefox', createFxC
     const ids = new Set(started.map(m => m.installationId));
     assert.equal(ids.size, 1, 'all concurrent starts must use the same installation id');
     assert.equal([...ids][0], store.webbrainCloudBridgeInstallationId, 'and it matches the persisted one');
+  });
+
+  test(`${label}: the deprecated bearer hello is off unless the legacy flag is stored as true`, async () => {
+    const { createCloudRunController: make } = label === 'chrome'
+      ? await import('../src/chrome/src/cloud-runs.js')
+      : { createCloudRunController: createController };
+    const store = { webbrainCloudBridgeEnabled: true, webbrainCloudBridgeToken: 'tok' };
+    const started = [];
+    const api = {
+      storage: { local: {
+        get: async (keys) => Object.fromEntries([].concat(keys).map(k => [k, store[k]]).filter(([, v]) => v !== undefined)),
+        set: async (obj) => { Object.assign(store, obj); },
+      } },
+      runtime: { getManifest: () => ({ version: '1.0.0' }), sendMessage: async (m) => { started.push(m); return {}; } },
+    };
+    const bridge = { start: (m) => { started.push(m); return {}; }, stop: () => ({}), status: () => ({}) };
+    const controller = make({ chromeApi: api, agent: {}, ensureOffscreen: async () => {}, bridge });
+    for (const value of [undefined, 'true', 1, true]) {
+      if (value === undefined) delete store.webbrainCloudBridgeLegacyBearerAuth;
+      else store.webbrainCloudBridgeLegacyBearerAuth = value;
+      await controller.syncBridge();
+      assert.equal(started.at(-1).legacyBearerAuth, value === true, `only an explicit true opts in (${JSON.stringify(value)})`);
+      assert.equal(started.at(-1).token, 'tok');
+    }
   });
 }
