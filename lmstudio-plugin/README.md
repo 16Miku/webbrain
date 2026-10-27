@@ -190,7 +190,7 @@ web-fetching primitives.
 The plugin runs in your local Node process, so anything reachable
 from that process is reachable from the LLM. The defenses below are
 layered — each closes a class of bypass the previous one missed —
-but DNS rebinding is a known residual gap (see end of this section).
+but they are not a hardened sandbox (see end of this section).
 
 **The browser bridge is a separate trust surface from the HTTP tools.**
 Everything below concerns `fetch_url` / `research_url`. For `browser_task`:
@@ -216,11 +216,15 @@ Everything below concerns `fetch_url` / `research_url`. For `browser_task`:
   cloud-metadata IPs, and `*.local` / `*.internal` / `*.lan` /
   `*.home` / `*.corp` / `*.intranet` are blocked. Non-`http(s)`
   protocols (`file://`, `ftp://`, `gopher://`, `javascript:`) too.
-- **DNS resolution check.** Before each hop, the hostname is
-  resolved via `dns.lookup({all: true})` and every returned A/AAAA
-  address is checked against the same private ranges. Closes the
-  bypass where `attacker.example A 127.0.0.1` would otherwise pass
-  the syntactic check.
+- **DNS resolution check, pinned to the connection.** On each hop the
+  hostname is resolved by the socket's own `lookup` hook via
+  `dns.lookup({all: true})`; every returned A/AAAA address is checked
+  against the same private ranges, and only those checked addresses
+  are dialled. Closes the bypass where `attacker.example A 127.0.0.1`
+  would otherwise pass the syntactic check, and DNS rebinding — a
+  TTL=0 record cannot answer public to the check and private to the
+  connection, because they are the same lookup. Requests use a fresh
+  connection each time, never a pooled socket resolved earlier.
 - **Per-redirect re-validation.** Redirects are followed manually
   (5 hops max). Each `Location` runs through both checks before we
   follow it — a public URL cannot 302 to `http://169.254.169.254/...`.
@@ -240,17 +244,12 @@ Set `allowPrivate: true` on a per-call basis to opt out of the URL
 guard + DNS check — useful when you actually want to talk to
 localhost services.
 
-### Known residual gap: DNS rebinding
+### Not a sandbox
 
-An attacker controlling a domain with TTL=0 can return a public IP
-when our guard runs `dns.lookup` and a private IP a moment later when
-`fetch` connects. Closing this fully requires pinning the resolved
-IP via a custom `undici` Agent's `connect.lookup` hook so the
-connection uses the exact address we validated. Tracked as a
-follow-up. If you're running this on a cloud VM with sensitive
-instance-metadata endpoints, use a network policy that blocks
-`169.254.169.254` outbound rather than relying solely on this
-plugin's checks.
+These checks only see the address ranges they know about. If you're
+running this on a cloud VM with sensitive instance-metadata
+endpoints, use a network policy that blocks `169.254.169.254`
+outbound rather than relying solely on this plugin's checks.
 
 ## License
 
