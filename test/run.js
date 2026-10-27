@@ -57770,8 +57770,8 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.equal(
       (clarifySource.match(/scrollToBottom\(\{ force: true \}\);/g) || []).length,
-      8,
-      `${label}: workflow healing, submit, recipient, deletion, video-length, unverified-step, permission, and clarify prompts should override reading-first scroll suppression`,
+      9,
+      `${label}: workflow healing, submit, recipient, deletion, video-length, download-read, unverified-step, permission, and clarify prompts should override reading-first scroll suppression`,
     );
     assert.match(
       panel,

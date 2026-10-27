@@ -1112,7 +1112,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'list_downloads',
-      description: 'List the user\'s most recent downloads with state, filename, source URL, and bytes received. Use this to verify a download you triggered actually completed.',
+      description: 'List this conversation\'s downloads (files you downloaded, or that downloaded while you worked) with state, file name, source URL, and bytes received. Use this to verify a download you triggered actually completed. The user\'s other download history is not listed.',
       parameters: {
         type: 'object',
         properties: {
@@ -1126,7 +1126,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'read_downloaded_file',
-      description: 'Read actual saved bytes of a completed browser download through an isolated local-file reader; never re-fetch its source URL. Returns at most 16k text characters, base64 for small binaries, or saved-file metadata for large binaries. Pass downloadId from list_downloads or download_files. A missing file or unavailable local reader returns an error.',
+      description: 'Read actual saved bytes of a completed browser download through an isolated local-file reader; never re-fetch its source URL. Returns at most 16k text characters, base64 for small binaries, or saved-file metadata for large binaries. Pass downloadId from list_downloads or download_files. A missing file or unavailable local reader returns an error. A download from outside this conversation is read only if the user approves that exact file on WebBrain\'s card.',
       parameters: {
         type: 'object',
         properties: {
