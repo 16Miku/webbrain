@@ -336,6 +336,21 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
   };
 
   /**
+   * A run that does not start on vision (the setting off, a text-only model,
+   * a page that needs the element inventory, Ask) after a vision run in the
+   * same conversation: the last frame and its patches would still be sent
+   * (pruneVisionImages keeps them). A retire marker drops them; the run's own
+   * frames, if vision starts later, come after it. Returns true if pushed.
+   */
+  proto._visionRetireEarlierFrames = function _visionRetireEarlierFrames(messages) {
+    if (!Array.isArray(messages)) return false;
+    const lastKey = messages.findLastIndex(message => visionFrameTag(message)?.kind === 'key');
+    if (lastKey < 0 || messages.findLastIndex(message => visionFrameTag(message)?.kind === 'retire') > lastKey) return false;
+    messages.push(visionUserMessage('[Screenshots from earlier vision steps are not shown: this run works without them. Read the page again before relying on what it showed.]', { epoch: 0, kind: 'retire' }));
+    return true;
+  };
+
+  /**
    * A vision click_at the file-chooser guard stopped, in either build and on
    * any dispatch path, hands the next steps to the element tools, upload_file
    * among them; a successful upload_file hands them back. Called once per

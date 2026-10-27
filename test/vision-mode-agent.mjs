@@ -749,6 +749,24 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.equal(clicks[1].vision.needsStabilityCheck, false);
   });
 
+  test(`${build}: a later run that does not use vision sends none of the earlier vision run's screenshots`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'Run one.', outcome: 'success' })] };
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Run two.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { onDispatch: (name, _args, scene) => { if (name === 'click') scene.rects.push({ x: 900, y: 600, w: 80, h: 30, color: [0, 120, 0] }); } });
+    const tab = nextTab++;
+    await runLoop(ctx.agent, tab, false, 'Run one.');
+    assert.ok(totalImages(ctx.requests[1]) >= 1, 'run one saw its screen');
+    ctx.agent.visionMode = 'off';
+    await runLoop(ctx.agent, tab, false, 'Run two.');
+    const runTwo = ctx.requests[2];
+    assert.ok(!runTwo.tools.includes('click_at'), 'run two is on the tree path');
+    assert.equal(totalImages(runTwo), 0, 'no screenshot from run one is sent');
+    assert.ok(runTwo.messages.some(message => /Screenshots from earlier vision steps are not shown/.test(textOf(message))));
+  });
+
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };

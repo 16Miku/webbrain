@@ -57285,6 +57285,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
       await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
       await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
+    } else if (!selectionOnly && !standaloneChatRun) {
+      // An earlier vision run's frames are not this run's screen.
+      this._visionRetireEarlierFrames(messages);
     }
     let visionPromptActive = !!this._visionToolOptions(tabId, mode);
 
@@ -58839,6 +58842,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
       await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
       await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
+    } else if (!selectionOnly && !standaloneChatRun) {
+      // An earlier vision run's frames are not this run's screen.
+      this._visionRetireEarlierFrames(messages);
     }
     let visionPromptActive = !!this._visionToolOptions(tabId, mode);
 
