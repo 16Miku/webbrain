@@ -625,6 +625,26 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.equal(agent._guardSkipped('done-verification-debt', 1), true);
   });
 
+  test(`${build}: a screen update that times out leaves a note and is not retried`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'Stopped.', outcome: 'partial' })] };
+      return { content: 'done' };
+    });
+    const capture = ctx.agent._visionPlatformCapture;
+    let hangs = 0;
+    ctx.agent._visionCaptureDeadlineMs = 50;
+    ctx.agent._visionPlatformCapture = async (tab, options) => {
+      // The first frame is captured; the update after the click hangs.
+      if (ctx.scene.captures >= 1) { hangs++; return new Promise(() => {}); }
+      return capture(tab, options);
+    };
+    await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.requests.length, 2);
+    assert.match(textOf(visionMessages(ctx.requests[1].messages).at(-1)), /could not be captured after the action \(The screenshot did not finish within 0\.05 s\.\)/);
+    assert.equal(hangs, 1, 'a timed-out capture is not tried again');
+  });
+
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };

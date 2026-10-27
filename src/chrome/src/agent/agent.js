@@ -20843,6 +20843,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await cdpClient.attach(tabId);
     await cdpClient.sendCommand(tabId, 'Page.enable').catch(() => {});
     await this._preparePageForCapture(tabId);
+    // Stop while the page was prepared: no screenshot is taken
+    // (vision-runtime.js _visionBounded no longer waits for it).
+    this._throwIfAborted(this._runAbortSignal(tabId));
     const region = cssRegion || { x: 0, y: 0, width: probe.cssWidth, height: probe.cssHeight };
     const dpr = Math.max(0.25, Number(probe?.devicePixelRatio) || 1);
     const zoom = Math.max(0.25, Number(probe?.zoom) || 1);

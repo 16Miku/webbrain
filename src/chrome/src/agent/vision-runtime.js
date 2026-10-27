@@ -62,6 +62,11 @@ const UPLOAD_HANDOFF_DECISIONS = 5;
 // scan yet. While the tab loads, WebBrain waits this long for one, then
 // captures again.
 const REDACTION_SCAN_WAIT_MS = 1500;
+// A viewport measurement or screenshot that has not answered by then (a hung
+// renderer, a stalled debugger) fails like any capture failure, with its own
+// error code (never a control-flow one), and is not retried; Stop ends the
+// wait at once (_visionBounded).
+const VISION_CAPTURE_DEADLINE_MS = 15000;
 const REDACTION_SCAN_POLL_MS = 250;
 // Redaction outcomes (agent _redactScreenshotDataUrl) that leave the image as
 // captured although redaction is on. Redaction is best-effort: the image is
@@ -509,11 +514,11 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
    * resamples to the plan so the coordinate map is exact.
    */
   proto._visionCaptureFrame = async function _visionCaptureFrame(tabId, state, { redactionRetry = true } = {}) {
-    const probe = await this._visionPlatformProbe(tabId);
+    const probe = await this._visionBounded(tabId, 'viewport measurement', () => this._visionPlatformProbe(tabId));
     if (!probe || !(probe.cssWidth > 0) || !(probe.cssHeight > 0)) throw new Error('The page viewport could not be measured.');
     const profile = VISION_PROFILES[state.profileId] || VISION_PROFILES.default;
     const size = planVisionImageSize({ cssWidth: probe.cssWidth, cssHeight: probe.cssHeight, profile, quality: state.quality });
-    let dataUrl = await this._visionPlatformCapture(tabId, { probe, outWidth: size.width, outHeight: size.height });
+    let dataUrl = await this._visionBounded(tabId, 'screenshot', () => this._visionPlatformCapture(tabId, { probe, outWidth: size.width, outHeight: size.height }));
     if (!dataUrl) throw new Error('The browser returned no screenshot.');
     let redaction = null;
     if (this.screenshotRedaction && typeof this._redactScreenshotDataUrl === 'function') {
@@ -552,6 +557,37 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
 
   proto._visionEncodeRegion = function _visionEncodeRegion(canvas, region, options) {
     return encodeCanvasRegion(canvas, region, options);
+  };
+
+  /**
+   * Runs one platform read (`what` names it in the error) against the run's
+   * Stop and VISION_CAPTURE_DEADLINE_MS (`_visionCaptureDeadlineMs` overrides
+   * it). The read itself is not cancelled; its late answer is ignored.
+   */
+  proto._visionBounded = async function _visionBounded(tabId, what, run) {
+    const signal = this._runAbortSignal?.(tabId) || null;
+    this._throwIfAborted?.(signal);
+    const deadlineMs = Number(this._visionCaptureDeadlineMs) > 0 ? Number(this._visionCaptureDeadlineMs) : VISION_CAPTURE_DEADLINE_MS;
+    let timer = null;
+    let onAbort = null;
+    try {
+      return await new Promise((resolve, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error(`The ${what} did not finish within ${deadlineMs / 1000} s.`);
+          error.code = 'vision_capture_timeout';
+          reject(error);
+        }, deadlineMs);
+        if (signal?.addEventListener) {
+          onAbort = () => reject(signal.reason instanceof Error ? signal.reason
+            : Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' }));
+          signal.addEventListener('abort', onAbort, { once: true });
+        }
+        Promise.resolve().then(run).then(resolve, reject);
+      });
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) signal.removeEventListener?.('abort', onAbort);
+    }
   };
 
   /** Waits up to REDACTION_SCAN_WAIT_MS for the page's redaction scan to answer. */
@@ -1007,7 +1043,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     });
     if (!reads) return null;
     let probe = null;
-    try { probe = await this._visionPlatformProbe(tabId); }
+    try { probe = await this._visionBounded(tabId, 'viewport measurement', () => this._visionPlatformProbe(tabId)); }
     catch (error) {
       if (isControlFlowError(error)) throw error;
       return null;
@@ -1174,9 +1210,9 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
         }
       }
       const profile = VISION_PROFILES[state.profileId] || VISION_PROFILES.default;
-      const probe = await this._visionPlatformProbe(tabId);
+      const probe = await this._visionBounded(tabId, 'viewport measurement', () => this._visionPlatformProbe(tabId));
       const plan = planZoomImageSize({ regionWidth: region.cssRegion.width, regionHeight: region.cssRegion.height, devicePixelRatio: probe?.devicePixelRatio || 1, profile });
-      let dataUrl = await this._visionPlatformCapture(tabId, { probe, cssRegion: region.cssRegion, outWidth: plan.width, outHeight: plan.height });
+      let dataUrl = await this._visionBounded(tabId, 'zoom screenshot', () => this._visionPlatformCapture(tabId, { probe, cssRegion: region.cssRegion, outWidth: plan.width, outHeight: plan.height }));
       if (!dataUrl) throw new Error('The browser returned no screenshot.');
       let redaction = null;
       if (this.screenshotRedaction && typeof this._redactScreenshotDataUrl === 'function') {
@@ -1224,7 +1260,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       } else if (session.keyframe) {
         point = { x: session.keyframe.cssWidth / 2, y: session.keyframe.cssHeight / 2 };
       } else {
-        const probe = await this._visionPlatformProbe(tabId);
+        const probe = await this._visionBounded(tabId, 'viewport measurement', () => this._visionPlatformProbe(tabId));
         point = { x: (probe?.cssWidth || 800) / 2, y: (probe?.cssHeight || 600) / 2 };
       }
       // A focused number field under the pointer takes the wheel as +/-.

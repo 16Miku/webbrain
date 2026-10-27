@@ -555,6 +555,35 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: a capture that hangs fails at its deadline, and Stop ends the wait at once`, async () => {
+    const agent = agentFor();
+    agent.visionMode = 'auto';
+    const tab = 39;
+    agent._effectiveRunMode = () => 'act';
+    agent._beginVisionRun(tab);
+    const state = agent._visionRunState(tab, 'act');
+    agent._visionPlatformProbe = async () => ({ cssWidth: 100, cssHeight: 50, devicePixelRatio: 1, scrollX: 0, scrollY: 0, url: 'https://owned.example/' });
+    agent._visionPlatformCapture = () => new Promise(() => {});
+    agent._visionCaptureDeadlineMs = 40;
+    let started = Date.now();
+    await assert.rejects(agent._visionCaptureFrame(tab, state), error => error.code === 'vision_capture_timeout' && /screenshot did not finish within 0\.04 s/.test(error.message));
+    assert.ok(Date.now() - started < 1000);
+    // Not a control-flow error: the caller's capture-failure path handles it.
+    agent._visionCaptureDeadlineMs = 60000;
+    const stop = new AbortController();
+    agent._runAbortSignal = () => stop.signal;
+    started = Date.now();
+    setTimeout(() => stop.abort(), 20);
+    await assert.rejects(agent._visionCaptureFrame(tab, state), error => error.name === 'AbortError');
+    assert.ok(Date.now() - started < 1000, 'Stop did not wait for the capture');
+    // A hung measurement is bounded the same way.
+    agent._runAbortSignal = () => null;
+    agent._visionCaptureDeadlineMs = 40;
+    agent._visionPlatformProbe = () => new Promise(() => {});
+    await assert.rejects(agent._visionCaptureFrame(tab, state), error => /viewport measurement did not finish/.test(error.message));
+    agent._endVisionRun(tab, null);
+  });
+
   test(`${build}: Gmail's result counter, which takes no target, stays in the vision tool list`, () => {
     // Offered on a Gmail result list (getGmailResultCountPolicy).
     const names = getToolsForMode('act', { tier: 'full', gmailResultCounting: true, vision: { coordinates: 'pixel' } }).map(tool => tool.function.name);
