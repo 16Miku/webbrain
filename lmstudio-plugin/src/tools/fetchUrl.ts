@@ -10,11 +10,14 @@
  *      http://169.254.169.254/latest/meta-data/ would happily exfil
  *      cloud-credential blobs from the user's machine; the guard
  *      blocks file://, RFC1918, link-local, and ULA targets by
- *      default. Opt out per-call with `allowPrivate: true`.
+ *      default. Private targets open only through the `opts` argument,
+ *      which the plugin fills from the user's setting; `args` holds
+ *      what the model sent and cannot lift the guard.
  */
 
 import { htmlToText } from "../util/htmlToText.js";
 import { safeFetch, readBodyCapped } from "../util/safeFetch.js";
+import type { UrlGuardOptions } from "../util/urlGuard.js";
 import {
   compactText,
   normalizeTextLimit,
@@ -43,13 +46,6 @@ export interface FetchUrlArgs {
   body?: string;
   /** ms; default 30 000, cap 120 000. */
   timeout?: number;
-  /**
-   * Allow URLs that target RFC1918 / loopback / link-local addresses.
-   * Off by default to keep the LLM out of cloud-metadata services and
-   * the user's intranet. Set to true only when you actually want the
-   * plugin to talk to localhost/private services.
-   */
-  allowPrivate?: boolean;
   /**
    * Maximum characters returned in the main text/json field after compaction.
    * Defaults to 8k for text/html and 16k for JSON; capped at 50k.
@@ -124,7 +120,15 @@ function prepareModelText(
   };
 }
 
-export async function fetchUrl(args: FetchUrlArgs): Promise<FetchUrlResult> {
+/**
+ * `opts.allowPrivate` opens RFC1918 / loopback / link-local targets. It
+ * is separate from `args` so a caller can pass model-supplied arguments
+ * straight through without handing the model the guard's off switch.
+ */
+export async function fetchUrl(
+  args: FetchUrlArgs,
+  opts: UrlGuardOptions = {},
+): Promise<FetchUrlResult> {
   if (!args?.url) return { success: false, error: "url is required" };
 
   const timeoutMs = Math.min(
@@ -144,7 +148,7 @@ export async function fetchUrl(args: FetchUrlArgs): Promise<FetchUrlResult> {
       headers: args.headers || {},
       body: args.body,
       signal: controller.signal,
-      allowPrivate: !!args.allowPrivate,
+      allowPrivate: opts.allowPrivate === true,
     });
     const contentType = (res.headers.get("content-type") || "").toLowerCase();
     const status = res.status;

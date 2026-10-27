@@ -55,6 +55,9 @@ before(async () => {
   process.env.WEBBRAIN_COMMAND_TIMEOUT_MS = "50";
   process.env.WEBBRAIN_BRIDGE_KEY = PAIRING_KEY;
   const context = {
+    withConfigSchematics() {
+      return context;
+    },
     withToolsProvider(provider) {
       toolsProvider = provider;
       return context;
