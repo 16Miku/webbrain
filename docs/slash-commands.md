@@ -95,9 +95,11 @@ is failing. A badge appears while it is active, and it clears on `/reset`.
 
 To keep the same policy active across conversations and browser restarts, turn
 on **Always allow API mutations** under **Settings → Advanced**. The
-setting is on by default and remains active until you turn it off. `/reset`
-still clears the conversation-only `/allow-api` override, but does not change
-the persistent setting.
+setting is on by default and remains active until you turn it off. On a new
+install the setting does not skip site permissions: a write request to a site
+you have not granted still asks (Allow once / Always / Deny), while `/allow-api`
+skips that prompt for its conversation. `/reset` still clears the conversation-only
+`/allow-api` override, but does not change the persistent setting.
 
 The default UI-first rule exists because API actions are invisible (you don't
 see what's being sent), often require separate auth tokens you may not have

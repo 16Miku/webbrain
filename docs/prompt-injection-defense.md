@@ -129,6 +129,11 @@ messages.push({ role: 'user', content: `[…]\n${wrapped}` });
 
 Known non-tool ingestion points (keep this list current):
 - auto-screenshot re-injection (vision description + interactive-elements list);
+- the current page URL and title in the `[Current page context …]` note of
+  `_enrichUserMessageWithCurrentPage`. That note shares the user-role message
+  with the task, so the two fields sit inside a `_wrapUntrusted` box, each
+  kept to one line without bracket or wrapper syntax so the note still strips
+  as one unit;
 - the "Initial viewport description" in `_enrichUserMessageWithCurrentPage`;
 - Plan before Act planner messages: sanitized page URL/title and recent-history
   digest are sent under the planner's untrusted-page framing; non-text image
@@ -195,7 +200,8 @@ protect the user on the trusted sites where injected content actually lives
     `KNOWN_SAFE_TOOLS` allowlist (defined in `test/run.js`) — else CI fails.
   - capability mapping, host resolution, `requiredHosts`, `frameHostMatches`,
     grant storage / `hydrateFrom`, content-wrap breakout-stripping.
-  - planner prompt parity / boundary checks in `test/security/injection-corpus.mjs`.
+  - planner prompt parity / boundary checks, and the main agent's current
+    page URL/title boundary, in `test/security/injection-corpus.mjs`.
 - `test/manual-permissions.md` — the in-browser checklist (the 3-option
   permission card and the Permissions page) that the unit suite can't
   cover.
@@ -247,4 +253,4 @@ These are conscious trade-offs, not oversights.
   and leaky). The gate is deterministic capability×origin with the human as the
   trust anchor.
 
-  _Last update: 10/11/2026_
+  _Last update: 10/27/2026_

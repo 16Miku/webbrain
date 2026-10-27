@@ -223,7 +223,7 @@ The primary threat: a malicious page crafts content that, when read by the agent
 | **Plan before Act** | When enabled, action-mode runs first produce a structured plan and wait for side-panel approval before any browser tool executes. In Try mode, planner JSON that remains invalid after repair degrades that turn to Ask/read-only; Strict stops. Also in Try, a turn that automatic mode routed with a sure `plan_need: direct` answer runs only the compact intent check and shows no plan card: `direct` is an authorizing choice (0.85 threshold) for a short, single-purpose job, and risky work (payments, purchases, bookings, deletion, bulk changes, credentials, messages to several people) answers `plan`. A `direct` answer about a request cut to fit the decision model is not used. Strict, and plan review set to Always, plan every turn. Scheduled runs can auto-approve the plan only through scheduler policy. |
 | **Skill import boundary** | Skills can expose read-only HTTP tools and download-job tools through a `webbrain-tools` manifest. Importing or keeping the skill enabled is the trust decision for the declared HTTPS endpoint; declared skill tools use `credentials: "omit"` and should mark third-party results `resultPolicy: "untrusted"`. Download-job skill tools still require an action mode and the normal Downloads permission gate before saving files. |
 | **WebMCP boundary** | Experimental WebMCP is on by default, so its tools and prompt guidance enter ordinary model requests unless the user opts out under Settings → Bridge. Chrome page-registered names, descriptions, schemas, frame URLs, annotations, outputs, and errors are page-controlled and always use the untrusted-content wrapper. Calls use opaque IDs. Ask may list tools but cannot invoke them. Because a callback can run arbitrary page logic, every invocation requires Act/Dev, fresh per-call confirmation, and a permission grant for the actual registration-frame origin; a page-authored `readOnly` hint never bypasses those gates. Missing/opaque frame identity fails closed, and the frame plus effective HTTP(S) security origin are revalidated immediately before dispatch to prevent navigation races from borrowing an old grant. |
-| **API mutation override** | A per-conversation `/allow-api` flag, or the default-on persistent setting under Settings → Advanced, *waives* the permission prompt for write-method network egress (`fetch_url`/`research_url` with POST/PUT/PATCH/DELETE) in Act and Dev. Ask stays read-only: an Ask run, including a turn that automatic mode starts in Ask, refuses a write-method request whatever these say. Neither option waives GET egress or any other capability. Conversation reset clears only the slash-command override. |
+| **API mutation override** | A per-conversation `/allow-api` flag *waives* the permission prompt for write-method network egress (`fetch_url`/`research_url` with POST/PUT/PATCH/DELETE) in Act and Dev. The default-on persistent setting under Settings → Advanced allows those requests without `/allow-api`; on a new install each host still gets the network permission prompt, while installs from before that change keep the waiver (see [`/allow-api` Flag](#allow-api-flag)). Ask stays read-only: an Ask run, including a turn that automatic mode starts in Ask, refuses a write-method request whatever these say. Neither option waives GET egress or any other capability. Conversation reset clears only the slash-command override. |
 | **Decision models** | Auto (default) uses a downloaded D1 for completion and scheduled checks, whatever the chat provider; while Compass is the chat provider, Compass's managed route answers semantic decisions, and completion checks until D1 is downloaded. Off uses none. In On, OpenRouter, direct TypeSafe and local/custom System One endpoints share independent per-feature switches. Keys are optional for local servers. Compass completion uses its managed decision route unless D1 is downloaded (Auto) or chosen, or the in-browser chat model is chosen. Bounded/redacted task and fresh page evidence are untrusted data. Judges have no browser executor; ordinary tool calls still pass policy, permission and completion layers. Strict Secret Mode, cancellation, quota and cost limits apply. Unavailable or malformed judgments fall through to the active LLM and existing checks. |
 | **`done()` verification** | Decision and tool-free LLM checks prefer vision, then AX. Confident pending/failed outcomes require read-only recovery before another submission. Accepted task-bound proof can satisfy generic evidence despite an unrelated comment form, while explicit recipient, payment, download, authorization and workflow contracts remain required. Existing dialog/form checks are the final fallback. |
 | **Grouped search approval** | A same-site GET form with no credential, payment or hidden token field, and no side-effect action address, shares one task-scoped approval for its navigation, typing and submit when the page's structure marks it as a search: a search landmark, a search-typed field or one whose keyboard says search, code names such as `q` or `query`, a search address, or a submit control a model read, in any language, as only searching or filtering. Words in a field's visible label decide nothing. Every other form keeps its fresh confirmation. |
@@ -321,12 +321,21 @@ Set per-conversation via the `/allow-api` slash command in the side panel, or
 persistently with **Always allow API mutations** under **Settings →
 Advanced**. The persistent setting is on by default when absent. Read failures
 and non-boolean stored values grant no authorization. When either option is
-active, it waives the permission prompt for **write-method network egress only**:
+active, the model may make **write-method network requests**:
 
 - `fetch_url` / `research_url` with `method: POST/PUT/PATCH/DELETE`
 
-It does NOT waive GET egress, `execute_js`, or any other capability — those still
-go through the capability × origin gate. (`isNetworkMutation` in
+`/allow-api` (and a Cloud run's own API grant) also waives the permission prompt
+for them. The persistent setting is on by default, so leaving it on is not a
+decision to skip that prompt: a new install stores `apiMutationSitePrompt: true`
+in `storage.local`, and there a write request to a host without a network grant
+shows the normal permission card (Allow once / Always / Deny). Installs from
+before that marker are not migrated and keep the earlier behavior, where the
+setting also waives the prompt. A storage read failure or a malformed marker
+keeps the prompt (`Agent.isApiMutationPromptWaived`).
+
+Neither option waives GET egress, `execute_js`, or any other capability — those
+still go through the capability × origin gate. (`isNetworkMutation` in
 `permission-gate.js` is what `/allow-api` keys off; `execute_js` is its own
 `Capability.EXECUTE_JS` and is always gated.)
 
@@ -340,7 +349,8 @@ The system prompt adds a preamble telling the model to:
 Loop-detection API shortcut hints do not bypass this policy. They can expose
 the exact method and URL the page was already calling, including POST/PATCH/etc.,
 but write-method `fetch_url` / `research_url` calls still require either the
-conversation's `/allow-api` state or the persistent setting. GET requests and
+conversation's `/allow-api` state or the persistent setting (with its per-host
+prompt on new installs). GET requests and
 non-network capabilities still go through the normal capability × origin gate.
 
 Conversation reset clears the slash-command override. It does not change the
