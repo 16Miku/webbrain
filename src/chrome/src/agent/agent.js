@@ -16854,6 +16854,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._persist(tabId);
           return { action: 'return', value: offer?.message || workflowPreSubmitBlock.error, status: 'publication_audit_failed' };
         }
+        // The loop detector never sees a call refused here: repeating it is
+        // bounded by its own count instead (_noteRefusalWithoutDispatch).
+        const refusalStop = this._noteRefusalWithoutDispatch(tabId, fnName, fnArgs, workflowPreSubmitBlock);
+        if (refusalStop) {
+          this._appendSyntheticToolResults(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
+            () => ({ success: false, skipped: true, error: 'skipped: run stopped after repeated refusals' }));
+          const refusalRunId = this.currentRunId.get(tabId);
+          if (refusalRunId) trace.recordError(refusalRunId, step, 'loop', refusalStop);
+          this._persist(tabId);
+          return { action: 'recover', value: refusalStop, status: 'loop_stopped' };
+        }
         onUpdate('warning', { message: workflowPreSubmitBlock.error });
         if (workflowPreSubmitBlock.workflowRearmed || workflowPreSubmitBlock.conditionalMutationBlocked) {
           this._appendSyntheticToolResults(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
@@ -17792,7 +17803,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }));
         return this._pageFeedbackRecoveryResult(tabId, messages, onUpdate) || { action: 'continue' };
       }
-      if (toolResult?.success !== false && toolResult?.noDispatch !== true && toolResult?.dispatched !== false) this._resetPageFeedbackProgress(tabId);
+      if (toolResult?.success !== false && toolResult?.noDispatch !== true && toolResult?.dispatched !== false) {
+        this._resetPageFeedbackProgress(tabId);
+        this._guardRunState(tabId).refusals = null;
+      }
       // A vision click on a file input hands the next steps to upload_file,
       // and a successful upload hands them back (vision-runtime.js).
       toolResult = this._visionNoteUploadHandoff(tabId, fnName, toolResult, { vision: tc._vision, promptTier });
@@ -22901,6 +22915,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (outcome !== 'advise') return false;
     if (Array.isArray(advisories)) advisories.push(guardAdvisory(id, message));
     return true;
+  }
+
+  /**
+   * A call a pre-dispatch guard refused (publication audit, commit binding,
+   * resource mutation, a prior submission after steering) never reaches the
+   * loop detector. Counted per run until a call goes through: the third
+   * identical refusal (arguments compared without image ids) or the sixth
+   * of any kind returns the message that stops the run.
+   */
+  _noteRefusalWithoutDispatch(tabId, name, args, result) {
+    const state = this._guardRunState(tabId);
+    const refusals = state.refusals ||= { total: 0, bySignature: new Map() };
+    const proposal = JSON.stringify(args || {}, (key, value) => (['image', 'keyframeId', 'imageId'].includes(key) ? undefined : value));
+    const reason = String(result?.errorCode || result?.reasonCode || result?.code || '').slice(0, 80);
+    const signature = JSON.stringify([name, reason, String(result?.error || '').slice(0, 160), proposal]);
+    const repeats = (refusals.bySignature.get(signature) || 0) + 1;
+    refusals.bySignature.set(signature, repeats);
+    refusals.total += 1;
+    if (repeats < 3 && refusals.total < 6) return null;
+    const detail = String(result?.error || 'the action was refused').replace(/\s+/g, ' ').trim().slice(0, 240);
+    return `Stopped: WebBrain refused ${repeats >= 3 ? 'the same action three times' : 'six actions'} in a row without any action going through (${detail}). The task is not complete; nothing more was sent, and any draft is left as it is.`;
   }
 
   _guardRunState(tabId) {

@@ -689,6 +689,40 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.ok(['none', 'patch', 'key'].includes(messages[update].webbrainVisionFrame.kind), textOf(messages[update]));
   });
 
+  test(`${build}: a click a pre-submit guard keeps refusing stops the run on the third identical refusal`, async () => {
+    const ctx = runAgent((step, _messages, options) => (names(options.tools).includes('click_at')
+      ? { toolCalls: [call('click_at', { x: 300, y: 200 })] }
+      : { toolCalls: [call('done', { summary: 'Not sent.', outcome: 'partial' })] }), { maxSteps: 10 });
+    const refused = [];
+    ctx.agent._workflowPreSubmitDispatchBlock = async (_tab, name, args) => {
+      if (name !== 'click') return null;
+      refused.push(args);
+      return { success: false, dispatched: false, noDispatch: true, errorCode: 'publication_audit_blocked', error: 'The publication audit refused the draft.' };
+    };
+    const result = await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(refused.length, 3, 'the third identical refusal stopped it');
+    assert.equal(ctx.dispatched.filter(entry => entry.name === 'click').length, 0);
+    assert.match(JSON.stringify(result), /refused the same action three times/);
+  });
+
+  test(`${build}: refusals stop counting once an action goes through`, () => {
+    const agent = new Agent({});
+    const tab = 77;
+    const refusal = { success: false, noDispatch: true, errorCode: 'x', error: 'Refused.' };
+    assert.equal(agent._noteRefusalWithoutDispatch(tab, 'click', { x: 1, y: 2, image: 'f1' }, refusal), null);
+    assert.equal(agent._noteRefusalWithoutDispatch(tab, 'click', { x: 1, y: 2, image: 'f2' }, refusal), null);
+    // A dispatched action in between resets the count (the batch clears it).
+    agent._guardRunState(tab).refusals = null;
+    assert.equal(agent._noteRefusalWithoutDispatch(tab, 'click', { x: 1, y: 2, image: 'f3' }, refusal), null);
+    assert.equal(agent._noteRefusalWithoutDispatch(tab, 'click', { x: 1, y: 2, image: 'f4' }, refusal), null);
+    assert.match(agent._noteRefusalWithoutDispatch(tab, 'click', { x: 1, y: 2, image: 'f5' }, refusal), /the same action three times/);
+    // Six different refusals in a row also stop.
+    const other = new Agent({});
+    const stops = [1, 2, 3, 4, 5, 6].map(i => other._noteRefusalWithoutDispatch(tab, 'click', { x: i, y: i }, refusal));
+    assert.deepEqual(stops.map(Boolean), [false, false, false, false, false, true]);
+    assert.match(stops[5], /six actions/);
+  });
+
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };
