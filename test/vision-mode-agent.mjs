@@ -789,6 +789,50 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.equal(ctx.dispatched.filter(entry => entry.name === 'click').length, 0, 'nothing was clicked');
   });
 
+  test(`${build}: with the screen unverified, a click checked in the same response lets its typing through`, async () => {
+    let failPatch = true;
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 648, y: 405 })] };
+      // The update after that click failed: the screen is unverified now.
+      if (step === 2) return { toolCalls: [call('click_at', { x: 200, y: 150 }), call('type_text', { text: 'checked' })] };
+      if (step === 3) return { toolCalls: [call('done', { summary: 'Typed.', outcome: 'success' })] };
+      return { content: 'done' };
+    }, { onDispatch: (name, _args, scene) => { if (name === 'click') scene.rects.push({ x: 900, y: 700 - scene.rects.length * 30, w: 60, h: 20, color: [0, 0, 200] }); } });
+    const encode = ctx.agent._visionEncodeRegion;
+    ctx.agent._visionEncodeRegion = async (canvas, region, options) => {
+      if (region && failPatch) { failPatch = false; throw new Error('convertToBlob failed'); }
+      return encode(canvas, region, options);
+    };
+    await runLoop(ctx.agent, nextTab++, false);
+    assert.match(textOf(visionMessages(ctx.requests[1].messages).at(-1)), /could not be prepared after the action/);
+    const second = ctx.dispatched.filter(entry => ['click', 'type_text'].includes(entry.name)).slice(1);
+    assert.deepEqual(second.map(entry => entry.name), ['click', 'type_text']);
+    assert.equal(second[0].vision.needsStabilityCheck, true, 'the click was checked against the live screen');
+    assert.ok(second[1].vision?.focusFollowUp, 'the typing follows that click');
+  });
+
+  test(`${build}: an action that goes through resets the refusal count in a real run`, async () => {
+    const plan = ['click', 'click', 'scroll', 'click', 'click', 'done'];
+    const ctx = runAgent(step => {
+      const next = plan[step - 1];
+      if (next === 'click') return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      if (next === 'scroll') return { toolCalls: [call('scroll_at', { direction: 'down', amount: 2 })] };
+      if (next === 'done') return { toolCalls: [call('done', { summary: 'Not sent.', outcome: 'partial' })] };
+      return { content: 'done' };
+    }, { maxSteps: 10 });
+    const refused = [];
+    ctx.agent._workflowPreSubmitDispatchBlock = async (_tab, name, args) => {
+      if (name !== 'click') return null;
+      refused.push(args);
+      return { success: false, dispatched: false, noDispatch: true, errorCode: 'publication_audit_blocked', error: 'The publication audit refused the draft.' };
+    };
+    const result = await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(refused.length, 4, 'two refusals on each side of the scroll, none stopping the run');
+    assert.ok(ctx.platform.some(entry => entry.kind === 'wheel'), 'the scroll went through');
+    assert.doesNotMatch(JSON.stringify(result), /refused the same action three times/);
+    assert.equal(ctx.dispatched.filter(entry => entry.name === 'done').length, 1);
+  });
+
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };
