@@ -39,8 +39,10 @@ import { pipeline, Readable } from "node:stream";
 import * as zlib from "node:zlib";
 import {
   assertSafeUrl,
+  isCloudMetadataHost,
   isPrivateIpv4,
   isPrivateIpv6,
+  PRIVATE_NETWORK_HINT,
   type UrlGuardOptions,
 } from "./urlGuard.js";
 
@@ -79,17 +81,27 @@ function stripCrossOriginHeaders(
  * Why we check ALL returned addresses rather than just the first one:
  * Node's happy-eyeballs connect may try any of them, and it is
  * defense-in-depth against accidentally-misconfigured dual-stack hosts.
+ *
+ * With allowPrivate the check still runs, because a hostname that
+ * resolves to a cloud metadata address stays blocked.
  */
-function assertAddressesArePublic(host: string, addresses: LookupAddress[]): void {
+function assertAddressesArePublic(host: string, addresses: LookupAddress[], opts: UrlGuardOptions = {}): void {
   for (const { address, family } of addresses) {
-    if (family === 4 && isPrivateIpv4(address)) {
-      throw new Error(
-        `Refusing ${host} — resolves to private IPv4 ${address}. Set allowPrivate to opt in.`,
-      );
+    if (!opts.allowPrivate) {
+      if (family === 4 && isPrivateIpv4(address)) {
+        throw new Error(
+          `Refusing ${host} — resolves to private IPv4 ${address}; ${PRIVATE_NETWORK_HINT}`,
+        );
+      }
+      if (family === 6 && isPrivateIpv6(address)) {
+        throw new Error(
+          `Refusing ${host} — resolves to private IPv6 ${address}; ${PRIVATE_NETWORK_HINT}`,
+        );
+      }
     }
-    if (family === 6 && isPrivateIpv6(address)) {
+    if (isCloudMetadataHost(address)) {
       throw new Error(
-        `Refusing ${host} — resolves to private IPv6 ${address}. Set allowPrivate to opt in.`,
+        `Refusing ${host} — resolves to cloud metadata endpoint ${address}, which stays blocked even with private network access on.`,
       );
     }
   }
@@ -100,13 +112,19 @@ function assertAddressesArePublic(host: string, addresses: LookupAddress[]): voi
  * directly without calling the socket's `lookup` hook. Classify them here
  * on every hop so this layer does not depend on `assertSafeUrl` alone.
  */
-function assertLiteralIpIsPublic(url: URL): void {
+function assertLiteralIpIsPublic(url: URL, opts: UrlGuardOptions = {}): void {
   let host = url.hostname;
   if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
   const family = isIP(host);
-  if (family === 4 ? isPrivateIpv4(host) : family === 6 && isPrivateIpv6(host)) {
+  if (family === 0) return;
+  if (!opts.allowPrivate && (family === 4 ? isPrivateIpv4(host) : isPrivateIpv6(host))) {
     throw new Error(
-      `Refusing private IPv${family} ${host} — set allowPrivate to opt in.`,
+      `Refusing private IPv${family} ${host} — ${PRIVATE_NETWORK_HINT}`,
+    );
+  }
+  if (isCloudMetadataHost(host)) {
+    throw new Error(
+      `Refusing cloud metadata endpoint ${host} — blocked even with private network access on.`,
     );
   }
 }
@@ -119,23 +137,25 @@ function assertLiteralIpIsPublic(url: URL): void {
  * to the check and private to the connection. Literal-IP hosts never
  * reach a lookup; `assertLiteralIpIsPublic` covers them.
  */
-const guardedLookup: LookupFunction = (hostname, options, callback) => {
-  dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
-    if (err) {
-      callback(err, "");
-      return;
-    }
-    try {
-      if (addresses.length === 0) throw new Error(`No addresses found for ${hostname}`);
-      assertAddressesArePublic(hostname, addresses);
-    } catch (e) {
-      callback(e as NodeJS.ErrnoException, "");
-      return;
-    }
-    if (options.all) callback(null, addresses);
-    else callback(null, addresses[0]!.address, addresses[0]!.family);
-  });
-};
+function createGuardedLookup(opts: UrlGuardOptions): LookupFunction {
+  return (hostname, options, callback) => {
+    dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
+      if (err) {
+        callback(err, "");
+        return;
+      }
+      try {
+        if (addresses.length === 0) throw new Error(`No addresses found for ${hostname}`);
+        assertAddressesArePublic(hostname, addresses, opts);
+      } catch (e) {
+        callback(e as NodeJS.ErrnoException, "");
+        return;
+      }
+      if (options.all) callback(null, addresses);
+      else callback(null, addresses[0]!.address, addresses[0]!.family);
+    });
+  };
+}
 
 /** Statuses whose Response must have a null body (Fetch standard). */
 const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
@@ -226,9 +246,7 @@ function pinnedFetch(url: URL, init: HopInit, opts: UrlGuardOptions): Promise<Re
       return;
     }
 
-    if (!opts.allowPrivate) {
-      try { assertLiteralIpIsPublic(url); } catch (e) { reject(e); return; }
-    }
+    try { assertLiteralIpIsPublic(url, opts); } catch (e) { reject(e); return; }
 
     let req: http.ClientRequest;
     try {
@@ -239,7 +257,7 @@ function pinnedFetch(url: URL, init: HopInit, opts: UrlGuardOptions): Promise<Re
         // resolved for whichever request opened it (possibly one with
         // allowPrivate), so reusing it would skip this request's lookup.
         agent: false,
-        ...(opts.allowPrivate ? {} : { lookup: guardedLookup }),
+        lookup: createGuardedLookup(opts),
       });
     } catch (e) {
       reject(e);
@@ -314,7 +332,11 @@ export interface SafeFetchInit {
   headers?: Record<string, string>;
   body?: string | undefined;
   signal?: AbortSignal;
-  /** Allow private/loopback/link-local destinations. Default false. */
+  /**
+   * Allow private/loopback/link-local destinations. Default false. Set
+   * from the user's plugin setting, never from tool arguments. Cloud
+   * metadata endpoints stay blocked regardless.
+   */
   allowPrivate?: boolean;
   /** Cap manual redirect hops. Default 5. */
   maxRedirects?: number;

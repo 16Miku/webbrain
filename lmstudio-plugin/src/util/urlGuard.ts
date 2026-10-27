@@ -16,6 +16,7 @@
  *     including IPv6 forms that embed a private IPv4 (IPv4-mapped,
  *     NAT64, 6to4, Teredo)
  *   - common private DNS spellings (localhost, *.local, *.internal, *.lan)
+ *   - cloud metadata endpoints, even when allowPrivate is set
  *
  * The DNS-resolution-aware check (`guardedLookup`) lives in
  * `safeFetch.ts` because it requires `node:dns`. It runs as the request
@@ -34,7 +35,10 @@
  *
  * To opt-out (e.g. you really do want to point this at your intranet)
  * call assertSafeUrl(url, { allowPrivate: true }) and pass the same
- * flag through to safeFetch.
+ * flag through to safeFetch. In the plugin that flag comes only from
+ * the user's "Allow private network access" setting, never from a tool
+ * argument: a page the model just read must not be able to switch the
+ * guard off. Cloud metadata endpoints stay blocked either way.
  */
 
 /*
@@ -204,11 +208,73 @@ function isPrivateHostname(host: string): boolean {
   return false;
 }
 
+// Cloud instance-metadata services hand out the machine's cloud
+// credentials. Reaching a service on the user's own LAN is a reasonable
+// opt-in; giving the model those credentials is not, so these stay
+// blocked even with allowPrivate. Like the private ranges, they are
+// matched on address bytes, so every spelling of an address (and every
+// IPv6 form that embeds one) is covered.
+const CLOUD_METADATA_IPV4: number[][] = [
+  "169.254.169.254", // AWS, GCP, Azure, OCI, DigitalOcean, OpenStack and others
+  "169.254.170.2",   // AWS ECS task metadata and credentials
+  "169.254.170.23",  // AWS EKS Pod Identity agent
+  "169.254.0.23",    // Tencent Cloud
+  "100.100.100.200", // Alibaba Cloud
+].map((ip) => ipv4ToBytes(ip)!);
+const CLOUD_METADATA_IPV6: number[][] = [
+  v6("fd00:ec2::254"), // AWS IMDS over IPv6
+  v6("fd00:ec2::23"),  // AWS EKS Pod Identity agent over IPv6
+];
+const CLOUD_METADATA_HOSTNAMES = new Set([
+  "metadata.google.internal",
+  "metadata.goog",
+  "metadata",
+]);
+
+function sameBytes(a: number[], b: number[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+function isCloudMetadataIpv4Bytes(bytes: number[]): boolean {
+  return CLOUD_METADATA_IPV4.some((m) => sameBytes(m, bytes));
+}
+
+/**
+ * True for a cloud metadata endpoint, given a URL hostname (with or
+ * without IPv6 brackets) or a resolved address. IPv6 addresses that embed
+ * an IPv4 address (mapped, compatible, translated, NAT64, 6to4, Teredo)
+ * count as that IPv4 address, using the same embedding table as the
+ * private-range check.
+ */
+export function isCloudMetadataHost(host: string): boolean {
+  let lower = host.toLowerCase();
+  if (lower.startsWith("[") && lower.endsWith("]")) lower = lower.slice(1, -1);
+  if (lower.endsWith(".")) lower = lower.slice(0, -1);
+  if (CLOUD_METADATA_HOSTNAMES.has(lower)) return true;
+  const v4 = ipv4ToBytes(lower);
+  if (v4) return isCloudMetadataIpv4Bytes(v4);
+  const bytes = ipv6ToBytes(lower);
+  if (!bytes) return false;
+  if (CLOUD_METADATA_IPV6.some((m) => sameBytes(m, bytes))) return true;
+  return IPV4_EMBEDDING_RANGES.some(([prefix, bits, embedded]) =>
+    inPrefix(bytes, prefix, bits) && embedded(bytes).some(isCloudMetadataIpv4Bytes));
+}
+
+/**
+ * Appended to private-target refusals. The model reads tool errors, so
+ * this tells it what to relay to the user instead of what to retry.
+ */
+export const PRIVATE_NETWORK_HINT =
+  "private network access is off. The user can turn on \"Allow private " +
+  "network access\" in this plugin's settings in LM Studio.";
+
 export interface UrlGuardOptions {
   /**
    * Set true to allow URLs that resolve to RFC1918 / loopback / link-
    * local addresses. Use only when you actually want the plugin to
-   * reach intranet services. Default false.
+   * reach intranet services. Default false. Cloud metadata endpoints
+   * stay blocked regardless. The plugin sets this from the user's
+   * plugin setting; never take it from model-supplied tool arguments.
    */
   allowPrivate?: boolean;
 }
@@ -230,7 +296,17 @@ export function assertSafeUrl(input: string, opts: UrlGuardOptions = {}): URL {
       `Refusing ${parsed.protocol} URL — this plugin only fetches http(s).`,
     );
   }
-  if (opts.allowPrivate) return parsed;
+  const refuseMetadata = (): void => {
+    if (isCloudMetadataHost(parsed.hostname)) {
+      throw new Error(
+        `Refusing cloud metadata endpoint ${parsed.hostname} — blocked even with private network access on.`,
+      );
+    }
+  };
+  if (opts.allowPrivate) {
+    refuseMetadata();
+    return parsed;
+  }
 
   // hostname for IPv6 comes back wrapped in [] — strip them.
   let host = parsed.hostname;
@@ -240,18 +316,20 @@ export function assertSafeUrl(input: string, opts: UrlGuardOptions = {}): URL {
 
   if (isPrivateIpv4(host)) {
     throw new Error(
-      `Refusing private IPv4 ${host} — set allowPrivate to opt in.`,
+      `Refusing private IPv4 ${host} — ${PRIVATE_NETWORK_HINT}`,
     );
   }
   if (host.includes(":") && isPrivateIpv6(host)) {
     throw new Error(
-      `Refusing private IPv6 ${host} — set allowPrivate to opt in.`,
+      `Refusing private IPv6 ${host} — ${PRIVATE_NETWORK_HINT}`,
     );
   }
   if (isPrivateHostname(host)) {
     throw new Error(
-      `Refusing private hostname ${host} — set allowPrivate to opt in.`,
+      `Refusing private hostname ${host} — ${PRIVATE_NETWORK_HINT}`,
     );
   }
+  // Metadata hostnames that are not private spellings (metadata.goog).
+  refuseMetadata();
   return parsed;
 }

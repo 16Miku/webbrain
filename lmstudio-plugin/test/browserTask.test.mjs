@@ -36,6 +36,9 @@ before(async () => {
   process.env.WEBBRAIN_BRIDGE_PORT = String(await freePort());
   process.env.WEBBRAIN_COMMAND_TIMEOUT_MS = "50";
   const context = {
+    withConfigSchematics() {
+      return context;
+    },
     withToolsProvider(provider) {
       toolsProvider = provider;
       return context;

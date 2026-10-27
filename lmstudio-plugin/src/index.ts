@@ -25,8 +25,8 @@
  * at plugin load time.
  */
 
-import { tool } from "@lmstudio/sdk";
-import type { PluginContext } from "@lmstudio/sdk";
+import { createConfigSchematics, tool } from "@lmstudio/sdk";
+import type { PluginContext, ToolsProviderController } from "@lmstudio/sdk";
 import { z } from "zod";
 import { fetchUrl } from "./tools/fetchUrl.js";
 import { researchUrl } from "./tools/researchUrl.js";
@@ -37,8 +37,45 @@ import {
   browserTask,
 } from "./tools/browserTask.js";
 import { sharedBridge } from "./util/bridgeClient.js";
+import type { UrlGuardOptions } from "./util/urlGuard.js";
 
-const fetchUrlTool = tool({
+/**
+ * Per-chat plugin settings, shown to the user in LM Studio and never to
+ * the model. Private-network access lives here rather than in the tool
+ * schemas: as a tool argument, any page the model had just read could
+ * ask it to switch the guard off.
+ */
+export const configSchematics = createConfigSchematics()
+  .field(
+    "allowPrivateNetwork",
+    "boolean",
+    {
+      displayName: "Allow private network access",
+      subtitle:
+        "Let fetch_url and research_url reach localhost, your LAN (10.*, " +
+        "172.16-31.*, 192.168.*), link-local and other private addresses. " +
+        "Cloud metadata endpoints stay blocked.",
+      warning:
+        "The model chooses the URL, method, headers and body. A page it " +
+        "reads can steer it toward routers, admin panels and local services.",
+    },
+    false,
+  )
+  .build();
+
+export function readNetworkOptions(ctl: ToolsProviderController): UrlGuardOptions {
+  try {
+    return {
+      allowPrivate:
+        ctl.getPluginConfig(configSchematics).get("allowPrivateNetwork") === true,
+    };
+  } catch {
+    // An unreadable config must not take down the tools; fail closed.
+    return { allowPrivate: false };
+  }
+}
+
+const createFetchUrlTool = (network: UrlGuardOptions) => tool({
   name: "fetch_url",
   description:
     "Fetch a URL and return its content. Auto-detects content type: " +
@@ -81,27 +118,20 @@ const fetchUrlTool = tool({
       .describe(
         "Compact long text/json with a head/middle/tail extractive pass. Defaults to true. Set false for head-only truncation.",
       ),
-    allowPrivate: z
-      .boolean()
-      .optional()
-      .describe(
-        "Allow targets that resolve to RFC1918 / loopback / link-local " +
-          "addresses (localhost, 192.168.*, 10.*, 172.16-31.*, " +
-          "169.254.*, fe80::*, fc00::/7). Off by default to keep the " +
-          "model out of cloud-metadata services and the user's intranet.",
-      ),
   },
-  implementation: async ({ url, method, headers, body, timeout, allowPrivate, maxChars, compact }) => {
-    const result = await fetchUrl({
-      url,
-      method,
-      headers,
-      body,
-      timeout,
-      allowPrivate,
-      maxChars,
-      compact,
-    });
+  implementation: async ({ url, method, headers, body, timeout, maxChars, compact }) => {
+    const result = await fetchUrl(
+      {
+        url,
+        method,
+        headers,
+        body,
+        timeout,
+        maxChars,
+        compact,
+      },
+      network,
+    );
     // The implementation contract returns whatever string the LLM
     // should see in the tool result. JSON-stringify so the model gets
     // stable, parseable structure rather than a `[object Object]`.
@@ -109,7 +139,7 @@ const fetchUrlTool = tool({
   },
 });
 
-const researchUrlTool = tool({
+const createResearchUrlTool = (network: UrlGuardOptions) => tool({
   name: "research_url",
   description:
     "Fetch a URL and return its readable article body, biased toward " +
@@ -140,16 +170,9 @@ const researchUrlTool = tool({
       .describe(
         "Compact long article text with a head/middle/tail extractive pass. Defaults to true. Set false for head-only truncation.",
       ),
-    allowPrivate: z
-      .boolean()
-      .optional()
-      .describe(
-        "Allow targets that resolve to RFC1918 / loopback / link-local. " +
-          "Off by default.",
-      ),
   },
-  implementation: async ({ url, timeout, allowPrivate, maxChars, compact }) => {
-    const result = await researchUrl({ url, timeout, allowPrivate, maxChars, compact });
+  implementation: async ({ url, timeout, maxChars, compact }) => {
+    const result = await researchUrl({ url, timeout, maxChars, compact }, network);
     return JSON.stringify(result, null, 2);
   },
 });
@@ -300,14 +323,20 @@ export async function main(ctx: PluginContext): Promise<void> {
     );
   }
 
-  ctx.withToolsProvider(async () => [
-    fetchUrlTool,
-    researchUrlTool,
-    browserTaskTool,
-    browserStatusTool,
-    browserRespondTool,
-    browserAbortTool,
-  ]);
+  ctx.withConfigSchematics(configSchematics);
+  ctx.withToolsProvider(async (ctl) => {
+    // LM Studio calls this once per session with that chat's settings,
+    // and again when the user changes them.
+    const network = readNetworkOptions(ctl);
+    return [
+      createFetchUrlTool(network),
+      createResearchUrlTool(network),
+      browserTaskTool,
+      browserStatusTool,
+      browserRespondTool,
+      browserAbortTool,
+    ];
+  });
 }
 
 // Some plugin loaders look at the default export instead of `main`.

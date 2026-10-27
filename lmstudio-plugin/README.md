@@ -244,9 +244,25 @@ Everything below concerns `fetch_url` / `research_url`. For `browser_task`:
   this plugin makes anonymous requests.
 - **Timeouts.** Default 30 s, hard cap 120 s.
 
-Set `allowPrivate: true` on a per-call basis to opt out of the URL
-guard + DNS check — useful when you actually want to talk to
-localhost services.
+### Private network access
+
+Private targets are opened by you, not by the model. To let `fetch_url`
+and `research_url` reach localhost or your LAN, turn on **Allow private
+network access** in this plugin's settings in LM Studio. The setting is
+per chat and off by default. The tools have no `allowPrivate` argument,
+and one sent anyway is ignored, so a page the model reads cannot talk
+it into switching the guard off.
+
+Cloud metadata endpoints stay blocked even with the setting on:
+`169.254.169.254`, `169.254.170.2`, `169.254.170.23`, `169.254.0.23`,
+`100.100.100.200`, `fd00:ec2::254`, `fd00:ec2::23`,
+`metadata.google.internal`, `metadata.goog` and `metadata`, including
+IPv4-mapped IPv6 spellings, hostnames that resolve to them, and
+redirects to them.
+
+While the setting is on, the model still chooses the URL, method,
+headers and body, and a page it reads can steer it toward your router,
+admin panels or local services. Turn it on only in chats that need it.
 
 ### Not a sandbox
 
