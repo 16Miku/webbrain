@@ -460,7 +460,7 @@ export default {
   'st.display.tracing.label': '记录轨迹（用于模型对比）',
   'st.display.tracing.desc_html': '将每次运行（LLM 请求、响应、工具调用、截图）持久化到本地 IndexedDB，以便并排查看和对比模型，包括每次 LLM 请求的完整提示词、消息与工具结构，以及每个工具结果最多 200 KB。在独立的轨迹页打开。默认关闭，因为会在本地写入对话内容并占用更多磁盘。<a href="traces.html" target="_blank" style="color:var(--accent);">打开轨迹页 →</a>',
   'st.display.allow_local_network.label': '允许代理访问本地网络',
-  'st.display.allow_local_network.desc': '允许代理的 fetch_url 工具访问回环（127.0.0.1、localhost）和私有/RFC1918 地址（10.x、192.168.x、172.16–31.x）。用于本地开发服务器、内网工具或自托管 API。默认关闭。关闭时会阻止直接写有私有或回环 IP 地址的 URL 以及 localhost 主机名。不检查 DNS 解析，因此其他主机名仍可能连接到本地地址。即使开启，云元数据的 IP 字面量（169.254.169.254）以及列表中的元数据主机名或 *.internal/*.local 主机名仍会被阻止。',
+  'st.display.allow_local_network.desc': '允许代理的 fetch_url 工具访问回环（127.0.0.1、localhost）和私有/RFC1918 地址（10.x、192.168.x、172.16–31.x）。用于本地开发服务器、内网工具或自托管 API。默认关闭。关闭时会阻止直接写有私有或回环 IP 地址的 URL 以及 localhost 主机名。解析到这些地址的主机名也会被阻止。即使开启，云元数据的 IP 字面量（169.254.169.254）以及列表中的元数据主机名或 *.internal/*.local 主机名仍会被阻止。',
   'st.display.notify_sound.label': "通知提示音",
   'st.display.notify_sound.desc': "为等待审核的计划播放不同的提示音，在任务完成或需要澄清时播放短促的铃声。取消运行时不播放声音。",
   'st.display.completion_confetti.label': '完成彩纸',

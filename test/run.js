@@ -401,10 +401,10 @@ const { transcribeAudio } = await import(
 // network-tools.js references chrome.* inside a try/catch at module load, so
 // it imports cleanly under Node — the storage init silently no-ops and
 // validateFetchUrl / registrableDomain are pure functions.
-const { validateFetchUrl, registrableDomain, filenameFromContentDisposition: filenameFromContentDispositionCh, fetchUrl: fetchUrlCh, researchUrl: researchUrlCh, downloadFiles: downloadFilesCh, downloadResourceFromPage: downloadResourceFromPageCh, executeHttpSkillTool: executeHttpSkillToolCh } = await import(
+const { validateFetchUrl, validateResolvedAddress: validateResolvedAddressCh, registrableDomain, filenameFromContentDisposition: filenameFromContentDispositionCh, fetchUrl: fetchUrlCh, readPageSource: readPageSourceCh, researchUrl: researchUrlCh, downloadFiles: downloadFilesCh, downloadResourceFromPage: downloadResourceFromPageCh, executeHttpSkillTool: executeHttpSkillToolCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/network/network-tools.js').replace(/\\/g, '/')
 );
-const { validateFetchUrl: validateFetchUrlFx, registrableDomain: registrableDomainFx, filenameFromContentDisposition: filenameFromContentDispositionFx, fetchUrl: fetchUrlFx, readPageSource: readPageSourceFx, researchUrl: researchUrlFx, downloadFiles: downloadFilesFx, downloadResourceFromPage: downloadResourceFromPageFx, executeHttpSkillTool: executeHttpSkillToolFx } = await import(
+const { validateFetchUrl: validateFetchUrlFx, validateResolvedAddress: validateResolvedAddressFx, registrableDomain: registrableDomainFx, filenameFromContentDisposition: filenameFromContentDispositionFx, fetchUrl: fetchUrlFx, readPageSource: readPageSourceFx, researchUrl: researchUrlFx, downloadFiles: downloadFilesFx, downloadResourceFromPage: downloadResourceFromPageFx, executeHttpSkillTool: executeHttpSkillToolFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/network/network-tools.js').replace(/\\/g, '/')
 );
 const { firefoxRestrictedDomainForUrl, firefoxRestrictedDomainFailure, firefoxHostPermissionFailure } = await import(
@@ -22751,6 +22751,264 @@ test('research_url rejects blocked redirect targets before returning hidden-tab 
         assert.equal(result.finalUrl, blockedUrl, `${label}/${blockedPhase}: final URL should be reported`);
         assert.equal(executeCalls, blockedPhase === 'loaded-tab' ? 0 : 1, `${label}/${blockedPhase}: extraction timing mismatch`);
         assert.equal(removeCalls, 1, `${label}/${blockedPhase}: hidden tab should always be closed`);
+      }
+    }
+  } finally {
+    globalThis.setTimeout = previousSetTimeout;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('resolved addresses use the same tiers as URL literals in both ports', () => {
+  const cases = [
+    ['127.0.0.1', false, false], ['127.0.0.1', true, true],
+    ['10.0.0.5', false, false], ['10.0.0.5', true, true],
+    ['172.16.0.1', false, false], ['192.168.1.1', false, false], ['192.168.1.1', true, true],
+    ['169.254.169.254', true, false], ['100.64.0.1', true, false],
+    ['0.0.0.0', true, false], ['224.0.0.1', true, false],
+    ['::1', false, false], ['::1', true, true], ['[::1]', false, false],
+    ['fd00::1', false, false], ['fd00::1', true, true], ['fe80::1', true, false],
+    ['::ffff:127.0.0.1', false, false], ['::ffff:7f00:1', false, false],
+    ['::ffff:169.254.169.254', true, false], ['::ffff:8.8.8.8', false, true],
+    ['93.184.216.34', false, true], ['2606:4700::6810:84e5', false, true],
+    ['', true, false], ['example.com', true, false],
+  ];
+  for (const [label, validate] of [['chrome', validateResolvedAddressCh], ['firefox', validateResolvedAddressFx]]) {
+    for (const [address, allowLocal, ok] of cases) {
+      assert.equal(validate(address, { allowLocalNetwork: allowLocal }).ok, ok,
+        `${label}: ${address || '(empty)'} (allowLocal=${allowLocal}) should ${ok ? 'pass' : 'be blocked'}`);
+    }
+  }
+});
+
+// webRequest stand-in for the resolved-address checks. Events respect the
+// tabId/types filter the production listener registers with.
+function makeAddressWebRequest() {
+  const listeners = {};
+  const api = {};
+  for (const name of ['onBeforeRedirect', 'onResponseStarted', 'onErrorOccurred']) {
+    listeners[name] = new Map();
+    api[name] = {
+      addListener: (fn, filter) => listeners[name].set(fn, filter || {}),
+      removeListener: fn => listeners[name].delete(fn),
+    };
+  }
+  return {
+    api,
+    emit(name, details) {
+      for (const [fn, filter] of [...listeners[name]]) {
+        if (filter.tabId != null && filter.tabId !== details.tabId) continue;
+        if (filter.types && !filter.types.includes(details.type)) continue;
+        fn(details);
+      }
+    },
+    count: () => Object.values(listeners).reduce((sum, map) => sum + map.size, 0),
+  };
+}
+
+test('fetch_url and read_page_source discard responses from a blocked resolved address', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const secret = 'INTERNAL-ADMIN-SECRET';
+  try {
+    for (const [label, apiName, fetchUrl, readPageSource] of [
+      ['chrome', 'chrome', fetchUrlCh, readPageSourceCh],
+      ['firefox', 'browser', fetchUrlFx, readPageSourceFx],
+    ]) {
+      for (const tool of ['fetch_url', 'read_page_source']) {
+        for (const [ip, proxyInfo, blocked] of [
+          ['127.0.0.1', null, true],
+          ['::ffff:a9fe:a9fe', null, true],
+          ['10.1.2.3', null, true],
+          ['93.184.216.34', null, false],
+          // Firefox reports the proxy's address for proxied requests; only its
+          // DNS check before sending applies there.
+          ...(apiName === 'browser' ? [['127.0.0.1', { type: 'http', host: '127.0.0.1', port: 8080 }, false]] : []),
+        ]) {
+          const webRequest = makeAddressWebRequest();
+          globalThis[apiName] = { webRequest: webRequest.api };
+          const url = 'https://rebind.example/admin#section';
+          let fetchCalls = 0;
+          globalThis.fetch = async (rawUrl) => {
+            fetchCalls++;
+            // The webRequest event can arrive after fetch() resolves.
+            setTimeout(() => webRequest.emit('onResponseStarted', {
+              url: 'https://rebind.example/admin', tabId: -1, type: 'xmlhttprequest', ip, proxyInfo,
+            }), 5);
+            return {
+              status: 200,
+              url: String(rawUrl).replace(/#.*$/, ''),
+              headers: new Headers({ 'content-type': 'text/html' }),
+              text: async () => `<html><title>admin</title><body>${secret}</body></html>`,
+            };
+          };
+          const result = tool === 'fetch_url' ? await fetchUrl(url) : await readPageSource(url);
+          const name = `${label}/${tool}/${ip}${proxyInfo ? '/proxied' : ''}`;
+          assert.equal(fetchCalls, 1, `${name}: request should be sent once`);
+          assert.equal(webRequest.count(), 0, `${name}: webRequest listeners must be removed`);
+          if (blocked) {
+            assert.equal(result.success, false, `${name}: blocked address must fail`);
+            assert.match(result.error || '', /^rebind\.example resolved to a blocked address\. Blocked /, `${name}: unexpected error`);
+            assert.doesNotMatch(JSON.stringify(result), new RegExp(secret), `${name}: body must be discarded`);
+          } else {
+            assert.equal(result.success, true, `${name}: public address must pass (${result.error || ''})`);
+            assert.match(JSON.stringify(result), new RegExp(secret), `${name}: body should be returned`);
+          }
+        }
+      }
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('Firefox network readers refuse hostnames that resolve to blocked addresses before sending', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousBrowser = globalThis.browser;
+  try {
+    for (const [addresses, blocked] of [
+      [['93.184.216.34', '10.0.0.7'], true],
+      [['2606:4700::6810:84e5', 'fd12::1'], true],
+      [['169.254.169.254'], true],
+      [['93.184.216.34', '2606:4700::6810:84e5'], false],
+      [new Error('NS_ERROR_UNKNOWN_HOST'), false],
+    ]) {
+      let fetchCalls = 0;
+      let tabsCreated = 0;
+      const resolved = [];
+      globalThis.fetch = async (rawUrl) => {
+        fetchCalls++;
+        return {
+          status: 200,
+          url: String(rawUrl),
+          headers: new Headers({ 'content-type': 'text/html' }),
+          text: async () => '<html><title>ok</title><body>public body</body></html>',
+        };
+      };
+      globalThis.browser = {
+        dns: {
+          async resolve(host) {
+            resolved.push(host);
+            if (addresses instanceof Error) throw addresses;
+            return { addresses, isTRR: false };
+          },
+        },
+        tabs: {
+          async create() { tabsCreated++; throw new Error('stop after the pre-check'); },
+          async remove() {},
+        },
+      };
+      const name = addresses instanceof Error ? 'lookup failure' : addresses.join(',');
+      const results = [
+        await fetchUrlFx('https://rebind.example/data'),
+        await readPageSourceFx('https://rebind.example/data'),
+        await researchUrlFx('https://rebind.example/data'),
+      ];
+      assert.deepEqual(resolved, ['rebind.example', 'rebind.example', 'rebind.example'], `${name}: each tool should resolve the hostname`);
+      if (blocked) {
+        for (const result of results) {
+          assert.equal(result.success, false, `${name}: must be refused`);
+          assert.match(result.error || '', /rebind\.example resolved to a blocked address\. Blocked /, `${name}: unexpected error`);
+        }
+        assert.equal(fetchCalls, 0, `${name}: nothing may be sent`);
+        assert.equal(tabsCreated, 0, `${name}: no hidden tab may be opened`);
+      } else {
+        assert.equal(results[0].success, true, `${name}: fetch_url should proceed (${results[0].error || ''})`);
+        assert.equal(results[1].success, true, `${name}: read_page_source should proceed (${results[1].error || ''})`);
+        assert.equal(fetchCalls, 2, `${name}: both fetches should be sent`);
+        assert.equal(tabsCreated, 1, `${name}: research_url should open its hidden tab`);
+      }
+    }
+
+    // IP literals are classified by the URL check and are never looked up.
+    const resolved = [];
+    globalThis.browser = { dns: { async resolve(host) { resolved.push(host); return { addresses: [] }; } } };
+    globalThis.fetch = async (rawUrl) => ({
+      status: 200, url: String(rawUrl), headers: new Headers({ 'content-type': 'text/plain' }), text: async () => 'ok',
+    });
+    await fetchUrlFx('https://93.184.216.34/');
+    await fetchUrlFx('https://[2606:4700::6810:84e5]/');
+    assert.deepEqual(resolved, []);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+});
+
+test('research_url discards a hidden tab whose top-level response came from a blocked address', async () => {
+  const previousChrome = globalThis.chrome;
+  const previousBrowser = globalThis.browser;
+  const previousSetTimeout = globalThis.setTimeout;
+  const nativeSetTimeout = previousSetTimeout;
+  // Skip the intentional 800 ms SPA hydration pause, as the redirect test does.
+  globalThis.setTimeout = (fn, ms, ...args) => nativeSetTimeout(fn, ms === 800 ? 0 : ms, ...args);
+  const publicUrl = 'https://public.example/start';
+  try {
+    for (const [label, researchUrl, apiName] of [
+      ['chrome', researchUrlCh, 'chrome'],
+      ['firefox', researchUrlFx, 'browser'],
+    ]) {
+      for (const scenario of ['response', 'redirect-hop', 'during-extraction', 'other-tab', 'public']) {
+        const webRequest = makeAddressWebRequest();
+        let executeCalls = 0;
+        let removeCalls = 0;
+        const mainFrame = (name, tabId, ip, url = publicUrl) =>
+          webRequest.emit(name, { url, tabId, type: 'main_frame', ip, proxyInfo: null });
+        const tabs = {
+          async create() {
+            // Navigation events start before tabs.create() resolves.
+            if (scenario === 'redirect-hop') mainFrame('onBeforeRedirect', 77, '192.168.0.10', 'https://hop.example/');
+            if (scenario === 'other-tab') mainFrame('onResponseStarted', 12, '127.0.0.1');
+            mainFrame('onResponseStarted', 77, scenario === 'response' ? '127.0.0.1' : '93.184.216.34');
+            return { id: 77, url: publicUrl };
+          },
+          async get() { return { id: 77, url: publicUrl }; },
+          async remove() { removeCalls++; },
+          onUpdated: {
+            addListener(fn) { nativeSetTimeout(() => fn(77, { status: 'complete' }), 0); },
+            removeListener() {},
+          },
+        };
+        const pageResult = { title: 'page', url: publicUrl, text: 'hidden tab text', originalLength: 15, links: [] };
+        const extract = () => {
+          executeCalls++;
+          if (scenario === 'during-extraction') mainFrame('onResponseStarted', 77, '169.254.169.254', 'https://public.example/next');
+        };
+        if (apiName === 'chrome') {
+          globalThis.chrome = {
+            tabs,
+            webRequest: webRequest.api,
+            scripting: { async executeScript() { extract(); return [{ result: pageResult }]; } },
+          };
+        } else {
+          globalThis.browser = {
+            webRequest: webRequest.api,
+            tabs: { ...tabs, async executeScript() { extract(); return [pageResult]; } },
+          };
+        }
+
+        const result = await researchUrl(publicUrl, { timeout: 1000 });
+        const name = `${label}/${scenario}`;
+        assert.equal(removeCalls, 1, `${name}: hidden tab should always be closed`);
+        assert.equal(webRequest.count(), 0, `${name}: webRequest listeners must be removed`);
+        if (scenario === 'public' || scenario === 'other-tab') {
+          assert.equal(result.success, true, `${name}: public address must pass (${result.error || ''})`);
+          assert.equal(result.text, 'hidden tab text');
+          continue;
+        }
+        assert.equal(result.success, false, `${name}: blocked address must fail`);
+        assert.match(result.error || '', /resolved to a blocked address\. Blocked /, `${name}: unexpected error`);
+        assert.equal(result.text, undefined, `${name}: page text must not be returned`);
+        assert.equal(executeCalls, scenario === 'during-extraction' ? 1 : 0, `${name}: extraction timing mismatch`);
       }
     }
   } finally {
