@@ -575,8 +575,8 @@ for (const build of BUILDS) {
 
   test(`${build}: the agent, background and settings are wired`, async () => {
     const agent = await read(`src/${build}/src/agent/agent.js`);
-    assert.equal(agent.split('await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);').length - 1, 3,
-      'both run loops and the tool-batch screenshot path settle cookie banners');
+    assert.equal(agent.split('await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);').length - 1, 5,
+      'both run loops, the first vision frame of each and the tool-batch screenshot path settle cookie banners');
     assert.match(agent, /setCookieBannerHost\(host\) \{/);
     const background = await read(`src/${build}/src/background.js`);
     assert.match(background, /createCookieBannerHost\(/);

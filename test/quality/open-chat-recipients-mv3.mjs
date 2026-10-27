@@ -172,7 +172,7 @@ async function runVariant(variant, request, alsoNamed, steps, cardAnswers, expec
     const message = (action, data = {}) => harness.evaluate(({ action, data }) => chrome.runtime.sendMessage({ target: 'background', action, ...data }), { action, data });
     await harness.evaluate(() => chrome.storage.local.set({ helpImproveWebBrain: false, tracingEnabled: false,
       autoScreenshot: false, screenshotFallback: false, planBeforeActMode: 'off', planBeforeAct: false,
-      planReviewMode: 'never', maxAgentSteps: 20, systemOneEnabled: false, agentAllowLocalNetwork: true,
+      planReviewMode: 'never', visionMode: 'off', maxAgentSteps: 20, systemOneEnabled: false, agentAllowLocalNetwork: true,
       askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false }));
     assert.equal((await message('update_provider', { providerId: 'openrouter', config: { apiKey: 'owned-fixture-fake-key',
       baseUrl: `${base}/v1`, model: 'minimax/minimax-m3', enabled: true,

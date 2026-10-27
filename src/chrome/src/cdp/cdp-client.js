@@ -3287,9 +3287,13 @@ export class CDPClient {
       timer: null,
     };
     state.handler = (params = {}) => {
+      // Only the protocol saw this chooser: the page-world guard covers the
+      // top document and its open shadow roots, so the input is in a frame
+      // or a closed shadow root, where upload_file cannot reach it either.
       state.blocked = {
         blocked: true,
         selector: null,
+        protocolOnly: true,
         ts: Date.now(),
         ...(params.backendNodeId ? { backendNodeId: params.backendNodeId } : {}),
       };
@@ -3555,6 +3559,7 @@ export class CDPClient {
       dispatched: true,
       filePickerBlocked: true,
       ...(selector ? { selector } : {}),
+      ...(blocked?.protocolOnly === true ? { protocolOnly: true } : {}),
       error: ['Blocked a native file chooser.', context, guidance].filter(Boolean).join(' '),
     };
   }

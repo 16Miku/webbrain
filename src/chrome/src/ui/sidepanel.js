@@ -4405,7 +4405,7 @@ function trimScheduleUrlProse(raw) {
   for (;;) {
     const last = url.slice(-1);
     const opener = last === ')' ? '(' : last === ']' ? '[' : '';
-    if (/[.,;:!?]/.test(last) || (opener && url.split(last).length > url.split(opener).length)) {
+    if (/[.,;:!?…]/.test(last) || (opener && url.split(last).length > url.split(opener).length)) {
       url = url.slice(0, -1);
     } else {
       return url;
@@ -4414,10 +4414,11 @@ function trimScheduleUrlProse(raw) {
 }
 
 // The one http(s) address a task's prompt names, so "check https://example.com/
-// every day" targets that page rather than whatever tab is open.
+// every day" targets that page rather than whatever tab is open. As in chat
+// links, curly quotes, guillemets and CJK punctuation end the address.
 function scheduleUrlFromPrompt(prompt) {
   const urls = new Set();
-  for (const match of String(prompt || '').matchAll(/https?:\/\/[^\s<>"'`]+/gi)) {
+  for (const match of String(prompt || '').matchAll(/https?:\/\/[^\s<>"'`“”‘’„‚«»‹›「」『』【】〔〕〈〉《》（）［］｛｝、。，；：！？]+/gi)) {
     const url = trimScheduleUrlProse(match[0]);
     if (isHttpScheduleUrl(url)) urls.add(url);
   }

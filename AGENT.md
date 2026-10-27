@@ -67,6 +67,8 @@ vanilla JS/CSS unless there is a very strong reason to add a framework.
 - `docs/adding-a-tool.md`: required checklist for new or changed agent tools.
 - `docs/accessibility-tree-and-refs.md`: AX refs, page reads, and interaction
   targeting.
+- `docs/vision-mode.md`: screenshot-and-coordinate Act runs (the default for
+  image-capable models), capture/DPR rules, diffs and the vision tool surface.
 - `docs/site-adapters.md`: adapter shape, prompt style, and testing guidance.
 - `docs/providers-and-models.md`: provider configuration and model capability
   assumptions.

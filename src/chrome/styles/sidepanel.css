@@ -2380,45 +2380,47 @@ html[dir="rtl"] .language-picker-menu {
   margin-bottom: 0;
 }
 
+/* Chat links keep the surrounding text color. A dotted underline marks them
+   and turns solid on hover or keyboard focus. */
 .message-content a {
-  color: var(--accent);
-  text-decoration: underline;
+  color: inherit;
+  text-decoration: underline dotted;
   text-underline-offset: 0.18em;
   overflow-wrap: anywhere;
 }
 
-.message.user .message-content a {
-  color: inherit;
+.message-content a:hover,
+.message-content a:focus-visible {
+  text-decoration-style: solid;
 }
 
-.message-content a.chat-link::before {
-  content: '';
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  margin-inline-end: 0.35em;
-  vertical-align: -0.1em;
-  background-color: currentColor;
-  opacity: 0.75;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cellipse cx='12' cy='12' rx='4' ry='9'/%3E%3Cpath d='M3 12h18'/%3E%3C/svg%3E") center / contain no-repeat;
+.message-content a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
-.message-content a.chat-link-icon-ready::before {
-  display: none;
+/* The favicon sits in the link's start padding. An inline icon box would add a
+   line break opportunity before the URL, leaving the icon alone on a line. The
+   space is held while the icon loads and given back when it cannot load. */
+.message-content a.chat-link:not(.chat-link-no-icon) {
+  position: relative;
+  padding-inline-start: calc(14px + 0.35em);
 }
 
 .message-content .chat-link-icon {
   display: none;
+  position: absolute;
+  inset-inline-start: 0;
+  top: calc(0.6em - 7px);
   width: 14px;
   height: 14px;
-  margin-inline-end: 0.35em;
-  vertical-align: -0.1em;
   object-fit: contain;
   border-radius: 3px;
 }
 
 .message-content .chat-link-icon-ready > .chat-link-icon {
-  display: inline-block;
+  display: block;
 }
 
 .hint {

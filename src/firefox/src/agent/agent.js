@@ -19,7 +19,11 @@ import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer,
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
-import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
+import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, getVisionActPrompt } from './tools.js';
+import { installVisionRuntime } from './vision-runtime.js';
+import { VISION_CAPTCHA_MANUAL_NOTE, VISION_CAPTCHA_UNAPPLIED_NOTE, VISION_NATIVE_TOOLS, VISION_SITE_NOTES_PREFACE, visionCaptchaSolverNote, visionFilePickerBlockedResult, visionUniversalPreamble } from './vision-tools.js';
+import { visionDomProbeExpression } from './vision-dom-probe.js';
+import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
 import { validateToolArguments } from './tool-arguments.js';
@@ -432,6 +436,9 @@ const SOCIAL_POST_SITES = new Set(['twitter', 'bluesky']);
 const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'chat_observe',
   'auto_screenshot',
+  // Vision mode observations (vision-tools.js).
+  'take_screenshot',
+  'zoom',
   'get_accessibility_tree',
   'read_page',
   'read_page_source',
@@ -741,6 +748,13 @@ export class Agent extends LoopDetector {
     // resolves it once at its start (_beginLeanRun) and keeps the answer in
     // _leanRuns, so its prompt note and guards agree. See lean-mode.js.
     this.leanMode = 'auto';
+    // Vision mode (vision-mode.js): 'auto' | 'off'. The class default keeps
+    // the accessibility-tree path for embedders and the unit suite;
+    // background.js applies the stored setting, whose default is 'auto'.
+    this.visionMode = 'off';
+    this.visionQuality = 'balanced';
+    this._visionSessions = new Map();
+    this._visionRunSnapshots = new Map();
     this._leanRuns = new Map();
     // Advisory lists a run's calls carry, by owning tab, so a guard that is
     // handed only the list still knows which run it belongs to.
@@ -1671,6 +1685,9 @@ export class Agent extends LoopDetector {
     } else if (['screenshot', 'auto_screenshot', 'full_page_screenshot'].includes(name)) {
       // A text-only planner sees a screenshot through its short description.
       if (typeof result.description === 'string') texts.push(result.description);
+      // A vision run's screen update carries the status texts it showed
+      // (vision-runtime.js _visionRecordObservation).
+      if (name === 'auto_screenshot' && Array.isArray(result.statusMessages)) texts.push(...result.statusMessages.slice(0, 6));
     }
     return [...new Set(texts.filter(value => typeof value === 'string')
       .map(value => value.replace(/\s+/g, ' ').trim())
@@ -2442,6 +2459,11 @@ export class Agent extends LoopDetector {
     }
     const state = this.completionInvariants.get(tabId);
     const block = completionDoneBlock(state, name, args, { skip });
+    // A vision run observes through its screen updates; the tree and form
+    // readers the shared advice names are not in its tools.
+    if (block?.reason === 'verification_required' && !state?.lastAction?.downloadAction && this._visionRunState(tabId).active === true) {
+      return { ...block, error: 'The latest consequential action has not been verified by a successful page observation. Look at the screen update WebBrain shows after this batch (take_screenshot for a fresh frame, read_page for exact text), then call done again; otherwise finish with outcome="partial" or outcome="failed".' };
+    }
     if (block) return block;
     if (outcome !== 'success' || !batchStartState || skip?.has?.('prior_turn_verification_required') === true) return null;
     const batchStartSequence = Number(batchStartState.sequence || 0);
@@ -6302,7 +6324,10 @@ export class Agent extends LoopDetector {
         : guard.steeringPriorSubmissionReconciliation?.verified === true ? 'authorization_required' : 'prior_effect_unreconciled',
         classification: detectedSubmit?.mutationKind === 'delete' ? 'delete' : detectedSubmit?.publicationControl === true ? 'publish' : 'unresolved' },
       error: unresolvedTarget
-        ? 'This action was not performed: its target could not be identified as a link, field, menu item or ordinary button. A submission was already made before the latest correction, and an unidentified control could repeat it. Read the page and target the specific control by its ref.'
+        ? 'This action was not performed: its target could not be identified as a link, field, menu item or ordinary button. A submission was already made before the latest correction, and an unidentified control could repeat it. '
+          + (this._visionRunState(tabId).active === true
+            ? 'Zoom in to find the specific link or labelled button and click_at it.'
+            : 'Read the page and target the specific control by its ref.')
         : 'A submission was already attempted before the user revised this task. Inspect its exact result before another consequential action. A separately authorized deletion or replacement needs a current resource proof; never repeat an uncertain or already dispatched submission.',
     };
   }
@@ -6429,8 +6454,14 @@ export class Agent extends LoopDetector {
   }
 
   _resourceMutationActionKey(tabId, name, args, detected) {
-    if (!detected || !['click', 'click_ax', 'iframe_click'].includes(name)
-        || Number.isFinite(args?.x) || Number.isFinite(args?.y)) return '';
+    // A vision click (vision-runtime.js) has nothing but its point, so it is
+    // bound to the control the submit probe read there, and its dispatch
+    // reads that point again (_visionMutationBindingBlock). Any other
+    // coordinate click has a ref or selector alternative and stays unbound.
+    const point = Number.isFinite(args?.x) || Number.isFinite(args?.y);
+    const visionPoint = point && name === 'click' && args?.coordinate_space === 'css'
+      && Number.isFinite(args?.x) && Number.isFinite(args?.y) && this._visionRunState?.(tabId)?.active === true;
+    if (!detected || !['click', 'click_ax', 'iframe_click'].includes(name) || (point && !visionPoint)) return '';
     const record = detected.actionRecord;
     // The resource's texts with its timestamps read as their datetime
     // (stableTextValues), so a relative time ticking over while the user
@@ -6856,7 +6887,11 @@ export class Agent extends LoopDetector {
     // Coordinates, keys, field submission and scripts cannot be bound to the
     // checked control and payload; a commit after a correction needs its own
     // identified control.
-    if (!key) return blocked('click_required', 'Activate the specific control with a ref or selector click; coordinate, keyboard, field and script submissions cannot be bound to the checked resource and payload.');
+    if (!key) {
+      return blocked('click_required', this._visionRunState?.(tabId)?.active === true
+        ? 'Click the specific control with click_at; keyboard, field and script submissions cannot be bound to the checked resource and payload.'
+        : 'Activate the specific control with a ref or selector click; coordinate, keyboard, field and script submissions cannot be bound to the checked resource and payload.');
+    }
     const formAction = value => (/^https?:\/\//i.test(String(value || '')) ? String(value) : '');
     // A form without record identity (settings, profile, preferences) is
     // bound to its form action and public values instead of a permalink.
@@ -8285,6 +8320,9 @@ export class Agent extends LoopDetector {
       screenshot_redaction: this.screenshotRedaction === true,
       strict_secret_mode: this.strictSecretMode === true,
       lean_mode_setting: normalizeLeanModeSetting(this.leanMode),
+      vision_mode_setting: normalizeVisionModeSetting(this.visionMode, 'off'),
+      // Whether this tab's run resolved to vision mode.
+      ...(tabId != null && this._visionRunSnapshots?.has(tabId) ? { vision_mode: this._visionRunState(tabId).active === true } : {}),
       // Whether this tab's run resolved to lean mode (traces show which ran).
       ...(tabId != null && this._leanRuns?.has(tabId) ? { lean_mode: this._leanRunActive(tabId) } : {}),
       plan_before_act_mode: this._normalizePlanBeforeActMode(this.planBeforeActMode),
@@ -9354,6 +9392,8 @@ export class Agent extends LoopDetector {
   }
 
   async _maybeJevFastTurn(tabId, task, messages, mode, allowed, provider, costState, runOptions = {}, recovery = null) {
+    // The fast path proposes tree-ref actions; a vision run has none.
+    if (this._visionRunState(tabId, mode).active) return null;
     if (this._steeringRuns.get(tabId)?.acceptedIds.size || this._pageFeedbackRuns?.get(tabId)?.revision) return null;
     const context = this.systemOneContext(tabId);
     if (!['act', 'dev'].includes(mode) || this._checkAbort(tabId)) return null;
@@ -10394,9 +10434,21 @@ export class Agent extends LoopDetector {
     }
     if (evaluation.block) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
-      return advises(toolbarNote, true) ? null : evaluation.block;
+      if (advises(toolbarNote, true)) return null;
+      // The shared advice names the tree; a vision run looks at the screen.
+      return this._visionRunState(tabId).active === true && typeof evaluation.block.error === 'string'
+        ? { ...evaluation.block, error: evaluation.block.error.replace('Re-read the tree and click or focus the editor body', 'Look at the screen and click_at the editor body') }
+        : evaluation.block;
     }
     if (evaluation.guarded !== true) {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+      return null;
+    }
+    // A vision click is sent at its point with the checks made there
+    // (vision-runtime.js). The element binding below would route it through
+    // the content click, which sends one left click and drops a right, middle
+    // or repeated click, so the toolbar check above is all it gets.
+    if (toolName === 'click' && args?.coordinate_space === 'css' && this._visionRunState(tabId).active === true) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return null;
     }
@@ -11341,7 +11393,7 @@ export class Agent extends LoopDetector {
 
   // A call to a tool this run does not advertise never dispatches. A retired
   // name gets the guidance for what replaced it, so the model stops asking.
-  _unavailableToolResult(fnName) {
+  _unavailableToolResult(fnName, tabId = null) {
     const base = { success: false, denied: true, dispatched: false, noDispatch: true, outcomeUnknown: false };
     if (!RETIRED_AGENT_TOOL_NAMES.has(fnName)) {
       return {
@@ -11353,7 +11405,7 @@ export class Agent extends LoopDetector {
     // Firefox captures a full page only through trusted automation with the
     // local companion, and its /record command is unsupported.
     const guidance = fnName === 'screenshot' || fnName === 'full_page_screenshot'
-      ? 'Image capture is user-only. To see the page yourself, call inspect_viewport (it takes no arguments). If the user wants a page image, tell them to type /screenshot for the visible viewport; /screenshot --full-page captures the whole page when Firefox trusted automation is enabled and the local companion is installed.'
+      ? `Image capture is user-only. To see the page yourself, call ${tabId != null && this._visionRunState?.(tabId)?.active === true ? 'take_screenshot' : 'inspect_viewport'} (it takes no arguments). If the user wants a page image, tell them to type /screenshot for the visible viewport; /screenshot --full-page captures the whole page when Firefox trusted automation is enabled and the local companion is installed.`
       : fnName === 'record_tab' || fnName === 'stop_recording'
         ? 'Recording is user-driven only and is not available in Firefox; tell the user so instead of trying to record.'
         : 'Tab management is not an agent tool; keep working in the current tab.';
@@ -11659,7 +11711,12 @@ export class Agent extends LoopDetector {
   static EXECUTION_META_TOOLS = new Set(['clarify', 'scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_TOOLS = new Set(['scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_WRITE_TOOLS = new Set(['scratchpad_write', 'progress_update']);
-  static DELIVERY_OBSERVATION_TOOLS = new Set(['read_page', 'get_accessibility_tree', OTP_EMAIL_TOOL_NAME, 'get_interactive_elements', 'extract_data', 'get_selection', 'find_text', 'scroll', 'wait_for_stable', 'wait_for_element', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_window_info', 'list_downloads', 'progress_read', 'inspect_viewport', 'screenshot', 'get_frames', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript']);
+  static DELIVERY_OBSERVATION_TOOLS = new Set(['read_page', 'get_accessibility_tree', OTP_EMAIL_TOOL_NAME, 'get_interactive_elements', 'extract_data', 'get_selection', 'find_text', 'scroll', 'wait_for_stable', 'wait_for_element', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_window_info', 'list_downloads', 'progress_read', 'inspect_viewport', 'screenshot', 'get_frames', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript',
+    // Vision mode's look, wheel and pause. A screen update that shows a change
+    // ends their streak (vision-runtime.js), so only looking at a screen that
+    // stays the same adds up. A zoom reads one part of the screen at a time,
+    // and reading a dense screen takes several, so zooms are left out.
+    'take_screenshot', 'scroll_at', 'wait']);
   static NAV_PRONE_TOOLS = new Set(['click', 'click_ax', 'set_checked', 'navigate', 'go_back', 'go_forward', 'execute_js', 'iframe_click']);
   static RECOMMENDED_ACTION_FAST_PATH_IDS = new Set(['download-media', 'tweet-webbrain', 'post-webbrain-linkedin', 'find-coupons']);
   static RECOMMENDED_ACTION_FIRST_TOOLS = Object.freeze({
@@ -11784,8 +11841,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const tab = await browser.tabs.get(tabId);
       const url = tab?.url || '';
       this._rememberProgressPageScope(tabId, url);
+      // The last address seen, for the synchronous vision decision
+      // (_visionNativeChatPage).
+      (this._lastTabUrls ??= new Map()).set(tabId, url);
       return url;
     } catch (e) { return ''; }
+  }
+
+  // Whether the tab is still loading: the redaction scan starts when the
+  // document is idle (vision-runtime.js _visionCaptureFrame waits for it).
+  async _visionTabLoading(tabId) {
+    try { return (await browser.tabs.get(tabId))?.status === 'loading'; }
+    catch { return false; }
+  }
+
+  // WhatsApp Web and Telegram keep the tree path (vision-mode.js).
+  _visionNativeChatPage(tabId) {
+    const url = this._lastTabUrls?.get(tabId) || '';
+    if (!url) return false;
+    try {
+      const name = getActiveAdapter(url)?.name || '';
+      // Telegram's web app, not its site's blog or FAQ pages.
+      return name === 'whatsapp-web'
+        || (name === 'telegram' && /^(?:web|webk|weba|webz|k)\.telegram\.org$/i.test(new URL(url).hostname));
+    } catch { return false; }
   }
 
   async _carouselPageState(tabId) {
@@ -11888,6 +11967,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot, abortSignal = null) {
     if (!String(key).startsWith('Arrow') || response?.success !== true) return response;
+    // In a vision run the screen update after the batch shows whether the key
+    // moved anything; a DOM snapshot cannot see a canvas carousel or a game.
+    if (this._visionRunState?.(tabId)?.active === true) return response;
     this._throwIfAborted(abortSignal);
     await new Promise(resolve => setTimeout(resolve, 200));
     this._throwIfAborted(abortSignal);
@@ -12359,9 +12441,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const heading = adapter.category === 'finance'
       ? `[Site context changed → now on ${adapter.name} — FINANCE / HIGH-STAKES. Apply these rules from now on:]`
       : `[Site context changed → now on ${adapter.name}. Apply these notes from now on:]`;
+    const visionNote = this._visionRunState(tabId).active ? `${VISION_SITE_NOTES_PREFACE}\n` : '';
     messages.push({
       role: 'user',
-      content: `${heading}\n${adapter.notes.trim()}`,
+      content: `${heading}\n${visionNote}${adapter.notes.trim()}`,
     });
     this._queueAdapterMatchTrace(tabId, adapter, true);
     return true;
@@ -12375,11 +12458,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return !!allowedToolNames?.has?.(name);
   }
 
-  _coordinateClickRecoveryWarning(args = {}, allowedToolNames = AGENT_TOOL_NAMES) {
+  _coordinateClickRecoveryWarning(args = {}, allowedToolNames = AGENT_TOOL_NAMES, vision = null) {
+    // A vision run: the point the model gave (image px), and only what the
+    // run offers; repeats count only while the screen stays unchanged.
+    if (vision?.tool === 'click_at') {
+      const point = vision.modelArgs || args;
+      return `[COORDINATE CLICK WARNING: You've clicked at or near (${point.x}, ${point.y}) several times and the screen did not change after any of those clicks. The point may be missing its target. Zoom into that area to see exactly where the control is, then click its centre, use a different control or key, or scroll it into view. Do not click this point again unless the screen has changed.]`;
+    }
     const cssBoxHint = this._canUseToolInCurrentBatch(allowedToolNames, 'inspect_element_styles')
       ? 'then use get_accessibility_tree or inspect_element_styles to get CSS-pixel boxes'
       : 'then use get_accessibility_tree or get_interactive_elements to choose a reachable target';
     return `[COORDINATE CLICK WARNING: You've clicked at or near (${args.x}, ${args.y}) several times with no visible page change. The click may be missing its target. Try: (a) call get_interactive_elements to find a real selector, (b) click({text: "..."}) to target by visible text, (c) inspect the latest injected auto_screenshot/visual context for element positions, ${cssBoxHint}, or (d) if you are trying to focus a text editor in a dialog, STOP clicking — dialogs on some sites render in a shadow root where coordinate clicks hit the backdrop and CLOSE the dialog. Reopen it if needed, then call type_text({selector: '[contenteditable]:not([contenteditable=\"false\"])', text: "..."}) directly; it focuses the editor without a click. Try a different approach before clicking these coordinates again.]`;
+  }
+
+  _coordinateClickStopMessage(args = {}, vision = null) {
+    if (vision?.tool === 'click_at') {
+      const point = vision.modelArgs || args;
+      return `Stopped: I clicked at (or near) (${point.x}, ${point.y}) in the screenshot several times and the screen did not change after any of those clicks. That point is missing its target, or the control there does nothing. Please give a different instruction or check the page yourself.`;
+    }
+    // Show the model's actual args, not _checkCoordClickLoop's 5px bucket —
+    // for fractional inputs like (0.911, 0.331) the bucket rounds to (0, 0)
+    // and the message reads as if we'd clicked the top-left corner.
+    return `Stopped: I clicked at (or near) coordinates (${args.x}, ${args.y}) multiple times and the page never responded. That position is hitting empty space, an overlay, or the wrong element. Please give a different instruction or check the page yourself.`;
   }
 
   _devStyleInspectionAvailableForTab(tabId) {
@@ -12693,6 +12793,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _captchaRoutingMessage(tabId, captchaGateDecision, captchaSolveOutcome, toolResult = {}, onUpdate = () => {}) {
+    // A vision run cannot apply a native answer: its notes end at the user.
+    const visionRun = this._visionRunState?.(tabId)?.active === true;
     let resultContent = '';
     const gate = captchaGateDecision || captchaSolveOutcome;
     if (gate && gate.status !== 'cleared' && !this._captchaToolsAvailable(tabId)) {
@@ -12706,12 +12808,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : captchaGateDecision.nativeDispatchInterrupted === true
         ? '\n[TRUSTED CAPTCHA GATE: A native solve was already dispatched for this document, but its answer is unavailable after restart. Do not send another paid request or submit the page; ask the user to complete the challenge manually.]'
         : captchaGateDecision.cloudflareManagedChallenge === true
-        ? '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Inspect get_captcha_capabilities for a Cloudflare native method; use one solve_captcha providerTasks dispatch only with all required observed inputs, otherwise ask for manual completion. Do not submit; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]'
+        ? (visionRun ? VISION_CAPTCHA_MANUAL_NOTE : '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Inspect get_captcha_capabilities for a Cloudflare native method; use one solve_captcha providerTasks dispatch only with all required observed inputs, otherwise ask for manual completion. Do not submit; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]')
         : captchaGateDecision.awsWaf === true
         ? '\n[TRUSTED CAPTCHA GATE: AWS verification requires manual completion because no untried compatible provider or complete observed input set is available. Do not buy another answer for this unresolved challenge. After manual completion, read the page so the runtime can resume.]'
         : captchaGateDecision.activeChallengeAfterSolve === true
         ? '\n[TRUSTED CAPTCHA GATE: The active challenge frame is visible again after the one automatic solve. The site may have rejected the token. Do not call solve_captcha again; stop automation and ask the user to complete the challenge manually.]'
-        : '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable automatic widget was detected. Inspect get_captcha_capabilities and use one native providerTasks solve only if its required parameters can be observed. Otherwise ask for manual completion. Do not dismiss, close, or resubmit the challenge.]';
+        : (visionRun ? VISION_CAPTCHA_MANUAL_NOTE : '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable automatic widget was detected. Inspect get_captcha_capabilities and use one native providerTasks solve only if its required parameters can be observed. Otherwise ask for manual completion. Do not dismiss, close, or resubmit the challenge.]');
       onUpdate('warning', { message: 'Verification challenge requires manual completion.' });
     } else if (captchaGateDecision?.status === 'cleared') {
       if (captchaGateDecision.clearedByNavigation === true) {
@@ -12727,13 +12829,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     } else if ((captchaGateDecision || captchaSolveOutcome)?.status === 'verification_pending'
         && this._hasUnappliedNativeCaptchaSolution(tabId)) {
-      resultContent += '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. If the prior tool result is no longer in this chat, call get_captcha_capabilities to retrieve the pending paid answer without another solve. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
+      resultContent += visionRun ? VISION_CAPTCHA_UNAPPLIED_NOTE : '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. If the prior tool result is no longer in this chat, call get_captcha_capabilities to retrieve the pending paid answer without another solve. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
     } else if (toolResult?.type === 'aws_waf' && toolResult?.injected === true) {
       resultContent += '\n[TRUSTED CAPTCHA GATE: The AWS cookie was applied. Reload the observed page once with navigate, then read it to verify clearance. Do not call solve_captcha again for this unresolved challenge.]';
     } else if (captchaGateDecision?.status === 'verification_pending') {
       resultContent += '\n[TRUSTED CAPTCHA GATE: Verification is still pending because the exact widget has no response token or its frame state could not be inspected conclusively. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
     } else if (toolResult?.applicationRequired === true && captchaSolveOutcome?.status === 'verification_pending') {
-      resultContent += '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
+      resultContent += visionRun ? VISION_CAPTCHA_UNAPPLIED_NOTE : '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
     } else if (captchaSolveOutcome?.status === 'verification_pending') {
       resultContent += '\n[TRUSTED CAPTCHA GATE: The supported CAPTCHA token was injected, but clearance must be confirmed from the exact widget token and active challenge-frame state. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
     } else if (captchaSolveOutcome?.status === 'manual_required') {
@@ -12810,7 +12912,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           manualCompletionRequired: true,
           cloudflareManagedChallenge: true,
           captchaDiagnostics: gate.publicGate?.diagnostics || null,
-          error: 'A full-page Cloudflare managed challenge is active. Use get_captcha_capabilities to inspect a compatible Cloudflare native method. A single solve_captcha call with observed providerTasks is allowed before any solve attempt; otherwise ask for manual completion. Navigate only to abandon the challenged page. Read the page again after Cloudflare resumes the destination.',
+          error: this._visionRunState?.(tabId)?.active === true
+            ? 'A full-page Cloudflare managed challenge is active and cannot be solved automatically in this mode. Ask the user to complete it manually; do not dismiss it or submit the page.'
+            : 'A full-page Cloudflare managed challenge is active. Use get_captcha_capabilities to inspect a compatible Cloudflare native method. A single solve_captcha call with observed providerTasks is allowed before any solve attempt; otherwise ask for manual completion. Navigate only to abandon the challenged page. Read the page again after Cloudflare resumes the destination.',
         };
       }
       return {
@@ -13179,7 +13283,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       activeGate
       && activeGate.status !== 'cleared'
       && !this._shouldRetryCaptchaManualGate(activeGate)
-    ) return null;
+    ) {
+      // A vision run cannot make the root tree read that shows a solved or
+      // completed challenge gone; WebBrain makes it before the action, and the
+      // gate block that follows reads the state it left (vision-runtime.js).
+      if (this._visionRunState(tabId).active === true) {
+        onStage('vision_root_read');
+        await this._visionCaptchaRootRead(tabId, abortSignal);
+        this._throwIfAborted(abortSignal);
+      }
+      return null;
+    }
     onStage('dialog_scan');
     const detectedChallenge = await this._detectChallengeDialogBeforeMutation(tabId, { abortSignal });
     this._throwIfAborted(abortSignal);
@@ -13882,6 +13996,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     toolCalls = expandBrowserBatchCalls(toolCalls, {
       enabled: this.browserBatchEnabled !== false, tier: this._resolvePromptTier(provider), allowedToolNames, toolSchemas: batchSchemas,
     });
+    // Vision mode: click_at becomes an ordinary coordinate click here, before
+    // any gate or guard runs (vision-runtime.js). Points read from a frame the
+    // window was resized or zoomed since are refused first.
+    const staleLayout = await this._visionStaleLayoutRefusal(tabId, toolCalls);
+    toolCalls = this._visionTranslateToolCalls(tabId, toolCalls, { staleLayout });
     const originalUpdate = onUpdate;
     const cancellationState = { active: null };
     // Begin wrapper rows at their execution position, including rejected batches.
@@ -13898,6 +14017,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowedToolNames, step, runOptions, toolSchemas, cancellationState,
       );
       this._throwIfAborted(this._runAbortSignal(tabId));
+      // Vision mode: whichever way the batch ended (a refused done, a
+      // completion hand-back, a bulk-API note), the next decision starts from
+      // a screen update of what the batch did, never from the frame its
+      // actions were chosen on. Once per batch (vision-runtime.js).
+      if (result?.action === 'continue' && this._visionRunState(tabId).active) {
+        await this._visionObserveAfterBatch(tabId, messages, onUpdate, { toolCalls });
+        this._throwIfAborted(this._runAbortSignal(tabId));
+      }
       return result;
     } catch (error) {
       // An action that was sent, or may have been, before Stop or an error
@@ -14343,17 +14470,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       const jevPending = this._jevPendingCalls?.get(tc.id);
       const fnName = tc.function?.name || '';
-      if (!allowedToolNames.has(fnName)) {
+      // A translated click_at runs as `click`, which vision runs do not
+      // advertise: it may run only while click_at itself is offered (a
+      // completion recovery turn that offers observation and done does not).
+      const translatedTool = tc._vision?.internalName && tc._vision.internalName === fnName ? tc._vision.tool || '' : '';
+      if (!allowedToolNames.has(fnName) && !(translatedTool && allowedToolNames.has(translatedTool))) {
         if (fnName) {
           // A named but unadvertised tool is a rejection before dispatch, so
           // it goes through loop accounting; otherwise a model can repeat a
           // retired screenshot call for the whole run. The detector counts it
           // by name alone (see _checkUnavailableToolLoop), so varying the
-          // arguments does not evade it, and never as progress.
-          const result = this._unavailableToolResult(fnName);
-          const recovery = await recordPreparationFailure(toolIndex, fnName, {}, result, result.error);
+          // arguments does not evade it, and never as progress. A translated
+          // call is named as the model called it.
+          const calledName = translatedTool || fnName;
+          const result = this._unavailableToolResult(calledName, tabId);
+          const recovery = await recordPreparationFailure(toolIndex, calledName, {}, result, result.error);
           if (recovery) return recovery;
-          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          if (interruptFailedBrowserAction(toolIndex, calledName)) { navNotices.length = 0; break; }
           continue;
         }
         const error = 'Tool call is missing a function name.';
@@ -14364,6 +14497,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           content: JSON.stringify({ success: false, denied: true, error }),
         });
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+        continue;
+      }
+      if (tc._vision?.error) {
+        const recovery = await recordPreparationFailure(toolIndex, tc._vision.tool || fnName, this._parseToolCallArgs(tc).args || {}, tc._vision.error);
+        if (recovery) return recovery;
+        // The rest of the batch was planned on that point: type_text would
+        // type into whatever has focus. The model decides again.
+        if (interruptFailedBrowserAction(toolIndex, tc._vision.tool || fnName)) { navNotices.length = 0; break; }
         continue;
       }
       // Where this call's time goes before dispatch (_predispatchTimer), from
@@ -14507,7 +14648,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             + (captchaGateBlock.manualCompletionRequired
               ? '\n[TRUSTED CAPTCHA GATE: Stop automation and ask the user to complete the verification manually. Do not dismiss, close, or resubmit it.]'
               : captchaGateBlock.captchaVerificationRequired
-                ? '\n[TRUSTED CAPTCHA GATE: Read the root accessibility tree to verify whether the one solved challenge cleared. Do not submit, dismiss, or call solve_captcha again.]'
+                ? (this._visionRunState(tabId).active === true
+                  ? '\n[TRUSTED CAPTCHA GATE: WebBrain checks whether the one solved challenge cleared before your next page action. Look at the screen update and wait briefly if the challenge is still finishing. Do not submit, dismiss, or call solve_captcha again.]'
+                  : '\n[TRUSTED CAPTCHA GATE: Read the root accessibility tree to verify whether the one solved challenge cleared. Do not submit, dismiss, or call solve_captcha again.]')
               : '\n[TRUSTED CAPTCHA GATE: Call solve_captcha once now. Do not dismiss or close the verification dialog and do not click Continue/Submit.]') + signupRecoveryNote,
         });
         const runId = this.currentRunId.get(tabId);
@@ -14867,6 +15010,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             () => ({ success: false, skipped: true, noDispatch: true, error: 'Paused for a user recovery choice.' }));
           this._persist(tabId);
           return { action: 'return', value: offer?.message || workflowPreSubmitBlock.error, status: 'publication_audit_failed' };
+        }
+        // The loop detector never sees a call refused here: repeating it is
+        // bounded by its own count instead (_noteRefusalWithoutDispatch).
+        const refusalStop = this._noteRefusalWithoutDispatch(tabId, fnName, fnArgs, workflowPreSubmitBlock);
+        if (refusalStop) {
+          this._appendSyntheticToolResults(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
+            () => ({ success: false, skipped: true, error: 'skipped: run stopped after repeated refusals' }));
+          const refusalRunId = this.currentRunId.get(tabId);
+          if (refusalRunId) trace.recordError(refusalRunId, step, 'loop', refusalStop);
+          this._persist(tabId);
+          return { action: 'recover', value: refusalStop, status: 'loop_stopped' };
         }
         onUpdate('warning', { message: workflowPreSubmitBlock.error });
         if (workflowPreSubmitBlock.workflowRearmed || workflowPreSubmitBlock.conditionalMutationBlocked) {
@@ -15618,6 +15772,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             onUpdate,
             {
               completionBatchStartState,
+              _vision: tc._vision || null,
               traceStep: step,
               jevBinding: jevPending?.call.binding,
               detectedSubmitAction,
@@ -15776,7 +15931,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }));
         return this._pageFeedbackRecoveryResult(tabId, messages, onUpdate) || { action: 'continue' };
       }
-      if (toolResult?.success !== false && toolResult?.noDispatch !== true && toolResult?.dispatched !== false) this._resetPageFeedbackProgress(tabId);
+      if (toolResult?.success !== false && toolResult?.noDispatch !== true && toolResult?.dispatched !== false) {
+        this._resetPageFeedbackProgress(tabId);
+        this._guardRunState(tabId).refusals = null;
+      }
+      // A vision click on a file input hands the next steps to upload_file,
+      // and a successful upload hands them back (vision-runtime.js).
+      toolResult = this._visionNoteUploadHandoff(tabId, fnName, toolResult, { vision: tc._vision, promptTier });
       if (jevPending) {
         this._jevPendingCalls.delete(tc.id);
         if (fnName !== 'get_accessibility_tree') jevPending.session.dispatched(toolResult);
@@ -16295,14 +16456,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let stopMessage = '';
       if (challengeLoopCheck.kind === 'stop' || loopCheck.kind === 'stop' || coordCheck.kind === 'stop' || axReadCheck.kind === 'stop' || scrollCheck.kind === 'stop') {
         effectiveKind = 'stop';
-        // Show the model's actual args, not _checkCoordClickLoop's 5px
-        // bucket — for fractional inputs like (0.911, 0.331) the bucket
-        // rounds to (0, 0) and the message reads as if we'd clicked the
-        // top-left corner, hiding what really happened.
         stopMessage = challengeLoopCheck.kind === 'stop'
           ? challengeLoopCheck.message
           : coordCheck.kind === 'stop'
-          ? `Stopped: I clicked at (or near) coordinates (${fnArgs.x}, ${fnArgs.y}) multiple times and the page never responded. That position is hitting empty space, an overlay, or the wrong element. Please give a different instruction or check the page yourself.`
+          ? this._coordinateClickStopMessage(fnArgs, tc._vision)
           : scrollCheck.kind === 'stop'
             ? scrollCheck.message
             : axReadCheck.kind === 'stop'
@@ -16313,7 +16470,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         nudgeWarning = challengeLoopCheck.kind === 'nudge'
           ? challengeLoopCheck.warning
           : coordCheck.kind === 'nudge'
-          ? this._coordinateClickRecoveryWarning(fnArgs, allowedToolNames)
+          ? this._coordinateClickRecoveryWarning(fnArgs, allowedToolNames, tc._vision)
           : scrollCheck.kind === 'nudge'
             ? scrollCheck.warning
             : axReadCheck.kind === 'nudge'
@@ -16596,6 +16753,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
 
     this._injectNavNotices(messages, navNotices, onUpdate, tabId);
+
+    // Vision mode shows the model a patch, a new frame or "no visible
+    // change" after every batch instead of the legacy auto-screenshot.
+    if (this._visionRunState(tabId).active) {
+      await this._visionObserveAfterBatch(tabId, messages, onUpdate, { toolCalls });
+      this._persist(tabId);
+      return { action: 'continue' };
+    }
 
     // Auto-screenshot after state change. Capture if either the main
     // provider supports images, or a dedicated vision model is configured
@@ -17014,6 +17179,179 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       y: Math.round(y * scale.scaleY),
       converted: true,
       captureId: capture.captureId,
+    };
+  }
+
+  // ───────────── Vision mode platform layer (Firefox) ─────────────
+  // vision-runtime.js owns the logic. Firefox has no CDP: captures use
+  // tabs.captureTab with a render scale, and pointer input is dispatched by
+  // the content script at the exact point (content.js visionInput), behind
+  // the same page-agent fence as every other content action. With the local
+  // companion (Settings → Advanced), a left click and a hover go out as
+  // trusted input at the point instead (bidi/client.js visionInput).
+
+  async _visionPlatformProbe(tabId) {
+    const results = await browser.tabs.executeScript(tabId, { code: `(() => ({
+      w: (window.visualViewport && window.visualViewport.width) || document.documentElement.clientWidth || innerWidth,
+      h: (window.visualViewport && window.visualViewport.height) || document.documentElement.clientHeight || innerHeight,
+      sx: (window.visualViewport && window.visualViewport.pageLeft) || scrollX,
+      sy: (window.visualViewport && window.visualViewport.pageTop) || scrollY,
+      dpr: devicePixelRatio,
+      url: location.href,
+    }))()` });
+    const value = Array.isArray(results) ? results[0] || {} : {};
+    let url = String(value.url || '');
+    if (!url) {
+      try { url = (await browser.tabs.get(tabId))?.url || ''; } catch { url = ''; }
+    }
+    return {
+      cssWidth: Number(value.w) || 0,
+      cssHeight: Number(value.h) || 0,
+      scrollX: Number(value.sx) || 0,
+      scrollY: Number(value.sy) || 0,
+      devicePixelRatio: Number(value.dpr) || 1,
+      url,
+    };
+  }
+
+  /**
+   * captureTab renders at `scale` image pixels per CSS pixel (not times the
+   * DPR), so the plan's scale is passed directly. The rect is always given
+   * (page-relative, like captureTab's rect): without one Firefox captures
+   * the whole content area, classic scrollbars included, while the probe's
+   * visual viewport excludes them, and points would drift by the scrollbar.
+   */
+  async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight }) {
+    const region = cssRegion || { x: 0, y: 0, width: probe.cssWidth, height: probe.cssHeight };
+    const scale = Math.max(0.05, Math.min(4, Number(outWidth) / Math.max(1, region.width)));
+    const options = {
+      format: 'jpeg',
+      quality: 90,
+      scale,
+      rect: {
+        x: (Number(probe?.scrollX) || 0) + region.x,
+        y: (Number(probe?.scrollY) || 0) + region.y,
+        width: Math.max(1, region.width),
+        height: Math.max(1, region.height),
+      },
+    };
+    return this._withIndicatorsHidden(tabId, () => browser.tabs.captureTab(tabId, options));
+  }
+
+  /**
+   * What is under CSS points (vision-dom-probe.js), evaluated in the
+   * content-script world, whose DOM methods page scripts cannot redefine.
+   */
+  async _visionPlatformDomProbe(tabId, request) {
+    const results = await browser.tabs.executeScript(tabId, { code: visionDomProbeExpression(request), frameId: 0 });
+    return Array.isArray(results) ? results[0] || null : null;
+  }
+
+  /**
+   * upload_file({downloadId}): the saved file's bytes through the companion
+   * (firefoxBidi.readSavedDownload), null when this run has no companion
+   * that can read them, or { error } when the file is gone or no longer
+   * matches the browser's record.
+   */
+  async _firefoxSavedDownloadBytes(tabId, item) {
+    if (item?.exists === false) return { error: 'The downloaded file is no longer on disk. Download it again before uploading it.' };
+    let saved = null;
+    try { saved = await firefoxBidi.readSavedDownload(tabId, item); }
+    catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      // Larger than a companion reply can carry: the size-checked fetch.
+      if (String(error?.message || '').startsWith('saved_download_too_large')) return null;
+      return { error: `Could not read the saved download (${String(error?.message || error).slice(0, 160)}).` };
+    }
+    if (!saved || typeof saved.base64 !== 'string') return null;
+    return {
+      base64: saved.base64,
+      filename: saved.filename || (item?.filename ? item.filename.split(/[\\/]/).pop() : 'downloaded_file'),
+      mimeType: saved.mimeType || item?.mime || 'application/octet-stream',
+    };
+  }
+
+  async _visionContentInput(tabId, params, kind = 'click') {
+    // Stop pressed while the checks before this input ran: nothing is sent.
+    this._throwIfAborted(this._runAbortSignal(tabId));
+    if (firefoxBidi.runs.has(tabId)) {
+      let trusted;
+      try {
+        trusted = await firefoxBidi.visionInput(tabId, params);
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        // Binding the run's document and preparing the point send nothing.
+        const message = String(error?.message || error).slice(0, 160);
+        return { success: false, dispatched: false, noDispatch: true, error: `The page could not take trusted input yet (${message}). Take a screenshot and try again.` };
+      }
+      if (trusted) return trusted;
+    }
+    await beforePageAgentDispatch(browser, tabId, {
+      kind, frameId: 0, navigationCandidate: kind === 'click' && params.type === 'click', fenceOnly: true,
+    });
+    this._throwIfAborted(this._runAbortSignal(tabId));
+    let response;
+    try {
+      response = await browser.tabs.sendMessage(tabId, { target: 'content', action: 'vision_input', params }, { frameId: 0 });
+    } catch (error) {
+      const message = String(error?.message || error).slice(0, 160);
+      // No content script answered (still loading, restricted page): nothing
+      // was sent. Any other failure may come after the input went out (the
+      // click navigated away), so its outcome is unknown.
+      if (/receiving end does not exist|could not establish connection/i.test(message)) {
+        return { success: false, dispatched: false, noDispatch: true, error: `The page could not receive the input yet (${message}). Take a screenshot and try again.` };
+      }
+      return { success: false, outcomeUnknown: true, error: `The page stopped answering during the input (${message}). Look at the next screen before repeating it.` };
+    }
+    return response || { success: false, dispatched: false, noDispatch: true, error: 'The page did not answer the vision input.' };
+  }
+
+  async _visionPlatformWheel(tabId, { x, y, deltaX = 0, deltaY = 0 }) {
+    return this._visionContentInput(tabId, { type: 'wheel', x, y, deltaX, deltaY }, 'scroll');
+  }
+
+  async _visionPlatformHover(tabId, { x, y }) {
+    return this._visionContentInput(tabId, { type: 'hover', x, y }, 'click');
+  }
+
+  async _visionPlatformDrag(tabId, { from, to, steps = 12 }) {
+    return this._visionContentInput(tabId, { type: 'drag', x: from.x, y: from.y, toX: to.x, toY: to.y, steps }, 'click');
+  }
+
+  /**
+   * Firefox vision click: a synthetic pointer sequence at exactly the CSS
+   * point. Batch-level gates and guards already ran on this `click`; a
+   * native <select> is focused for type_text instead of opening its popup.
+   */
+  async _visionDispatchClick(tabId, args, { vision = null, abortSignal = null, dispatchState = { started: false }, detectedSubmitAction = null } = {}) {
+    const x = Number(args.x);
+    const y = Number(args.y);
+    this._throwIfAborted(abortSignal);
+    // A native <select> is focused for type_text instead of opening a popup
+    // no screenshot shows; a repeated click on a control is refused.
+    const preflight = await this._visionClickPreflight(tabId, {
+      x, y, button: vision?.button || 'left', clickCount: vision?.clickCount || 1,
+      submitDetected: detectedSubmitAction?.isSubmit === true,
+    });
+    if (preflight.refusal) return preflight.refusal;
+    this._throwIfAborted(abortSignal);
+    // An authorized deletion or post-correction commit is bound to the control
+    // read at this point; it must still be there (vision-runtime.js).
+    const unbound = await this._visionMutationBindingBlock(tabId, args, detectedSubmitAction);
+    this._throwIfAborted(abortSignal);
+    if (unbound) return unbound;
+    dispatchState.started = true;
+    let response = await this._visionContentInput(tabId, {
+      type: 'click', x, y, button: vision?.button || 'left', clickCount: vision?.clickCount || 1,
+    }, 'click');
+    // The content click ran inside the native file-chooser guard, as an
+    // ordinary click does; settle it the same way (a deferred chooser too).
+    response = visionFilePickerBlockedResult(await this._settleContentFilePickerGuard(tabId, response));
+    return {
+      ...response,
+      x,
+      y,
+      ...(vision?.imageId ? { image: vision.imageId } : {}),
     };
   }
 
@@ -17600,6 +17938,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * @returns {Promise<string>}
    */
   async _redactScreenshotDataUrl(tabId, dataUrl, opts = {}) {
+    // `opts.outcome`, when given, receives why the image came back as it did:
+    // 'redacted', 'no_regions' or 'no_regions_in_view' (nothing to hide), or
+    // 'decode_failed', 'scan_unavailable' or 'pixelate_failed' (the image is
+    // returned unredacted; vision mode reports those).
+    const report = status => { if (opts.outcome && typeof opts.outcome === 'object') opts.outcome.status = status; };
     if (!this.screenshotRedaction || !dataUrl) return dataUrl;
 
     let imageWidth = opts.imageWidth;
@@ -17616,6 +17959,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           try { bmp.close?.(); } catch {}
         }
       } catch {
+        report('decode_failed');
         return dataUrl;
       }
     }
@@ -17624,7 +17968,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const snapshot = opts.redactionSnapshot
       ? this._normalizeScreenshotRedactionSnapshot(opts.redactionSnapshot, coordinateSpace)
       : await this._captureScreenshotRedactionSnapshot(tabId, { coordinateSpace });
-    if (!snapshot) return dataUrl;
+    if (!snapshot) {
+      report('scan_unavailable');
+      return dataUrl;
+    }
 
     const suppliedBounds = opts.capturedCssBounds;
     const hasCapturedBounds = coordinateSpace === 'page' &&
@@ -17645,7 +17992,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : (Number.isFinite(opts.offsetY) ? opts.offsetY : 0);
 
     const regions = snapshot.regions;
-    if (!regions.length) return dataUrl;
+    if (!regions.length) {
+      report('no_regions');
+      return dataUrl;
+    }
 
     const imageRegions = mapRegionsToImage(regions, {
       scaleX,
@@ -17655,10 +18005,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       imageWidth,
       imageHeight,
     });
-    if (!imageRegions.length) return dataUrl;
+    if (!imageRegions.length) {
+      report('no_regions_in_view');
+      return dataUrl;
+    }
 
     const redacted = await pixelateDataUrl(dataUrl, imageRegions);
-    if (redacted === dataUrl) return dataUrl;
+    if (redacted === dataUrl) {
+      // Pixelation was a no-op or failed.
+      report('pixelate_failed');
+      return dataUrl;
+    }
+    report('redacted');
     try {
       return await this._compressJpegToByteCeiling(redacted);
     } catch {
@@ -18920,7 +19278,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const heading = adapter.category === 'finance'
           ? `[Site guidance for ${adapter.name} — FINANCE / HIGH-STAKES]`
           : `[Site guidance for ${adapter.name}]`;
-        contextLine += `${heading}\n${adapter.notes.trim()}\n\n`;
+        const visionNote = this._visionRunState(tabId).active ? `${VISION_SITE_NOTES_PREFACE}\n` : '';
+        contextLine += `${heading}\n${visionNote}${adapter.notes.trim()}\n\n`;
       }
       if (adapter) this._queueAdapterMatchTrace(tabId, adapter, !!shouldInjectAdapter);
     }
@@ -18929,6 +19288,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // page title, adapter guidance, a vision description, or raw pixels that a
     // small multimodal model could mistake for the authoritative selection.
     if (selectionScoped || standaloneChat || hasPriorUserTurn) {
+      return enrichedUserMessage(contextLine + userMessage);
+    }
+
+    // Vision mode takes its own first frame right before the model's first
+    // decision (vision-runtime.js); a legacy capture here would only cost
+    // tokens and a second image.
+    if (this._visionRunState(tabId).active) {
       return enrichedUserMessage(contextLine + userMessage);
     }
 
@@ -19334,7 +19700,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * (no tab) is never skipped.
    */
   _guardSkipped(id, tabId = null) {
-    return this._leanRunActive(tabId) && leanSkipsGuard(id);
+    if (!this._leanRunActive(tabId) || !leanSkipsGuard(id)) return false;
+    // A vision run sees what an action did only in the screen update after
+    // its batch: done(success) in the same response as the action reports a
+    // result nobody has looked at, so lean mode keeps that check there.
+    if (id === 'done-invariant-shape-checks' && this._visionRunState?.(tabId)?.active === true) return false;
+    return true;
   }
 
   /**
@@ -19375,6 +19746,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (outcome !== 'advise') return false;
     if (Array.isArray(advisories)) advisories.push(guardAdvisory(id, message));
     return true;
+  }
+
+  /**
+   * A call a pre-dispatch guard refused (publication audit, commit binding,
+   * resource mutation, a prior submission after steering) never reaches the
+   * loop detector. Counted per run until a call goes through: the third
+   * identical refusal (arguments compared without image ids) or the sixth
+   * of any kind returns the message that stops the run.
+   */
+  _noteRefusalWithoutDispatch(tabId, name, args, result) {
+    const state = this._guardRunState(tabId);
+    const refusals = state.refusals ||= { total: 0, bySignature: new Map() };
+    const proposal = JSON.stringify(args || {}, (key, value) => (['image', 'keyframeId', 'imageId'].includes(key) ? undefined : value));
+    const reason = String(result?.errorCode || result?.reasonCode || result?.code || '').slice(0, 80);
+    const signature = JSON.stringify([name, reason, String(result?.error || '').slice(0, 160), proposal]);
+    const repeats = (refusals.bySignature.get(signature) || 0) + 1;
+    refusals.bySignature.set(signature, repeats);
+    refusals.total += 1;
+    if (repeats < 3 && refusals.total < 6) return null;
+    // The run stops here; a recovery that carries on starts counting again.
+    state.refusals = null;
+    const detail = String(result?.error || 'the action was refused').replace(/\s+/g, ' ').trim().slice(0, 240);
+    return `Stopped: WebBrain refused ${repeats >= 3 ? 'the same action three times' : 'six actions'} in a row without any action going through (${detail}). The task is not complete; nothing more was sent, and any draft is left as it is.`;
   }
 
   _guardRunState(tabId) {
@@ -22141,7 +22535,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return blocked('The task changed while this control was being checked, so it was not activated. Continue under the latest request and read the page again before retrying.');
       }
       if (name === 'press_keys') return { ...blocked('Enter was not pressed: outside the post editor, a key activation on X or Bluesky could publish. Click the specific control instead; to publish, verify the draft and use the composer\'s Post button.'), targetUnresolved: true };
-      return { ...blocked('This control was not clicked: it could not be identified as a link, field, menu item or ordinary button, and an unidentified control on X or Bluesky could publish. Read the page and target the specific control by its ref; to publish, verify the draft and use the composer\'s Post button. Do not run arbitrary JavaScript or bundle editing and submission.'), targetUnresolved: true };
+      return { ...blocked('This control was not clicked: it could not be identified as a link, field, menu item or ordinary button, and an unidentified control on X or Bluesky could publish. '
+        + (this._visionRunState(tabId).active === true
+          ? 'Zoom in to find the specific link or labelled button and click_at it'
+          : 'Read the page and target the specific control by its ref')
+        + '; to publish, verify the draft and use the composer\'s Post button. Do not run arbitrary JavaScript or bundle editing and submission.'), targetUnresolved: true };
     }
     if (!['click', 'click_ax', 'iframe_click'].includes(name)) return blocked('Write and verify the draft first, then activate its publish control in a separate click.');
     if (detected.publicationControl !== true) return blocked('Publication composer ownership could not be observed. Read the current page and use its resolved publish control.');
@@ -29105,7 +29503,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '', executionContext = null) {
     const name = String(toolName || '');
     const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys', 'upload_file']);
-    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool']);
+    // drag_at (vision mode) presses and releases where the model points; no
+    // recipient binding covers that, and a short drag is a click.
+    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool', 'drag_at']);
     if (!ordinaryGuardedTools.has(name) && !unbindableDispatchTools.has(name)) return null;
     if (name === 'press_keys' && String(args?.key || '') !== 'Enter') return null;
     if (name === 'set_field' && args?.submit !== true) return null;
@@ -29155,7 +29555,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? (!uploadSourceKey
             ? 'Attachment blocked: use exactly one attachmentId, downloadId, or absolute filePath. Remove fallback sources and retry with the same authorized recipient.'
             : 'Attachment blocked: choose an exact, unique file-input selector in the active authorized conversation. Re-read the file-input inventory before retrying.')
-          : `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
+          : name === 'drag_at'
+            ? 'Message action blocked: drag_at cannot bind its effects to the verified active recipient. Use click_at on the control, or a single Enter press in the visible composer, instead.'
+            : `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
       };
     }
 
@@ -29536,9 +29938,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? 'Message send blocked: this control commits a message (for example "Send" / "Send without a note") but no active composer or recipient could be verified. Changing click targeting methods will not help. Open the intended conversation so its composer and recipient are visible, or report that the message could not be sent.'
           : 'Message send blocked: no message composer is visible, so this send cannot be verified. Changing click targeting methods will not resolve this classification failure. Re-read the page to find a supported navigation or composer-opening control; if none is available, report the blocker instead of repeating the click.')
         : probe?.reasonCode === 'message_target_unresolved'
-        ? 'The requested control could not be resolved in the current page or frame, so no action was dispatched. This does not establish a recipient mismatch or an attempted Send. Read fresh page evidence and use an exact visible control or fresh ref_id; do not guess hidden menu labels or repeat the same unresolved target. If the control is unavailable, report that blocker.'
+        ? `The requested control could not be resolved in the current page or frame, so no action was dispatched. This does not establish a recipient mismatch or an attempted Send. ${this._visionRunState(tabId).active === true ? 'Look at the current screen and click_at an exact visible control' : 'Read fresh page evidence and use an exact visible control or fresh ref_id'}; do not guess hidden menu labels or repeat the same unresolved target. If the control is unavailable, report that blocker.`
         : inconclusive
-        ? 'Message action blocked: WebBrain could not conclusively resolve the target control and active composer. Re-read the page and retry with an exact visible control or fresh ref_id.'
+        ? `Message action blocked: WebBrain could not conclusively resolve the target control and active composer. ${this._visionRunState(tabId).active === true ? 'Look at the current screen and retry with click_at on an exact visible control.' : 'Re-read the page and retry with an exact visible control or fresh ref_id.'}`
         : target
           ? this._recipientMismatchGuidance(observedRecipientLabel, target)
           // A verifiable text send is put to the user on WebBrain's card; what
@@ -30437,6 +30839,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   static _submitActionProbe = function _submitActionProbe(toolName, args = {}) {
     const compact = (value, max = 160) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+    // The element a point lands on, inside open shadow roots too, as the
+    // pointer events of a coordinate click reach it (content.js
+    // _shadowAwareElementFromPoint): a Delete or Pay button in a web
+    // component is the control, not its host.
+    const elementAtPoint = (root, x, y) => {
+      let hit = root.elementFromPoint(x, y);
+      const seen = new Set();
+      while (hit?.shadowRoot && !seen.has(hit)) {
+        seen.add(hit);
+        let inner = null;
+        try { inner = hit.shadowRoot.elementFromPoint(x, y); } catch {}
+        if (!inner || inner === hit) break;
+        hit = inner;
+      }
+      return hit;
+    };
+    // closest() that continues past a shadow root to its host, so an element
+    // inside a web component still sees the control or link around it.
+    const closestAcrossShadow = (el, selector) => {
+      for (let node = el, depth = 0; node && depth < 16; depth++) {
+        const found = node.closest?.(selector);
+        if (found) return found;
+        const root = node.getRootNode?.();
+        node = root && root !== node && root.host ? root.host : null;
+      }
+      return null;
+    };
     // What a control's caption means (it publishes, commits, deletes one or
     // several items, moves to a next step, edits the draft, only changes the
     // view, or is unclear) is read by a model in any language, never matched
@@ -31642,7 +32071,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return interactiveElements().find((el) => compact(el.innerText || el.value || el.placeholder || el.ariaLabel).toLowerCase().includes(needle)) || null;
         }
         if (args.x != null && args.y != null) {
-          try { return doc.elementFromPoint(Number(args.x), Number(args.y)); } catch { return null; }
+          try { return elementAtPoint(doc, Number(args.x), Number(args.y)); } catch { return null; }
         }
         return null;
       }
@@ -31670,7 +32099,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return Number.isFinite(index) ? all[index] || null : null;
       }
       if (args.x != null && args.y != null) {
-        try { return doc.elementFromPoint(Number(args.x), Number(args.y)); } catch { return null; }
+        try { return elementAtPoint(doc, Number(args.x), Number(args.y)); } catch { return null; }
       }
       if (args.text) {
         const needle = compact(args.text).toLowerCase();
@@ -32842,6 +33271,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             popupLauncherToken: popupTarget ? rememberPopupLauncher(control, actionResource) : '' };
         }
       }
+      // A vision click on plain content: no control, link, field, label or
+      // inline handler on the element or around it (a post's text, a picture,
+      // blank space). It can open what the page opens for it; it cannot submit
+      // a form or publish. The tree path clicks the link or button itself, but
+      // a point is all a vision run has. A frame, embed, plugin, canvas or
+      // application region draws controls the DOM does not show, so it is
+      // opaque here, never plain.
+      if (target && toolName === 'click' && args.coordinate_space === 'css' && args.x != null && args.y != null
+          && !isFormField(target) && !isEditableActivationTarget(target)
+          && !closestAcrossShadow(target, 'iframe,frame,embed,object,canvas,[role="application"],button,input,select,textarea,label,summary,a[href],area[href],[role="button"],[role="link"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="tab"],[role="option"],[role="treeitem"],[role="switch"],[role="checkbox"],[role="radio"],[role="textbox"],[role="combobox"],[contenteditable=""],[contenteditable="true"],[onclick],[data-action],[form],[formaction]')) {
+        return { isSubmit: false, host, url, resolvedNonSubmitTarget: true, resolvedPlainContent: true };
+      }
     } catch {}
     return null;
   };
@@ -32934,6 +33375,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Select the appropriate ACT system prompt based on the active provider.
    * Small/local models get a compact prompt to save context budget.
    */
+  _getVisionActPrompt(state, provider = null) {
+    const tier = this._resolvePromptTier(provider);
+    const prompt = getVisionActPrompt({ coordinates: state.coordinates, tier });
+    return tier === 'full'
+      ? `${prompt}\n\n${this.imageGenConfigured ? SYSTEM_PROMPT_GENERATIVE_MEDIA : GENERATIVE_MEDIA_SETUP_NOTE}`
+      : prompt;
+  }
+
   _getActPrompt(provider = null) {
     const tier = this._resolvePromptTier(provider);
     if (tier === 'compact') return SYSTEM_PROMPT_ACT_COMPACT;
@@ -33070,9 +33519,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode (Act only) keeps the tier's prompt and tools. WebBrain skips
     // its quality checks in a lean run, so one note asks the model to check
     // its own work.
-    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK : this._getActPrompt(provider);
+    // Vision mode replaces the tree-centred Act prompt (vision-tools.js).
+    const visionState = mode === 'act' ? this._visionRunState(tabId, mode) : null;
+    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK
+      : (visionState?.active ? this._getVisionActPrompt(visionState, provider) : this._getActPrompt(provider));
     if (this._isActionMode(mode) && this._leanPromptActive(tabId, mode, provider)) prompt += `\n\n${SYSTEM_PROMPT_LEAN_NOTE}`;
-    if (tier !== 'compact' && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
+    if (tier !== 'compact' && !visionState?.active && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
         .some(tool => tool.function.name === 'browser_batch')) prompt += `\n\n${SYSTEM_PROMPT_BATCHING}`;
     const botMemory = tabId == null ? null : this._botMemorySessions.get(tabId);
     if (botMemory) prompt += `\n\n${botMemory.systemNote()}\n\n${this._wrapUntrusted('bot_memory_observe', botMemory.contextData())}`;
@@ -33083,7 +33535,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       prompt += `\n\n${AUTO_MODE_ASK_NOTE}\n${autoModeGenerativeMediaNote({ configured: this.imageGenConfigured, tier })}`;
     }
     if (this.useSiteAdapters) {
-      prompt += `\n\n${UNIVERSAL_PREAMBLE.trim()}`;
+      prompt += `\n\n${(visionState?.active ? visionUniversalPreamble(UNIVERSAL_PREAMBLE) : UNIVERSAL_PREAMBLE).trim()}`;
     }
 
     if (this._isActionMode(mode) && tabId != null) {
@@ -33128,7 +33580,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (memoryPrompt) prompt += `\n\n${memoryPrompt}`;
     }
     if (this.captchaSolverEnabled && this._captchaToolsAvailable(tabId, mode, tier)) {
-      prompt += `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. Enabled coverage: ${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'recaptcha_v2')) ? 'reCAPTCHA v2/v3 including Enterprise, Turnstile, and image CAPTCHAs. ' : ''}${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'hcaptcha')) ? 'hCaptcha via NopeCHA or NoneCap. ' : 'hCaptcha requires manual completion. '} For other CAPTCHA families, call get_captcha_capabilities, inspect the chosen method schemas, and supply providerTasks to solve_captcha with inject:false. All documented token, recognition, cookie, and structured-answer methods are available through that route. Supply observed inputs for each compatible enabled provider so weight-based fallback can run. Apply the answer with apply_captcha_solution. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If neither automatic nor native inputs can be obtained, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha. These limits apply per challenge: a new CAPTCHA that appears later, such as after a submit or on a newly loaded page, is a separate challenge. Read the page and solve it once with solve_captcha before asking the user.]`;
+      const coverage = `${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'recaptcha_v2')) ? 'reCAPTCHA v2/v3 including Enterprise, Turnstile, and image CAPTCHAs. ' : ''}${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'hcaptcha')) ? 'hCaptcha via NopeCHA or NoneCap. ' : 'hCaptcha requires manual completion. '}`;
+      // A vision run has no tree to read and no native-method tools: its note
+      // names the automatic route only (vision-tools.js).
+      prompt += this._visionRunState(tabId, mode).active === true
+        ? `\n\n${visionCaptchaSolverNote(coverage)}`
+        : `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. Enabled coverage: ${coverage} For other CAPTCHA families, call get_captcha_capabilities, inspect the chosen method schemas, and supply providerTasks to solve_captcha with inject:false. All documented token, recognition, cookie, and structured-answer methods are available through that route. Supply observed inputs for each compatible enabled provider so weight-based fallback can run. Apply the answer with apply_captcha_solution. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If neither automatic nor native inputs can be obtained, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha. These limits apply per challenge: a new CAPTCHA that appears later, such as after a submit or on a newly loaded page, is a separate challenge. Read the page and solve it once with solve_captcha before asking the user.]`;
     }
     // Ordinary turns get the one-line rendering; the full block is reserved for
     // policies that need the precise wording (translation targets, multilingual
@@ -35276,6 +35733,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._cancelPendingPlans(tabId, 'tab closed');
     this._clarificationAuthorizationGuards.delete(tabId);
     this._isPdfTabCache.delete(tabId);
+    this._visionForgetTab?.(tabId);
     this._lastTypeFieldIdent?.delete(tabId);
     this._lastTypeFieldEpoch?.delete(tabId);
     // A cleared conversation or closed tab takes its filled credentials along.
@@ -40620,10 +41078,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const stripAllImages = provider && !provider.supportsVision;
     const stripAllDocuments = provider && !provider.supportsDocuments;
     if (stripAllImages) keep = 0;
+    // Vision mode keeps the current frame with its patches and zooms, and
+    // nothing older (vision-runtime.js); those images do not use `keep`.
+    const vision = !stripAllImages && typeof this._visionPruneImages === 'function'
+      ? this._visionPruneImages(messages) : { latestEpoch: 0 };
+    if (vision.latestEpoch) messages = vision.messages;
     let imgsKept = 0;
     const out = new Array(messages.length);
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
+      if (vision.latestEpoch && msg?.webbrainVisionFrame) {
+        out[i] = msg;
+        continue;
+      }
       if (Array.isArray(msg.content)) {
         let inUserAttachmentSection = false;
         const newContent = msg.content.map(block => {
@@ -41838,6 +42305,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
+    // A vision click that follows another action of the same batch is
+    // re-checked against the live screen after every gate, right before it
+    // can dispatch (vision-runtime.js).
+    if (executionContext?._vision?.needsStabilityCheck && executionContext._vision.cssPoint) {
+      const blocked = await this._visionStabilityBlock(tabId, executionContext._vision.cssPoint);
+      if (blocked) return blocked;
+    }
     const memory = this._botMemorySessions.get(tabId);
     if (!memory) return this._executeToolWithLifecycle(tabId, name, args, onUpdate, executionContext);
     // Managed bot context cannot consume the user's profile-wide remote store.
@@ -41997,6 +42471,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'load_skill') {
       return this._loadSkillForRun(tabId, args || {});
     }
+    if (VISION_NATIVE_TOOLS.has(name)) return this._executeVisionTool(tabId, name, args || {}, dispatchContext);
     if (name === 'done_json') {
       const structured = handleDoneJson(this.cloudRunContexts.get(tabId), args);
       if (!structured.done || structured.cloudFailed) return structured;
@@ -43611,7 +44086,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // (URL/title/pageState/completionWarning) is vision-independent and
             // runs regardless.
             const provider = this.providerManager.getActive();
-            const plannerCanSeeImages = !!provider?.supportsVision;
+            // A vision run is shown the screen by its own labeled update after
+            // the batch; an unlabeled device-scale capture here could be read
+            // for coordinates it does not map to (vision-runtime.js).
+            const plannerCanSeeImages = !!provider?.supportsVision && this._visionRunState(tabId).active !== true;
             let dataUrl = plannerCanSeeImages
               ? await this._withIndicatorsHidden(tabId, () =>
                   browser.tabs.captureTab(tabId, { format: 'png', quality: 80 })
@@ -44053,102 +44531,115 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               error: `Download is in state: ${dl[0].state}, not complete. Wait for it to finish (wait_for_stable / list_downloads) then retry.`,
             };
           }
-          const targetUrl = dl[0].url;
-          let currentUrl = targetUrl;
-          let initialRegDomain = null;
-          let tabRegDomain = null;
-          try {
-            initialRegDomain = registrableDomain(new URL(targetUrl).hostname);
-            const currentTab = await browser.tabs.get(tabId);
-            if (currentTab && currentTab.url) {
-              tabRegDomain = registrableDomain(new URL(currentTab.url).hostname);
-            }
-          } catch {}
+          // The bytes the browser saved, read by the companion when this run
+          // has one; otherwise the file is fetched again from its address.
+          const saved = await this._firefoxSavedDownloadBytes(tabId, dl[0]);
+          if (saved?.error) return { success: false, error: saved.error };
+          if (saved) {
+            ({ base64, filename, mimeType } = saved);
+          } else {
+            const targetUrl = dl[0].url;
+            let currentUrl = targetUrl;
+            let initialRegDomain = null;
+            let tabRegDomain = null;
+            try {
+              initialRegDomain = registrableDomain(new URL(targetUrl).hostname);
+              const currentTab = await browser.tabs.get(tabId);
+              if (currentTab && currentTab.url) {
+                tabRegDomain = registrableDomain(new URL(currentTab.url).hostname);
+              }
+            } catch {}
 
-          let attachCookies = !!(tabRegDomain && initialRegDomain && tabRegDomain === initialRegDomain);
-          let res = null;
-          for (let hop = 0; hop < 5; hop++) {
-            const v = validateFetchUrl(currentUrl, { allowLocalNetwork: getAllowLocalNetwork() });
-            if (!v.ok) {
-              return { success: false, error: `Invalid download URL: ${v.error}` };
-            }
-            res = await fetch(currentUrl, {
-              method: 'GET',
-              credentials: attachCookies ? 'include' : 'omit',
-              redirect: 'manual',
-            });
-            if (res.status >= 300 && res.status < 400) {
-              const location = res.headers.get('location');
-              if (!location) {
-                return { success: false, error: `Redirect from ${currentUrl} missing Location header` };
+            let attachCookies = !!(tabRegDomain && initialRegDomain && tabRegDomain === initialRegDomain);
+            let res = null;
+            for (let hop = 0; hop < 5; hop++) {
+              const v = validateFetchUrl(currentUrl, { allowLocalNetwork: getAllowLocalNetwork() });
+              if (!v.ok) {
+                return { success: false, error: `Invalid download URL: ${v.error}` };
               }
-              const nextUrl = new URL(location, currentUrl).href;
-              const nextV = validateFetchUrl(nextUrl, { allowLocalNetwork: getAllowLocalNetwork() });
-              if (!nextV.ok) {
-                return { success: false, error: `Invalid redirect URL: ${nextV.error}` };
-              }
-              try {
-                const nextRegDomain = registrableDomain(new URL(nextUrl).hostname);
-                if (nextRegDomain !== initialRegDomain || (tabRegDomain && nextRegDomain !== tabRegDomain)) {
+              res = await fetch(currentUrl, {
+                method: 'GET',
+                credentials: attachCookies ? 'include' : 'omit',
+                redirect: 'manual',
+              });
+              if (res.status >= 300 && res.status < 400) {
+                const location = res.headers.get('location');
+                if (!location) {
+                  return { success: false, error: `Redirect from ${currentUrl} missing Location header` };
+                }
+                const nextUrl = new URL(location, currentUrl).href;
+                const nextV = validateFetchUrl(nextUrl, { allowLocalNetwork: getAllowLocalNetwork() });
+                if (!nextV.ok) {
+                  return { success: false, error: `Invalid redirect URL: ${nextV.error}` };
+                }
+                try {
+                  const nextRegDomain = registrableDomain(new URL(nextUrl).hostname);
+                  if (nextRegDomain !== initialRegDomain || (tabRegDomain && nextRegDomain !== tabRegDomain)) {
+                    attachCookies = false;
+                  }
+                } catch {
                   attachCookies = false;
                 }
-              } catch {
-                attachCookies = false;
+                currentUrl = nextUrl;
+                continue;
               }
-              currentUrl = nextUrl;
-              continue;
+              break;
             }
-            break;
-          }
-          if (!res || !res.ok) {
-            return { success: false, error: `Failed to re-fetch downloaded file from ${targetUrl} (HTTP ${res ? res.status : 'unknown'})` };
-          }
-          const clHeader = res.headers.get('content-length');
-          if (clHeader != null) {
-            const expectedLen = parseInt(clHeader, 10);
-            if (Number.isFinite(expectedLen) && expectedLen > UPLOAD_MAX_BYTES) {
-              return { success: false, error: 'File size exceeds 25MB limit.' };
+            if (!res || !res.ok) {
+              return { success: false, error: `Failed to re-fetch downloaded file from ${targetUrl} (HTTP ${res ? res.status : 'unknown'})` };
             }
-          }
-          // Stream the body with a hard cap so a missing/lying Content-Length
-          // cannot buffer an arbitrary payload into extension memory.
-          let bytes;
-          if (res.body && typeof res.body.getReader === 'function') {
-            const reader = res.body.getReader();
-            const chunks = [];
-            let total = 0;
-            for (;;) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              const part = value instanceof Uint8Array ? value : new Uint8Array(value);
-              if (total + part.byteLength > UPLOAD_MAX_BYTES) {
-                try { await reader.cancel(); } catch {}
+            const clHeader = res.headers.get('content-length');
+            if (clHeader != null) {
+              const expectedLen = parseInt(clHeader, 10);
+              if (Number.isFinite(expectedLen) && expectedLen > UPLOAD_MAX_BYTES) {
                 return { success: false, error: 'File size exceeds 25MB limit.' };
               }
-              chunks.push(part);
-              total += part.byteLength;
             }
-            bytes = new Uint8Array(total);
-            let offset = 0;
-            for (const part of chunks) {
-              bytes.set(part, offset);
-              offset += part.byteLength;
+            // Stream the body with a hard cap so a missing/lying Content-Length
+            // cannot buffer an arbitrary payload into extension memory.
+            let bytes;
+            if (res.body && typeof res.body.getReader === 'function') {
+              const reader = res.body.getReader();
+              const chunks = [];
+              let total = 0;
+              for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const part = value instanceof Uint8Array ? value : new Uint8Array(value);
+                if (total + part.byteLength > UPLOAD_MAX_BYTES) {
+                  try { await reader.cancel(); } catch {}
+                  return { success: false, error: 'File size exceeds 25MB limit.' };
+                }
+                chunks.push(part);
+                total += part.byteLength;
+              }
+              bytes = new Uint8Array(total);
+              let offset = 0;
+              for (const part of chunks) {
+                bytes.set(part, offset);
+                offset += part.byteLength;
+              }
+            } else {
+              const buf = await res.arrayBuffer();
+              if (buf.byteLength > UPLOAD_MAX_BYTES) {
+                return { success: false, error: 'File size exceeds 25MB limit.' };
+              }
+              bytes = new Uint8Array(buf);
             }
-          } else {
-            const buf = await res.arrayBuffer();
-            if (buf.byteLength > UPLOAD_MAX_BYTES) {
-              return { success: false, error: 'File size exceeds 25MB limit.' };
+            // Fetched again from its address: only the bytes the browser saved
+            // may be attached.
+            if (Number.isSafeInteger(dl[0].fileSize) && dl[0].fileSize >= 0 && bytes.length !== dl[0].fileSize) {
+              return { success: false, error: `The file at the download's address is not the one that was saved (${bytes.length} bytes now, ${dl[0].fileSize} saved). Download it again before uploading it.` };
             }
-            bytes = new Uint8Array(buf);
+            let binary = '';
+            const chunk = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunk) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+            }
+            base64 = btoa(binary);
+            filename = dl[0].filename ? dl[0].filename.split(/[\\/]/).pop() : 'downloaded_file';
+            mimeType = dl[0].mime || res.headers.get('content-type') || 'application/octet-stream';
           }
-          let binary = '';
-          const chunk = 0x8000;
-          for (let i = 0; i < bytes.length; i += chunk) {
-            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-          }
-          base64 = btoa(binary);
-          filename = dl[0].filename ? dl[0].filename.split(/[\\/]/).pop() : 'downloaded_file';
-          mimeType = dl[0].mime || res.headers.get('content-type') || 'application/octet-stream';
         } else {
           const pickerId = `upk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
           const tabPending = this._pendingUploadPickers.get(tabId) || new Map();
@@ -44768,7 +45259,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               ...(result.solution?.userAgent ? { solverUserAgent: result.solution.userAgent } : {}),
               note: application.success
                 ? 'AWS cookie applied. Reload this page once with navigate, then read it to verify clearance. A provider answer is not site acceptance; do not buy another solve for the same unresolved challenge.'
-                : 'AWS answer received but could not be applied. Inspect the binding and use apply_captcha_solution; do not buy another answer.' };
+                : (this._visionRunState?.(tabId)?.active === true ? 'AWS answer received but could not be applied, and this mode has no tool to apply it. Ask the user to complete verification manually; do not buy another answer.' : 'AWS answer received but could not be applied. Inspect the binding and use apply_captcha_solution; do not buy another answer.') };
           }
           return { success: true, dispatched: true, type: result.family, provider: result.provider, method: result.method, taskId: result.taskId,
             solution: result.solution, ...((result.userAgent || result.solution?.userAgent) ? { solverUserAgent: result.userAgent || result.solution.userAgent } : {}),
@@ -45094,7 +45585,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(pendingAutomaticAnswer ? { applicationRequired: true } : {}),
           injection,
           note: pendingAutomaticAnswer
-            ? 'Token returned without injection. Inspect the page and call apply_captcha_solution with observed frame/field or callback bindings and path: token. The paid answer is saved; do not request another solve.'
+            ? (this._visionRunState?.(tabId)?.active === true ? 'Token returned without injection, and this mode has no tool to place it in the page. The paid answer is saved; do not request another solve. Ask the user to complete verification manually.' : 'Token returned without injection. Inspect the page and call apply_captcha_solution with observed frame/field or callback bindings and path: token. The paid answer is saved; do not request another solve.')
             : !wantInject ? 'Recognition answer returned without page injection.'
             : injection?.success
               ? (injection.calledCallback
@@ -46320,6 +46811,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         (text, { read }) => (read ? this._readControlEffect(tabId, text) : this._controlEffectReading(text)),
       );
       if (duplicateSubmit) return duplicateSubmit;
+      // A vision click lands exactly where the model pointed: no semantic
+      // re-targeting (vision-runtime.js). A click bound to a recipient check
+      // keeps the content path, which verifies that binding at dispatch.
+      if (coordinatePoint && !dispatchBinding?.token && !messageRecipientGuardRequired
+          && dispatchContext._vision?.tool === 'click_at') {
+        return await this._visionDispatchClick(tabId, args, {
+          vision: dispatchContext._vision,
+          abortSignal: contentPipelineAbortSignal,
+          dispatchState: contentPipelineDispatchState,
+          detectedSubmitAction: dispatchContext.detectedSubmitAction || null,
+        });
+      }
+      // A vision click that must pass the recipient binding goes through the
+      // content click, which checks that binding and sends one left click on
+      // the element at the point: a right, middle or repeated click cannot be
+      // sent there (a right click on Send would send), and an authorized
+      // deletion is read again at its point first.
+      if (coordinatePoint && dispatchContext._vision?.tool === 'click_at') {
+        const vision = dispatchContext._vision;
+        if ((vision.button && vision.button !== 'left') || Number(vision.clickCount || 1) > 1) {
+          return { success: false, dispatched: false, noDispatch: true, visionInputRefused: 'recipient_bound_click',
+            error: 'Not dispatched: on this messaging page a click is checked against the verified recipient and sent as one left click, so a right, middle or repeated click cannot be sent here. Use a single left click_at, or another control.' };
+        }
+        const unbound = await this._visionMutationBindingBlock(tabId, args, dispatchContext.detectedSubmitAction || null);
+        if (unbound) return unbound;
+      }
       if (coordinatePoint && !dispatchBinding?.token) {
         const reconciled = await this._reconcileCoordinateClickWithDeadline(tabId, coordinatePoint, {
           messageRecipientGuardRequired,
@@ -46392,7 +46909,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       contentPipelineAbortSignal,
     );
     let keyProgressBefore = '';
-    if (name === 'press_keys' && String(args?.key || '').startsWith('Arrow')) {
+    if (name === 'press_keys' && String(args?.key || '').startsWith('Arrow') && this._visionRunState?.(tabId)?.active !== true) {
       try {
         keyProgressBefore = await runContentActionStage(
           abortSignal => this._keyProgressSnapshot(tabId, abortSignal),
@@ -47125,6 +47642,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode is resolved once, now that the run's mode and provider are
     // known, and holds for every tool list, prompt and guard of this run.
     const previousLeanRun = this._leanRuns?.get(tabId);
+    const previousVisionRun = this._visionRunSnapshots?.get(tabId);
     this._beginLeanRun(tabId, mode);
     const previousBotMemory = this._botMemorySessions.get(tabId);
     let botMemorySession = null;
@@ -47140,6 +47658,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } else this._botMemorySessions.delete(tabId);
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
       messageProcessingStarted = true;
+      this._beginVisionRun(tabId);
       const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, this._effectiveRunMode(tabId, mode), userMessage, result, onUpdate, runOptions);
       return result;
@@ -47159,6 +47678,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
+      this._endVisionRun(tabId, previousVisionRun);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousStandaloneChatRun) this._standaloneChatRunTabs.add(tabId);
@@ -47744,6 +48264,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
       autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
+      vision: this._visionToolOptions(tabId, mode),
     });
     // The selected text is already present in the trusted run envelope.
     // Advertising page/network tools would let an injected selection induce a
@@ -47962,6 +48483,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return true;
     };
 
+    // Vision mode: the model's first decision is made on a fresh full frame,
+    // taken once a cookie-banner decline in progress has finished (the loop
+    // settles banners before every model call; the frame must not show one
+    // that is about to disappear).
+    if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
+      await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
+    } else if (!selectionOnly && !standaloneChatRun) {
+      // An earlier vision run's frames are not this run's screen.
+      this._visionRetireEarlierFrames(messages);
+    }
+    let visionPromptActive = !!this._visionToolOptions(tabId, mode);
+
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
       if (handoff) await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, handoff);
@@ -48001,6 +48535,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
+      // An upload handed to the element tools starts or ends here, before
+      // anything this step does depends on whether it runs on vision
+      // (vision-runtime.js).
+      await this._visionUploadHandoffTick(tabId, steps);
       if (steps > 0 && !selectionOnly && !standaloneChatRun) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
@@ -48026,8 +48564,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
         autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
+        vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
+      // Vision mode can end and resume mid-run (a step that needs the element
+      // inventory, vision-mode.js); the system prompt follows the tools.
+      const visionPromptNow = !!this._visionToolOptions(tabId, mode);
+      if (visionPromptNow !== visionPromptActive && messages[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(mode, tabId);
+      // Back on vision after tree-path steps: the step starts on a fresh frame,
+      // never on the one from before them.
+      if (visionPromptNow && !visionPromptActive && !selectionOnly && !standaloneChatRun) {
+        await this._visionResumeKeyframe(tabId, messages, onUpdate, { mode });
+      }
+      this._visionNoteStepTools(tabId, visionPromptNow);
+      visionPromptActive = visionPromptNow;
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
         const completionState = this.completionInvariants.get(tabId);
@@ -48958,6 +49508,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode is resolved once, now that the run's mode and provider are
     // known, and holds for every tool list, prompt and guard of this run.
     const previousLeanRun = this._leanRuns?.get(tabId);
+    const previousVisionRun = this._visionRunSnapshots?.get(tabId);
     this._beginLeanRun(tabId, mode);
     const previousBotMemory = this._botMemorySessions.get(tabId);
     let botMemorySession = null;
@@ -48972,6 +49523,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._botMemorySessions.set(tabId, botMemorySession);
       } else this._botMemorySessions.delete(tabId);
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
+      this._beginVisionRun(tabId);
       const result = await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
@@ -48991,6 +49543,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
+      this._endVisionRun(tabId, previousVisionRun);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousStandaloneChatRun) this._standaloneChatRunTabs.add(tabId);
@@ -49240,6 +49793,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
+      vision: this._visionToolOptions(tabId, mode),
     });
     // Match the non-streaming path: selection-grounded turns are tool-free so
     // page or network content cannot be introduced after the source anchor.
@@ -49297,6 +49851,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Past local-only fast paths: the streaming loop below calls the provider.
     shareHadProviderCompletion = true;
 
+    // Vision mode: the model's first decision is made on a fresh full frame,
+    // taken once a cookie-banner decline in progress has finished (the loop
+    // settles banners before every model call; the frame must not show one
+    // that is about to disappear).
+    if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
+      await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
+    } else if (!selectionOnly && !standaloneChatRun) {
+      // An earlier vision run's frames are not this run's screen.
+      this._visionRetireEarlierFrames(messages);
+    }
+    let visionPromptActive = !!this._visionToolOptions(tabId, mode);
+
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
       if (handoff) await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, handoff);
@@ -49334,6 +49901,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finish(steeringOutcome.content, steeringOutcome.status);
       }
 
+      // An upload handed to the element tools starts or ends here, before
+      // anything this step does depends on whether it runs on vision
+      // (vision-runtime.js).
+      await this._visionUploadHandoffTick(tabId, steps);
       if (steps > 0 && !selectionOnly && !standaloneChatRun) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
@@ -49358,8 +49929,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
+        vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
+      // Vision mode can end and resume mid-run (a step that needs the element
+      // inventory, vision-mode.js); the system prompt follows the tools.
+      const visionPromptNow = !!this._visionToolOptions(tabId, mode);
+      if (visionPromptNow !== visionPromptActive && messages[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(mode, tabId);
+      // Back on vision after tree-path steps: the step starts on a fresh frame,
+      // never on the one from before them.
+      if (visionPromptNow && !visionPromptActive && !selectionOnly && !standaloneChatRun) {
+        await this._visionResumeKeyframe(tabId, messages, onUpdate, { mode });
+      }
+      this._visionNoteStepTools(tabId, visionPromptNow);
+      visionPromptActive = visionPromptNow;
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
         const completionState = this.completionInvariants.get(tabId);
@@ -50185,3 +50768,4 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 }
 
 installPageFeedback(Agent);
+installVisionRuntime(Agent, { trace });

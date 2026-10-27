@@ -180,7 +180,7 @@ try {
       }
     });
     await chrome.storage.local.set({ helpImproveWebBrain: false, planBeforeActMode: 'off', planBeforeAct: false, planReviewMode: 'never',
-      screenshotFallback: false, autoScreenshot: false, maxAgentSteps: 30, systemOneEnabled: false, tracingEnabled: false,
+      screenshotFallback: false, autoScreenshot: false, visionMode: 'off', maxAgentSteps: 30, systemOneEnabled: false, tracingEnabled: false,
       agentAllowLocalNetwork: true, askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false,
       scheduledTasksEnabled: true, scheduledRequireConsequentialConfirmation: false });
   });

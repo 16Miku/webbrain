@@ -42876,6 +42876,13 @@ test('sidepanel exposes schedule slash commands in both builds', () => {
       assert.equal(pick('See https://en.wikipedia.org/wiki/Function_(mathematics) daily.'), 'https://en.wikipedia.org/wiki/Function_(mathematics)', `${label}: a bracket that closes one inside the address stays`);
       assert.equal(pick('(see https://en.wikipedia.org/wiki/Function_(mathematics)).'), 'https://en.wikipedia.org/wiki/Function_(mathematics)', `${label}: prose punctuation after a balanced address is dropped`);
       assert.equal(pick('Check [https://example.com/a].'), 'https://example.com/a');
+      assert.equal(pick('Check “https://webbrain.one” daily.'), 'https://webbrain.one', `${label}: a closing curly quote never reaches the host`);
+      for (const [open, close] of [['“', '”'], ['‘', '’'], ['«', '»'], ['»', '«'], ['„', '“'], ['「', '」'], ['『', '』'], ['（', '）']]) {
+        assert.equal(pick(`毎日${open}https://example.com/a${close}を確認。`), 'https://example.com/a', `${label}: ${open}…${close} stays outside the address`);
+      }
+      assert.equal(pick('Check https://example.com/a。次に報告'), 'https://example.com/a', `${label}: CJK punctuation ends the address`);
+      assert.equal(pick('Check https://example.com/a…'), 'https://example.com/a');
+      assert.equal(pick('Check “https://en.wikipedia.org/wiki/Function_(mathematics)”.'), 'https://en.wikipedia.org/wiki/Function_(mathematics)', `${label}: balanced brackets survive inside quotes`);
     }
     assert.match(panel, /targetType\.value = 'url'/, `${label}: schedule form should default http(s) pages to URL targets`);
     assert.match(panel, /content\.appendChild\(form\)/, `${label}: schedule form should append after initial target defaults are applied`);

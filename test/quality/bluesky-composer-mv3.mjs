@@ -241,7 +241,7 @@ try {
       if(event.action==='agent_update'&&blueskyRuns[event.requestId])blueskyRuns[event.requestId].push({type:event.type,data:event.data});
     });
     return chrome.storage.local.set({helpImproveWebBrain:false,tracingEnabled:false,autoScreenshot:false,screenshotFallback:false,
-      planBeforeActMode:'off',planBeforeAct:false,planReviewMode:'never',maxAgentSteps:10,systemOneEnabled:false,agentAllowLocalNetwork:true,
+      planBeforeActMode:'off',planBeforeAct:false,planReviewMode:'never',visionMode:'off',maxAgentSteps:10,systemOneEnabled:false,agentAllowLocalNetwork:true,
       askBeforeConsequentialActions:false,openaiAskStreamingEnabled:false});
   });
   assert.equal((await message('update_provider',{providerId:'openrouter',config:{apiKey:'owned-fixture-fake-key',

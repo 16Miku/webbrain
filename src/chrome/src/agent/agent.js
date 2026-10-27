@@ -20,7 +20,11 @@ import { AUTO_MODE, AUTO_MODE_ASK_NOTE, autoModeGenerativeMediaNote, REQUEST_ACT
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticDataComplete, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
-import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
+import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT, getVisionActPrompt } from './tools.js';
+import { installVisionRuntime } from './vision-runtime.js';
+import { VISION_CAPTCHA_MANUAL_NOTE, VISION_CAPTCHA_UNAPPLIED_NOTE, VISION_NATIVE_TOOLS, VISION_SITE_NOTES_PREFACE, visionCaptchaSolverNote, visionFilePickerBlockedResult, visionUniversalPreamble } from './vision-tools.js';
+import { visionDomProbeExpression } from './vision-dom-probe.js';
+import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
 import { validateToolArguments } from './tool-arguments.js';
@@ -371,6 +375,28 @@ function urlWithoutFragment(url) {
   return hash < 0 ? value : value.slice(0, hash);
 }
 
+// How long after a vision click a tab it opens is still rerouted into the
+// source tab (checked at each screen update while the watch lasts; see
+// watchOpenedTabs and _visionPlatformLateTab).
+const VISION_LATE_TAB_WATCH_MS = 4000;
+
+// Tabs that `openerTabId` opens from now on (a target=_blank link or
+// window.open after a click), recorded as the browser creates them.
+function watchOpenedTabs(openerTabId) {
+  const watch = { opened: [], listening: false, stop() {} };
+  const listener = tab => { if (tab && tab.openerTabId === openerTabId) watch.opened.push(tab.id); };
+  try {
+    chrome.tabs.onCreated.addListener(listener);
+    watch.listening = true;
+    watch.stop = () => {
+      if (!watch.listening) return;
+      watch.listening = false;
+      try { chrome.tabs.onCreated.removeListener(listener); } catch {}
+    };
+  } catch { /* no tabs events here: the full poll applies */ }
+  return watch;
+}
+
 const EARLY_CDP_ACTION_TOOLS = new Set(['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file']);
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
 const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the run started|executing requested tool calls))?\.?\]?$/;
@@ -606,6 +632,9 @@ const SOCIAL_POST_SITES = new Set(['twitter', 'bluesky']);
 const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'chat_observe',
   'auto_screenshot',
+  // Vision mode observations (vision-tools.js).
+  'take_screenshot',
+  'zoom',
   'get_accessibility_tree',
   'read_page',
   'read_page_source',
@@ -1037,6 +1066,13 @@ export class Agent extends LoopDetector {
     // resolves it once at its start (_beginLeanRun) and keeps the answer in
     // _leanRuns, so its prompt note and guards agree. See lean-mode.js.
     this.leanMode = 'auto';
+    // Vision mode (vision-mode.js): 'auto' | 'off'. The class default keeps
+    // the accessibility-tree path for embedders and the unit suite;
+    // background.js applies the stored setting, whose default is 'auto'.
+    this.visionMode = 'off';
+    this.visionQuality = 'balanced';
+    this._visionSessions = new Map();
+    this._visionRunSnapshots = new Map();
     this._leanRuns = new Map();
     // Advisory lists a run's calls carry, by owning tab, so a guard that is
     // handed only the list still knows which run it belongs to.
@@ -2113,6 +2149,9 @@ export class Agent extends LoopDetector {
     } else if (['screenshot', 'auto_screenshot', 'full_page_screenshot'].includes(name)) {
       // A text-only planner sees a screenshot through its short description.
       if (typeof result.description === 'string') texts.push(result.description);
+      // A vision run's screen update carries the status texts it showed
+      // (vision-runtime.js _visionRecordObservation).
+      if (name === 'auto_screenshot' && Array.isArray(result.statusMessages)) texts.push(...result.statusMessages.slice(0, 6));
     }
     return [...new Set(texts.filter(value => typeof value === 'string')
       .map(value => value.replace(/\s+/g, ' ').trim())
@@ -2889,6 +2928,11 @@ export class Agent extends LoopDetector {
     }
     const state = this.completionInvariants.get(tabId);
     const block = completionDoneBlock(state, name, args, { skip });
+    // A vision run observes through its screen updates; the tree and form
+    // readers the shared advice names are not in its tools.
+    if (block?.reason === 'verification_required' && !state?.lastAction?.downloadAction && this._visionRunState(tabId).active === true) {
+      return { ...block, error: 'The latest consequential action has not been verified by a successful page observation. Look at the screen update WebBrain shows after this batch (take_screenshot for a fresh frame, read_page for exact text), then call done again; otherwise finish with outcome="partial" or outcome="failed".' };
+    }
     if (block) return block;
     if (outcome !== 'success' || !batchStartState || skip?.has?.('prior_turn_verification_required') === true) return null;
     const batchStartSequence = Number(batchStartState.sequence || 0);
@@ -6760,7 +6804,10 @@ export class Agent extends LoopDetector {
         : guard.steeringPriorSubmissionReconciliation?.verified === true ? 'authorization_required' : 'prior_effect_unreconciled',
         classification: detectedSubmit?.mutationKind === 'delete' ? 'delete' : detectedSubmit?.publicationControl === true ? 'publish' : 'unresolved' },
       error: unresolvedTarget
-        ? 'This action was not performed: its target could not be identified as a link, field, menu item or ordinary button. A submission was already made before the latest correction, and an unidentified control could repeat it. Read the page and target the specific control by its ref.'
+        ? 'This action was not performed: its target could not be identified as a link, field, menu item or ordinary button. A submission was already made before the latest correction, and an unidentified control could repeat it. '
+          + (this._visionRunState(tabId).active === true
+            ? 'Zoom in to find the specific link or labelled button and click_at it.'
+            : 'Read the page and target the specific control by its ref.')
         : 'A submission was already attempted before the user revised this task. Inspect its exact result before another consequential action. A separately authorized deletion or replacement needs a current resource proof; never repeat an uncertain or already dispatched submission.',
     };
   }
@@ -6887,8 +6934,14 @@ export class Agent extends LoopDetector {
   }
 
   _resourceMutationActionKey(tabId, name, args, detected) {
-    if (!detected || !['click', 'click_ax', 'iframe_click'].includes(name)
-        || Number.isFinite(args?.x) || Number.isFinite(args?.y)) return '';
+    // A vision click (vision-runtime.js) has nothing but its point, so it is
+    // bound to the control the submit probe read there, and its dispatch
+    // reads that point again (_visionMutationBindingBlock). Any other
+    // coordinate click has a ref or selector alternative and stays unbound.
+    const point = Number.isFinite(args?.x) || Number.isFinite(args?.y);
+    const visionPoint = point && name === 'click' && args?.coordinate_space === 'css'
+      && Number.isFinite(args?.x) && Number.isFinite(args?.y) && this._visionRunState?.(tabId)?.active === true;
+    if (!detected || !['click', 'click_ax', 'iframe_click'].includes(name) || (point && !visionPoint)) return '';
     const record = detected.actionRecord;
     // The resource's texts with its timestamps read as their datetime
     // (stableTextValues), so a relative time ticking over while the user
@@ -7314,7 +7367,11 @@ export class Agent extends LoopDetector {
     // Coordinates, keys, field submission and scripts cannot be bound to the
     // checked control and payload; a commit after a correction needs its own
     // identified control.
-    if (!key) return blocked('click_required', 'Activate the specific control with a ref or selector click; coordinate, keyboard, field and script submissions cannot be bound to the checked resource and payload.');
+    if (!key) {
+      return blocked('click_required', this._visionRunState?.(tabId)?.active === true
+        ? 'Click the specific control with click_at; keyboard, field and script submissions cannot be bound to the checked resource and payload.'
+        : 'Activate the specific control with a ref or selector click; coordinate, keyboard, field and script submissions cannot be bound to the checked resource and payload.');
+    }
     const formAction = value => (/^https?:\/\//i.test(String(value || '')) ? String(value) : '');
     // A form without record identity (settings, profile, preferences) is
     // bound to its form action and public values instead of a permalink.
@@ -8300,6 +8357,9 @@ export class Agent extends LoopDetector {
       screenshot_redaction: this.screenshotRedaction === true,
       strict_secret_mode: this.strictSecretMode === true,
       lean_mode_setting: normalizeLeanModeSetting(this.leanMode),
+      vision_mode_setting: normalizeVisionModeSetting(this.visionMode, 'off'),
+      // Whether this tab's run resolved to vision mode.
+      ...(tabId != null && this._visionRunSnapshots?.has(tabId) ? { vision_mode: this._visionRunState(tabId).active === true } : {}),
       // Whether this tab's run resolved to lean mode (traces show which ran).
       ...(tabId != null && this._leanRuns?.has(tabId) ? { lean_mode: this._leanRunActive(tabId) } : {}),
       plan_before_act_mode: this._normalizePlanBeforeActMode(this.planBeforeActMode),
@@ -9623,6 +9683,8 @@ export class Agent extends LoopDetector {
   }
 
   async _maybeJevFastTurn(tabId, task, messages, mode, allowed, provider, costState, runOptions = {}, recovery = null) {
+    // The fast path proposes tree-ref actions; a vision run has none.
+    if (this._visionRunState(tabId, mode).active) return null;
     if (this._steeringRuns.get(tabId)?.acceptedIds.size || this._pageFeedbackRuns?.get(tabId)?.revision) return null;
     const context = this.systemOneContext(tabId);
     if (!['act', 'dev'].includes(mode) || this._checkAbort(tabId)) return null;
@@ -10667,9 +10729,21 @@ export class Agent extends LoopDetector {
     }
     if (evaluation.block) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
-      return advises(toolbarNote, true) ? null : evaluation.block;
+      if (advises(toolbarNote, true)) return null;
+      // The shared advice names the tree; a vision run looks at the screen.
+      return this._visionRunState(tabId).active === true && typeof evaluation.block.error === 'string'
+        ? { ...evaluation.block, error: evaluation.block.error.replace('Re-read the tree and click or focus the editor body', 'Look at the screen and click_at the editor body') }
+        : evaluation.block;
     }
     if (evaluation.guarded !== true) {
+      await this._releaseRichTextToolbarProbeTarget(tabId, probe);
+      return null;
+    }
+    // A vision click is sent at its point with the checks made there
+    // (vision-runtime.js). The element binding below would route it through
+    // the content click, which sends one left click and drops a right, middle
+    // or repeated click, so the toolbar check above is all it gets.
+    if (toolName === 'click' && args?.coordinate_space === 'css' && this._visionRunState(tabId).active === true) {
       await this._releaseRichTextToolbarProbeTarget(tabId, probe);
       return null;
     }
@@ -11640,7 +11714,7 @@ export class Agent extends LoopDetector {
 
   // A call to a tool this run does not advertise never dispatches. A retired
   // name gets the guidance for what replaced it, so the model stops asking.
-  _unavailableToolResult(fnName) {
+  _unavailableToolResult(fnName, tabId = null) {
     const base = { success: false, denied: true, dispatched: false, noDispatch: true, outcomeUnknown: false };
     if (!RETIRED_AGENT_TOOL_NAMES.has(fnName)) {
       return {
@@ -11650,7 +11724,7 @@ export class Agent extends LoopDetector {
       };
     }
     const guidance = fnName === 'screenshot' || fnName === 'full_page_screenshot'
-      ? 'Image capture is user-only. To see the page yourself, call inspect_viewport (it takes no arguments). If the user wants a page image, tell them to type /screenshot for the visible viewport or /screenshot --full-page for the whole page.'
+      ? `Image capture is user-only. To see the page yourself, call ${tabId != null && this._visionRunState?.(tabId)?.active === true ? 'take_screenshot' : 'inspect_viewport'} (it takes no arguments). If the user wants a page image, tell them to type /screenshot for the visible viewport or /screenshot --full-page for the whole page.`
       : fnName === 'record_tab' || fnName === 'stop_recording'
         ? 'Recording is user-driven only. Tell the user to type /record for current-tab recording or /record --full-screen for screen/window recording; they stop it by pressing Escape twice or with Chrome\'s Stop sharing control.'
         : 'Tab management is not an agent tool; keep working in the current tab.';
@@ -12074,9 +12148,23 @@ export class Agent extends LoopDetector {
    * `tabs.onCreated` fires before the URL has resolved in some flows.
    *
    * Returns { redirected: true, url, closedTabId } on redirect, else null.
+   *
+   * `watch` (watchOpenedTabs, armed before the click) sees new tabs as they
+   * are created: when none appeared within `quietMs` the click opened none,
+   * and it does not wait out the whole poll (vision clicks use this).
    */
-  async _redirectTargetBlankClick(tabId, beforeTabIds) {
+  async _redirectTargetBlankClick(tabId, beforeTabIds, { watch = null, quietMs = 0 } = {}) {
     try {
+      if (watch?.listening && quietMs > 0) {
+        const deadline = Date.now() + quietMs;
+        for (let left = quietMs; !watch.opened.length && left > 0; left = deadline - Date.now()) {
+          await new Promise(r => setTimeout(r, Math.min(50, left)));
+        }
+        if (!watch.opened.length) {
+          const all = await chrome.tabs.query({});
+          if (!all.some(t => t.id !== tabId && t.openerTabId === tabId && !beforeTabIds.has(t.id))) return null;
+        }
+      }
       let newTab = null;
       // Poll for up to ~900ms — the new tab needs a few ticks to appear
       // and for the browser to populate its URL past about:blank/newtab.
@@ -12126,7 +12214,12 @@ export class Agent extends LoopDetector {
   static EXECUTION_META_TOOLS = new Set(['clarify', 'scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_TOOLS = new Set(['scratchpad_write', 'scratchpad_read', 'progress_update', 'progress_read']);
   static EXECUTION_APP_STATE_WRITE_TOOLS = new Set(['scratchpad_write', 'progress_update']);
-  static DELIVERY_OBSERVATION_TOOLS = new Set(['read_page', 'get_accessibility_tree', OTP_EMAIL_TOOL_NAME, 'get_interactive_elements', 'extract_data', 'get_selection', 'find_text', 'scroll', 'wait_for_stable', 'wait_for_element', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_window_info', 'list_downloads', 'progress_read', 'inspect_viewport', 'screenshot', 'get_frames', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript']);
+  static DELIVERY_OBSERVATION_TOOLS = new Set(['read_page', 'get_accessibility_tree', OTP_EMAIL_TOOL_NAME, 'get_interactive_elements', 'extract_data', 'get_selection', 'find_text', 'scroll', 'wait_for_stable', 'wait_for_element', 'read_pdf', 'fetch_url', 'research_url', 'read_downloaded_file', 'iframe_read', 'get_window_info', 'list_downloads', 'progress_read', 'inspect_viewport', 'screenshot', 'get_frames', 'get_shadow_dom', 'shadow_dom_query', 'read_youtube_transcript',
+    // Vision mode's look, wheel and pause. A screen update that shows a change
+    // ends their streak (vision-runtime.js), so only looking at a screen that
+    // stays the same adds up. A zoom reads one part of the screen at a time,
+    // and reading a dense screen takes several, so zooms are left out.
+    'take_screenshot', 'scroll_at', 'wait']);
   static NAV_PRONE_TOOLS = new Set(['click', 'click_ax', 'set_checked', 'navigate', 'go_back', 'go_forward', 'execute_js', 'iframe_click', 'execute_webmcp_tool']);
   static RECOMMENDED_ACTION_FAST_PATH_IDS = new Set(['download-media', 'tweet-webbrain', 'post-webbrain-linkedin', 'find-coupons']);
   static RECOMMENDED_ACTION_FIRST_TOOLS = Object.freeze({
@@ -12630,7 +12723,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const heading = adapter.category === 'finance'
           ? `[Site guidance for ${adapter.name} — FINANCE / HIGH-STAKES]`
           : `[Site guidance for ${adapter.name}]`;
-        contextLine += `${heading}\n${adapter.notes.trim()}\n\n`;
+        const visionNote = this._visionRunState(tabId).active ? `${VISION_SITE_NOTES_PREFACE}\n` : '';
+        contextLine += `${heading}\n${visionNote}${adapter.notes.trim()}\n\n`;
       }
       if (adapter) this._queueAdapterMatchTrace(tabId, adapter, !!shouldInjectAdapter);
     }
@@ -12639,6 +12733,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // page title, adapter guidance, a vision description, or raw pixels that a
     // small multimodal model could mistake for the authoritative selection.
     if (selectionScoped || standaloneChat || hasPriorUserTurn) {
+      return enrichedUserMessage(contextLine + userMessage);
+    }
+
+    // Vision mode takes its own first frame right before the model's first
+    // decision (vision-runtime.js); a legacy capture here would only cost
+    // tokens and a second image.
+    if (this._visionRunState(tabId).active) {
       return enrichedUserMessage(contextLine + userMessage);
     }
 
@@ -13361,9 +13462,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const heading = adapter.category === 'finance'
       ? `[Site context changed → now on ${adapter.name} — FINANCE / HIGH-STAKES. Apply these rules from now on:]`
       : `[Site context changed → now on ${adapter.name}. Apply these notes from now on:]`;
+    const visionNote = this._visionRunState(tabId).active ? `${VISION_SITE_NOTES_PREFACE}\n` : '';
     messages.push({
       role: 'user',
-      content: `${heading}\n${adapter.notes.trim()}`,
+      content: `${heading}\n${visionNote}${adapter.notes.trim()}`,
     });
     this._queueAdapterMatchTrace(tabId, adapter, true);
     return true;
@@ -13377,8 +13479,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const tab = await chrome.tabs.get(tabId);
       const url = tab?.url || '';
       this._rememberProgressPageScope(tabId, url);
+      // The last address seen, for the synchronous vision decision
+      // (_visionNativeChatPage).
+      (this._lastTabUrls ??= new Map()).set(tabId, url);
       return url;
     } catch (e) { return ''; }
+  }
+
+  // Compact upload_file attaches only a file the user attached to this run's
+  // message: without one, a chooser blocked in vision mode is not handed to
+  // the element tools (vision-runtime.js _visionNoteUploadHandoff).
+  _visionUploadSourceAvailable(tabId, promptTier) {
+    return promptTier !== 'compact' || (this._userAttachmentHandles.get(tabId)?.size || 0) > 0;
+  }
+
+  // Whether the tab is still loading: the redaction scan starts when the
+  // document is idle (vision-runtime.js _visionCaptureFrame waits for it).
+  async _visionTabLoading(tabId) {
+    try { return (await chrome.tabs.get(tabId))?.status === 'loading'; }
+    catch { return false; }
+  }
+
+  // WhatsApp Web and Telegram keep the tree path (vision-mode.js).
+  _visionNativeChatPage(tabId) {
+    const url = this._lastTabUrls?.get(tabId) || '';
+    if (!url) return false;
+    try {
+      const name = getActiveAdapter(url)?.name || '';
+      // Telegram's web app, not its site's blog or FAQ pages.
+      return name === 'whatsapp-web'
+        || (name === 'telegram' && /^(?:web|webk|weba|webz|k)\.telegram\.org$/i.test(new URL(url).hostname));
+    } catch { return false; }
   }
 
   async _carouselPageState(tabId) {
@@ -13788,7 +13919,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return !!allowedToolNames?.has?.(name);
   }
 
-  _coordinateClickRecoveryWarning(args = {}, allowedToolNames = AGENT_TOOL_NAMES) {
+  _coordinateClickRecoveryWarning(args = {}, allowedToolNames = AGENT_TOOL_NAMES, vision = null) {
+    // A vision run: the point the model gave (image px), and only what the
+    // run offers; repeats count only while the screen stays unchanged.
+    if (vision?.tool === 'click_at') {
+      const point = vision.modelArgs || args;
+      return `[COORDINATE CLICK WARNING: You've clicked at or near (${point.x}, ${point.y}) several times and the screen did not change after any of those clicks. The point may be missing its target. Zoom into that area to see exactly where the control is, then click its centre, use a different control or key, or scroll it into view. Do not click this point again unless the screen has changed.]`;
+    }
     const cssBoxHint = this._canUseToolInCurrentBatch(allowedToolNames, 'inspect_element_styles')
       ? 'then use get_accessibility_tree or inspect_element_styles to get CSS-pixel boxes'
       : 'then use get_accessibility_tree or get_interactive_elements to choose a reachable target';
@@ -13796,10 +13933,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _noProgressRecoveryWarning(allowedToolNames = AGENT_TOOL_NAMES) {
+    if (this._canUseToolInCurrentBatch(allowedToolNames, 'click_at')
+        && !this._canUseToolInCurrentBatch(allowedToolNames, 'get_accessibility_tree')) {
+      return '[NO PROGRESS DETECTED: The last action returned from the page, but the page did not change. Do not repeat it. Look at the screen update WebBrain shows next (zoom in if needed), then choose a different target or explain the blocker.]';
+    }
     const rereadHint = this._canUseToolInCurrentBatch(allowedToolNames, 'inspect_element_styles')
       ? 'get_accessibility_tree({filter:"visible"}) or inspect_element_styles'
       : 'get_accessibility_tree({filter:"visible"}) or get_interactive_elements';
     return `[NO PROGRESS DETECTED: The last click returned from the page, but the visible page snapshot did not change. Do not repeat the same click. Re-observe the page with ${rereadHint}, then choose a different target or explain the blocker.]`;
+  }
+
+  _coordinateClickStopMessage(args = {}, vision = null) {
+    if (vision?.tool === 'click_at') {
+      const point = vision.modelArgs || args;
+      return `Stopped: I clicked at (or near) (${point.x}, ${point.y}) in the screenshot several times and the screen did not change after any of those clicks. That point is missing its target, or the control there does nothing. Please give a different instruction or check the page yourself.`;
+    }
+    // Show the model's actual args, not _checkCoordClickLoop's 5px bucket —
+    // for fractional inputs like (0.911, 0.331) the bucket rounds to (0, 0)
+    // and the message reads as if we'd clicked the top-left corner.
+    return `Stopped: I clicked at (or near) coordinates (${args.x}, ${args.y}) multiple times and the page never responded. That position is hitting empty space, an overlay, or the wrong element. Please give a different instruction or check the page yourself.`;
   }
 
   _devStyleInspectionAvailableForTab(tabId) {
@@ -14417,6 +14569,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _captchaRoutingMessage(tabId, captchaGateDecision, captchaSolveOutcome, toolResult = {}, onUpdate = () => {}) {
+    // A vision run cannot apply a native answer: its notes end at the user.
+    const visionRun = this._visionRunState?.(tabId)?.active === true;
     let resultContent = '';
     const gate = captchaGateDecision || captchaSolveOutcome;
     if (gate && gate.status !== 'cleared' && !this._captchaToolsAvailable(tabId)) {
@@ -14430,12 +14584,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : captchaGateDecision.nativeDispatchInterrupted === true
         ? '\n[TRUSTED CAPTCHA GATE: A native solve was already dispatched for this document, but its answer is unavailable after restart. Do not send another paid request or submit the page; ask the user to complete the challenge manually.]'
         : captchaGateDecision.cloudflareManagedChallenge === true
-        ? '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Inspect get_captcha_capabilities for a Cloudflare native method; use one solve_captcha providerTasks dispatch only with all required observed inputs, otherwise ask for manual completion. Do not submit; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]'
+        ? (visionRun ? VISION_CAPTCHA_MANUAL_NOTE : '\n[TRUSTED CAPTCHA GATE: A response-backed full-page Cloudflare managed challenge is active. Inspect get_captcha_capabilities for a Cloudflare native method; use one solve_captcha providerTasks dispatch only with all required observed inputs, otherwise ask for manual completion. Do not submit; the network/navigation monitor will clear the gate when Cloudflare resumes the destination.]')
         : captchaGateDecision.awsWaf === true
         ? '\n[TRUSTED CAPTCHA GATE: AWS verification requires manual completion because no untried compatible provider or complete observed input set is available. Do not buy another answer for this unresolved challenge. After manual completion, read the page so the runtime can resume.]'
         : captchaGateDecision.activeChallengeAfterSolve === true
         ? '\n[TRUSTED CAPTCHA GATE: The active challenge frame is visible again after the one automatic solve. The site may have rejected the token. Do not call solve_captcha again; stop automation and ask the user to complete the challenge manually.]'
-        : '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable automatic widget was detected. Inspect get_captcha_capabilities and use one native providerTasks solve only if its required parameters can be observed. Otherwise ask for manual completion. Do not dismiss, close, or resubmit the challenge.]';
+        : (visionRun ? VISION_CAPTCHA_MANUAL_NOTE : '\n[TRUSTED CAPTCHA GATE: A verification challenge is active, but no safely selectable automatic widget was detected. Inspect get_captcha_capabilities and use one native providerTasks solve only if its required parameters can be observed. Otherwise ask for manual completion. Do not dismiss, close, or resubmit the challenge.]');
       onUpdate('warning', { message: 'Verification challenge requires manual completion.' });
     } else if (captchaGateDecision?.status === 'cleared') {
       if (captchaGateDecision.clearedByNavigation === true) {
@@ -14451,13 +14605,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     } else if ((captchaGateDecision || captchaSolveOutcome)?.status === 'verification_pending'
         && this._hasUnappliedNativeCaptchaSolution(tabId)) {
-      resultContent += '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. If the prior tool result is no longer in this chat, call get_captcha_capabilities to retrieve the pending paid answer without another solve. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
+      resultContent += visionRun ? VISION_CAPTCHA_UNAPPLIED_NOTE : '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. If the prior tool result is no longer in this chat, call get_captcha_capabilities to retrieve the pending paid answer without another solve. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
     } else if (toolResult?.type === 'aws_waf' && toolResult?.injected === true) {
       resultContent += '\n[TRUSTED CAPTCHA GATE: The AWS cookie was applied. Reload the observed page once with navigate, then read it to verify clearance. Do not call solve_captcha again for this unresolved challenge.]';
     } else if (captchaGateDecision?.status === 'verification_pending') {
       resultContent += '\n[TRUSTED CAPTCHA GATE: Verification is still pending because the exact widget has no response token or its frame state could not be inspected conclusively. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
     } else if (toolResult?.applicationRequired === true && captchaSolveOutcome?.status === 'verification_pending') {
-      resultContent += '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
+      resultContent += visionRun ? VISION_CAPTCHA_UNAPPLIED_NOTE : '\n[TRUSTED CAPTCHA GATE: The native answer is ready but has not been applied. Inspect the page and use apply_captcha_solution, then verify fresh page state.]';
     } else if (captchaSolveOutcome?.status === 'verification_pending') {
       resultContent += '\n[TRUSTED CAPTCHA GATE: The supported CAPTCHA token was injected, but clearance must be confirmed from the exact widget token and active challenge-frame state. Wait briefly, then read the page again. Do not submit, dismiss, or call solve_captcha again.]';
     } else if (captchaSolveOutcome?.status === 'manual_required') {
@@ -14534,7 +14688,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           manualCompletionRequired: true,
           cloudflareManagedChallenge: true,
           captchaDiagnostics: gate.publicGate?.diagnostics || null,
-          error: 'A full-page Cloudflare managed challenge is active. Use get_captcha_capabilities to inspect a compatible Cloudflare native method. A single solve_captcha call with observed providerTasks is allowed before any solve attempt; otherwise ask for manual completion. Navigate only to abandon the challenged page. Read the page again after Cloudflare resumes the destination.',
+          error: this._visionRunState?.(tabId)?.active === true
+            ? 'A full-page Cloudflare managed challenge is active and cannot be solved automatically in this mode. Ask the user to complete it manually; do not dismiss it or submit the page.'
+            : 'A full-page Cloudflare managed challenge is active. Use get_captcha_capabilities to inspect a compatible Cloudflare native method. A single solve_captcha call with observed providerTasks is allowed before any solve attempt; otherwise ask for manual completion. Navigate only to abandon the challenged page. Read the page again after Cloudflare resumes the destination.',
         };
       }
       return {
@@ -14912,7 +15068,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       activeGate
       && activeGate.status !== 'cleared'
       && !this._shouldRetryCaptchaManualGate(activeGate)
-    ) return null;
+    ) {
+      // A vision run cannot make the root tree read that shows a solved or
+      // completed challenge gone; WebBrain makes it before the action, and the
+      // gate block that follows reads the state it left (vision-runtime.js).
+      if (this._visionRunState(tabId).active === true) {
+        onStage('vision_root_read');
+        await this._visionCaptchaRootRead(tabId, abortSignal);
+        this._throwIfAborted(abortSignal);
+      }
+      return null;
+    }
     onStage('dialog_scan');
     const detectedChallenge = await this._detectChallengeDialogBeforeMutation(tabId, { abortSignal });
     this._throwIfAborted(abortSignal);
@@ -15610,6 +15776,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     toolCalls = expandBrowserBatchCalls(toolCalls, {
       enabled: this.browserBatchEnabled !== false, tier: this._resolvePromptTier(provider), allowedToolNames, toolSchemas: batchSchemas,
     });
+    // Vision mode: click_at becomes an ordinary coordinate click here, before
+    // any gate or guard runs (vision-runtime.js). Points read from a frame the
+    // window was resized or zoomed since are refused first.
+    const staleLayout = await this._visionStaleLayoutRefusal(tabId, toolCalls);
+    toolCalls = this._visionTranslateToolCalls(tabId, toolCalls, { staleLayout });
     const originalUpdate = onUpdate;
     const cancellationState = { active: null };
     // Begin wrapper rows at their execution position, including rejected batches.
@@ -15626,6 +15797,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowedToolNames, step, runOptions, toolSchemas, cancellationState,
       );
       this._throwIfAborted(this._runAbortSignal(tabId));
+      // Vision mode: whichever way the batch ended (a refused done, a
+      // completion hand-back, a bulk-API note), the next decision starts from
+      // a screen update of what the batch did, never from the frame its
+      // actions were chosen on. Once per batch (vision-runtime.js).
+      if (result?.action === 'continue' && this._visionRunState(tabId).active) {
+        await this._visionObserveAfterBatch(tabId, messages, onUpdate, { toolCalls });
+        this._throwIfAborted(this._runAbortSignal(tabId));
+      }
       return result;
     } catch (error) {
       // An action that was sent, or may have been, before Stop or an error
@@ -16077,17 +16256,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       const jevPending = this._jevPendingCalls?.get(tc.id);
       const fnName = tc.function?.name || '';
-      if (!allowedToolNames.has(fnName)) {
+      // A translated click_at runs as `click`, which vision runs do not
+      // advertise: it may run only while click_at itself is offered (a
+      // completion recovery turn that offers observation and done does not).
+      const translatedTool = tc._vision?.internalName && tc._vision.internalName === fnName ? tc._vision.tool || '' : '';
+      if (!allowedToolNames.has(fnName) && !(translatedTool && allowedToolNames.has(translatedTool))) {
         if (fnName) {
           // A named but unadvertised tool is a rejection before dispatch, so
           // it goes through loop accounting; otherwise a model can repeat a
           // retired screenshot call for the whole run. The detector counts it
           // by name alone (see _checkUnavailableToolLoop), so varying the
-          // arguments does not evade it, and never as progress.
-          const result = this._unavailableToolResult(fnName);
-          const recovery = await recordPreparationFailure(toolIndex, fnName, {}, result, result.error);
+          // arguments does not evade it, and never as progress. A translated
+          // call is named as the model called it.
+          const calledName = translatedTool || fnName;
+          const result = this._unavailableToolResult(calledName, tabId);
+          const recovery = await recordPreparationFailure(toolIndex, calledName, {}, result, result.error);
           if (recovery) return recovery;
-          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          if (interruptFailedBrowserAction(toolIndex, calledName)) { navNotices.length = 0; break; }
           continue;
         }
         const error = 'Tool call is missing a function name.';
@@ -16098,6 +16283,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           content: JSON.stringify({ success: false, denied: true, error }),
         });
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+        continue;
+      }
+      if (tc._vision?.error) {
+        const recovery = await recordPreparationFailure(toolIndex, tc._vision.tool || fnName, this._parseToolCallArgs(tc).args || {}, tc._vision.error);
+        if (recovery) return recovery;
+        // The rest of the batch was planned on that point: type_text would
+        // type into whatever has focus. The model decides again.
+        if (interruptFailedBrowserAction(toolIndex, tc._vision.tool || fnName)) { navNotices.length = 0; break; }
         continue;
       }
       // Where this call's time goes before dispatch (_predispatchTimer), from
@@ -16255,7 +16448,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             + (captchaGateBlock.manualCompletionRequired
               ? '\n[TRUSTED CAPTCHA GATE: Stop automation and ask the user to complete the verification manually. Do not dismiss, close, or resubmit it.]'
               : captchaGateBlock.captchaVerificationRequired
-                ? '\n[TRUSTED CAPTCHA GATE: Read the root accessibility tree to verify whether the one solved challenge cleared. Do not submit, dismiss, or call solve_captcha again.]'
+                ? (this._visionRunState(tabId).active === true
+                  ? '\n[TRUSTED CAPTCHA GATE: WebBrain checks whether the one solved challenge cleared before your next page action. Look at the screen update and wait briefly if the challenge is still finishing. Do not submit, dismiss, or call solve_captcha again.]'
+                  : '\n[TRUSTED CAPTCHA GATE: Read the root accessibility tree to verify whether the one solved challenge cleared. Do not submit, dismiss, or call solve_captcha again.]')
               : '\n[TRUSTED CAPTCHA GATE: Call solve_captcha once now. Do not dismiss or close the verification dialog and do not click Continue/Submit.]') + signupRecoveryNote,
         });
         const runId = this.currentRunId.get(tabId);
@@ -16662,6 +16857,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             () => ({ success: false, skipped: true, noDispatch: true, error: 'Paused for a user recovery choice.' }));
           this._persist(tabId);
           return { action: 'return', value: offer?.message || workflowPreSubmitBlock.error, status: 'publication_audit_failed' };
+        }
+        // The loop detector never sees a call refused here: repeating it is
+        // bounded by its own count instead (_noteRefusalWithoutDispatch).
+        const refusalStop = this._noteRefusalWithoutDispatch(tabId, fnName, fnArgs, workflowPreSubmitBlock);
+        if (refusalStop) {
+          this._appendSyntheticToolResults(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
+            () => ({ success: false, skipped: true, error: 'skipped: run stopped after repeated refusals' }));
+          const refusalRunId = this.currentRunId.get(tabId);
+          if (refusalRunId) trace.recordError(refusalRunId, step, 'loop', refusalStop);
+          this._persist(tabId);
+          return { action: 'recover', value: refusalStop, status: 'loop_stopped' };
         }
         onUpdate('warning', { message: workflowPreSubmitBlock.error });
         if (workflowPreSubmitBlock.workflowRearmed || workflowPreSubmitBlock.conditionalMutationBlocked) {
@@ -17433,6 +17639,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               {
                 completionBatchStartState,
                 _browserBatch: tc._browserBatch,
+                _vision: tc._vision || null,
                 traceStep: step,
                 jevBinding: jevPending?.call.binding,
                 detectedSubmitAction,
@@ -17600,7 +17807,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }));
         return this._pageFeedbackRecoveryResult(tabId, messages, onUpdate) || { action: 'continue' };
       }
-      if (toolResult?.success !== false && toolResult?.noDispatch !== true && toolResult?.dispatched !== false) this._resetPageFeedbackProgress(tabId);
+      if (toolResult?.success !== false && toolResult?.noDispatch !== true && toolResult?.dispatched !== false) {
+        this._resetPageFeedbackProgress(tabId);
+        this._guardRunState(tabId).refusals = null;
+      }
+      // A vision click on a file input hands the next steps to upload_file,
+      // and a successful upload hands them back (vision-runtime.js).
+      toolResult = this._visionNoteUploadHandoff(tabId, fnName, toolResult, { vision: tc._vision, promptTier });
       if (jevPending) {
         this._jevPendingCalls.delete(tc.id);
         if (fnName !== 'get_accessibility_tree') jevPending.session.dispatched(toolResult);
@@ -18127,11 +18340,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (challengeLoopCheck.kind === 'stop') {
           stopMessage = challengeLoopCheck.message;
         } else if (coordCheck.kind === 'stop') {
-          // Show the model's actual args, not _checkCoordClickLoop's 5px
-          // bucket — for fractional inputs like (0.911, 0.331) the bucket
-          // rounds to (0, 0) and the message reads as if we'd clicked the
-          // top-left corner, hiding what really happened.
-          stopMessage = `Stopped: I clicked at (or near) coordinates (${fnArgs.x}, ${fnArgs.y}) multiple times and the page never responded. That position is hitting empty space, an overlay, or the wrong element. Please give a different instruction or check the page yourself.`;
+          stopMessage = this._coordinateClickStopMessage(fnArgs, tc._vision);
         } else if (scrollCheck.kind === 'stop') {
           stopMessage = scrollCheck.message;
         } else if (axReadCheck.kind === 'stop') {
@@ -18144,7 +18353,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (challengeLoopCheck.kind === 'nudge') {
           nudgeWarning = challengeLoopCheck.warning;
         } else if (coordCheck.kind === 'nudge') {
-          nudgeWarning = this._coordinateClickRecoveryWarning(fnArgs, allowedToolNames);
+          nudgeWarning = this._coordinateClickRecoveryWarning(fnArgs, allowedToolNames, tc._vision);
         } else if (scrollCheck.kind === 'nudge') {
           nudgeWarning = scrollCheck.warning;
         } else if (axReadCheck.kind === 'nudge') {
@@ -18503,6 +18712,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Inject any navigation notices BEFORE the auto-screenshot, so the
     // model sees the warning and the new viewport in the same turn.
     this._injectNavNotices(messages, navNotices, onUpdate, tabId);
+
+    // Vision mode shows the model a patch, a new frame or "no visible
+    // change" after every batch instead of the legacy auto-screenshot.
+    if (this._visionRunState(tabId).active) {
+      await this._visionObserveAfterBatch(tabId, messages, onUpdate, { toolCalls });
+      this._persist(tabId);
+      return { action: 'continue' };
+    }
 
     // Auto-screenshot once per batch, debounced 500ms. Capture if either
     // the main provider supports images, or a dedicated vision model is
@@ -19299,6 +19516,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return shot;
   }
 
+  /**
+   * Clip for a CDP capture of the visible viewport. Clip coordinates are
+   * document coordinates (a clip at 0,0 on a scrolled page captures the
+   * unrendered top of the document: a blank frame), and the output is
+   * clip x scale x devicePixelRatio (scale 1 on a retina screen is twice the
+   * CSS size), so the scale divides the DPR out.
+   */
+  _viewportCaptureClip(probe, cssW, cssH, scale = 1) {
+    const dpr = Math.max(0.25, Number(probe?.dpr) || 1);
+    // The clip is in device-independent pixels: CSS px times browser zoom
+    // (the DPR already contains the zoom, so the scale stays scale / DPR).
+    const zoom = Math.max(0.25, Number(probe?.zoom) || 1);
+    return {
+      x: Math.max(0, Number(probe?.scrollX) || 0) * zoom,
+      y: Math.max(0, Number(probe?.scrollY) || 0) * zoom,
+      width: cssW * zoom,
+      height: cssH * zoom,
+      scale: scale / dpr,
+    };
+  }
+
   async _captureAutoScreenshot(tabId, { coordAligned = false } = {}) {
     try {
       await cdpClient.attach(tabId);
@@ -19323,7 +19561,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
               format: 'jpeg',
               quality: 60,
-              clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+              clip: this._viewportCaptureClip(probe, cssW, cssH, 1),
             })
           );
           if (!shot?.data) return null;
@@ -19368,7 +19606,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             format: 'jpeg',
             quality: Math.round(budget.initialJpegQuality * 100),
             fromSurface: true,
-            clip: { x: 0, y: 0, width: cssW, height: cssH, scale },
+            clip: this._viewportCaptureClip(probe, cssW, cssH, scale),
           })
         );
         if (!shot?.data) return null;
@@ -19420,6 +19658,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * @returns {Promise<string>}
    */
   async _redactScreenshotDataUrl(tabId, dataUrl, opts = {}) {
+    // `opts.outcome`, when given, receives why the image came back as it did:
+    // 'redacted', 'no_regions' or 'no_regions_in_view' (nothing to hide), or
+    // 'decode_failed', 'scan_unavailable' or 'pixelate_failed' (the image is
+    // returned unredacted; vision mode reports those).
+    const report = status => { if (opts.outcome && typeof opts.outcome === 'object') opts.outcome.status = status; };
     if (!this.screenshotRedaction || !dataUrl) return dataUrl;
 
     // Resolve the captured image's pixel dimensions. Callers that already
@@ -19441,6 +19684,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           try { bmp.close?.(); } catch {}
         }
       } catch {
+        report('decode_failed');
         return dataUrl;
       }
     }
@@ -19449,7 +19693,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const snapshot = opts.redactionSnapshot
       ? this._normalizeScreenshotRedactionSnapshot(opts.redactionSnapshot, coordinateSpace)
       : await this._captureScreenshotRedactionSnapshot(tabId, { coordinateSpace });
-    if (!snapshot) return dataUrl;
+    if (!snapshot) {
+      report('scan_unavailable');
+      return dataUrl;
+    }
 
     // The captured CSS box (CSS px) in the SAME space as the element rects.
     // A bounded full-page capture can be shorter than the live document, so
@@ -19475,7 +19722,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : (Number.isFinite(opts.offsetY) ? opts.offsetY : 0);
 
     const regions = snapshot.regions;
-    if (!regions.length) return dataUrl;
+    if (!regions.length) {
+      report('no_regions');
+      return dataUrl;
+    }
 
     const imageRegions = mapRegionsToImage(regions, {
       scaleX,
@@ -19485,10 +19735,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       imageWidth,
       imageHeight,
     });
-    if (!imageRegions.length) return dataUrl;
+    if (!imageRegions.length) {
+      report('no_regions_in_view');
+      return dataUrl;
+    }
 
     const redacted = await pixelateDataUrl(dataUrl, imageRegions);
-    if (redacted === dataUrl) return dataUrl; // pixelation was a no-op/failed
+    if (redacted === dataUrl) {
+      // Pixelation was a no-op or failed.
+      report('pixelate_failed');
+      return dataUrl;
+    }
+    report('redacted');
 
     // `pixelateDataUrl` re-encodes at a fixed quality, which can push the
     // result back over the provider's base64 ceiling (callers have already
@@ -19804,7 +20062,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
             format: 'png',
             fromSurface: true,
-            clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+            clip: this._viewportCaptureClip(probe, cssW, cssH, 1),
           })
         );
         if (!shot?.data) return null;
@@ -20091,7 +20349,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         })()
       `);
-      return probe?.result?.value || null;
+      const value = probe?.result?.value || null;
+      if (value) {
+        // Browser zoom: capture clips are in CSS px x zoom (_viewportCaptureClip).
+        try {
+          const zoom = Number((await cdpClient.sendCommand(tabId, 'Page.getLayoutMetrics'))?.cssVisualViewport?.zoom);
+          if (zoom > 0) value.zoom = zoom;
+        } catch {}
+      }
+      return value;
     } catch {
       return null;
     }
@@ -20547,6 +20813,311 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       converted: true,
       captureId: capture.captureId,
     };
+  }
+
+  // ───────────── Vision mode platform layer (Chrome) ─────────────
+  // vision-runtime.js owns the logic; these methods are the CDP specifics.
+  // Every Input.* command passes cdpClient's page-agent fence, so the page
+  // monitor attributes these events to the agent, not to a person.
+
+  /** CSS viewport, scroll offset, DPR and URL of the tab. */
+  async _visionPlatformProbe(tabId) {
+    await cdpClient.attach(tabId);
+    const [metrics, page] = await Promise.all([
+      cdpClient.sendCommand(tabId, 'Page.getLayoutMetrics').catch(() => null),
+      cdpClient.evaluate(tabId, '({ w: innerWidth, h: innerHeight, sx: scrollX, sy: scrollY, dpr: devicePixelRatio, url: location.href })')
+        .catch(() => null),
+    ]);
+    const value = page?.result?.value || {};
+    const visual = metrics?.cssVisualViewport || null;
+    let url = String(value.url || '');
+    if (!url) {
+      try { url = (await chrome.tabs.get(tabId))?.url || ''; } catch { url = ''; }
+    }
+    // The visual viewport excludes classic scrollbars, so points never land
+    // on one, and its page offset is where CDP clips start (clip coordinates
+    // are document coordinates: a clip at 0,0 on a scrolled page is blank).
+    return {
+      cssWidth: Number(visual?.clientWidth) || Number(value.w) || 0,
+      cssHeight: Number(visual?.clientHeight) || Number(value.h) || 0,
+      scrollX: Number.isFinite(Number(visual?.pageX)) ? Number(visual.pageX) : (Number(value.sx) || 0),
+      scrollY: Number.isFinite(Number(visual?.pageY)) ? Number(visual.pageY) : (Number(value.sy) || 0),
+      devicePixelRatio: Number(value.dpr) || 1,
+      // Browser zoom (CSS px -> device-independent px); part of the DPR.
+      zoom: Number(visual?.zoom) > 0 ? Number(visual.zoom) : 1,
+      url,
+    };
+  }
+
+  /**
+   * Capture the viewport (or `cssRegion` of it) close to outWidth x
+   * outHeight. The clip is in device-independent pixels (CSS px x browser
+   * zoom) and the compositor renders clip x scale x device scale factor, so
+   * with the DPR (= device scale factor x zoom) divided out of the scale the
+   * output is outWidth wide. Whatever size actually comes back is resampled
+   * to the plan by the runtime.
+   */
+  async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight }) {
+    await cdpClient.attach(tabId);
+    await cdpClient.sendCommand(tabId, 'Page.enable').catch(() => {});
+    await this._preparePageForCapture(tabId);
+    // Stop while the page was prepared: no screenshot is taken
+    // (vision-runtime.js _visionBounded no longer waits for it).
+    this._throwIfAborted(this._runAbortSignal(tabId));
+    const region = cssRegion || { x: 0, y: 0, width: probe.cssWidth, height: probe.cssHeight };
+    const dpr = Math.max(0.25, Number(probe?.devicePixelRatio) || 1);
+    const zoom = Math.max(0.25, Number(probe?.zoom) || 1);
+    const scale = Math.max(0.05, Math.min(4, Number(outWidth) / (Math.max(1, region.width) * dpr)));
+    const shot = await this._withIndicatorsHidden(tabId, () => cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
+      format: 'jpeg',
+      quality: 90,
+      fromSurface: true,
+      clip: {
+        x: ((Number(probe?.scrollX) || 0) + region.x) * zoom,
+        y: ((Number(probe?.scrollY) || 0) + region.y) * zoom,
+        width: Math.max(1, region.width) * zoom,
+        height: Math.max(1, region.height) * zoom,
+        scale,
+      },
+    }));
+    return shot?.data ? `data:image/jpeg;base64,${shot.data}` : null;
+  }
+
+  /**
+   * A tab the last vision click opened after its quiet window (watchOpenedTabs)
+   * is rerouted into this tab before the next screen update, as one opened at
+   * once would have been. A watch that has seen no tab yet stays armed until
+   * its deadline, for a tab the page opens while the screen settles or the
+   * model decides (a later update reroutes it); `cancel` drops the watch (a
+   * new click or run).
+   */
+  async _visionPlatformLateTab(tabId, { cancel = false } = {}) {
+    const entry = this._visionLateTabWatches?.get(tabId);
+    if (!entry) return null;
+    if (!cancel && !entry.watch.opened.length && entry.watch.listening) return null;
+    this._visionLateTabWatches.delete(tabId);
+    clearTimeout(entry.timer);
+    entry.watch.stop();
+    if (cancel || !entry.watch.opened.length) return null;
+    return this._redirectTargetBlankClick(tabId, entry.beforeTabIds);
+  }
+
+  async _visionPlatformWheel(tabId, { x, y, deltaX = 0, deltaY = 0 }) {
+    await cdpClient.attach(tabId);
+    await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 });
+    // Wheel notches of ~100 CSS px, like a mouse; smooth-scroll handlers and
+    // scroll-snapping lists behave as they do for a person.
+    const notches = Math.max(1, Math.min(30, Math.round(Math.max(Math.abs(deltaX), Math.abs(deltaY)) / 100)));
+    for (let i = 0; i < notches; i++) {
+      await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        type: 'mouseWheel', x, y, deltaX: deltaX / notches, deltaY: deltaY / notches, button: 'none', buttons: 0,
+      });
+      await new Promise(resolve => setTimeout(resolve, 16));
+    }
+    return { success: true, dispatched: true, method: 'cdp-wheel' };
+  }
+
+  async _visionPlatformHover(tabId, { x, y }) {
+    await cdpClient.attach(tabId);
+    // Approach from one pixel away so enter/over handlers fire even when the
+    // pointer already rests at the point.
+    await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.max(0, x - 1), y: Math.max(0, y - 1), button: 'none', buttons: 0 });
+    await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 });
+    const point = (await this._visionDomProbe(tabId, { points: [{ x, y }] }))?.points?.[0];
+    const target = point?.found ? { tag: point.tag, ...(point.role ? { role: point.role } : {}) } : null;
+    return { success: true, dispatched: true, method: 'cdp-hover', ...(target ? { target } : {}) };
+  }
+
+  async _visionPlatformDrag(tabId, { from, to, steps = 12 }) {
+    await cdpClient.attach(tabId);
+    await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x, y: from.y, button: 'none', buttons: 0 });
+    let pressed = false;
+    try {
+      await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1,
+      }, '', options), { onSent: () => { pressed = true; } });
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved', x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t, button: 'left', buttons: 1,
+        });
+        await new Promise(resolve => setTimeout(resolve, 16));
+      }
+    } finally {
+      if (pressed) {
+        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1,
+        }).catch(() => {});
+      }
+    }
+    return { success: true, dispatched: pressed, method: 'cdp-drag' };
+  }
+
+  /**
+   * What is under CSS points (vision-dom-probe.js), evaluated in an isolated
+   * world so page scripts cannot redefine the DOM methods the checks use. The
+   * world is created once per document (frame loader) and reused.
+   */
+  async _visionPlatformDomProbe(tabId, request) {
+    await cdpClient.attach(tabId);
+    await cdpClient.sendCommand(tabId, 'Runtime.enable');
+    if (!this._visionProbeContexts) this._visionProbeContexts = new Map();
+    const expression = visionDomProbeExpression(request);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let contextId = null;
+      let reused = false;
+      try {
+        await cdpClient.sendCommand(tabId, 'Page.enable');
+        const frame = (await cdpClient.sendCommand(tabId, 'Page.getFrameTree'))?.frameTree?.frame;
+        const cached = this._visionProbeContexts.get(tabId);
+        if (frame?.id && cached?.frameId === frame.id && cached.loaderId === frame.loaderId) {
+          contextId = cached.contextId;
+          reused = true;
+        } else if (frame?.id) {
+          contextId = (await cdpClient.sendCommand(tabId, 'Page.createIsolatedWorld', {
+            frameId: frame.id, worldName: 'webbrain-vision-probe', grantUniveralAccess: false,
+          }))?.executionContextId || null;
+          if (contextId) this._visionProbeContexts.set(tabId, { frameId: frame.id, loaderId: frame.loaderId, contextId });
+        }
+      } catch (error) {
+        if (error?.code === 'page_feedback_pending') throw error;
+        contextId = null;
+      }
+      try {
+        const response = await cdpClient.sendCommand(tabId, 'Runtime.evaluate', {
+          expression,
+          returnByValue: true,
+          ...(contextId ? { contextId } : {}),
+        });
+        if (response?.exceptionDetails) return null;
+        return response?.result?.value || null;
+      } catch (error) {
+        if (error?.code === 'page_feedback_pending') throw error;
+        this._visionProbeContexts.delete(tabId);
+        // A cached world that did not survive (a debugger re-attach on the
+        // same document) is made again once.
+        if (reused && attempt === 0) continue;
+        throw error;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Dispatch a vision click: trusted pointer events at exactly the CSS point
+   * (button and click count as asked), keeping the coordinate path's
+   * dispatch-time protections: native <select> handling, the file-chooser
+   * guard, the recipient binding and target=_blank redirection. Batch-level
+   * gates and guards already ran on this `click`.
+   */
+  async _visionDispatchClick(tabId, args, {
+    vision = null,
+    messageRecipientGuardRequired = false,
+    messageRecipientDispatchBinding = null,
+    detectedSubmitAction = null,
+    throwIfAborted = () => {},
+    markDispatched = () => {},
+    cancelPressedPointer = async () => {},
+  } = {}) {
+    const x = Number(args.x);
+    const y = Number(args.y);
+    const button = ['left', 'right', 'middle'].includes(vision?.button) ? vision.button : 'left';
+    const clickCount = [1, 2, 3].includes(vision?.clickCount) ? vision.clickCount : 1;
+    throwIfAborted();
+    await cdpClient.attach(tabId);
+    throwIfAborted();
+    // A native <select> opens an OS popup no screenshot can show (it is
+    // focused for type_text instead), and a double/triple click on a control
+    // would repeat the one action the checks approved.
+    const preflight = await this._visionClickPreflight(tabId, {
+      x, y, button, clickCount,
+      recipientGuarded: messageRecipientGuardRequired === true,
+      submitDetected: detectedSubmitAction?.isSubmit === true,
+    });
+    throwIfAborted();
+    if (preflight.refusal) return preflight.refusal;
+    // An authorized deletion or post-correction commit is bound to the control
+    // read at this point; it must still be there (vision-runtime.js).
+    const unbound = await this._visionMutationBindingBlock(tabId, args, detectedSubmitAction);
+    throwIfAborted();
+    if (unbound) return unbound;
+    const hit = { target: preflight.target };
+    const beforeTabIds = new Set((await chrome.tabs.query({})).map(tab => tab.id));
+    throwIfAborted();
+    this._showAgentTarget(tabId, { x: Math.round(x), y: Math.round(y), w: 1, h: 1 }, 'click_coordinates');
+    await cdpClient.armFileInputClickGuard(tabId);
+    throwIfAborted();
+    // A tab the click opens is seen as it is created; a click that opens none
+    // is known to after a short quiet window instead of the full poll.
+    const openedTabs = watchOpenedTabs(tabId);
+    let redirected = null;
+    try {
+      await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', buttons: 0 });
+      throwIfAborted();
+      if (messageRecipientGuardRequired) {
+        const recipientValidation = await this._consumeMessageRecipientDispatchBinding(
+          tabId,
+          messageRecipientDispatchBinding,
+          { dispatchPoint: { x, y } },
+        );
+        if (recipientValidation?.success !== true) return recipientValidation;
+      }
+      throwIfAborted();
+      const buttons = button === 'right' ? 2 : button === 'middle' ? 4 : 1;
+      let pressed = false;
+      try {
+        for (let count = 1; count <= clickCount; count++) {
+          await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+            type: 'mousePressed', x, y, button, buttons, clickCount: count,
+          }, '', options), { beforeSend: throwIfAborted, onSent: () => { pressed = true; markDispatched(); } });
+          await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+            type: 'mouseReleased', x, y, button, buttons: 0, clickCount: count,
+          });
+          pressed = false;
+        }
+      } catch (error) {
+        if (pressed) await cancelPressedPointer();
+        throw error;
+      }
+      const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
+      if (blockedFileInput?.blocked) {
+        return visionFilePickerBlockedResult(cdpClient.fileInputClickBlockedResult(blockedFileInput, `The attempted control was at (${x}, ${y}).`));
+      }
+      // The file-chooser guard's settle time (above) is already the quiet
+      // window: a click that has opened no tab by now opened none.
+      redirected = await this._redirectTargetBlankClick(tabId, beforeTabIds, { watch: openedTabs, quietMs: 1 });
+      // A tab opened later (window.open after the page's own request) is
+      // still rerouted before the next screen update (_visionPlatformLateTab).
+      // An earlier click's watch ends here; a tab it already saw is carried
+      // over unless this click navigated the tab itself.
+      const previous = this._visionLateTabWatches?.get(tabId);
+      await this._visionPlatformLateTab(tabId, { cancel: true });
+      if (!redirected && openedTabs.listening) {
+        const carried = previous?.watch.opened.length ? previous : null;
+        if (carried) openedTabs.opened.unshift(...carried.watch.opened);
+        this._visionLateTabWatches ??= new Map();
+        this._visionLateTabWatches.set(tabId, { watch: openedTabs, beforeTabIds: carried?.beforeTabIds || beforeTabIds,
+          timer: setTimeout(() => openedTabs.stop(), VISION_LATE_TAB_WATCH_MS) });
+      }
+    } finally {
+      if (this._visionLateTabWatches?.get(tabId)?.watch !== openedTabs) openedTabs.stop();
+    }
+    const result = {
+      success: true,
+      dispatched: true,
+      method: 'cdp-vision-pointer',
+      x,
+      y,
+      ...(button !== 'left' ? { button } : {}),
+      ...(clickCount > 1 ? { clicks: clickCount } : {}),
+      ...(hit?.target ? { target: hit.target } : {}),
+      ...(vision?.imageId ? { image: vision.imageId } : {}),
+      ...(redirected?.redirected ? { redirectedFromNewTab: true } : {}),
+    };
+    // Whether the click changed anything is the screen update's to say: a DOM
+    // text and control snapshot cannot see a canvas, a map or a value it does
+    // not read, and calling such a click a failure stopped real progress.
+    return result;
   }
 
   _coordinateReconciliationDiagnostic(point, resolution, clickPath, fallbackReason) {
@@ -22302,7 +22873,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * (no tab) is never skipped.
    */
   _guardSkipped(id, tabId = null) {
-    return this._leanRunActive(tabId) && leanSkipsGuard(id);
+    if (!this._leanRunActive(tabId) || !leanSkipsGuard(id)) return false;
+    // A vision run sees what an action did only in the screen update after
+    // its batch: done(success) in the same response as the action reports a
+    // result nobody has looked at, so lean mode keeps that check there.
+    if (id === 'done-invariant-shape-checks' && this._visionRunState?.(tabId)?.active === true) return false;
+    return true;
   }
 
   /**
@@ -22343,6 +22919,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (outcome !== 'advise') return false;
     if (Array.isArray(advisories)) advisories.push(guardAdvisory(id, message));
     return true;
+  }
+
+  /**
+   * A call a pre-dispatch guard refused (publication audit, commit binding,
+   * resource mutation, a prior submission after steering) never reaches the
+   * loop detector. Counted per run until a call goes through: the third
+   * identical refusal (arguments compared without image ids) or the sixth
+   * of any kind returns the message that stops the run.
+   */
+  _noteRefusalWithoutDispatch(tabId, name, args, result) {
+    const state = this._guardRunState(tabId);
+    const refusals = state.refusals ||= { total: 0, bySignature: new Map() };
+    const proposal = JSON.stringify(args || {}, (key, value) => (['image', 'keyframeId', 'imageId'].includes(key) ? undefined : value));
+    const reason = String(result?.errorCode || result?.reasonCode || result?.code || '').slice(0, 80);
+    const signature = JSON.stringify([name, reason, String(result?.error || '').slice(0, 160), proposal]);
+    const repeats = (refusals.bySignature.get(signature) || 0) + 1;
+    refusals.bySignature.set(signature, repeats);
+    refusals.total += 1;
+    if (repeats < 3 && refusals.total < 6) return null;
+    // The run stops here; a recovery that carries on starts counting again.
+    state.refusals = null;
+    const detail = String(result?.error || 'the action was refused').replace(/\s+/g, ' ').trim().slice(0, 240);
+    return `Stopped: WebBrain refused ${repeats >= 3 ? 'the same action three times' : 'six actions'} in a row without any action going through (${detail}). The task is not complete; nothing more was sent, and any draft is left as it is.`;
   }
 
   _guardRunState(tabId) {
@@ -25083,7 +25682,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return blocked('The task changed while this control was being checked, so it was not activated. Continue under the latest request and read the page again before retrying.');
       }
       if (name === 'press_keys') return { ...blocked('Enter was not pressed: outside the post editor, a key activation on X or Bluesky could publish. Click the specific control instead; to publish, verify the draft and use the composer\'s Post button.'), targetUnresolved: true };
-      return { ...blocked('This control was not clicked: it could not be identified as a link, field, menu item or ordinary button, and an unidentified control on X or Bluesky could publish. Read the page and target the specific control by its ref; to publish, verify the draft and use the composer\'s Post button. Do not run arbitrary JavaScript or bundle editing and submission.'), targetUnresolved: true };
+      return { ...blocked('This control was not clicked: it could not be identified as a link, field, menu item or ordinary button, and an unidentified control on X or Bluesky could publish. '
+        + (this._visionRunState(tabId).active === true
+          ? 'Zoom in to find the specific link or labelled button and click_at it'
+          : 'Read the page and target the specific control by its ref')
+        + '; to publish, verify the draft and use the composer\'s Post button. Do not run arbitrary JavaScript or bundle editing and submission.'), targetUnresolved: true };
     }
     if (!['click', 'click_ax', 'iframe_click'].includes(name)) return blocked('Write and verify the draft first, then activate its publish control in a separate click.');
     if (detected.publicationControl !== true) return blocked('Publication composer ownership could not be observed. Read the current page and use its resolved publish control.');
@@ -32127,7 +32730,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '', executionContext = null) {
     const name = String(toolName || '');
     const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys', 'upload_file']);
-    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool']);
+    // drag_at (vision mode) presses and releases where the model points; no
+    // recipient binding covers that, and a short drag is a click.
+    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool', 'drag_at']);
     if (!ordinaryGuardedTools.has(name) && !unbindableDispatchTools.has(name)) return null;
     if (name === 'press_keys' && String(args?.key || '') !== 'Enter') return null;
     if (name === 'set_field' && args?.submit !== true) return null;
@@ -32177,7 +32782,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? (!uploadSourceKey
             ? 'Attachment blocked: use exactly one attachmentId, downloadId, or absolute filePath. Remove fallback sources and retry with the same authorized recipient.'
             : 'Attachment blocked: choose an exact, unique file-input selector in the active authorized conversation. Re-read the file-input inventory before retrying.')
-          : `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
+          : name === 'drag_at'
+            ? 'Message action blocked: drag_at cannot bind its effects to the verified active recipient. Use click_at on the control, or a single Enter press in the visible composer, instead.'
+            : `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
       };
     }
 
@@ -32557,9 +33164,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ? 'Message send blocked: this control commits a message (for example "Send" / "Send without a note") but no active composer or recipient could be verified. Changing click targeting methods will not help. Open the intended conversation so its composer and recipient are visible, or report that the message could not be sent.'
           : 'Message send blocked: no message composer is visible, so this send cannot be verified. Changing click targeting methods will not resolve this classification failure. Re-read the page to find a supported navigation or composer-opening control; if none is available, report the blocker instead of repeating the click.')
         : probe?.reasonCode === 'message_target_unresolved'
-        ? 'The requested control could not be resolved in the current page or frame, so no action was dispatched. This does not establish a recipient mismatch or an attempted Send. Read fresh page evidence and use an exact visible control or fresh ref_id; do not guess hidden menu labels or repeat the same unresolved target. If the control is unavailable, report that blocker.'
+        ? `The requested control could not be resolved in the current page or frame, so no action was dispatched. This does not establish a recipient mismatch or an attempted Send. ${this._visionRunState(tabId).active === true ? 'Look at the current screen and click_at an exact visible control' : 'Read fresh page evidence and use an exact visible control or fresh ref_id'}; do not guess hidden menu labels or repeat the same unresolved target. If the control is unavailable, report that blocker.`
         : inconclusive
-        ? 'Message action blocked: WebBrain could not conclusively resolve the target control and active composer. Re-read the page and retry with an exact visible control or fresh ref_id.'
+        ? `Message action blocked: WebBrain could not conclusively resolve the target control and active composer. ${this._visionRunState(tabId).active === true ? 'Look at the current screen and retry with click_at on an exact visible control.' : 'Re-read the page and retry with an exact visible control or fresh ref_id.'}`
         : target
           ? this._recipientMismatchGuidance(observedRecipientLabel, target)
           // A verifiable text send is put to the user on WebBrain's card; what
@@ -33478,11 +34085,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                     host = parsed.hostname;
                   }
                 } catch {}
+                // Where the frame's own viewport starts inside its box, and
+                // the scale a CSS transform or zoom draws it at (its layout
+                // box against the drawn one; 1 up to rounding), so the probe
+                // in the frame maps the point onto what is drawn there.
+                const style = getComputedStyle(frame);
+                const length = value => Number.parseFloat(value) || 0;
+                const scale = (drawn, laid) => (laid > 0 && Math.abs(drawn - laid) > 1 ? drawn / laid : 1);
                 return {
                   left: rect.left,
                   top: rect.top,
                   width: rect.width,
                   height: rect.height,
+                  insetLeft: length(style.borderLeftWidth) + length(style.paddingLeft),
+                  insetTop: length(style.borderTopWidth) + length(style.paddingTop),
+                  scaleX: scale(rect.width, frame.offsetWidth),
+                  scaleY: scale(rect.height, frame.offsetHeight),
                   url,
                   host,
                   index,
@@ -33615,6 +34233,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   static _submitActionProbe = function _submitActionProbe(toolName, args = {}) {
     const compact = (value, max = 160) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+    // The element a point lands on, inside open shadow roots too, as the
+    // pointer events of a coordinate click reach it (content.js
+    // _shadowAwareElementFromPoint): a Delete or Pay button in a web
+    // component is the control, not its host.
+    const elementAtPoint = (root, x, y) => {
+      let hit = root.elementFromPoint(x, y);
+      const seen = new Set();
+      while (hit?.shadowRoot && !seen.has(hit)) {
+        seen.add(hit);
+        let inner = null;
+        try { inner = hit.shadowRoot.elementFromPoint(x, y); } catch {}
+        if (!inner || inner === hit) break;
+        hit = inner;
+      }
+      return hit;
+    };
+    // closest() that continues past a shadow root to its host, so an element
+    // inside a web component still sees the control or link around it.
+    const closestAcrossShadow = (el, selector) => {
+      for (let node = el, depth = 0; node && depth < 16; depth++) {
+        const found = node.closest?.(selector);
+        if (found) return found;
+        const root = node.getRootNode?.();
+        node = root && root !== node && root.host ? root.host : null;
+      }
+      return null;
+    };
     // What a control's caption means (it publishes, commits, deletes one or
     // several items, moves to a next step, edits the draft, only changes the
     // view, or is unclear) is read by a model in any language, never matched
@@ -34814,7 +35459,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return interactiveElements().find((el) => compact(el.innerText || el.value || el.placeholder || el.ariaLabel).toLowerCase().includes(needle)) || null;
         }
         if (args.x != null && args.y != null) {
-          try { return doc.elementFromPoint(Number(args.x), Number(args.y)); } catch { return null; }
+          try { return elementAtPoint(doc, Number(args.x), Number(args.y)); } catch { return null; }
         }
         return null;
       }
@@ -34862,22 +35507,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const candidateRects = matchingRects.length ? matchingRects : (frameRects.length === 1 ? frameRects : []);
           let fallbackTarget = null;
           for (const frame of candidateRects) {
-            const localX = Number(args.x) - Number(frame?.left);
-            const localY = Number(args.y) - Number(frame?.top);
-            const width = Number(frame?.width);
-            const height = Number(frame?.height);
+            // The frame's drawn box, scaled back to its own viewport.
+            const scaleX = Number(frame?.scaleX) > 0 ? Number(frame.scaleX) : 1;
+            const scaleY = Number(frame?.scaleY) > 0 ? Number(frame.scaleY) : 1;
+            const localX = (Number(args.x) - Number(frame?.left)) / scaleX - (Number(frame?.insetLeft) || 0);
+            const localY = (Number(args.y) - Number(frame?.top)) / scaleY - (Number(frame?.insetTop) || 0);
+            const width = Number(frame?.width) / scaleX;
+            const height = Number(frame?.height) / scaleY;
             if (!Number.isFinite(localX) || !Number.isFinite(localY)) continue;
             if (Number.isFinite(width) && (localX < 0 || localX > width)) continue;
             if (Number.isFinite(height) && (localY < 0 || localY > height)) continue;
             try {
-              const target = doc.elementFromPoint(localX, localY);
+              const target = elementAtPoint(doc, localX, localY);
               if (!fallbackTarget && target) fallbackTarget = target;
               if (isSubmitControl(target)) return target;
             } catch {}
           }
           if (fallbackTarget) return fallbackTarget;
         }
-        try { return doc.elementFromPoint(Number(args.x), Number(args.y)); } catch { return null; }
+        try { return elementAtPoint(doc, Number(args.x), Number(args.y)); } catch { return null; }
       }
       if (args.text) {
         const needle = compact(args.text).toLowerCase();
@@ -36049,6 +36697,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             popupLauncherToken: popupTarget ? rememberPopupLauncher(control, actionResource) : '' };
         }
       }
+      // A vision click on plain content: no control, link, field, label or
+      // inline handler on the element or around it (a post's text, a picture,
+      // blank space). It can open what the page opens for it; it cannot submit
+      // a form or publish. The tree path clicks the link or button itself, but
+      // a point is all a vision run has. A frame, embed, plugin, canvas or
+      // application region draws controls the DOM does not show, so it is
+      // opaque here, never plain.
+      if (target && toolName === 'click' && args.coordinate_space === 'css' && args.x != null && args.y != null
+          && !isFormField(target) && !isEditableActivationTarget(target)
+          && !closestAcrossShadow(target, 'iframe,frame,embed,object,canvas,[role="application"],button,input,select,textarea,label,summary,a[href],area[href],[role="button"],[role="link"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="tab"],[role="option"],[role="treeitem"],[role="switch"],[role="checkbox"],[role="radio"],[role="textbox"],[role="combobox"],[contenteditable=""],[contenteditable="true"],[onclick],[data-action],[form],[formaction]')) {
+        return { isSubmit: false, host, url, resolvedNonSubmitTarget: true, resolvedPlainContent: true };
+      }
     } catch {}
     return null;
   };
@@ -36144,6 +36804,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Select the appropriate ACT system prompt based on the active provider.
    * Small/local models get a compact prompt to save context budget.
    */
+  _getVisionActPrompt(state, provider = null) {
+    const tier = this._resolvePromptTier(provider);
+    const prompt = getVisionActPrompt({ coordinates: state.coordinates, tier });
+    return tier === 'full'
+      ? `${prompt}\n\n${this.imageGenConfigured ? SYSTEM_PROMPT_GENERATIVE_MEDIA : GENERATIVE_MEDIA_SETUP_NOTE}`
+      : prompt;
+  }
+
   _getActPrompt(provider = null) {
     const tier = this._resolvePromptTier(provider);
     if (tier === 'compact') return SYSTEM_PROMPT_ACT_COMPACT;
@@ -36356,9 +37024,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode (Act only) keeps the tier's prompt and tools. WebBrain skips
     // its quality checks in a lean run, so one note asks the model to check
     // its own work.
-    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK : this._getActPrompt(provider);
+    // Vision mode replaces the tree-centred Act prompt (vision-tools.js).
+    const visionState = mode === 'act' ? this._visionRunState(tabId, mode) : null;
+    let prompt = !this._isActionMode(mode) ? SYSTEM_PROMPT_ASK
+      : (visionState?.active ? this._getVisionActPrompt(visionState, provider) : this._getActPrompt(provider));
     if (this._isActionMode(mode) && this._leanPromptActive(tabId, mode, provider)) prompt += `\n\n${SYSTEM_PROMPT_LEAN_NOTE}`;
-    if (tier !== 'compact' && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
+    if (tier !== 'compact' && !visionState?.active && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
         .some(tool => tool.function.name === 'browser_batch')) prompt += `\n\n${SYSTEM_PROMPT_BATCHING}`;
     const botMemory = tabId == null ? null : this._botMemorySessions.get(tabId);
     if (botMemory) prompt += `\n\n${botMemory.systemNote()}\n\n${this._wrapUntrusted('bot_memory_observe', botMemory.contextData())}`;
@@ -36378,7 +37049,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // browsing; cheap enough to carry on chrome:///file:// pages too
     // since it's just a few dozen cached tokens.
     if (this.useSiteAdapters) {
-      prompt += `\n\n${UNIVERSAL_PREAMBLE.trim()}`;
+      prompt += `\n\n${(visionState?.active ? visionUniversalPreamble(UNIVERSAL_PREAMBLE) : UNIVERSAL_PREAMBLE).trim()}`;
     }
 
     if (this._isActionMode(mode) && tabId != null) {
@@ -36434,7 +37105,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // SYSTEM_PROMPT_ACT stands. The note unlocks the solve_captcha tool
     // path described there.
     if (this.captchaSolverEnabled && this._captchaToolsAvailable(tabId, mode, tier)) {
-      prompt += `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. Enabled coverage: ${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'recaptcha_v2')) ? 'reCAPTCHA v2/v3 including Enterprise, Turnstile, and image CAPTCHAs. ' : ''}${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'hcaptcha')) ? 'hCaptcha via NopeCHA or NoneCap. ' : 'hCaptcha requires manual completion. '} For other CAPTCHA families, call get_captcha_capabilities, inspect the chosen method schemas, and supply providerTasks to solve_captcha with inject:false. All documented token, recognition, cookie, and structured-answer methods are available through that route. Supply observed inputs for each compatible enabled provider so weight-based fallback can run. Apply the answer with apply_captcha_solution. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If neither automatic nor native inputs can be obtained, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha. These limits apply per challenge: a new CAPTCHA that appears later, such as after a submit or on a newly loaded page, is a separate challenge. Read the page and solve it once with solve_captcha before asking the user.]`;
+      const coverage = `${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'recaptcha_v2')) ? 'reCAPTCHA v2/v3 including Enterprise, Turnstile, and image CAPTCHAs. ' : ''}${this.captchaProviderIds.some(id => captchaProviderSupportsType(id, 'hcaptcha')) ? 'hCaptcha via NopeCHA or NoneCap. ' : 'hCaptcha requires manual completion. '}`;
+      // A vision run has no tree to read and no native-method tools: its note
+      // names the automatic route only (vision-tools.js).
+      prompt += this._visionRunState(tabId, mode).active === true
+        ? `\n\n${visionCaptchaSolverNote(coverage)}`
+        : `\n\n[CAPTCHA SOLVER — the user has enabled a CAPTCHA solver. Enabled providers run in descending weight order; failure or timeout tries the next compatible provider. Each attempt may charge. This fallback is internal to one tool call, not permission to call the tool again. Enabled coverage: ${coverage} For other CAPTCHA families, call get_captcha_capabilities, inspect the chosen method schemas, and supply providerTasks to solve_captcha with inject:false. All documented token, recognition, cookie, and structured-answer methods are available through that route. Supply observed inputs for each compatible enabled provider so weight-based fallback can run. Apply the answer with apply_captcha_solution. When a CAPTCHA or verification dialog blocks a step, read the page/tree without dismissing it. The runtime will route a supported widget to \`solve_captcha\` once and block page-changing actions until a fresh root accessibility-tree read confirms the dialog cleared. If neither automatic nor native inputs can be obtained, the solve fails, or the dialog remains after solving, stop and ask the user to complete it manually; never dismiss and resubmit or retry solve_captcha. These limits apply per challenge: a new CAPTCHA that appears later, such as after a submit or on a newly loaded page, is a separate challenge. Read the page and solve it once with solve_captcha before asking the user.]`;
     }
 
     // Ordinary turns get the one-line rendering; the full block is reserved for
@@ -37331,6 +38007,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     void cdpClient.cleanupTab(tabId).catch(() => {});
     this._cancelPendingPlans(tabId, 'tab closed');
     this._isPdfTabCache.delete(tabId);
+    this._visionForgetTab?.(tabId);
     this._lastTypeFieldIdent?.delete(tabId);
     this._lastTypeFieldEpoch?.delete(tabId);
     // A cleared conversation or closed tab takes its filled credentials along.
@@ -43976,10 +44653,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const stripAllImages = provider && !provider.supportsVision;
     const stripAllDocuments = provider && !provider.supportsDocuments;
     if (stripAllImages) keep = 0;
+    // Vision mode keeps the current frame with its patches and zooms, and
+    // nothing older (vision-runtime.js); those images do not use `keep`.
+    const vision = !stripAllImages && typeof this._visionPruneImages === 'function'
+      ? this._visionPruneImages(messages) : { latestEpoch: 0 };
+    if (vision.latestEpoch) messages = vision.messages;
     let imgsKept = 0;
     const out = new Array(messages.length);
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
+      if (vision.latestEpoch && msg?.webbrainVisionFrame) {
+        out[i] = msg;
+        continue;
+      }
       if (Array.isArray(msg.content)) {
         let inUserAttachmentSection = false;
         const newContent = msg.content.map(block => {
@@ -45965,6 +46651,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
+    // A vision click that follows another action of the same batch is
+    // re-checked against the live screen after every gate, right before it
+    // can dispatch (vision-runtime.js).
+    if (executionContext?._vision?.needsStabilityCheck && executionContext._vision.cssPoint) {
+      const blocked = await this._visionStabilityBlock(tabId, executionContext._vision.cssPoint);
+      if (blocked) return blocked;
+    }
     const memory = this._botMemorySessions.get(tabId);
     if (!memory) return this._executeToolWithLifecycle(tabId, name, args, onUpdate, executionContext);
     // Managed bot context cannot consume the user's profile-wide remote store.
@@ -46209,6 +46902,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'load_skill') {
       return this._loadSkillForRun(tabId, args || {});
     }
+    if (VISION_NATIVE_TOOLS.has(name)) return this._executeVisionTool(tabId, name, args || {}, dispatchContext);
     if (name === 'done_json') {
       const structured = handleDoneJson(this.cloudRunContexts.get(tabId), args);
       if (!structured.done || structured.cloudFailed) return structured;
@@ -47523,7 +48217,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
                   format: 'png',
                   fromSurface: true,
-                  clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+                  clip: this._viewportCaptureClip(probe, cssW, cssH, 1),
                 })
               );
               if (!screenshot?.data) return null;
@@ -47560,7 +48254,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
                   format: 'png',
                   fromSurface: true,
-                  clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 },
+                  // Downloads keep native device pixels (scale 1 is CSS px x DPR).
+                  clip: { ...this._viewportCaptureClip(probe, cssW, cssH), scale: 1 },
                 })
               );
               if (!screenshot?.data) return null;
@@ -47585,7 +48280,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 format: 'jpeg',
                 quality: Math.round(budget.initialJpegQuality * 100),
                 fromSurface: true,
-                clip: { x: 0, y: 0, width: cssW, height: cssH, scale },
+                clip: this._viewportCaptureClip(probe, cssW, cssH, scale),
               })
             );
             if (!screenshot?.data) return null;
@@ -47890,7 +48585,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // probes. The semantic judge captures its own fresh redacted evidence,
           // including when the active planner cannot consume images.
           const provider = this._activeProvider(tabId);
-          const plannerCanSeeImages = !!provider?.supportsVision;
+          // A vision run is shown the screen by its own labeled update after
+          // the batch; an unlabeled device-scale capture here could be read
+          // for coordinates it does not map to (vision-runtime.js).
+          const plannerCanSeeImages = !!provider?.supportsVision && this._visionRunState(tabId).active !== true;
 
           await cdpClient.attach(tabId);
           await cdpClient.sendCommand(tabId, 'Page.enable');
@@ -48795,7 +49493,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               ...(result.solution?.userAgent ? { solverUserAgent: result.solution.userAgent } : {}),
               note: application.success
                 ? 'AWS cookie applied. Reload this page once with navigate, then read it to verify clearance. A provider answer is not site acceptance; do not buy another solve for the same unresolved challenge.'
-                : 'AWS answer received but could not be applied. Inspect the binding and use apply_captcha_solution; do not buy another answer.' };
+                : (this._visionRunState?.(tabId)?.active === true ? 'AWS answer received but could not be applied, and this mode has no tool to apply it. Ask the user to complete verification manually; do not buy another answer.' : 'AWS answer received but could not be applied. Inspect the binding and use apply_captcha_solution; do not buy another answer.') };
           }
           return { success: true, dispatched: true, type: result.family, provider: result.provider, method: result.method, taskId: result.taskId,
             solution: result.solution, ...((result.userAgent || result.solution?.userAgent) ? { solverUserAgent: result.userAgent || result.solution.userAgent } : {}),
@@ -49123,7 +49821,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...(pendingAutomaticAnswer ? { applicationRequired: true } : {}),
           injection,
           note: pendingAutomaticAnswer
-            ? 'Token returned without injection. Inspect the page and call apply_captcha_solution with observed frame/field or callback bindings and path: token. The paid answer is saved; do not request another solve.'
+            ? (this._visionRunState?.(tabId)?.active === true ? 'Token returned without injection, and this mode has no tool to place it in the page. The paid answer is saved; do not request another solve. Ask the user to complete verification manually.' : 'Token returned without injection. Inspect the page and call apply_captcha_solution with observed frame/field or callback bindings and path: token. The paid answer is saved; do not request another solve.')
             : !wantInject ? 'Recognition answer returned without page injection.'
             : injection?.success
               ? (injection.calledCallback
@@ -50916,6 +51614,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         throwIfEarlyCdpAborted();
         if (duplicateSubmit) return duplicateSubmit;
 
+        // A vision click lands exactly where the model pointed: no semantic
+        // re-targeting and no nearby-input redirect (vision-runtime.js).
+        if (coordinatePoint && dispatchContext._vision?.tool === 'click_at') {
+          return await this._visionDispatchClick(tabId, args, {
+            vision: dispatchContext._vision,
+            messageRecipientGuardRequired,
+            messageRecipientDispatchBinding,
+            detectedSubmitAction: dispatchContext.detectedSubmitAction || null,
+            throwIfAborted: throwIfEarlyCdpAborted,
+            markDispatched: markEarlyCdpDispatched,
+            cancelPressedPointer: cancelEarlyCdpPressedPointer,
+          });
+        }
         if (coordinatePoint) {
           const reconciled = await this._reconcileCoordinateClickWithDeadline(tabId, coordinatePoint, {
             messageRecipientGuardRequired,
@@ -52766,6 +53477,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // consume already proved the exact editor, so "page did not change"
       // must not be reported as a failed dispatch.
       const keyProgressBefore = String(key).startsWith('Arrow') && !dispatchBinding?.token
+        && this._visionRunState?.(tabId)?.active !== true
         ? await this._keyProgressSnapshot(tabId, earlyCdpAbortSignal)
         : '';
       throwIfEarlyCdpAborted();
@@ -55357,6 +56069,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _verifyProvisionalKeyProgress(tabId, key, response, beforeSnapshot, abortSignal = null) {
     if (!String(key).startsWith('Arrow') || response?.success !== true) return response;
+    // In a vision run the screen update after the batch shows whether the key
+    // moved anything; a DOM snapshot cannot see a canvas carousel or a game.
+    if (this._visionRunState?.(tabId)?.active === true) return response;
     this._throwIfAborted(abortSignal);
     await new Promise(resolve => setTimeout(resolve, 200));
     this._throwIfAborted(abortSignal);
@@ -55649,6 +56364,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode is resolved once, now that the run's mode and provider are
     // known, and holds for every tool list, prompt and guard of this run.
     const previousLeanRun = this._leanRuns?.get(tabId);
+    const previousVisionRun = this._visionRunSnapshots?.get(tabId);
     this._beginLeanRun(tabId, mode);
     const previousBotMemory = this._botMemorySessions.get(tabId);
     let botMemorySession = null;
@@ -55671,6 +56387,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
       }
       messageProcessingStarted = true;
+      this._beginVisionRun(tabId);
       const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, this._effectiveRunMode(tabId, mode), userMessage, result, onUpdate, runOptions);
       return result;
@@ -55691,6 +56408,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
+      this._endVisionRun(tabId, previousVisionRun);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousRunProviderOverride) this._runProviderOverrides.set(tabId, previousRunProviderOverride);
@@ -56337,6 +57055,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
       autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
+      vision: this._visionToolOptions(tabId, mode),
     });
     // The selected text is already present in the trusted run envelope.
     // Advertising page/network tools would let an injected selection induce a
@@ -56565,6 +57284,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return true;
     };
 
+    // Vision mode: the model's first decision is made on a fresh full frame,
+    // taken once a cookie-banner decline in progress has finished (the loop
+    // settles banners before every model call; the frame must not show one
+    // that is about to disappear).
+    if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
+      await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
+    } else if (!selectionOnly && !standaloneChatRun) {
+      // An earlier vision run's frames are not this run's screen.
+      this._visionRetireEarlierFrames(messages);
+    }
+    let visionPromptActive = !!this._visionToolOptions(tabId, mode);
+
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
       if (handoff) await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, handoff);
@@ -56605,6 +57337,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
+      // An upload handed to the element tools starts or ends here, before
+      // anything this step does depends on whether it runs on vision
+      // (vision-runtime.js).
+      await this._visionUploadHandoffTick(tabId, steps);
       // Re-inject adapter notes if the user navigated to a different
       // high-traffic site mid-conversation (no-op on the first iteration
       // because _enrichUserMessageWithCurrentPage already seeded lastSeenAdapter).
@@ -56634,8 +57370,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
         autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
+        vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
+      // Vision mode can end and resume mid-run (a step that needs the element
+      // inventory, vision-mode.js); the system prompt follows the tools.
+      const visionPromptNow = !!this._visionToolOptions(tabId, mode);
+      if (visionPromptNow !== visionPromptActive && messages[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(mode, tabId);
+      // Back on vision after tree-path steps: the step starts on a fresh frame,
+      // never on the one from before them.
+      if (visionPromptNow && !visionPromptActive && !selectionOnly && !standaloneChatRun) {
+        await this._visionResumeKeyframe(tabId, messages, onUpdate, { mode });
+      }
+      this._visionNoteStepTools(tabId, visionPromptNow);
+      visionPromptActive = visionPromptNow;
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
         const completionState = this.completionInvariants.get(tabId);
@@ -57689,6 +58437,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Lean mode is resolved once, now that the run's mode and provider are
     // known, and holds for every tool list, prompt and guard of this run.
     const previousLeanRun = this._leanRuns?.get(tabId);
+    const previousVisionRun = this._visionRunSnapshots?.get(tabId);
     this._beginLeanRun(tabId, mode);
     const previousBotMemory = this._botMemorySessions.get(tabId);
     let botMemorySession = null;
@@ -57710,6 +58459,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // Restricted tabs can still use non-CDP tools.
         });
       }
+      this._beginVisionRun(tabId);
       const result = await this._processMessageStreamInner(tabId, userMessage, onUpdate, mode, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
@@ -57730,6 +58480,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._planExecutionGuards.delete(tabId);
       this._runModeOverrides.delete(tabId);
+      this._endVisionRun(tabId, previousVisionRun);
       if (previousLeanRun) this._leanRuns.set(tabId, previousLeanRun);
       else this._leanRuns?.delete(tabId);
       if (previousRunProviderOverride) this._runProviderOverrides.set(tabId, previousRunProviderOverride);
@@ -58029,6 +58780,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
+      vision: this._visionToolOptions(tabId, mode),
     });
     // Match the non-streaming path: selection-grounded turns are tool-free so
     // page or network content cannot be introduced after the source anchor.
@@ -58089,6 +58841,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Past local-only fast paths: the streaming loop below calls the provider.
     shareHadProviderCompletion = true;
 
+    // Vision mode: the model's first decision is made on a fresh full frame,
+    // taken once a cookie-banner decline in progress has finished (the loop
+    // settles banners before every model call; the frame must not show one
+    // that is about to disappear).
+    if (!selectionOnly && !standaloneChatRun && this._visionRunState(tabId, mode).active) {
+      await settleCookieBannersForTurn(this._cookieBannerHost, tabId, messages);
+      await this._visionEnsureKeyframe(tabId, messages, onUpdate, { mode });
+    } else if (!selectionOnly && !standaloneChatRun) {
+      // An earlier vision run's frames are not this run's screen.
+      this._visionRetireEarlierFrames(messages);
+    }
+    let visionPromptActive = !!this._visionToolOptions(tabId, mode);
+
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
       if (handoff) await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, handoff);
@@ -58126,6 +58891,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finish(steeringOutcome.content, steeringOutcome.status);
       }
 
+      // An upload handed to the element tools starts or ends here, before
+      // anything this step does depends on whether it runs on vision
+      // (vision-runtime.js).
+      await this._visionUploadHandoffTick(tabId, steps);
       if (steps > 0 && !selectionOnly && !standaloneChatRun) {
         await this._maybeReinjectAdapter(tabId, messages);
       }
@@ -58151,8 +58920,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
+        vision: this._visionToolOptions(tabId, mode),
       });
       tools = this._botMemoryRunTools(tabId, tools);
+      // Vision mode can end and resume mid-run (a step that needs the element
+      // inventory, vision-mode.js); the system prompt follows the tools.
+      const visionPromptNow = !!this._visionToolOptions(tabId, mode);
+      if (visionPromptNow !== visionPromptActive && messages[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(mode, tabId);
+      // Back on vision after tree-path steps: the step starts on a fresh frame,
+      // never on the one from before them.
+      if (visionPromptNow && !visionPromptActive && !selectionOnly && !standaloneChatRun) {
+        await this._visionResumeKeyframe(tabId, messages, onUpdate, { mode });
+      }
+      this._visionNoteStepTools(tabId, visionPromptNow);
+      visionPromptActive = visionPromptNow;
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
         const completionState = this.completionInvariants.get(tabId);
@@ -59079,3 +59860,4 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 }
 
 installPageFeedback(Agent);
+installVisionRuntime(Agent, { trace });

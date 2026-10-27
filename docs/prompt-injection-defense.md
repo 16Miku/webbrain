@@ -51,7 +51,7 @@ them in sync — the test suite asserts the pure modules are byte-identical.
    icons come only from a fixed favicon service using a validated public
    hostname, without URL paths, query strings, credentials or a referrer.
    Responses are bounded raster images rendered through local blob URLs;
-   failed lookups keep a local globe icon.
+   a link whose icon cannot load shows no icon.
    - Code: `ui/markdown-link.js`, `ui/markdown-render.js`, `ui/chat-link-icons.js`.
 
 ---

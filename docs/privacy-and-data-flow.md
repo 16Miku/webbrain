@@ -625,7 +625,7 @@ The only outbound HTTP requests are:
    Icons are cached in memory while the panel is open, with bounded requests
    and response sizes. Local hosts, IP addresses, code, Markdown image syntax
    and download links do not trigger these requests. Strict Secret Mode disables
-   remote icon lookups; unavailable icons use a local globe.
+   remote icon lookups; a link whose icon is unavailable shows no icon.
 11. **Feedback trace attachments** uploaded by GitHub's native issue editor,
     only after the user chooses **Upload trace and open GitHub** in the extension.
     Preparing, viewing, and downloading the trace are local operations. The

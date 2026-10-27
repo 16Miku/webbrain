@@ -1,6 +1,7 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, open, lstat } from 'node:fs/promises';
+import { constants as FS } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, basename } from 'node:path';
+import { join, basename, isAbsolute } from 'node:path';
 
 // A rendered prefix cannot certify an unsupported rich-text document, and paragraph spacing
 // in innerText is not the document's authored line breaks.
@@ -181,6 +182,19 @@ function unpackRemoteObjectValue(value) {
   }));
 }
 
+// What this companion can do beyond the first protocol, reported by
+// `connect`. point_input: vision mode's click_at and hover_at, trusted input
+// at a viewport point of the run's top document.
+export const COMPANION_CAPABILITIES = Object.freeze(['point_input', 'saved_download']);
+// What a reply can carry as base64 within the 32 MiB native transfer limit
+// (native-messages.mjs), with room for its envelope. A larger download is
+// refused with SAVED_DOWNLOAD_TOO_LARGE, and the extension falls back to its
+// own size-checked route.
+const SAVED_DOWNLOAD_MAX_BYTES = 24 * 1024 * 1024 - 64 * 1024;
+export const SAVED_DOWNLOAD_TOO_LARGE = 'saved_download_too_large';
+// Vision mode's point actions (point_input).
+const POINT_ACTIONS = new Set(['click_at', 'hover_at']);
+
 export class BidiSession {
   constructor(WebSocketImpl = WebSocket) {
     this.WebSocketImpl = WebSocketImpl;
@@ -194,7 +208,7 @@ export class BidiSession {
   }
   async connectSession(port) {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid local Firefox port');
-    if (this.socket?.readyState === 1) return { connected: true };
+    if (this.socket?.readyState === 1) return { connected: true, capabilities: [...COMPANION_CAPABILITIES] };
     const socket = this.socket = new this.WebSocketImpl(`ws://127.0.0.1:${port}/session`);
     socket.addEventListener('message', event => this.receive(JSON.parse(event.data)));
     socket.addEventListener('close', () => {
@@ -208,7 +222,7 @@ export class BidiSession {
     });
     await this.send('session.new', { capabilities: { alwaysMatch: { unhandledPromptBehavior: { default: 'ignore' } } } });
     await this.send('session.subscribe', { events: ['browsingContext.userPromptOpened', 'browsingContext.userPromptClosed', 'browsingContext.contextDestroyed'] });
-    return { connected: true };
+    return { connected: true, capabilities: [...COMPANION_CAPABILITIES] };
   }
   send(method, params) {
     if (this.socket?.readyState !== 1) return Promise.reject(new Error('Firefox BiDi is disconnected'));
@@ -267,6 +281,52 @@ export class BidiSession {
     if (matches.length !== 1) throw new Error('Tab or element binding is stale or ambiguous; re-read the page');
     return matches[0];
   }
+  /**
+   * The bytes of a completed browser download, read from the path the
+   * browser recorded for it: the extension cannot read files, and fetching
+   * the download's address again can return other bytes or spend a one-time
+   * link. Only for an open run, a regular file (not a link) that still has
+   * the recorded size, at most 25 MB, unchanged while it was read.
+   */
+  async readSavedDownload(runId, download = {}) {
+    if (!this.runs.get(runId)) throw new Error('Firefox run stopped');
+    if (!Number.isSafeInteger(download?.id) || download.id < 0 || download.state !== 'complete' || download.exists === false
+        || typeof download.filename !== 'string' || !isAbsolute(download.filename)) {
+      throw new Error('A completed browser download with its saved path is required');
+    }
+    const link = await lstat(download.filename);
+    if (!link.isFile()) throw new Error('The saved download is not a regular file');
+    // Opened without following a link, and bound to the file lstat saw: a
+    // path swapped in between is refused, not read.
+    const file = await open(download.filename, FS.O_RDONLY | (FS.O_NOFOLLOW || 0) | (FS.O_NONBLOCK || 0));
+    try {
+      const before = await file.stat();
+      if (!before.isFile() || before.dev !== link.dev || before.ino !== link.ino) {
+        throw new Error('The saved download changed before it was read');
+      }
+      if (Number.isSafeInteger(download.fileSize) && download.fileSize >= 0 && download.fileSize !== before.size) {
+        throw new Error('The saved download no longer matches its browser record');
+      }
+      if (before.size > SAVED_DOWNLOAD_MAX_BYTES) {
+        throw new Error(`${SAVED_DOWNLOAD_TOO_LARGE}: the saved download is larger than the companion can return.`);
+      }
+      const bytes = Buffer.alloc(before.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const part = await file.read(bytes, offset, bytes.length - offset, offset);
+        if (!part.bytesRead) throw new Error('The saved download changed while it was read');
+        offset += part.bytesRead;
+      }
+      const after = await file.stat();
+      if (!this.runs.get(runId) || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+        throw new Error('The saved download or the run changed while it was read');
+      }
+      return { base64: bytes.toString('base64'), size: bytes.length, filename: basename(download.filename), mimeType: String(download.mime || '') };
+    } finally {
+      await file.close();
+    }
+  }
+
   async openRun(id, token, url) {
     if (!/^[a-f0-9-]{36}$/.test(id) || this.runs.has(id) || this.closedRuns.has(id)) throw new Error('Invalid run');
     const match = await this.locate(token, url);
@@ -388,7 +448,7 @@ export class BidiSession {
     }
   }
   async performAction(id, action, payload, dispatch, validatePageDispatch = null) {
-    if (!['navigate', 'click', 'hover', 'type', 'field', 'key', 'upload'].includes(action)) throw new Error('Unsupported BiDi action');
+    if (!['navigate', 'click', 'hover', 'type', 'field', 'key', 'upload', ...POINT_ACTIONS].includes(action)) throw new Error('Unsupported BiDi action');
     if (payload.modifiers) throw new Error('Key modifiers are not supported by this tool');
     const run = this.runs.get(id); if (!run) throw new Error('Run stopped or disconnected');
     const assertLive = () => {
@@ -410,8 +470,15 @@ export class BidiSession {
       finally { run.navigation = false; }
       return { success: true, dispatched: true };
     }
+    const pointAction = POINT_ACTIONS.has(action);
+    if (pointAction) {
+      // A vision point is in the top document's viewport, so the element the
+      // extension marked there is one of that document (content.js).
+      if (!Number.isInteger(payload.point?.x) || !Number.isInteger(payload.point?.y)) throw new Error('Invalid point coordinates');
+    }
     const match = await this.locate(payload.token, payload.url, run.context);
     assertLive();
+    if (pointAction && match.context !== run.context) throw new Error('Point input targets the top document; no input sent');
     let nativeSequence = 0;
     const markNativeDispatch = async (kind, { rebindFocus = false, domDispatch = false } = {}) => {
       assertLive();
@@ -471,7 +538,7 @@ export class BidiSession {
         }`, [{ type: 'string', value: marker }, { type: 'string', value: action }]);
       } catch { /* The document may have navigated or the monitor already consumed the marker. */ }
     };
-    const point = action === 'click' && payload.point != null ? payload.point : null;
+    const point = (action === 'click' && payload.point != null) || pointAction ? payload.point : null;
     if (point && (!Number.isInteger(point.x) || !Number.isInteger(point.y))) throw new Error('Invalid click coordinates');
     const focusGuard = payload.pageFeedbackGuard;
     if (['type', 'field', 'key'].includes(action) && focusGuard
@@ -482,10 +549,12 @@ export class BidiSession {
     }
     assertLive();
     const check = await this.call(match, `(el, token, action, x, y) => {
-      if (!el.isConnected || el.getAttribute('data-webbrain-bidi') !== token || el.disabled) return false;
+      // A pointer may rest on a disabled control.
+      if (!el.isConnected || el.getAttribute('data-webbrain-bidi') !== token
+          || (el.disabled && action !== 'hover_at')) return false;
       el.removeAttribute('data-webbrain-bidi');
       if (action === 'upload') return el.tagName === 'INPUT' && el.type === 'file';
-      if (action === 'click' || action === 'hover') {
+      if (action === 'click' || action === 'hover' || action === 'click_at' || action === 'hover_at') {
         const r = el.getBoundingClientRect();
         const px = x === null ? r.x+r.width/2 : x;
         const py = y === null ? r.y+r.height/2 : y;
@@ -588,11 +657,12 @@ export class BidiSession {
       finally { await this.send('input.releaseActions', { context: match.context }).catch(() => {}); }
       assertLive();
     };
-    if (action === 'click' || action === 'hover') {
+    if (action === 'click' || action === 'hover' || action === 'click_at' || action === 'hover_at') {
+      const pressing = action === 'click' || action === 'click_at';
       const source = { type: 'pointer', id: 'webbrain-pointer', parameters: { pointerType: 'mouse' }, actions: [
         point ? { type: 'pointerMove', x: point.x, y: point.y, origin: 'viewport' }
           : { type: 'pointerMove', x: 0, y: 0, origin: { type: 'element', element: { sharedId: match.node.sharedId } } },
-        ...(action === 'click' ? [{ type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }] : []),
+        ...(pressing ? [{ type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }] : []),
       ] };
       assertLive();
       const marker = await markNativeDispatch('click');

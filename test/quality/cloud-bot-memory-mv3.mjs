@@ -209,7 +209,7 @@ try {
   const message = (action, data = {}) => harness.evaluate(({ action, data }) => chrome.runtime.sendMessage({ target: 'background', action, ...data }), { action, data });
   await harness.evaluate(() => chrome.storage.local.set({ helpImproveWebBrain: false, tracingEnabled: false,
     autoScreenshot: false, screenshotFallback: false, planBeforeActMode: 'off', planBeforeAct: false, planReviewMode: 'never',
-    maxAgentSteps: 8, systemOneEnabled: false, agentAllowLocalNetwork: true, askBeforeConsequentialActions: false,
+    visionMode: 'off', maxAgentSteps: 8, systemOneEnabled: false, agentAllowLocalNetwork: true, askBeforeConsequentialActions: false,
     openaiAskStreamingEnabled: false }));
   assert.equal((await message('update_provider', { providerId: 'openrouter', config: { apiKey: 'owned-memory-fixture-key',
     baseUrl: origin + '/v1', model: 'minimax/minimax-m3', enabled: true, contextWindow: 1000000, supportsAskStreaming: false } })).ok, true);
