@@ -100,7 +100,7 @@ After a batch WebBrain waits until two consecutive captures match (bounded, ~1 s
 
 The "seen" buffer copies only patched regions, so changes below the threshold accumulate until they are sent instead of drifting forever.
 
-Only the current frame, its patches and zooms stay in the model request (`pruneVisionImages`); older images become a short placeholder. Screen updates are app-owned user turns (`webbrainAppOwned`), never mistaken for a new request.
+Only the current frame, its patches and its newest zooms stay in the model request (`pruneVisionImages`); older images become a short placeholder. At most four zooms of the current frame stay, and stay usable (`VISION_MAX_LIVE_ZOOMS`; a point on an older one is refused as `stale_image` with a note to zoom again), and while the kept images exceed about 8 MB of data URL the oldest zooms leave first. Patches are never dropped, since they are the current screen; a long patch chain becomes a new frame instead. Screen updates are app-owned user turns (`webbrainAppOwned`), never mistaken for a new request.
 
 A capture, encoding or input failure never ends the run: a screen update that cannot be prepared becomes a one-line note and the next update is a full frame; a vision tool that fails returns a tool error (an unknown outcome once input may have gone out).
 

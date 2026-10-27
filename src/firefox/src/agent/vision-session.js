@@ -35,6 +35,10 @@ export function normalizeImageId(value) {
   return IMAGE_ID_RE.test(id) ? id : '';
 }
 
+// Zooms of the current frame kept usable and in the request; older ones are
+// retired (VisionSession.registerZoom, vision-runtime.js pruneVisionImages).
+export const VISION_MAX_LIVE_ZOOMS = 4;
+
 export class VisionSession {
   /**
    * `startEpoch` / `startCounter` continue the numbering of an earlier
@@ -203,6 +207,13 @@ export class VisionSession {
       scaleY: region.height / Math.max(1, height),
     };
     this.images.set(id, image);
+    // Only the newest zooms stay usable, as only they stay in the model's
+    // request (vision-runtime.js pruneVisionImages): an older one is retired.
+    const zooms = [...this.images.values()].filter(item => item.kind === 'zoom');
+    for (const old of zooms.slice(0, Math.max(0, zooms.length - VISION_MAX_LIVE_ZOOMS))) {
+      this.images.delete(old.id);
+      this.retired.set(old.id, { epoch: old.epoch, replacedBy: null, zoomLimit: true });
+    }
     return image;
   }
 
@@ -266,7 +277,9 @@ export class VisionSession {
     const lookup = this._imageFor(image);
     if (!lookup.image) {
       if (lookup.retired) {
-        return { ok: false, code: 'stale_image', error: `Image ${lookup.id} is from an earlier screen. The current full frame is ${this.keyframe.id}; read the point from it or from a later patch.` };
+        return { ok: false, code: 'stale_image', error: lookup.retired.zoomLimit
+          ? `Zoom ${lookup.id} is no longer shown: only the newest ${VISION_MAX_LIVE_ZOOMS} zooms are kept. Read the point from the current frame ${this.keyframe.id}, or zoom again.`
+          : `Image ${lookup.id} is from an earlier screen. The current full frame is ${this.keyframe.id}; read the point from it or from a later patch.` };
       }
       return { ok: false, code: 'unknown_image', error: `Unknown image "${lookup.id}". Name an image exactly as labeled (valid now: ${[...this.images.keys()].join(', ')}), or omit image for the current screen.` };
     }

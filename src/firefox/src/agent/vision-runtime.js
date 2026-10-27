@@ -15,7 +15,7 @@
 //      older images become short placeholders (_visionPruneImages).
 
 import { resolveVisionMode, normalizeVisionModeSetting } from './vision-mode.js';
-import { VisionSession } from './vision-session.js';
+import { VisionSession, VISION_MAX_LIVE_ZOOMS } from './vision-session.js';
 import { diffFrames, planFrameUpdate, pointTouchesRegions } from './vision-diff.js';
 import {
   VISION_PROFILES, planVisionImageSize, planZoomImageSize, estimateVisionTokens, visionEncodingFor,
@@ -52,6 +52,11 @@ const STABILITY_MARGIN_PX = 12;
 const SETTLE_INITIAL_DELAY_MS = 120;
 const SETTLE_POLL_MS = 220;
 const SETTLE_MAX_EXTRA_CAPTURES = 3;
+// Images kept after the current frame (its patches and zooms), as data-URL
+// characters: past this, the oldest zooms leave the request first. Patches
+// are never dropped (they are the current screen); a long patch chain turns
+// into a new frame instead (vision-diff.js planFrameUpdate).
+const RETAINED_IMAGE_CHARS_BUDGET = 8_000_000;
 // An upload handoff (_visionNoteUploadHandoff) lasts this many model
 // decisions without a successful upload_file, and a run hands off at most
 // this many times: a page whose upload never succeeds goes back to vision
@@ -230,7 +235,46 @@ export function pruneVisionImages(messages) {
     });
     return changed ? { ...message, content } : message;
   });
-  return { messages: out, latestEpoch };
+  return { messages: dropOldZooms(out, boundary), latestEpoch };
+}
+
+/**
+ * After the current frame, only the newest VISION_MAX_LIVE_ZOOMS zooms keep
+ * their images (as only they stay usable, VisionSession.registerZoom), and
+ * older zooms go first while the kept images exceed
+ * RETAINED_IMAGE_CHARS_BUDGET. A tagged message's image blocks are its ids,
+ * in order.
+ */
+function dropOldZooms(messages, boundary) {
+  const slots = [];
+  let chars = 0;
+  messages.forEach((message, index) => {
+    const tag = visionFrameTag(message);
+    if (index < boundary || !tag || !Array.isArray(message.content) || !Array.isArray(tag.ids)) return;
+    const blocks = message.content.map((block, at) => (isImageBlock(block) ? at : -1)).filter(at => at >= 0);
+    blocks.forEach((at, order) => {
+      const block = message.content[at];
+      const size = String(block.image_url?.url || block.image_url || block.source?.data || '').length;
+      chars += size;
+      if (blocks.length === tag.ids.length && /^z\d+$/.test(tag.ids[order])) slots.push({ index, at, id: tag.ids[order], size });
+    });
+  });
+  const drop = new Set();
+  const excess = slots.length - VISION_MAX_LIVE_ZOOMS;
+  for (const slot of slots.slice(0, Math.max(0, excess))) { drop.add(slot); chars -= slot.size; }
+  for (const slot of slots) {
+    if (chars <= RETAINED_IMAGE_CHARS_BUDGET) break;
+    if (!drop.has(slot)) { drop.add(slot); chars -= slot.size; }
+  }
+  if (!drop.size) return messages;
+  const out = messages.slice();
+  for (const slot of drop) {
+    const message = out[slot.index];
+    const content = message.content.slice();
+    content[slot.at] = { type: 'text', text: `[zoom ${slot.id} omitted — older than the zooms kept; zoom again if needed]` };
+    out[slot.index] = { ...message, content };
+  }
+  return out;
 }
 
 export function installVisionRuntime(AgentClass, { trace = null } = {}) {

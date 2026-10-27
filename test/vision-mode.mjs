@@ -494,6 +494,27 @@ for (const build of ['chrome', 'firefox']) {
 const probeModule = await import('../src/chrome/src/agent/vision-dom-probe.js');
 const runtimeModule = await import('../src/chrome/src/agent/vision-runtime.js');
 
+test('pruning: after the current frame only the newest zooms keep their images, and oldest zooms go first past the size budget', () => {
+  const image = (chars = 40) => ({ type: 'image_url', image_url: { url: `data:image/webp;base64,${'A'.repeat(chars)}` } });
+  const frame = (kind, ids, images) => ({ role: 'user', content: [{ type: 'text', text: ids.join(',') }, ...images], webbrainVisionFrame: { epoch: 1, kind, ids } });
+  const messages = [
+    frame('key', ['f1'], [image()]),
+    ...['z2', 'z3', 'z4', 'z5', 'z6', 'z7'].map(id => frame('zoom', [id], [image()])),
+    frame('patch', ['p8', 'z9'], [image(), image()]),
+  ];
+  const kept = runtimeModule.pruneVisionImages(messages).messages;
+  const shown = kept.flatMap(message => message.content.filter(block => block.type === 'image_url').length ? message.webbrainVisionFrame.ids : []);
+  const omitted = kept.flatMap(message => message.content.filter(block => block.type === 'text' && /^\[zoom z\d+ omitted/.test(block.text)).map(block => /z\d+/.exec(block.text)[0]));
+  assert.deepEqual(omitted, ['z2', 'z3', 'z4']);
+  assert.deepEqual(shown, ['f1', 'z5', 'z6', 'z7', 'p8', 'z9']);
+  // A huge zoom pushes the kept images past the budget: the oldest zoom goes, never the frame or a patch.
+  const big = runtimeModule.pruneVisionImages([
+    frame('key', ['f1'], [image()]), frame('zoom', ['z2'], [image(8_100_000)]), frame('zoom', ['z3'], [image()]), frame('patch', ['p4'], [image()]),
+  ]).messages;
+  assert.equal(big[1].content.some(block => block.type === 'image_url'), false);
+  for (const index of [0, 2, 3]) assert.equal(big[index].content.some(block => block.type === 'image_url'), true, String(index));
+});
+
 test('session: numbering continues across sessions and a retired screen refuses points', () => {
   const session = new VisionSession({ startEpoch: 3, startCounter: 7 });
   const frame = session.registerKeyframe({ imageWidth: 1000, imageHeight: 500, cssWidth: 1000, cssHeight: 500 });
@@ -523,6 +544,17 @@ test('session: a failed update stays recorded until the model is shown the scree
     shown();
     assert.equal(session.observationFailed, false);
   }
+});
+
+test('session: only the newest four zooms stay usable', () => {
+  const session = new VisionSession();
+  session.registerKeyframe({ imageWidth: 100, imageHeight: 50, cssWidth: 100, cssHeight: 50 });
+  const zooms = [1, 2, 3, 4, 5].map(() => session.registerZoom({ x: 0, y: 0, width: 10, height: 10 }, 20, 20));
+  assert.equal(sessionModule.VISION_MAX_LIVE_ZOOMS, 4);
+  const oldest = session.resolvePoint({ x: 5, y: 5, image: zooms[0].id });
+  assert.equal(oldest.code, 'stale_image');
+  assert.match(oldest.error, /no longer shown: only the newest 4 zooms are kept/);
+  for (const zoom of zooms.slice(1)) assert.equal(session.resolvePoint({ x: 5, y: 5, image: zoom.id }).ok, true, zoom.id);
 });
 
 test('session: an image value that is not an id is refused, not read as the current screen', () => {
