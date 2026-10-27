@@ -7,9 +7,9 @@
  * answered by the browser.
  *
  * Wire protocol:
- *   us -> extension   {type:'auth_challenge', scheme, nonce}       (on connect)
+ *   us -> extension   {type:'pairing_challenge', scheme, nonce}       (on connect)
  *   extension -> us   {type:'hello', client, protocolVersion, capabilities, status}
- *   extension -> us   {type:'auth', scheme, proof}                 (either order)
+ *   extension -> us   {type:'pairing_proof', scheme, proof}           (either order)
  *   us -> extension   {id, action, payload}
  *   extension -> us   {id, ok:true, result} | {id, ok:false, error, status?}
  *
@@ -223,7 +223,7 @@ export class BridgeClient {
       });
 
       try {
-        socket.send(JSON.stringify({ type: "auth_challenge", scheme: PAIRING_SCHEME, nonce: candidate.nonce }));
+        socket.send(JSON.stringify({ type: "pairing_challenge", scheme: PAIRING_SCHEME, nonce: candidate.nonce }));
       } catch {
         /* the close handler drops the candidate */
       }
@@ -248,7 +248,7 @@ export class BridgeClient {
         return;
       }
       candidate.hello = true;
-    } else if (msg.type === "auth") {
+    } else if (msg.type === "pairing_proof" || msg.type === "auth") {
       if (msg.scheme !== PAIRING_SCHEME || !verifyPairingProof(this.pairingKey, candidate.nonce, msg.proof)) {
         this.rejectCandidate(socket, "Pairing key mismatch");
         return;

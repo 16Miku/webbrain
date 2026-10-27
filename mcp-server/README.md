@@ -45,8 +45,8 @@ The LM Studio plugin reads the same key file, so one pairing covers both destina
 
 Anything on your machine can open a socket to `127.0.0.1:17374` and claim to be WebBrain, so the server does not trust a socket until it proves it holds the pairing key:
 
-1. On connect the server sends `{type: "auth_challenge", scheme: "hmac-sha256-v1", nonce}` with a fresh random nonce.
-2. The extension answers `{type: "auth", scheme, proof}`, where `proof` is the hex HMAC-SHA256 of `"webbrain-bridge-pairing-v1:" + nonce` keyed with the pairing key. The key itself never crosses the socket, and a recorded proof is useless on the next socket.
+1. On connect the server sends `{type: "pairing_challenge", scheme: "hmac-sha256-v1", nonce}` with a fresh random nonce.
+2. The extension answers `{type: "pairing_proof", scheme, proof}`, where `proof` is the hex HMAC-SHA256 of `"webbrain-bridge-pairing-v1:" + nonce` keyed with the pairing key. The key itself never crosses the socket, and a recorded proof is useless on the next socket.
 3. Only after a valid `hello` **and** a valid proof does the socket become the extension. Until then it receives no commands and the already-connected extension keeps working. A wrong proof closes the socket with code `4001`; a socket that does not pair within 10 seconds is closed the same way.
 
 The extension stops reconnecting after a `4001` and shows the reason under **Settings → Bridge**. Saving a new key reconnects it.

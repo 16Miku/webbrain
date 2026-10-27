@@ -29,8 +29,8 @@ function proofFor(key, nonce) {
 function answerPairing(ws, key = PAIRING_KEY) {
   ws.on("message", (raw) => {
     const message = JSON.parse(raw.toString());
-    if (message.type === "auth_challenge") {
-      ws.send(JSON.stringify({ type: "auth", scheme: message.scheme, proof: proofFor(key, message.nonce) }));
+    if (message.type === "pairing_challenge" || message.type === "auth_challenge") {
+      ws.send(JSON.stringify({ type: "pairing_proof", scheme: message.scheme, proof: proofFor(key, message.nonce) }));
     }
   });
 }
@@ -302,7 +302,7 @@ test("a local process with a forged hello cannot replace the paired extension", 
     const result = await browserStatus("still-private-run");
     assert.equal(result.ok, true);
     assert.equal(result.runId, "still-private-run");
-    assert.deepEqual(frames.map((frame) => frame.type), ["auth_challenge"]);
+    assert.deepEqual(frames.map((frame) => frame.type), ["pairing_challenge"]);
 
     if (key) {
       const [code, reason] = await closed;

@@ -51,9 +51,9 @@ function fakeExtension(url, handler, { client = "webbrain-extension", key = PAIR
   socket.on("message", async (raw) => {
     const msg = JSON.parse(raw.toString());
     socket.frames.push(msg);
-    if (msg.type === "auth_challenge") {
+    if (msg.type === "pairing_challenge" || msg.type === "auth_challenge") {
       if (key !== null) {
-        socket.send(JSON.stringify({ type: "auth", scheme: msg.scheme, proof: proofFor(key, msg.nonce) }));
+        socket.send(JSON.stringify({ type: "pairing_proof", scheme: msg.scheme, proof: proofFor(key, msg.nonce) }));
       }
       return;
     }
@@ -239,7 +239,7 @@ test("a local process claiming to be the extension cannot replace the paired ext
   assert.equal(bridge.isConnected(), true, "an unpaired hello displaced the extension");
   const result = await bridge.request("cloud_run", { runId: "still-private", task: "private task", mode: "ask" });
   assert.equal(result.runId, "still-private", "the paired extension must keep answering");
-  assert.deepEqual(rogue.frames.map((frame) => frame.type), ["auth_challenge"], "an unpaired socket must only see the challenge");
+  assert.deepEqual(rogue.frames.map((frame) => frame.type), ["pairing_challenge"], "an unpaired socket must only see the challenge");
 
   const { code, reason } = await rogueClosed;
   assert.equal(code, 4001);
@@ -262,7 +262,7 @@ test("a wrong pairing proof is refused without touching the paired extension", a
   const { code, reason } = await closeInfo(rogue);
   assert.equal(code, 4001);
   assert.equal(reason, "Pairing key mismatch");
-  assert.deepEqual(rogue.frames.map((frame) => frame.type), ["auth_challenge"]);
+  assert.deepEqual(rogue.frames.map((frame) => frame.type), ["pairing_challenge"]);
 
   assert.equal(bridge.isConnected(), true);
   assert.equal((await bridge.request("cloud_status", { runId: "safe" })).runId, "safe");
@@ -308,8 +308,8 @@ test("the pairing key never crosses the socket and pairing works in either frame
     const text = raw.toString();
     seen.push(text);
     const msg = JSON.parse(text);
-    if (msg.type === "auth_challenge") {
-      socket.send(JSON.stringify({ type: "auth", scheme: msg.scheme, proof: proofFor(PAIRING_KEY, msg.nonce) }));
+    if (msg.type === "pairing_challenge" || msg.type === "auth_challenge") {
+      socket.send(JSON.stringify({ type: "pairing_proof", scheme: msg.scheme, proof: proofFor(PAIRING_KEY, msg.nonce) }));
       setTimeout(() => {
         assert.equal(bridge.isConnected(), false, "a proof without hello must not be enough");
         socket.send(JSON.stringify({ type: "hello", client: "webbrain-extension", protocolVersion: 2, capabilities: [] }));

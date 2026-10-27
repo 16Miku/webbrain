@@ -7,9 +7,9 @@
  * initiated by us and answered by the extension.
  *
  * Wire protocol:
- *   us -> extension   {type:'auth_challenge', scheme, nonce}       (on connect)
+ *   us -> extension   {type:'pairing_challenge', scheme, nonce}       (on connect)
  *   extension -> us   {type:'hello', client, protocolVersion, capabilities, status}
- *   extension -> us   {type:'auth', scheme, proof}                 (either order)
+ *   extension -> us   {type:'pairing_proof', scheme, proof}           (either order)
  *   us -> extension   {id, action, payload}
  *   extension -> us   {id, ok:true,  result}
  *                     {id, ok:false, error, status?}
@@ -24,6 +24,7 @@
  * exact field names `cloud-runs.js` reads.
  */
 
+import { randomUUID } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import { config } from "./config.js";
 import {
@@ -70,6 +71,22 @@ export interface CloudSnapshot {
 }
 
 export const TERMINAL_STATUSES = new Set(["completed", "failed", "aborted"]);
+
+/**
+ * Memory-run redaction scopes held at once. One bridge can live as long as the
+ * app hosting it, so this bounds concurrent scopes, not lifetime runs: an
+ * unfinished run keeps its scope until the extension reports it terminal, and
+ * finished scopes are recycled oldest-first when room is needed.
+ */
+export const MAX_MEMORY_RUN_SCOPES = 256;
+
+interface MemoryRunState {
+  credentials: readonly string[];
+  /** The start was answered (or never sent): the run is in the extension's list or never will be. */
+  startSettled: boolean;
+  /** The extension reported a terminal status, so nothing new can reach this run. */
+  finished: boolean;
+}
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -143,7 +160,8 @@ export class WebBrainBridge {
   private memoryPrivateValues = new Set<string>();
   private memoryProtectedRunIds = new Set<string>();
   private memoryRunValues = new Map<string, ReadonlySet<string>>();
-  private protectedMemoryRequests = 0;
+  /** Lifecycle of each scope above, in eviction order (oldest finished first). */
+  private memoryRuns = new Map<string, MemoryRunState>();
 
   constructor(private readonly options: BridgeOptions = {}) {
     this.pairingTimeoutMs = options.pairingTimeoutMs ?? 10_000;
@@ -239,7 +257,7 @@ export class WebBrainBridge {
       });
 
       try {
-        socket.send(JSON.stringify({ type: "auth_challenge", scheme: PAIRING_SCHEME, nonce: candidate.nonce }));
+        socket.send(JSON.stringify({ type: "pairing_challenge", scheme: PAIRING_SCHEME, nonce: candidate.nonce }));
       } catch {
         /* the close handler drops the candidate */
       }
@@ -274,7 +292,7 @@ export class WebBrainBridge {
         return;
       }
       candidate.hello = msg;
-    } else if (msg.type === "auth") {
+    } else if (msg.type === "pairing_proof" || msg.type === "auth") {
       if (msg.scheme !== PAIRING_SCHEME || !verifyPairingProof(this.pairingKey, candidate.nonce, msg.proof)) {
         this.rejectCandidate(socket, "Pairing key mismatch");
         return;
@@ -352,6 +370,12 @@ export class WebBrainBridge {
     this.pending.delete(id);
     clearTimeout(entry.timer);
 
+    if (entry.memoryStart && entry.runId) {
+      // Answered either way, so the extension now lists this run or never will.
+      const state = this.memoryRuns.get(entry.runId);
+      if (state) state.startSettled = true;
+    }
+
     if (msg.ok === false) {
       const status = typeof msg.status === "number" ? msg.status : undefined;
       entry.reject(new BridgeError(String(redactMemoryRunResponse(msg.error || "Unknown bridge error", this.memoryPrivateValues,
@@ -364,8 +388,13 @@ export class WebBrainBridge {
       if (typeof runId === "string") {
         this.memoryProtectedRunIds.add(runId);
         if (entry.memoryValues) this.memoryRunValues.set(runId, new Set([...(this.memoryRunValues.get(runId) || []), ...entry.memoryValues]));
+        if (!this.memoryRuns.has(runId)) {
+          const credentials = (entry.runId && this.memoryRuns.get(entry.runId)?.credentials) || [];
+          this.memoryRuns.set(runId, { credentials, startSettled: true, finished: false });
+        }
       }
     }
+    this.noteMemoryRunStatuses(msg.result, entry.runId);
     entry.resolve(redactMemoryRunResponse(msg.result, this.memoryPrivateValues, this.memoryProtectedRunIds,
       entry.protectedRequest, { runValues: this.memoryRunValues, requestRunId: entry.runId, requestValues: entry.memoryValues }));
   }
@@ -376,6 +405,64 @@ export class WebBrainBridge {
       entry.reject(error);
     }
     this.pending.clear();
+  }
+
+  /** Track which protected runs the extension reports as finished (or live again). */
+  private noteMemoryRunStatuses(result: unknown, requestRunId?: string): void {
+    if (!this.memoryRuns.size || !result || typeof result !== "object") return;
+    const listed = (result as { runs?: unknown }).runs;
+    for (const run of Array.isArray(listed) ? listed : [result]) {
+      if (!run || typeof run !== "object") continue;
+      const snapshot = run as Record<string, unknown>;
+      const runId = String(snapshot.runId || snapshot.run_id || (Array.isArray(listed) ? "" : requestRunId || ""));
+      const state = this.memoryRuns.get(runId);
+      if (!state || typeof snapshot.status !== "string") continue;
+      state.startSettled = true;
+      const finished = TERMINAL_STATUSES.has(snapshot.status);
+      if (finished && !state.finished) {
+        // Re-append so the most recently finished runs keep their scope longest.
+        this.memoryRuns.delete(runId);
+        this.memoryRuns.set(runId, state);
+      }
+      state.finished = finished;
+    }
+  }
+
+  /** Drop the oldest finished scopes until one more fits; false if every slot is unfinished. */
+  private evictFinishedMemoryRuns(): boolean {
+    let evicted = false;
+    for (const [runId, state] of this.memoryRuns) {
+      if (this.memoryRuns.size < MAX_MEMORY_RUN_SCOPES) break;
+      if (!state.finished) continue;
+      this.memoryRuns.delete(runId);
+      this.memoryProtectedRunIds.delete(runId);
+      this.memoryRunValues.delete(runId);
+      evicted = true;
+    }
+    if (evicted) {
+      // Runs can share a credential, so keep every one a retained run still uses.
+      this.memoryPrivateValues = new Set([...this.memoryRuns.values()].flatMap((state) => state.credentials));
+    }
+    return this.memoryRuns.size < MAX_MEMORY_RUN_SCOPES;
+  }
+
+  /**
+   * A caller that stopped polling leaves a finished run looking unfinished.
+   * The extension's run list is authoritative (it hydrates first), so re-read
+   * it: terminal runs are noted on the way in, and a settled start missing
+   * from the list can never be returned again.
+   */
+  private async refreshMemoryRunStates(timeoutMs: number): Promise<void> {
+    try {
+      const listed = await this.request<{ runs?: CloudSnapshot[] }>("cloud_status", {}, timeoutMs);
+      if (!Array.isArray(listed?.runs)) return;
+      const present = new Set(listed.runs.map((run) => String(run.runId || run.run_id || "")));
+      for (const [runId, state] of this.memoryRuns) {
+        if (state.startSettled && !present.has(runId)) state.finished = true;
+      }
+    } catch {
+      /* the caller reports capacity */
+    }
   }
 
   isConnected(): boolean {
@@ -429,21 +516,37 @@ export class WebBrainBridge {
       if (!this.capabilities().includes(BOT_MEMORY_CAPABILITY)) {
         throw new BridgeError("Update the browser extension before starting a task with bot memory.", 409);
       }
-      // Retain privacy through failed/late runs; never evict an old scope and
-      // then accidentally expose its data when status is queried again.
-      if (this.protectedMemoryRequests >= 256) {
-        throw new BridgeError("Private memory relay capacity reached. Restart the MCP server before starting another memory run.", 409);
+      // Retain privacy through failed/late runs: a scope is never evicted
+      // before the extension reports its run finished, and only then once
+      // room is needed. A known run ID lets every start be tracked that way.
+      const runId = typeof payload.runId === "string" ? payload.runId : `mcp_${randomUUID()}`;
+      if (!this.memoryRuns.has(runId) && !this.evictFinishedMemoryRuns()) {
+        await this.refreshMemoryRunStates(timeoutMs);
+        if (this.socket !== socket || !this.isConnected()) {
+          throw new BridgeError("WebBrain extension disconnected before the memory run could start.");
+        }
+        // Re-checked with no await before the scope is added below.
+        if (!this.memoryRuns.has(runId) && !this.evictFinishedMemoryRuns()) {
+          throw new BridgeError(
+            `${MAX_MEMORY_RUN_SCOPES} bot-memory runs are still unfinished on this bridge. ` +
+              "Wait for one to finish or abort it before starting another memory run.",
+            409,
+          );
+        }
       }
-      this.protectedMemoryRequests += 1;
-      payload = { ...payload, taskMemory: memory };
-      memoryValues = taskMemoryPrivateValues(memory);
-      this.memoryPrivateValues.add(memory.callbackToken);
-      this.memoryPrivateValues.add(memory.callbackUrl);
-      if (typeof payload.runId === "string") {
-        this.memoryProtectedRunIds.add(payload.runId);
-        memoryValues = new Set([...(this.memoryRunValues.get(payload.runId) || []), ...memoryValues]);
-        this.memoryRunValues.set(payload.runId, memoryValues);
-      }
+      payload = { ...payload, runId, taskMemory: memory };
+      memoryValues = new Set([...(this.memoryRunValues.get(runId) || []), ...taskMemoryPrivateValues(memory)]);
+      const credentials = [memory.callbackToken, memory.callbackUrl];
+      for (const credential of credentials) this.memoryPrivateValues.add(credential);
+      this.memoryProtectedRunIds.add(runId);
+      this.memoryRunValues.set(runId, memoryValues);
+      const previous = this.memoryRuns.get(runId);
+      this.memoryRuns.delete(runId);
+      this.memoryRuns.set(runId, {
+        credentials: [...new Set([...(previous?.credentials || []), ...credentials])],
+        startSettled: false,
+        finished: false,
+      });
     }
 
     const id = this.nextId++;
@@ -489,7 +592,7 @@ export class WebBrainBridge {
     this.memoryPrivateValues.clear();
     this.memoryProtectedRunIds.clear();
     this.memoryRunValues.clear();
-    this.protectedMemoryRequests = 0;
+    this.memoryRuns.clear();
     for (const [candidate, state] of this.candidates) {
       clearTimeout(state.timer);
       try {

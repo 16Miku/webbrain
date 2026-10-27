@@ -47,8 +47,8 @@ socket.on("message", (raw) => {
     log("non-JSON frame:", raw.toString());
     return;
   }
-  if (msg.type === "auth_challenge") {
-    socket.send(JSON.stringify({ type: "auth", scheme: PAIRING_SCHEME, proof: pairingProof(pairingKey, msg.nonce) }));
+  if (msg.type === "pairing_challenge" || msg.type === "auth_challenge") {
+    socket.send(JSON.stringify({ type: "pairing_proof", scheme: PAIRING_SCHEME, proof: pairingProof(pairingKey, msg.nonce) }));
     log("pairing proof sent");
     return;
   }

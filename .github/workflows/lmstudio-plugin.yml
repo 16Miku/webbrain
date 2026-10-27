@@ -1,0 +1,42 @@
+name: LM Studio Plugin
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/lmstudio-plugin.yml"
+      - "lmstudio-plugin/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/lmstudio-plugin.yml"
+      - "lmstudio-plugin/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lmstudio-plugin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: lmstudio-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: lmstudio-plugin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and test
+        run: npm test

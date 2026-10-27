@@ -713,6 +713,26 @@ test('trusted target validation descends through open shadow roots', async () =>
   assert.match(validation, /shadowRoot\.elementFromPoint/);
   assert.match(validation, /node\.parentNode \|\| node\.host/);
 });
+test('a trusted click over an embedded frame is refused before any input', async () => {
+  // The marked element is a container whose point is covered by a frame:
+  // the press would land in the frame's own document, another site.
+  for (const action of ['click', 'click_at']) {
+    const session = new BidiSession(); const runId = id(); const token = id(); const sent = [];
+    const el = { isConnected: true, tagName: 'DIV', disabled: false,
+      getAttribute: name => name === 'data-webbrain-bidi' ? token : null, removeAttribute() {},
+      getBoundingClientRect: () => ({ x: 0, y: 0, width: 300, height: 200 }) };
+    const frame = { tagName: 'IFRAME', parentNode: el };
+    session.runs.set(runId, { context: 'tab' });
+    session.locate = async () => ({ context: 'tab', node: { sharedId: 'container' } });
+    session.call = async (_match, declaration, args = []) => ({ result: { value: vm.runInNewContext(`(${declaration})`, {
+      document: { elementFromPoint: () => frame }, innerWidth: 800, innerHeight: 600,
+    })(el, ...args.map(arg => arg.type === 'null' ? null : arg.value)) } });
+    session.send = async method => { sent.push(method); return {}; };
+    await assert.rejects(session.perform(runId, action, { token, point: { x: 40, y: 40 } }),
+      error => /Target changed or is covered/.test(error.message) && error.dispatchState.noDispatch === true, action);
+    assert.deepEqual(sent, [], action);
+  }
+});
 test('keyboard validation does not require pointer geometry', async () => {
   const session = new BidiSession(); const runId = id(); const calls = [];
   session.runs.set(runId, { context: 'tab' });

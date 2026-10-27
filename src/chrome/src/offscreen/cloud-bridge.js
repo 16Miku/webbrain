@@ -31,6 +31,15 @@
   const PAIRING_SCHEME = 'hmac-sha256-v1';
   const PAIRING_PROOF_LABEL = 'webbrain-bridge-pairing-v1:';
   const PAIRING_CLOSE_CODE = 4001;
+  // A token-configured controller must pass a mutual HMAC challenge
+  // (docs/cloud-bridge-browser-approval.md). The token never crosses the
+  // socket: whoever answers on the loopback port proves it knows the token
+  // first, and only then does the extension prove itself and reveal its
+  // browser and installation IDs. A process that wins the port learns nothing
+  // it can replay and cannot move the socket to `approved`.
+  const BRIDGE_AUTH_METHOD = 'hmac-sha256-v1';
+  const BRIDGE_AUTH_LABEL = 'webbrain-bridge-auth-v1';
+  const HEX_256 = /^[0-9a-f]{64}$/;
   let socket = null;
   let bridgeUrl = null;
   let enabled = false;
@@ -39,9 +48,13 @@
   let lastError = '';
   // Browser registration/approval. Identity is pushed by the background worker
   // with `cloud-bridge-start` (the offscreen page has no storage access). When
-  // a token is configured the backend must approve each new socket before any
-  // cloud_* command runs; without a token the legacy local behaviour is kept.
-  let identity = { token: '', browserId: '', installationId: '', extensionVersion: '', pairingKey: '' };
+  // a token is configured the backend must authenticate and then approve each
+  // new socket before any cloud_* command runs; without a token the legacy
+  // local behaviour is kept. `legacyBearerAuth` is the deprecated opt-in that
+  // still sends the token in the hello for controllers without the challenge.
+  // `pairingKey` is independent of the token: it answers the pairing challenge
+  // that the local MCP / LM Studio bridges send to authenticate the extension.
+  let identity = { token: '', browserId: '', installationId: '', extensionVersion: '', legacyBearerAuth: false, pairingKey: '' };
   let approval = 'not_required'; // not_required | pending | approved | rejected
 
   function browserInfo() {
@@ -107,6 +120,51 @@
     try { target.close(); } catch {}
   }
 
+  function authMode() {
+    if (!identity.token) return 'none';
+    return identity.legacyBearerAuth ? 'legacy_bearer' : 'challenge';
+  }
+
+  const utf8 = (value) => new TextEncoder().encode(value);
+  const toHex = (bytes) => Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, '0')).join('');
+  const fromHex = (hex) => Uint8Array.from(hex.match(/../g), (pair) => parseInt(pair, 16));
+  const hmacKey = (token, usage) => crypto.subtle.importKey('raw', utf8(token), { name: 'HMAC', hash: 'SHA-256' }, false, [usage]);
+  // A JSON array keeps the role, the nonces and the identity unambiguous.
+  const authTranscript = (...parts) => utf8(JSON.stringify([BRIDGE_AUTH_LABEL, ...parts]));
+
+  async function answerAuthChallenge(msg, target, auth) {
+    // One challenge per socket, and only after our own nonce went out.
+    if (auth.mode !== 'challenge' || auth.state !== 'awaiting_controller') return;
+    auth.state = 'verifying';
+    const { token, browserId, installationId } = identity;
+    let proof = '';
+    try {
+      const verified = msg.method === BRIDGE_AUTH_METHOD
+        && typeof msg.nonce === 'string' && HEX_256.test(msg.nonce)
+        && typeof msg.proof === 'string' && HEX_256.test(msg.proof)
+        && await crypto.subtle.verify('HMAC', await hmacKey(token, 'verify'), fromHex(msg.proof),
+          authTranscript('controller', auth.nonce, msg.nonce));
+      if (verified) {
+        proof = toHex(await crypto.subtle.sign('HMAC', await hmacKey(token, 'sign'),
+          authTranscript('extension', auth.nonce, msg.nonce, browserId, installationId)));
+      }
+    } catch {
+      proof = '';
+    }
+    if (socket !== target) return;
+    if (!proof) {
+      // Not the controller this token belongs to: answer nothing and retry
+      // with backoff, in case the real controller gets its port back.
+      auth.state = 'failed';
+      lastError = 'Bridge controller failed authentication';
+      try { target.close(); } catch {}
+      return;
+    }
+    auth.state = 'verified';
+    reconnectAttempt = 0;
+    sendJson({ type: 'auth_response', method: BRIDGE_AUTH_METHOD, proof, browserId, installationId }, target);
+  }
+
   function scheduleReconnect() {
     if (!enabled || !bridgeUrl || reconnectTimer) return;
     const delay = Math.min(30000, 500 * Math.pow(2, reconnectAttempt++));
@@ -121,10 +179,15 @@
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
     try {
       const nextSocket = new WebSocket(bridgeUrl);
+      // Per-socket authentication state; nothing carries over a reconnect.
+      const auth = { mode: 'none', state: 'none', nonce: '' };
       socket = nextSocket;
       nextSocket.addEventListener('open', () => {
         if (socket !== nextSocket) return;
-        reconnectAttempt = 0;
+        auth.mode = authMode();
+        // A challenged socket only counts as healthy once the controller has
+        // proved itself, so a squatter that fails cannot reset the backoff.
+        if (auth.mode !== 'challenge') reconnectAttempt = 0;
         lastError = '';
         // Every new socket starts unapproved; approval never carries over.
         approval = identity.token ? 'pending' : 'not_required';
@@ -138,7 +201,15 @@
           platform: platformName(),
           status: status(),
         };
-        if (identity.token) {
+        if (auth.mode === 'challenge') {
+          auth.nonce = toHex(crypto.getRandomValues(new Uint8Array(32)));
+          auth.state = 'awaiting_controller';
+          hello.auth = { type: 'challenge', method: BRIDGE_AUTH_METHOD, nonce: auth.nonce };
+          // The IDs go out in auth_response, after the controller's proof.
+          delete hello.status.browserId;
+          delete hello.status.installationId;
+        } else if (auth.mode === 'legacy_bearer') {
+          // Deprecated: hands the reusable token to whoever owns the port.
           hello.auth = { type: 'bearer', token: identity.token };
           hello.browserId = identity.browserId;
           hello.installationId = identity.installationId;
@@ -160,6 +231,14 @@
         }
 
         if (msg.type === 'auth_challenge') {
+          await answerAuthChallenge(msg, nextSocket, auth);
+          return;
+        }
+
+        // The local MCP / LM Studio bridges authenticate the extension with a
+        // separate pairing challenge. It has its own message types so it can
+        // never be confused with the controller auth_challenge above.
+        if (msg.type === 'pairing_challenge') {
           if (msg.scheme !== PAIRING_SCHEME || typeof msg.nonce !== 'string' || !msg.nonce || msg.nonce.length > 256) return;
           if (!identity.pairingKey) {
             failPairing(nextSocket, 'This bridge requires a pairing key. Paste it under Settings → Bridge → Pairing key.');
@@ -173,12 +252,16 @@
             return;
           }
           if (socket !== nextSocket) return;
-          sendJson({ type: 'auth', scheme: PAIRING_SCHEME, proof }, nextSocket);
+          sendJson({ type: 'pairing_proof', scheme: PAIRING_SCHEME, proof }, nextSocket);
           return;
         }
 
         if (msg.type === 'connection_pending' || msg.type === 'connection_approved' || msg.type === 'connection_rejected') {
           if (!identity.token) return;
+          // Only a controller that proved the token may move a challenged
+          // socket toward approval. A rejection only takes rights away, so it
+          // is honoured from anyone.
+          if (auth.mode === 'challenge' && auth.state !== 'verified' && msg.type !== 'connection_rejected') return;
           if (msg.browserId && msg.browserId !== identity.browserId) return;
           if (msg.type === 'connection_pending') {
             if (approval !== 'approved') approval = 'pending';
@@ -244,7 +327,8 @@
         scheduleReconnect();
       });
       nextSocket.addEventListener('error', () => {
-        if (socket !== nextSocket) return;
+        // Closing a socket we dropped can error; keep the reason we dropped it.
+        if (socket !== nextSocket || auth.state === 'failed') return;
         lastError = 'WebSocket error';
       });
     } catch (e) {
@@ -270,6 +354,7 @@
         installationId: String(msg.installationId || ''),
         extensionVersion: String(msg.extensionVersion || ''),
         pairingKey: String(msg.pairingKey || '').trim(),
+        legacyBearerAuth: msg.legacyBearerAuth === true,
       };
       const identityChanged = JSON.stringify(nextIdentity) !== JSON.stringify(identity);
       const changed = (bridgeUrl && bridgeUrl !== nextUrl) || identityChanged;
