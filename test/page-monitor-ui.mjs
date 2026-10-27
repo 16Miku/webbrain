@@ -2305,6 +2305,17 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       await page.evaluate(() => messageListeners.forEach(listener => listener({ type: 'WB_SHOW_AFTER_TOOL_USE' }, {}, () => {})));
       await page.locator('#human').click();
       assert.ok((await page.evaluate(() => feedback)).some(event => event.kind === 'click' && event.source === 'user'));
+      // Reduced motion: the canvas keeps one still frame, and the glow and the ring stop pulsing.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.waitForTimeout(100);
+      const frame = () => page.evaluate(() => document.getElementById('webbrain-agent-effect').toDataURL());
+      const still = await frame();
+      await page.waitForTimeout(400);
+      assert.equal(await frame(), still, 'the circuit holds still under reduced motion');
+      await page.evaluate(() => storageListeners.forEach(fn => fn({ agentIndicatorStyle: { newValue: 'classic' } }, 'local')));
+      await page.evaluate(() => window.__webbrainAgentIndicator.showTarget(document.getElementById('select'), 'click_coordinates'));
+      assert.deepEqual(await page.evaluate(() => ['webbrain-agent-glow-border', 'webbrain-agent-target-outline']
+        .map(id => getComputedStyle(document.getElementById(id)).animationName)), ['none', 'none']);
     } finally { await browser.close(); }
   });
 

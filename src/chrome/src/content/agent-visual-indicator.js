@@ -120,6 +120,19 @@
             0 0 32px rgba(108, 99, 255, 0.38);
         }
       }
+
+      /* The canvas effects and the cursor check this in script; the glow
+         and the target ring are CSS, so they hold still here. */
+      @media (prefers-reduced-motion: reduce) {
+        #webbrain-agent-glow-border { animation: none !important; }
+        #webbrain-agent-target-outline {
+          animation: none !important;
+          transition: opacity 0.35s ease !important;
+          box-shadow:
+            0 0 0 3px rgba(108, 99, 255, 0.18),
+            0 0 24px rgba(108, 99, 255, 0.28) !important;
+        }
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
