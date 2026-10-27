@@ -479,7 +479,7 @@ function validateFallbackIdentifiers(built) {
 // All validation happens before any paid create request. A provider is never
 // submitted twice, and a failed page application never restarts this loop.
 export function prepareNativeCaptchaTasks(providers, entries) {
-  if (!Array.isArray(entries) || !entries.length || entries.length > 7) throw new Error('Provide one to seven providerTasks.');
+  if (!Array.isArray(entries) || !entries.length || entries.length > 8) throw new Error('Provide one to eight providerTasks.');
   const seen = new Set();
   const built = entries.map(entry => {
     if (seen.has(entry.provider)) throw new Error('Only one method per provider is allowed per dispatch.');

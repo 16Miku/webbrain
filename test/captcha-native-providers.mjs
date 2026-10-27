@@ -123,6 +123,7 @@ for (const browser of ['chrome','firefox']) {
     const entry={provider:'capsolver',method:'AntiCloudflareTask',parameters:{websiteURL:url,proxy:'http:p:80'}};
     for(const parameters of [{websiteURL:url},{...entry.parameters,callbackUrl:'https://evil.test'},{...entry.parameters,type:'UnknownTask'},JSON.parse('{"__proto__":{"polluted":true}}')]) assert.throws(()=>native.prepareNativeCaptchaTasks(providers,[{...entry,parameters}]));
     assert.throws(()=>native.prepareNativeCaptchaTasks(providers,[entry,entry]),/one method/);
+    assert.throws(()=>native.prepareNativeCaptchaTasks(providers,Array.from({length:9},()=>entry)),/one to eight/);
     assert.throws(()=>native.prepareNativeCaptchaTasks([], [entry]),/enabled/);
     assert.throws(()=>native.prepareNativeCaptchaTasks([{id:'capsolver',useCloudBroker:true}], [entry]),/personal/);
     assert.throws(()=>native.prepareNativeCaptchaTasks(providers,[entry,{provider:'nonecap',method:'hcaptcha',parameters:{sitekey:'site',url}}]),/same CAPTCHA/);
@@ -334,6 +335,13 @@ for (const browser of ['chrome','firefox']) {
     assert.throws(()=>native.buildNativeCaptchaTask({provider:'solvecha',method:'token/recaptcha2',parameters:{sitekey:'site',url}}));
     assert.throws(()=>native.buildNativeCaptchaTask({provider:'solvecha',method:'recognition/textcaptcha',parameters:{image_data:['a','b']}}),/exactly one input/);
     assert.throws(()=>native.buildNativeCaptchaTask({provider:'solvecha',method:'recognition/recaptcha',parameters:{task:'cars',grid:'5x5',image_data:['a']}}),/Invalid reCAPTCHA recognition grid/);
+  });
+  test(`${browser}: solve_captcha schema accepts Solvecha native tasks`,async()=>{
+    const {AGENT_TOOLS}=await import(`../src/${browser}/src/agent/tools.js`);
+    const {validateToolArguments}=await import(`../src/${browser}/src/agent/tool-arguments.js`);
+    const tool=AGENT_TOOLS.find(t=>t.function.name==='solve_captcha');
+    const args={providerTasks:[{provider:'solvecha',method:'recognition/recaptcha',parameters:{task:'cars',grid:'3x3',image_data:['base64']}}],inject:false};
+    assert.equal(validateToolArguments('solve_captcha',args,tool.function.parameters).ok,true);
   });
   test(`${browser}: SolveCaptcha form polling decodes object results, without flattening them into token strings`,async t=>{
     const calls=mockApi(t,c=>c.url.pathname==='/in.php'?{status:1,request:'123'}:{status:1,request:'{"captcha_id":"id","lot_number":"lot"}'});

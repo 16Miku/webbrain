@@ -2,7 +2,7 @@
 
 Initial catalog audit: **2026-09-29**. Integration contracts rechecked against first-party documentation on **2026-10-01**. Chrome and Firefox share the provider catalog, request validation, transports, and result handling; their browser execution adapters remain platform-specific.
 
-This integration exposes **eight providers and 203 catalog method variants**. A method variant can be a proxy/proxyless route, an Enterprise option, a recognition model, or a separate response mode. It is not a claim that there are 198 CAPTCHA products.
+This integration exposes **eight providers and 203 catalog method variants**. A method variant can be a proxy/proxyless route, an Enterprise option, a recognition model, or a separate response mode. It is not a claim that there are 203 CAPTCHA products.
 
 “Integrated” means WebBrain can validate the method's input, submit its documented request, poll when needed, and preserve its answer. It does **not** mean every website exposes the required parameters, that a token is accepted, or that authenticated live success rates have been measured. This implementation was checked with provider-contract fixtures and browser tests; no paid live solves were performed.
 

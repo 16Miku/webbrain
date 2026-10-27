@@ -660,7 +660,7 @@
           <p class="captcha-description"><a id="nonecap-docs" target="_blank" rel="noopener noreferrer" data-i18n="st.captcha.docs"></a></p>
           <div class="field">
             <label for="nonecap-api-key" data-i18n="st.captcha.provider_key" data-i18n-params='{"provider":"NoneCap"}'></label>
-            <input type="password" id="nonecap-api-key" pattern="[A-Za-z0-9_\-]{1,256}" maxlength="256" autocomplete="off" spellcheck="false">
+            <input type="password" id="nonecap-api-key" pattern="nc_live_[A-Za-z0-9_\-]{32}" minlength="40" maxlength="40" placeholder="nc_live_…" autocomplete="off" spellcheck="false">
           </div>
           <div class="btn-row">
             <button class="btn-primary" id="btn-save-nonecap" data-i18n="st.captcha.save"></button>
