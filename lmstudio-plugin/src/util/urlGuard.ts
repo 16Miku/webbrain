@@ -18,23 +18,20 @@
  *   - common private DNS spellings (localhost, *.local, *.internal, *.lan)
  *   - cloud metadata endpoints, even when allowPrivate is set
  *
- * The DNS-resolution-aware check
- * (`assertHostnameDoesNotResolveToPrivate`) lives in `safeFetch.ts`
- * because it requires `node:dns` and is awaited once per redirect hop
- * inside the `safeFetch` wrapper. That additional layer closes the case
+ * The DNS-resolution-aware check (`guardedLookup`) lives in
+ * `safeFetch.ts` because it requires `node:dns`. It runs as the request
+ * socket's `lookup` hook on every hop, so the connection can only use
+ * addresses that passed it. That additional layer closes the case
  * where a public-looking hostname has an A record pointing into
  * RFC1918 / loopback / link-local space, e.g. `attacker.example A
- * 127.0.0.1`. `isPrivateIpv4` / `isPrivateIpv6` are exported so the
- * resolver-side check reuses the same range definitions.
+ * 127.0.0.1`, and DNS rebinding (a TTL=0 record answering public to a
+ * check and private to the connection), because there is no separate
+ * check to answer. `isPrivateIpv4` / `isPrivateIpv6` are exported so
+ * the resolver-side check reuses the same range definitions.
  *
- * Residual gap: DNS rebinding. An attacker controlling a domain with
- * TTL=0 can return a public IP at the time of the guard check and a
- * private IP at the time `fetch` connects. Closing this fully requires
- * pinning the resolved IP via a custom undici Agent + `lookup` hook —
- * tracked as a follow-up. The current layered defense (sync check +
- * DNS check + per-redirect re-validation) raises the bar enough to
- * stop drive-by SSRF from open redirects and naive hostname tricks
- * but is NOT a hardened sandbox.
+ * The layered defense (sync check + connect-time DNS check +
+ * per-redirect re-validation) stops drive-by SSRF from open redirects,
+ * naive hostname tricks and rebinding, but is NOT a hardened sandbox.
  *
  * To opt-out (e.g. you really do want to point this at your intranet)
  * call assertSafeUrl(url, { allowPrivate: true }) and pass the same
