@@ -76319,7 +76319,7 @@ test('_defaultConfigs: every entry carries an explicit category', () => {
 test('extended provider catalog is complete, mirrored, safe, and excluded-provider clean', async () => {
   const expectedIds = `
     302ai abacus aihubmix alibaba-coding-plan alibaba-coding-plan-cn
-    azure-cognitive-services bailing baseten berget cerebras chutes clarifai
+    azure-cognitive-services bailing baseten berget cerebras cheaperinference chutes clarifai
     cloudferro-sherlock cohere cortecs deepinfra digitalocean dinference drun
     evroc fastrouter freebuff2api friendli google-vertex google-vertex-anthropic helicone
     iflowcn inception inference io-net jiekou kilo kimi-for-coding
@@ -76333,7 +76333,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 80);
+  assert.equal(expectedIds.length, 81);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -76348,8 +76348,8 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   ]) {
     const defaults = new PM()._defaultConfigs();
     // Includes the sidepanel-only WebBrain Compass XL runtime profile, which is
-    // deliberately omitted from the 114/113 Settings provider cards.
-    const expectedDefaultCount = label === 'chrome' ? 115 : 114;
+    // deliberately omitted from the 115/114 Settings provider cards.
+    const expectedDefaultCount = label === 'chrome' ? 116 : 115;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -76471,6 +76471,30 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.nearai.suggestions,
     ['z-ai/glm-5.3-flash', 'Qwen/Qwen3.8-27B'],
+  );
+  assert.deepEqual(
+    {
+      baseUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.baseUrl,
+      model: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.model,
+      contextWindow: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.contextWindow,
+      supportsVision: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.supportsVision,
+      supportsTools: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.supportsTools,
+      supportsAskStreaming: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.supportsAskStreaming,
+      apiKeyUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.cheaperinference.apiKeyUrl,
+    },
+    {
+      baseUrl: 'https://api.cheaperinference.com/v1',
+      model: 'gpt-5.4-mini',
+      contextWindow: 400000,
+      supportsVision: true,
+      supportsTools: true,
+      supportsAskStreaming: true,
+      apiKeyUrl: 'https://cheaperinference.com',
+    },
+  );
+  assert.deepEqual(
+    ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.cheaperinference.suggestions,
+    ['gpt-5.4-mini', 'claude-sonnet-5', 'gemini-3.5-flash', 'deepseek-v4-flash'],
   );
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['kimi-for-coding'].suggestions,
