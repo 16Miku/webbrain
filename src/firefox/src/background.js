@@ -1281,7 +1281,8 @@ browser.storage.onChanged.addListener((changes, areaName) => {
     setApiMutationObserverEnabled(value === undefined || value === true);
   }
   if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
-    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
+    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId
+    || changes.webbrainCloudBridgeLegacyBearerAuth) {
     cloudRunController.syncBridge().catch(() => {});
   }
   if (areaName === 'local' && changes.browserBatchEnabled) {
