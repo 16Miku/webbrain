@@ -19655,7 +19655,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * (no tab) is never skipped.
    */
   _guardSkipped(id, tabId = null) {
-    return this._leanRunActive(tabId) && leanSkipsGuard(id);
+    if (!this._leanRunActive(tabId) || !leanSkipsGuard(id)) return false;
+    // A vision run sees what an action did only in the screen update after
+    // its batch: done(success) in the same response as the action reports a
+    // result nobody has looked at, so lean mode keeps that check there.
+    if (id === 'done-invariant-shape-checks' && this._visionRunState?.(tabId)?.active === true) return false;
+    return true;
   }
 
   /**

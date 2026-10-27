@@ -604,6 +604,27 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.equal(redactionWarnings(report.updates).length, 1);
   });
 
+  test(`${build}: in a lean vision run, done(success) in the same response as the action is refused once`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) return { toolCalls: [call('click_at', { x: 300, y: 200 }), call('done', { summary: 'Sent.', outcome: 'success' })] };
+      if (step === 2) return { toolCalls: [call('done', { summary: 'Sent.', outcome: 'success' })] };
+      return { content: 'done' };
+    });
+    assert.equal(ctx.agent.leanMode, 'on');
+    await runLoop(ctx.agent, nextTab++, false);
+    assert.equal(ctx.requests.length, 2, 'the model decided again after the screen update');
+    assert.ok(toolTexts(ctx.requests[1]).some(text => /cannot rely on action or observation results from the same assistant tool batch/.test(text)), toolTexts(ctx.requests[1]).join('\n'));
+    assert.equal(ctx.dispatched.filter(entry => entry.name === 'done').length, 1);
+    // Only that check, and only on vision: lean mode on the tree path still skips it.
+    const agent = new Agent({});
+    agent._leanRunActive = () => true;
+    agent._visionRunState = () => ({ active: false });
+    assert.equal(agent._guardSkipped('done-invariant-shape-checks', 1), true);
+    agent._visionRunState = () => ({ active: true });
+    assert.equal(agent._guardSkipped('done-invariant-shape-checks', 1), false);
+    assert.equal(agent._guardSkipped('done-verification-debt', 1), true);
+  });
+
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };
