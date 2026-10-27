@@ -959,7 +959,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'list_downloads',
-      description: 'List recent downloads with state, filename, and source URL.',
+      description: 'List this conversation\'s downloads (files you downloaded, or that downloaded while you worked) with state, file name, and source URL. The user\'s other download history is not listed.',
       parameters: {
         type: 'object',
         properties: {
@@ -973,7 +973,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'read_downloaded_file',
-      description: 'Read immutable data: payloads captured with a completed download. Firefox cannot verify saved bytes of HTTP(S) downloads; those return an unsupported result and are never fetched again. Returns bounded text or base64 with explicit immutable-payload provenance. Pass downloadId from list_downloads or download_files.',
+      description: 'Read immutable data: payloads captured with a completed download. Firefox cannot verify saved bytes of HTTP(S) downloads; those return an unsupported result and are never fetched again. Returns bounded text or base64 with explicit immutable-payload provenance. Pass downloadId from list_downloads or download_files. A download from outside this conversation is read only if the user approves that exact file on WebBrain\'s card.',
       parameters: {
         type: 'object',
         properties: {

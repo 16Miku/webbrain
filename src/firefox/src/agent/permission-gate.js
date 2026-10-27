@@ -633,6 +633,20 @@ export function urlFilterHostHint(urlFilter, frameUrls = []) {
     : '';
 }
 
+/**
+ * Does this call's input go to whichever document is under a viewport point
+ * or holds keyboard focus, rather than to an element WebBrain resolved in the
+ * top document? A coordinate click (a vision click_at runs as one), type_text
+ * without a selector and press_keys do: native input lands in an embedded
+ * frame there, a cross-origin payment, identity or wallet frame included.
+ */
+export function inputReachesReceivingFrame(toolName, args) {
+  args = args || {};
+  if (toolName === 'click') return args.x != null && args.y != null;
+  if (toolName === 'type_text') return !args.selector;
+  return toolName === 'press_keys';
+}
+
 /** Resolve a URL (relative / protocol-relative / absolute) to a host against a
  *  base page URL — exactly what the browser handler does (new URL(raw, base)). */
 function resolveHostAgainst(url, base) {
@@ -648,7 +662,8 @@ function resolveHostAgainst(url, base) {
 /**
  * Which host does this capability act on? Navigate/network/download target the
  * destination URL (resolved against the current page); click/type/execute/
- * record target the current page. Returns '' for an iframe action whose frame
+ * record target the current page (or the frame that receives point/focus
+ * input). Returns '' for an iframe action or point/focus input whose frame
  * can't be identified, so the caller fails closed. For the MULTI-host case
  * (download_files with a urls[] array) use requiredHosts() instead.
  */
@@ -678,6 +693,13 @@ export function hostForCapability(capability, args, currentUrlOrHost, toolName) 
   // identify the frame → '' so the caller fails closed.
   if (toolName === 'iframe_click' || toolName === 'iframe_type' || toolName === 'promote_iframe') {
     return normalizeHost(args.urlFilter);
+  }
+  // Point and focus input reaches the receiving document, not necessarily the
+  // top-level page. agent.js always overwrites _inputFrameUrl with that
+  // document's URL before the gate runs; '' (it could not be identified)
+  // fails closed instead of borrowing the top-level page's grant.
+  if ((capability === Capability.CLICK || capability === Capability.TYPE) && inputReachesReceivingFrame(toolName, args)) {
+    return normalizeHost(args._inputFrameUrl);
   }
   if (capability === Capability.NAVIGATE || capability === Capability.NETWORK || capability === Capability.DOWNLOAD) {
     if (typeof args.url === 'string' && args.url) {

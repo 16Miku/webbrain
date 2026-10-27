@@ -6566,7 +6566,7 @@ function rebindClarifyCards() {
     // the card. Skip permission/form-submit cards (they never auto-timeout).
     if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
       || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1'
-      || card.dataset.videoLengthConfirmation === '1') return;
+      || card.dataset.videoLengthConfirmation === '1' || card.dataset.downloadReadConfirmation === '1') return;
     const deadlineTs = Number(card.dataset.deadlineTs);
     if (!Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
     const firstOption = card.dataset.firstOption
@@ -11255,6 +11255,7 @@ function renderClarifyCard(data) {
     ? 'scheduled_clarification'
     : data.workflowHealing || data.pendingReconciliation === true || data.recipientConfirmation
       || data.mutationConfirmation || data.unverifiedStepConfirmation || data.videoLengthConfirmation
+      || data.downloadReadConfirmation
       ? ''
       : data.submitConfirmation
         ? 'form_confirmation'
@@ -11502,6 +11503,44 @@ function renderClarifyCard(data) {
     const optionsEl = document.createElement('div');
     optionsEl.className = 'clarify-options';
     for (const [value, label] of [['once', t('sp.video_length.generate', { total: clock(video.totalSeconds) })], ['deny', t('sp.video_length.dont')]]) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'clarify-option';
+      b.textContent = String(label).slice(0, 200);
+      b.dataset.value = value;
+      b.addEventListener('click', () => {
+        card.dataset.answerLabel = b.textContent;
+        submitClarify(card, tabId, clarifyId, value, 'option');
+      });
+      optionsEl.appendChild(b);
+    }
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
+
+  // Downloaded-file read: the model asked to read a file from the browser's
+  // download history that WebBrain did not download in this chat. The name is
+  // the download's own (page-settable) name, shown as text only. Fixed choices
+  // return stable values ('once'/'deny'); the card never times out.
+  if (data.downloadReadConfirmation) {
+    card.dataset.downloadReadConfirmation = '1';
+    const file = data.downloadReadConfirmation || {};
+    const filename = String(file.filename || '').slice(0, 260);
+    const host = String(file.host || '').slice(0, 300);
+    qEl.textContent = t('sp.download_read.question');
+    const reasonEl = document.createElement('div');
+    reasonEl.className = 'clarify-reason';
+    reasonEl.textContent = t('sp.download_read.reason');
+    card.appendChild(reasonEl);
+    const fileEl = document.createElement('div');
+    fileEl.className = 'clarify-subject';
+    fileEl.textContent = host ? t('sp.download_read.file_from', { filename, host }) : filename;
+    card.appendChild(fileEl);
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    for (const [value, label] of [['once', t('sp.download_read.read')], ['deny', t('sp.download_read.dont')]]) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'clarify-option';
@@ -11899,7 +11938,7 @@ function lockClarifyCardFromAuto(data) {
     const unverifiedStep = card.dataset.unverifiedStepConfirmation === '1';
     if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
       || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1'
-      || card.dataset.videoLengthConfirmation === '1') return;
+      || card.dataset.videoLengthConfirmation === '1' || card.dataset.downloadReadConfirmation === '1') return;
     clearClarifyCountdown(card);
     card.classList.add('clarify-answered');
     for (const el of card.querySelectorAll('button, input')) {

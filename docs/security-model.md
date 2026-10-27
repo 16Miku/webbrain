@@ -24,7 +24,7 @@ For vulnerability disclosure, see [SECURITY.md](../SECURITY.md).
 ```
 
 (This is the Chrome MV3 manifest. Firefox MV2 grants a narrower set —
-`activeTab`, `menus`, `webNavigation`, `webRequest`, `storage`,
+`activeTab`, `menus`, `webNavigation`, `webRequest`, `dns`, `storage`,
 `unlimitedStorage`, `tabs`, `tabGroups`, `notifications`, `downloads`,
 `alarms`, `clipboard*`, `<all_urls>` — and has no
 `debugger`/`offscreen`/`tabCapture`/`sidePanel`/`scripting`/`privateNetworkAccess`,
@@ -34,8 +34,9 @@ see Firefox Differences below.)
 |---|---|---|
 | `<all_urls>` | Content script injection anywhere — the agent can read and interact with any page the user visits | A turn needs an action mode (Act or Dev) before clicks/types/navigation, and only the user's own request grants one: in their own words or with `/act` or `/dev` (see **Automatic mode selection** below). Ask mode is read-only. General browser-tab creation, enumeration, activation, and run retargeting are not exposed as model-callable tools. The one OTP-skill-gated Mid/Full reader internally selects an already-open supported mailbox and returns only bounded service-matching content; it exposes no tab catalog. Candidate inspection is read-only, while opening a selected message requires Act/Dev and mailbox-host click permission because it may mark mail read. Its disposable inactive clone consumes exact message continuations to completion or fails closed. |
 | `debugger` | CDP access provides trusted events and full DOM/network control on any tab | The debugger is attached only to the target tab while a CDP-backed run or mode-scoped Dev diagnostics own it. Run cleanup closes run-scoped WebMCP state and detaches unless Dev diagnostics remain active; conversation cleanup and tab removal drain all owners and detach. |
-| `webRequest` | Can observe XHR/fetch metadata for requests made by the active page | API mutation observer is on by default; it keeps only a bounded in-memory per-tab buffer for repeated-click shortcut hints and opaque same-origin replay. |
-| `downloads` | Can save files to the user's Downloads folder without prompting | Only the agent's explicit download-capable tool calls (`download_files`, `download_file`, `download_resource_from_page`, `download_social_media`, download-job skill tools) use this, and each is gated by the capability × origin permission prompt. |
+| `webRequest` | Can observe XHR/fetch metadata for requests made by the active page | API mutation observer is on by default; it keeps only a bounded in-memory per-tab buffer for repeated-click shortcut hints and opaque same-origin replay. `fetch_url`, `read_page_source` and `research_url` also read the server address of their own requests while they run, to discard responses from blocked addresses (see **Local network blocking**). |
+| `dns` (Firefox only) | Can resolve hostnames | Used only by `fetch_url`, `read_page_source` and `research_url` to resolve the target hostname before sending, so a name that resolves to a blocked address is refused without contacting it. |
+| `downloads` | Can save files to the user's Downloads folder without prompting, and read the browser's download history | Only the agent's explicit download-capable tool calls (`download_files`, `download_file`, `download_resource_from_page`, `download_social_media`, download-job skill tools) use this, and each is gated by the capability × origin permission prompt. `list_downloads` and `read_downloaded_file` see only the conversation's own downloads: files those tools saved, and downloads that started while a WebBrain run was active on the tab (a download names no tab, so concurrent runs share one). Listed files carry their basename, not the local path. Reading any other file from the history needs the user's approval of that exact file on WebBrain's card ("Read this file once"); an unattended run cannot ask and reads nothing. |
 | `alarms` | Can wake scheduled jobs in future browser sessions | `schedule_resume` / `schedule_task` are gated; the user-authored `/watch` slash command can also create a page-bound 30–120 second conditional poll. |
 | `offscreen` | An offscreen document can make HTTP requests immune to user CSP, run local inference, or play audio without an open panel | Used for the localhost LLM proxy, the optional endpoint-free WebGPU text and vision providers, tab recording, validated download staging, the local controller bridge, and successful `/watch /beep` tones. The text provider receives the same bounded conversation and allowlisted tool schemas that would be sent to another active provider; dedicated local vision receives only its screenshot/prompt. Model files are downloaded from Hugging Face, while inference stays in the worker. Watch audio receives only a style selector, never page content or an arbitrary URL. |
 | `sidePanel` | Opens the extension side panel UI | The panel is user-invoked (toolbar click / `Alt+Shift+W`). No model-callable tool opens it silently; it only hosts the chat UI the user already sees. |
@@ -48,7 +49,7 @@ see Firefox Differences below.)
 | `notifications` | Can show OS-level notifications | Used as a completion fallback for restricted or discarded background tabs, including scheduled runs. The message is the current tab title, falling back to its URL, so page-controlled titles and sensitive URL components may appear on OS notification surfaces or in notification history. Run output, page bodies, and trace payloads are not intentionally included. |
 | `tabCapture` (Chrome only) | Can capture tab audio/video | Used only for the explicit slash-driven tab/screen recording flow. Recording starts on a user command and stops on completion; there is no background capture. |
 | `clipboardWrite` / `clipboardRead` | Can write to / read from the clipboard | Writes place agent-produced snippets the user asked for; reads support paste-driven tasks. Clipboard content entering a prompt is treated like other untrusted input and never exfiltrated except as the user's requested result. |
-| `privateNetworkAccess` (Chrome only) | Allows requests to local/private-network LLM endpoints | Required for llama.cpp / Ollama / LM Studio on localhost or LAN. Agent network tools block URLs written with private or loopback IP literals and localhost names by default. DNS resolution is not checked, so other hostnames may still reach local addresses. Cloud-metadata IP literals (169.254.169.254) and listed metadata or `*.internal`/`*.local` hostnames remain blocked even when local access is enabled. |
+| `privateNetworkAccess` (Chrome only) | Allows requests to local/private-network LLM endpoints | Required for llama.cpp / Ollama / LM Studio on localhost or LAN. Agent network tools block URLs written with private or loopback IP literals and localhost names by default; `fetch_url`, `read_page_source` and `research_url` also block hostnames that resolve to those addresses (see **Local network blocking**). Cloud-metadata IP literals (169.254.169.254) and listed metadata or `*.internal`/`*.local` hostnames remain blocked even when local access is enabled. |
 | `http://localhost/*`, `http://127.0.0.1/*`, `http://*/*` host permissions | Lets the extension call local-model servers and plain-HTTP endpoints | Localhost entries exist for local LLM servers (llama.cpp, Ollama, LM Studio). Provider inference and discovery requests to a user-configured HTTP endpoint use the provider transport directly and do not pass the agent-tool permission prompt. Model-callable network tools such as `fetch_url` and `research_url` are separately subject to the capability × origin gate; `connect-src *` in the extension CSP does not waive that gate. |
 
 ### Authentication
@@ -194,9 +195,11 @@ Users can store a short profile (name, email, throwaway password) in Settings �
 
 The Cloud Bridge lets a controller send `cloud_*` run commands to the browser. By default (no token) it behaves as before. When a Cloud Bridge token is configured the bridge adds an opt-in approval step:
 
-- Each socket sends a `hello` with the token, `browserId`, `installationId` and browser/extension/platform info, then is *pending*; the backend must answer `connection_approved` before any command runs. Earlier commands get `connection_not_approved` (403) and never reach the background.
+- Each socket sends a `hello` with a fresh nonce and browser/extension/platform info, then is *pending*. The backend must first prove it holds the token (an HMAC over both sides' nonces); only then does the extension send its own proof with `browserId` and `installationId`. The token is never sent, so a program that takes the loopback port first learns nothing reusable, and `connection_approved` is ignored until the backend has proved itself. The backend must answer `connection_approved` before any command runs. Earlier commands get `connection_not_approved` (403) and never reach the background.
+- The old hello that carried the token is kept only behind the deprecated `webbrainCloudBridgeLegacyBearerAuth` flag, for backends that have not implemented the challenge yet.
 - Approval is **per socket**: a reconnect, URL change or identity change starts pending again. `connection_rejected` closes the socket and stops auto-reconnect, and cancels any pending reconnect timer.
 - The token is a Cloud Bridge credential, distinct from provider API keys. It is stored in `chrome.storage.local` and is never included in the bridge `status`.
+- Without a token nothing is authenticated: whichever program listens on the configured port first can send `cloud_*` commands. The local MCP server, the LM Studio plugin and WebBrain Cloud use this mode today, and it only runs once the bridge is turned on.
 - The URL stays restricted to `ws://` on localhost, and the allowed actions stay limited to the `cloud_*` run operations rather than general browser APIs. The bridge sends connection metadata (such as the configured URL) and run data (`tabId`, `finalUrl`, `content` and `result`), which may contain sensitive page data.
 
 **Where it stops.** The permission prompts raised during a cloud run (navigate, click, …) are answered by the backend through `cloud_respond`, including "always". An approved backend is therefore effectively an operator of that browser. Approval is per socket and is not persisted. The backend can revoke it with `connection_rejected`, which closes the socket and stops auto-reconnect. Disabling the bridge or changing its URL or identity also closes the active socket; a replacement needs fresh approval if a token remains configured. Details: [cloud-bridge-browser-approval.md](cloud-bridge-browser-approval.md).
@@ -221,7 +224,7 @@ The primary threat: a malicious page crafts content that, when read by the agent
 | **Plan before Act** | When enabled, action-mode runs first produce a structured plan and wait for side-panel approval before any browser tool executes. In Try mode, planner JSON that remains invalid after repair degrades that turn to Ask/read-only; Strict stops. Also in Try, a turn that automatic mode routed with a sure `plan_need: direct` answer runs only the compact intent check and shows no plan card: `direct` is an authorizing choice (0.85 threshold) for a short, single-purpose job, and risky work (payments, purchases, bookings, deletion, bulk changes, credentials, messages to several people) answers `plan`. A `direct` answer about a request cut to fit the decision model is not used. Strict, and plan review set to Always, plan every turn. Scheduled runs can auto-approve the plan only through scheduler policy. |
 | **Skill import boundary** | Skills can expose read-only HTTP tools and download-job tools through a `webbrain-tools` manifest. Importing or keeping the skill enabled is the trust decision for the declared HTTPS endpoint; declared skill tools use `credentials: "omit"` and should mark third-party results `resultPolicy: "untrusted"`. Download-job skill tools still require an action mode and the normal Downloads permission gate before saving files. |
 | **WebMCP boundary** | Experimental WebMCP is on by default, so its tools and prompt guidance enter ordinary model requests unless the user opts out under Settings → Bridge. Chrome page-registered names, descriptions, schemas, frame URLs, annotations, outputs, and errors are page-controlled and always use the untrusted-content wrapper. Calls use opaque IDs. Ask may list tools but cannot invoke them. Because a callback can run arbitrary page logic, every invocation requires Act/Dev, fresh per-call confirmation, and a permission grant for the actual registration-frame origin; a page-authored `readOnly` hint never bypasses those gates. Missing/opaque frame identity fails closed, and the frame plus effective HTTP(S) security origin are revalidated immediately before dispatch to prevent navigation races from borrowing an old grant. |
-| **API mutation override** | A per-conversation `/allow-api` flag, or the default-on persistent setting under Settings → Advanced, *waives* the permission prompt for write-method network egress (`fetch_url`/`research_url` with POST/PUT/PATCH/DELETE) in Act and Dev. Ask stays read-only: an Ask run, including a turn that automatic mode starts in Ask, refuses a write-method request whatever these say. Neither option waives GET egress or any other capability. Conversation reset clears only the slash-command override. |
+| **API mutation override** | A per-conversation `/allow-api` flag *waives* the permission prompt for write-method network egress (`fetch_url`/`research_url` with POST/PUT/PATCH/DELETE) in Act and Dev. The default-on persistent setting under Settings → Advanced allows those requests without `/allow-api`; on a new install each host still gets the network permission prompt, while installs from before that change keep the waiver (see [`/allow-api` Flag](#allow-api-flag)). Ask stays read-only: an Ask run, including a turn that automatic mode starts in Ask, refuses a write-method request whatever these say. Neither option waives GET egress or any other capability. Conversation reset clears only the slash-command override. |
 | **Decision models** | Auto (default) uses a downloaded D1 for completion and scheduled checks, whatever the chat provider; while Compass is the chat provider, Compass's managed route answers semantic decisions, and completion checks until D1 is downloaded. Off uses none. In On, OpenRouter, direct TypeSafe and local/custom System One endpoints share independent per-feature switches. Keys are optional for local servers. Compass completion uses its managed decision route unless D1 is downloaded (Auto) or chosen, or the in-browser chat model is chosen. Bounded/redacted task and fresh page evidence are untrusted data. Judges have no browser executor; ordinary tool calls still pass policy, permission and completion layers. Strict Secret Mode, cancellation, quota and cost limits apply. Unavailable or malformed judgments fall through to the active LLM and existing checks. |
 | **`done()` verification** | Decision and tool-free LLM checks prefer vision, then AX. Confident pending/failed outcomes require read-only recovery before another submission. Accepted task-bound proof can satisfy generic evidence despite an unrelated comment form, while explicit recipient, payment, download, authorization and workflow contracts remain required. Existing dialog/form checks are the final fallback. |
 | **Grouped search approval** | A same-site GET form with no credential, payment or hidden token field, and no side-effect action address, shares one task-scoped approval for its navigation, typing and submit when the page's structure marks it as a search: a search landmark, a search-typed field or one whose keyboard says search, code names such as `q` or `query`, a search address, or a submit control a model read, in any language, as only searching or filtering. Words in a field's visible label decide nothing. Every other form keeps its fresh confirmation. |
@@ -233,7 +236,33 @@ The primary threat: a malicious page crafts content that, when read by the agent
 | **Loop detection** | Three independent detectors stop the agent if it's repeating the same action or oscillating. Repeated click loops may include an exact same-tab XHR/fetch URL+method hint so the agent can switch to `fetch_url` instead of clicking forever. Limits damage from a persistently injected prompt. |
 | **Finance adapters** | Adapters with `category: 'finance'` inject extra confirmation guidance and a warning banner. |
 | **Strict secret handling** | Instructs the model not to quote credentials, strikes credentials it filled into sensitive fields from its scratchpad and progress ledger, and in cloud runs strikes every credential it typed, sent, or read from a labelled field out of what gets published. A secret it only saw in page prose still depends on the instruction. |
-| **Local network blocking** | Local-network access is off by default. When access is off, URLs written with private or loopback IP literals and localhost names are blocked. DNS resolution is not checked, so other hostnames may still reach local addresses. Cloud-metadata IP literals (169.254.169.254) and listed metadata or `*.internal`/`*.local` hostnames stay blocked even when local-network access is enabled. |
+| **Local network blocking** | Local-network access is off by default. When access is off, URLs written with private or loopback IP literals and localhost names are blocked. `fetch_url`, `read_page_source` and `research_url` also check the address a hostname resolved to: the browser reports the server address of each response (for `research_url`, every top-level redirect hop of its hidden tab), and a response from a blocked address is discarded before the model sees it. Firefox also resolves the hostname before sending and refuses it when any answer is blocked. Resolved addresses use the same tiers as literals. Cloud-metadata IP literals (169.254.169.254) and listed metadata or `*.internal`/`*.local` hostnames stay blocked even when local-network access is enabled, as do names that resolve to link-local, CGNAT, multicast or unspecified addresses. See **Resolved-address limits** below. |
+
+### Resolved-address limits
+
+Extensions cannot choose or pin the address a request connects to, so the
+resolved-address check has these limits:
+
+- Chrome has no DNS API for extensions. The request, including its method,
+  headers and body, has already reached the address when its response is
+  discarded, so a write-method request can still change state on a local
+  service. Firefox refuses before sending when its lookup returns a blocked
+  address, but the connection may still use a different answer (DNS
+  rebinding); the response check then applies as in Chrome.
+- With a proxy, Chrome reports the proxy's address. If the proxy is on a
+  loopback or private address, these tools are blocked until local-network
+  access is enabled. Firefox reports the proxy and skips the response check
+  for proxied requests, leaving only its lookup before sending. That lookup
+  uses Firefox's own resolver even when a SOCKS proxy is set to resolve names
+  remotely.
+- If the browser reports no address within 1.5 seconds of the response (for
+  example because the user withdrew the extension's site access for that
+  host), the response is kept.
+- `research_url` checks only its hidden tab's top-level document. Frames and
+  subresources that page loads follow the browser's own private-network
+  rules; the tool does not return their content.
+- Other model-callable requests, such as skill HTTP tools and the download
+  tools, still check only the URL text.
 
 ### What is NOT defended
 
@@ -293,12 +322,21 @@ Set per-conversation via the `/allow-api` slash command in the side panel, or
 persistently with **Always allow API mutations** under **Settings →
 Advanced**. The persistent setting is on by default when absent. Read failures
 and non-boolean stored values grant no authorization. When either option is
-active, it waives the permission prompt for **write-method network egress only**:
+active, the model may make **write-method network requests**:
 
 - `fetch_url` / `research_url` with `method: POST/PUT/PATCH/DELETE`
 
-It does NOT waive GET egress, `execute_js`, or any other capability — those still
-go through the capability × origin gate. (`isNetworkMutation` in
+`/allow-api` (and a Cloud run's own API grant) also waives the permission prompt
+for them. The persistent setting is on by default, so leaving it on is not a
+decision to skip that prompt: a new install stores `apiMutationSitePrompt: true`
+in `storage.local`, and there a write request to a host without a network grant
+shows the normal permission card (Allow once / Always / Deny). Installs from
+before that marker are not migrated and keep the earlier behavior, where the
+setting also waives the prompt. A storage read failure or a malformed marker
+keeps the prompt (`Agent.isApiMutationPromptWaived`).
+
+Neither option waives GET egress, `execute_js`, or any other capability — those
+still go through the capability × origin gate. (`isNetworkMutation` in
 `permission-gate.js` is what `/allow-api` keys off; `execute_js` is its own
 `Capability.EXECUTE_JS` and is always gated.)
 
@@ -312,7 +350,8 @@ The system prompt adds a preamble telling the model to:
 Loop-detection API shortcut hints do not bypass this policy. They can expose
 the exact method and URL the page was already calling, including POST/PATCH/etc.,
 but write-method `fetch_url` / `research_url` calls still require either the
-conversation's `/allow-api` state or the persistent setting. GET requests and
+conversation's `/allow-api` state or the persistent setting (with its per-host
+prompt on new installs). GET requests and
 non-network capabilities still go through the normal capability × origin gate.
 
 Conversation reset clears the slash-command override. It does not change the

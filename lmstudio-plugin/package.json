@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "npm run build && node --test test/browserTask.test.mjs",
+    "test": "npm run build && node --test test/browserTask.test.mjs test/urlGuard.test.mjs test/toolParameters.test.mjs",
     "clean": "rm -rf dist"
   },
   "keywords": [
@@ -33,7 +33,7 @@
   "dependencies": {
     "@lmstudio/sdk": "^1.0.0",
     "ws": "^8.18.0",
-    "zod": "^4.6.6"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "typescript": "^5.5.0",

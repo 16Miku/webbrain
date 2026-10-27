@@ -209,14 +209,22 @@ for (const kind of ['chrome', 'firefox']) {
     const start = source.indexOf("    if (name === 'read_downloaded_file') {");
     const end = source.indexOf("    if (name === 'download_resource_from_page')", start);
     assert.ok(start >= 0 && end > start);
-    let owner = 'original-current-owner', pending = false, cancelled = false, captured;
+    let owner = 'original-current-owner', pending = false, cancelled = false, captured, authorized, refusal = null;
     const signal = new AbortController().signal;
     const abort = () => { if (cancelled) throw new Error('Stopped by user'); };
-    const run = new Function('tabId', 'name', 'args', 'executionContext', 'cdpClient', 'readDownloadedFile',
+    const onUpdate = () => {};
+    const run = new Function('tabId', 'name', 'args', 'onUpdate', 'executionContext', 'cdpClient', 'readDownloadedFile',
       'throwIfEarlyCdpAborted', 'throwIfContentPipelineAborted', `return (async()=>{${source.slice(start, end)}})();`);
-    const agent = { _pageFeedbackOwnerScope: () => owner, _hasPendingSteering: () => pending };
+    const agent = { _pageFeedbackOwnerScope: () => owner, _hasPendingSteering: () => pending,
+      _authorizeDownloadRead: async (...values) => { authorized = values; return refusal; } };
+    const read = async (id, ctx) => { captured = { id, ctx }; return { success: true }; };
+    refusal = { success: false, code: 'download_not_from_conversation' };
+    assert.equal(await run.call(agent, 71, 'read_downloaded_file', { downloadId: 19 }, onUpdate, { _contentActionAbortSignal: signal },
+      cdpClient, read, abort, abort), refusal, 'a download outside the conversation is not read without approval');
+    assert.deepEqual(authorized, [71, 19, onUpdate]); assert.equal(captured, undefined);
+    refusal = null;
     await run.call(agent, 71, 'read_downloaded_file', { downloadId: 19, cdpClient: 'forged', signal: 'forged', checkStillActive: 'forged' },
-      { _contentActionAbortSignal: signal }, cdpClient, async (id, ctx) => { captured = { id, ctx }; return { success: true }; }, abort, abort);
+      onUpdate, { _contentActionAbortSignal: signal }, cdpClient, read, abort, abort);
     assert.equal(captured.id, 19); assert.equal(captured.ctx.signal, signal);
     assert.equal(captured.ctx.cdpClient, kind === 'chrome' ? cdpClient : undefined);
     assert.equal(typeof captured.ctx.checkStillActive, 'function');
