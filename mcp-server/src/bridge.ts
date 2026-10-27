@@ -6,11 +6,18 @@
  * document and we host the listener. That also means every command below is
  * initiated by us and answered by the extension.
  *
- * Wire protocol (already shipping in the extension, unchanged here):
+ * Wire protocol:
+ *   us -> extension   {type:'pairing_challenge', scheme, nonce}       (on connect)
  *   extension -> us   {type:'hello', client, protocolVersion, capabilities, status}
+ *   extension -> us   {type:'pairing_proof', scheme, proof}           (either order)
  *   us -> extension   {id, action, payload}
  *   extension -> us   {id, ok:true,  result}
  *                     {id, ok:false, error, status?}
+ *
+ * A socket stays a candidate until it has sent both a valid hello and the
+ * pairing proof (see pairing.ts). Candidates never receive commands and never
+ * displace the connected extension, so a local process that merely claims to
+ * be WebBrain cannot take over the bridge or read task payloads.
  *
  * The extension spreads `payload` over the message it forwards to its own
  * background worker, so payload keys become top-level fields there. Send the
@@ -20,6 +27,14 @@
 import { randomUUID } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import { config } from "./config.js";
+import {
+  PAIRING_CLOSE_CODE,
+  PAIRING_SCHEME,
+  loadPairingKey,
+  newPairingNonce,
+  validatePairingKey,
+  verifyPairingProof,
+} from "./pairing.js";
 import { BOT_MEMORY_CAPABILITY, validateTaskMemory, taskMemoryPrivateValues, redactTaskMemory, redactMemoryRunResponse } from "./task-memory.js";
 
 /** Actions already present in the extension's ALLOWED_BRIDGE_ACTIONS set. */
@@ -83,6 +98,21 @@ interface Pending {
   memoryStart?: boolean;
 }
 
+/** A socket that connected but has not yet proved it holds the pairing key. */
+interface Candidate {
+  nonce: string;
+  hello: Record<string, unknown> | null;
+  paired: boolean;
+  timer: NodeJS.Timeout;
+}
+
+export interface BridgeOptions {
+  /** Pairing key supplied by a host process. Defaults to loadPairingKey(). */
+  pairingKey?: string;
+  /** How long a new socket may take to send hello and pair before it is closed. */
+  pairingTimeoutMs?: number;
+}
+
 export class BridgeError extends Error {
   readonly status?: number;
   readonly code?: "COMMAND_TIMEOUT" | "COMMAND_INTERRUPTED";
@@ -116,21 +146,44 @@ function isAllowedBridgeOrigin(origin: string | string[] | undefined): boolean {
 
 export class WebBrainBridge {
   private wss: WebSocketServer | null = null;
+  /** The paired extension. Only set once a socket has sent hello and paired. */
   private socket: WebSocket | null = null;
+  private candidates = new Map<WebSocket, Candidate>();
   private pending = new Map<number, Pending>();
   private nextId = 1;
   private extensionCapabilities: string[] = [];
   private extensionProtocol: number | null = null;
-  private handshakenSocket: WebSocket | null = null;
   private waiters: Array<() => void> = [];
+  private pairingKey = "";
+  private pairingSource = "";
+  private readonly pairingTimeoutMs: number;
   private memoryPrivateValues = new Set<string>();
   private memoryProtectedRunIds = new Set<string>();
   private memoryRunValues = new Map<string, ReadonlySet<string>>();
   /** Lifecycle of each scope above, in eviction order (oldest finished first). */
   private memoryRuns = new Map<string, MemoryRunState>();
 
+  constructor(private readonly options: BridgeOptions = {}) {
+    this.pairingTimeoutMs = options.pairingTimeoutMs ?? 10_000;
+  }
+
+  /** Where the pairing key came from (a file path or variable name), for setup messages. */
+  pairingKeySource(): string {
+    return this.pairingSource;
+  }
+
   async start(): Promise<void> {
     if (this.wss) return;
+
+    // Resolve the key before binding: without it every socket would be refused.
+    if (this.options.pairingKey !== undefined) {
+      this.pairingKey = validatePairingKey(this.options.pairingKey, "The pairing key");
+      this.pairingSource = "host configuration";
+    } else {
+      const loaded = loadPairingKey();
+      this.pairingKey = loaded.key;
+      this.pairingSource = loaded.source;
+    }
 
     await new Promise<void>((resolve, reject) => {
       // Bind to loopback explicitly. Never expose this listener to the network:
@@ -159,36 +212,34 @@ export class WebBrainBridge {
         return;
       }
 
-      // Latest connection wins. The extension reconnects with backoff after a
-      // browser restart or an offscreen-document teardown, and the stale socket
-      // is never reused.
-      if (this.socket) {
-        this.failAllPending(
-          new BridgeError(
-            "WebBrain extension connection was superseded mid-command.",
-            undefined,
-            "COMMAND_INTERRUPTED",
-          ),
-        );
-        try {
-          this.socket.close(1000, "Superseded by a newer extension connection");
-        } catch {
-          /* already gone */
-        }
-      }
-
-      this.socket = socket;
-      this.handshakenSocket = null;
-      this.extensionCapabilities = [];
-      this.extensionProtocol = null;
-      log(`extension connected on ${config.bridgePath}`);
+      // The new socket is only a candidate. The connected extension keeps
+      // working until the candidate pairs, and is never touched if it fails.
+      const candidate: Candidate = {
+        nonce: newPairingNonce(),
+        hello: null,
+        paired: false,
+        timer: setTimeout(() => {
+          this.rejectCandidate(
+            socket,
+            candidate.hello
+              ? "Pairing required: update WebBrain and paste the pairing key under Settings → Bridge"
+              : "Handshake timeout",
+          );
+        }, this.pairingTimeoutMs),
+      };
+      this.candidates.set(socket, candidate);
 
       socket.on("message", (raw) => this.handleMessage(socket, raw.toString()));
 
       socket.on("close", () => {
+        const unpaired = this.candidates.get(socket);
+        if (unpaired) {
+          clearTimeout(unpaired.timer);
+          this.candidates.delete(socket);
+          return;
+        }
         if (this.socket !== socket) return;
         this.socket = null;
-        this.handshakenSocket = null;
         this.extensionCapabilities = [];
         this.extensionProtocol = null;
         log("extension disconnected");
@@ -204,13 +255,98 @@ export class WebBrainBridge {
       socket.on("error", (error) => {
         log("socket error:", redactTaskMemory(error instanceof Error ? error.message : String(error), this.memoryPrivateValues));
       });
+
+      try {
+        socket.send(JSON.stringify({ type: "pairing_challenge", scheme: PAIRING_SCHEME, nonce: candidate.nonce }));
+      } catch {
+        /* the close handler drops the candidate */
+      }
     });
 
     log(`listening on ws://127.0.0.1:${config.bridgePort}${config.bridgePath}`);
+    log(`extensions must pair with the key from ${this.pairingKeyHint()}`);
+  }
+
+  /** Where the user finds the key. Never the key itself. */
+  private pairingKeyHint(): string {
+    const source = this.pairingSource || "~/.webbrain/bridge-key";
+    return this.options.pairingKey === undefined ? `${source} (print it with: webbrain-mcp pairing-key)` : source;
+  }
+
+  private rejectCandidate(socket: WebSocket, reason: string, code = PAIRING_CLOSE_CODE): void {
+    const candidate = this.candidates.get(socket);
+    if (candidate) clearTimeout(candidate.timer);
+    this.candidates.delete(socket);
+    log(`rejected unpaired connection: ${reason}`);
+    try {
+      socket.close(code, reason);
+    } catch {
+      /* already gone */
+    }
+  }
+
+  private handleCandidateMessage(socket: WebSocket, candidate: Candidate, msg: Record<string, unknown>): void {
+    if (msg.type === "hello") {
+      if (msg.client !== "webbrain-extension") {
+        this.rejectCandidate(socket, "Unknown client", 1008);
+        return;
+      }
+      candidate.hello = msg;
+    } else if (msg.type === "pairing_proof" || msg.type === "auth") {
+      if (msg.scheme !== PAIRING_SCHEME || !verifyPairingProof(this.pairingKey, candidate.nonce, msg.proof)) {
+        this.rejectCandidate(socket, "Pairing key mismatch");
+        return;
+      }
+      candidate.paired = true;
+    } else {
+      // Candidates are never sent commands, so anything else is noise.
+      return;
+    }
+    if (candidate.paired && candidate.hello) this.adopt(socket, candidate);
+  }
+
+  /** Promote a paired candidate to the extension. Latest paired connection wins. */
+  private adopt(socket: WebSocket, candidate: Candidate): void {
+    clearTimeout(candidate.timer);
+    this.candidates.delete(socket);
+    const hello = candidate.hello!;
+
+    // The extension reconnects with backoff after a browser restart or an
+    // offscreen-document teardown, and the stale socket is never reused.
+    const previous = this.socket;
+    if (previous) {
+      this.socket = null;
+      this.failAllPending(
+        new BridgeError(
+          "WebBrain extension connection was superseded mid-command.",
+          undefined,
+          "COMMAND_INTERRUPTED",
+        ),
+      );
+      try {
+        previous.close(1000, "Superseded by a newer extension connection");
+      } catch {
+        /* already gone */
+      }
+    }
+
+    this.socket = socket;
+    this.extensionProtocol = typeof hello.protocolVersion === "number" ? hello.protocolVersion : null;
+    this.extensionCapabilities = Array.isArray(hello.capabilities)
+      ? (hello.capabilities as string[])
+      : [];
+    log(
+      `extension paired on ${config.bridgePath} — protocol v${this.extensionProtocol}, capabilities: ` +
+        (this.extensionCapabilities.join(", ") || "none"),
+    );
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const wake of waiters) wake();
   }
 
   private handleMessage(socket: WebSocket, data: string): void {
-    if (this.socket !== socket) return;
+    const candidate = this.candidates.get(socket);
+    if (!candidate && this.socket !== socket) return;
 
     let msg: Record<string, unknown>;
     try {
@@ -219,30 +355,10 @@ export class WebBrainBridge {
       log("dropped non-JSON frame from extension");
       return;
     }
+    if (!msg || typeof msg !== "object") return;
 
-    // Handshake frame — no id, nothing to correlate.
-    if (msg.type === "hello") {
-      if (msg.client !== "webbrain-extension") {
-        log(`rejecting unknown bridge client: ${String(msg.client)}`);
-        socket.close(1008, "Unknown client");
-        if (this.socket === socket) {
-          this.socket = null;
-          this.handshakenSocket = null;
-        }
-        return;
-      }
-      this.handshakenSocket = socket;
-      this.extensionProtocol = typeof msg.protocolVersion === "number" ? msg.protocolVersion : null;
-      this.extensionCapabilities = Array.isArray(msg.capabilities)
-        ? (msg.capabilities as string[])
-        : [];
-      log(
-        `handshake ok — protocol v${this.extensionProtocol}, capabilities: ` +
-          (this.extensionCapabilities.join(", ") || "none"),
-      );
-      const waiters = this.waiters;
-      this.waiters = [];
-      for (const wake of waiters) wake();
+    if (candidate) {
+      this.handleCandidateMessage(socket, candidate, msg);
       return;
     }
 
@@ -350,11 +466,7 @@ export class WebBrainBridge {
   }
 
   isConnected(): boolean {
-    return (
-      this.socket !== null &&
-      this.socket.readyState === 1 &&
-      this.handshakenSocket === this.socket
-    );
+    return this.socket !== null && this.socket.readyState === 1;
   }
 
   capabilities(): string[] {
@@ -388,7 +500,8 @@ export class WebBrainBridge {
       throw new BridgeError(
         "No WebBrain extension is connected. Open the browser, then set " +
           "WebBrain → Settings → Bridge to " +
-          `ws://127.0.0.1:${config.bridgePort}${config.bridgePath} and enable the MCP bridge.`,
+          `ws://127.0.0.1:${config.bridgePort}${config.bridgePath}, paste the pairing key ` +
+          `from ${this.pairingKeyHint()} into Pairing key, and enable the MCP bridge.`,
       );
     }
 
@@ -480,6 +593,15 @@ export class WebBrainBridge {
     this.memoryProtectedRunIds.clear();
     this.memoryRunValues.clear();
     this.memoryRuns.clear();
+    for (const [candidate, state] of this.candidates) {
+      clearTimeout(state.timer);
+      try {
+        candidate.close(1001, "Server shutting down");
+      } catch {
+        /* ignore */
+      }
+    }
+    this.candidates.clear();
     if (this.socket) {
       try {
         this.socket.close(1001, "Server shutting down");
@@ -487,7 +609,6 @@ export class WebBrainBridge {
         /* ignore */
       }
       this.socket = null;
-      this.handshakenSocket = null;
     }
     if (this.wss) {
       await new Promise<void>((resolve) => this.wss!.close(() => resolve()));

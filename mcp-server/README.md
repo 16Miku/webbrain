@@ -24,13 +24,41 @@ cd mcp-server && npm install && npm run build
 
 > **Chromium first.** Chrome, Edge, Brave, Opera, Vivaldi run the bridge from the extension's **offscreen document** (`src/chrome/src/offscreen/cloud-bridge.js`). Firefox has no offscreen document, so `src/firefox/src/cloud-bridge.js` runs it in the background page, configured under the same **Settings → Bridge** tab; it has not yet been verified against this MCP server on a real Firefox install.
 >
-> This server does not use the optional browser-approval handshake (token, `connection_pending` / `connection_approved`). Without a token the extension behaves exactly as before. See [Cloud Bridge browser approval](../docs/cloud-bridge-browser-approval.md) for backends that want it.
+> This server does not use the optional browser-approval handshake (token, `connection_pending` / `connection_approved`); leave the Cloud Bridge token empty. It authenticates the extension with a **pairing key** instead (below). See [Cloud Bridge browser approval](../docs/cloud-bridge-browser-approval.md) for backends that want approval.
 
 The MCP server hosts the listener; the extension dials out to it. A Manifest V3 extension cannot listen on a socket, so the direction is fixed.
 
 1. Install the [WebBrain extension](https://webbrain.one) and open your browser.
-2. In **WebBrain → Settings → Bridge**, set the URL to `ws://127.0.0.1:17374/extension` and enable it.
-3. Ask your MCP client to call `webbrain_connection` to confirm.
+2. Print the pairing key:
+
+   ```bash
+   npx -y @webbrain/mcp-server pairing-key
+   ```
+
+   The first run creates it in `~/.webbrain/bridge-key` (`%USERPROFILE%\.webbrain\bridge-key` on Windows), readable only by you. You can also open that file and copy its contents.
+3. In **WebBrain → Settings → Bridge**, set the URL to `ws://127.0.0.1:17374/extension`, paste the key into **Pairing key**, and enable the bridge.
+4. Ask your MCP client to call `webbrain_connection` to confirm.
+
+The LM Studio plugin reads the same key file, so one pairing covers both destinations.
+
+### Pairing
+
+Anything on your machine can open a socket to `127.0.0.1:17374` and claim to be WebBrain, so the server does not trust a socket until it proves it holds the pairing key:
+
+1. On connect the server sends `{type: "pairing_challenge", scheme: "hmac-sha256-v1", nonce}` with a fresh random nonce.
+2. The extension answers `{type: "pairing_proof", scheme, proof}`, where `proof` is the hex HMAC-SHA256 of `"webbrain-bridge-pairing-v1:" + nonce` keyed with the pairing key. The key itself never crosses the socket, and a recorded proof is useless on the next socket.
+3. Only after a valid `hello` **and** a valid proof does the socket become the extension. Until then it receives no commands and the already-connected extension keeps working. A wrong proof closes the socket with code `4001`; a socket that does not pair within 10 seconds is closed the same way.
+
+The extension stops reconnecting after a `4001` and shows the reason under **Settings → Bridge**. Saving a new key reconnects it.
+
+### Upgrading from an unpaired version
+
+Earlier versions of this server accepted any socket that sent the right `hello`. After upgrading:
+
+1. Update the WebBrain extension first. A version without the **Pairing key** field cannot pair, and this server closes its socket after 10 seconds with "Pairing required". The updated extension still works with older servers: without a challenge it never sends a proof.
+2. Run `npx -y @webbrain/mcp-server pairing-key`, paste the key under **Settings → Bridge → Pairing key**, and press **Save & test connection**.
+
+Deleting `~/.webbrain/bridge-key` and restarting the server rotates the key; paste the new one into WebBrain.
 
 > **One bridge at a time.** The extension holds exactly one outbound bridge socket. Pointing it here means it is *not* pointed at WebBrain Cloud (`17373`) or the LM Studio plugin (`17375`). Switch it under **Settings → Bridge**.
 
@@ -82,7 +110,8 @@ npm start
 ```
 
 After it is running, enable `ws://127.0.0.1:17374/extension` under **WebBrain →
-Settings → Bridge**. Ask the MCP client to call
+Settings → Bridge** with the pairing key from `npx -y @webbrain/mcp-server pairing-key`
+(or `node dist/index.js pairing-key` in a checkout). Ask the MCP client to call
 `webbrain_connection` to verify the complete connection.
 
 ## Troubleshooting
@@ -100,6 +129,12 @@ extension does not connect, make sure another bridge destination is not selected
 WebBrain Cloud uses `17373`, this MCP server uses `17374`, and the LM Studio
 plugin uses `17375`. Only one can be selected at a time. The bridge is available
 in Chromium browsers only, not Firefox.
+
+**Rejected by the backend: Pairing key mismatch** means the key under
+**Settings → Bridge → Pairing key** is not the one this server uses. Print it
+again with `npx -y @webbrain/mcp-server pairing-key`. If the server runs with
+`WEBBRAIN_BRIDGE_KEY` or `WEBBRAIN_BRIDGE_KEY_FILE`, use that key instead.
+**This bridge requires a pairing key** means the field is empty.
 
 ## Tools
 
@@ -182,11 +217,30 @@ WebBrain exposes roughly fifty primitives internally — `click_ax`, `type_ax`, 
 | `WEBBRAIN_COMMAND_TIMEOUT_MS` | `30000` | Per-command reply timeout. |
 | `WEBBRAIN_RUN_TIMEOUT_MS` | `300000` | Default ceiling for `webbrain_run` polling. |
 | `WEBBRAIN_POLL_INTERVAL_MS` | `1000` | Status poll interval. |
+| `WEBBRAIN_BRIDGE_KEY` | — | Pairing key to use instead of the key file (at least 16 characters). |
+| `WEBBRAIN_BRIDGE_KEY_FILE` | `~/.webbrain/bridge-key` | Key file to read, or create on first start. |
+
+### Embedding the server in another app
+
+A host process that launches `dist/index.js` itself (for example over stdio, as
+webbrain.me does) configures pairing through the same environment:
+
+- Pass nothing to use the shared `~/.webbrain/bridge-key`, and show the user the
+  output of `node <path-to>/dist/index.js pairing-key` (or the file's contents)
+  to paste into WebBrain.
+- Or generate a key, keep it in the host's own user-only storage, and pass it as
+  `WEBBRAIN_BRIDGE_KEY` in the child's environment. `WEBBRAIN_BRIDGE_KEY_FILE`
+  points the server at a different file instead.
+
+`webbrain_connection` answers `Connected.` only for a paired extension. Its
+"Not connected" text names the key's source (a file path or variable name),
+never the key.
 
 ## Security notes
 
 - The listener binds `127.0.0.1` only. Anything that can reach this port can drive your signed-in browser — never expose it to a network or a container bridge.
-- Connections from HTTP(S) pages and other non-extension browser origins are rejected before they can replace the extension socket. Accepted connections must also present the extension's `hello` frame with `client: "webbrain-extension"`; anything else is closed. This is **not** authentication. The shipping extension sends no shared secret, so a local process could impersonate it. Treat the port as trusted-local, and see [`docs/security-model.md`](../docs/security-model.md).
+- Connections from HTTP(S) pages and other non-extension browser origins are rejected outright. Every other socket must send the extension's `hello` frame and answer the pairing challenge (see [Pairing](#pairing)) before it receives a command; until then it cannot replace the connected extension. A local process without the key can still occupy the port before the server starts, or connect and be refused, but it cannot read tasks or answer them.
+- The pairing key is as sensitive as the browser session it unlocks. It lives in a user-only file; do not paste it into an MCP client chat. See [`docs/security-model.md`](../docs/security-model.md).
 - A `webbrain_run` timeout does **not** abort the run. A task that already submitted a form should not be silently killed — the browser keeps going and `webbrain_status` picks it back up.
 - `allow_api_mutations` lifts WebBrain's UI-first rule and is off by default. It is accepted only with `mode: "act"`; Ask runs remain read-only. The UI path is visible and stoppable; direct API mutations are neither.
 
@@ -196,10 +250,10 @@ WebBrain exposes roughly fifty primitives internally — `click_ax`, `type_ax`, 
 npm run build && node --test test/bridge.test.mjs
 ```
 
-The suite stands up the real listener and connects a fake extension speaking the exact frames `src/chrome/src/offscreen/cloud-bridge.js` emits — handshake, id correlation under concurrency, error propagation, disconnect mid-command, and the poll/timeout/clarify paths. If the extension's wire format changes, these fail. That is intentional.
+The suite stands up the real listener and connects a fake extension speaking the exact frames `src/chrome/src/offscreen/cloud-bridge.js` emits — handshake, pairing, id correlation under concurrency, error propagation, disconnect mid-command, and the poll/timeout/clarify paths. `test/pairing.test.mjs` also runs the extension's real Chrome and Firefox bridge code against the server. If the extension's wire format changes, these fail. That is intentional.
 
 For manual poking, [`scripts/fake-extension.mjs`](scripts/fake-extension.mjs) is
-the same fake as a standalone process — run the server, then:
+the same fake as a standalone process. It pairs with the server's key — run the server, then:
 
 ```bash
 node scripts/fake-extension.mjs

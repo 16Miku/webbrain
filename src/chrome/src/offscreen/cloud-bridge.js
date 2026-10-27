@@ -24,6 +24,13 @@
     'cloud_pause',
     'cloud_resume',
   ]);
+  // Local bridges (the MCP server and the LM Studio plugin) challenge each new
+  // socket with a nonce and only trust it after it returns this HMAC, keyed by
+  // the pairing key the user pasted in Settings. The key never crosses the
+  // socket. Keep in sync with mcp-server/src/pairing.ts.
+  const PAIRING_SCHEME = 'hmac-sha256-v1';
+  const PAIRING_PROOF_LABEL = 'webbrain-bridge-pairing-v1:';
+  const PAIRING_CLOSE_CODE = 4001;
   // A token-configured controller must pass a mutual HMAC challenge
   // (docs/cloud-bridge-browser-approval.md). The token never crosses the
   // socket: whoever answers on the loopback port proves it knows the token
@@ -45,7 +52,9 @@
   // new socket before any cloud_* command runs; without a token the legacy
   // local behaviour is kept. `legacyBearerAuth` is the deprecated opt-in that
   // still sends the token in the hello for controllers without the challenge.
-  let identity = { token: '', browserId: '', installationId: '', extensionVersion: '', legacyBearerAuth: false };
+  // `pairingKey` is independent of the token: it answers the pairing challenge
+  // that the local MCP / LM Studio bridges send to authenticate the extension.
+  let identity = { token: '', browserId: '', installationId: '', extensionVersion: '', legacyBearerAuth: false, pairingKey: '' };
   let approval = 'not_required'; // not_required | pending | approved | rejected
 
   function browserInfo() {
@@ -92,6 +101,23 @@
     } catch (e) {
       lastError = e.message || String(e);
     }
+  }
+
+  async function pairingProof(key, nonce) {
+    const encoder = new TextEncoder();
+    const hmacKey = await crypto.subtle.importKey('raw', encoder.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const mac = await crypto.subtle.sign('HMAC', hmacKey, encoder.encode(PAIRING_PROOF_LABEL + nonce));
+    return Array.from(new Uint8Array(mac), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  // A pairing failure needs the user to fix Settings; reconnecting would only
+  // repeat it. Saving Settings or "Save & test" starts a fresh attempt.
+  function failPairing(target, reason) {
+    approval = 'rejected';
+    lastError = reason;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    try { target.close(); } catch {}
   }
 
   function authMode() {
@@ -209,6 +235,27 @@
           return;
         }
 
+        // The local MCP / LM Studio bridges authenticate the extension with a
+        // separate pairing challenge. It has its own message types so it can
+        // never be confused with the controller auth_challenge above.
+        if (msg.type === 'pairing_challenge') {
+          if (msg.scheme !== PAIRING_SCHEME || typeof msg.nonce !== 'string' || !msg.nonce || msg.nonce.length > 256) return;
+          if (!identity.pairingKey) {
+            failPairing(nextSocket, 'This bridge requires a pairing key. Paste it under Settings → Bridge → Pairing key.');
+            return;
+          }
+          let proof;
+          try {
+            proof = await pairingProof(identity.pairingKey, msg.nonce);
+          } catch (e) {
+            failPairing(nextSocket, `Could not compute the pairing proof: ${e.message || e}`);
+            return;
+          }
+          if (socket !== nextSocket) return;
+          sendJson({ type: 'pairing_proof', scheme: PAIRING_SCHEME, proof }, nextSocket);
+          return;
+        }
+
         if (msg.type === 'connection_pending' || msg.type === 'connection_approved' || msg.type === 'connection_rejected') {
           if (!identity.token) return;
           // Only a controller that proved the token may move a challenged
@@ -267,9 +314,13 @@
           sendJson({ id, ok: false, error: e.message || String(e) }, nextSocket);
         }
       });
-      nextSocket.addEventListener('close', () => {
+      nextSocket.addEventListener('close', (event) => {
         if (socket !== nextSocket) return;
         socket = null;
+        if (event?.code === PAIRING_CLOSE_CODE) {
+          failPairing(nextSocket, String(event.reason || 'Pairing rejected by the bridge'));
+          return;
+        }
         // A rejected browser stays rejected until the settings change.
         if (approval === 'rejected') return;
         approval = identity.token ? 'pending' : 'not_required';
@@ -302,6 +353,7 @@
         browserId: String(msg.browserId || ''),
         installationId: String(msg.installationId || ''),
         extensionVersion: String(msg.extensionVersion || ''),
+        pairingKey: String(msg.pairingKey || '').trim(),
         legacyBearerAuth: msg.legacyBearerAuth === true,
       };
       const identityChanged = JSON.stringify(nextIdentity) !== JSON.stringify(identity);

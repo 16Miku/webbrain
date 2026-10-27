@@ -636,3 +636,111 @@ for (const [label, createController] of [['chrome', null], ['firefox', createFxC
     }
   });
 }
+
+// ---- Local bridge pairing (MCP server / LM Studio plugin) ----
+// Same vector as mcp-server/test/pairing.test.mjs and the LM Studio test, so
+// the extension and both servers cannot drift apart.
+const PAIRING_VECTOR = {
+  key: 'webbrain-pairing-test-vector-key',
+  nonce: 'fixed-nonce-for-cross-checks',
+  proof: '5d2a446bcc1734f26d8b94e20d3329a07fb2513aa6d036f47f687065d33c55da',
+};
+const challenge = { type: 'pairing_challenge', scheme: 'hmac-sha256-v1', nonce: PAIRING_VECTOR.nonce };
+
+async function until(predicate) {
+  for (let i = 0; i < 100 && !predicate(); i++) await tick(10);
+  assert.ok(predicate(), 'condition not reached');
+}
+
+function pairingHarness(build) {
+  if (build === 'chrome') {
+    const h = harness();
+    return { ...h, start: (extra) => h.start(extra), stop: () => {}, reconnects: () => h.timers.filter(timer => !timer.cleared).length };
+  }
+  const h = fxHarness();
+  return {
+    sockets: h.sockets,
+    start: (extra) => h.bridge.start({ url: 'ws://127.0.0.1:17374/extension', ...extra }),
+    status: () => h.bridge.status(),
+    stop: () => h.bridge.stop(),
+    reconnects: () => h.sockets.length - 1,
+  };
+}
+
+for (const build of ['chrome', 'firefox']) {
+  test(`${build}: answers the bridge pairing challenge with an HMAC and never sends the key`, async () => {
+    const h = pairingHarness(build);
+    try {
+      h.start({ pairingKey: PAIRING_VECTOR.key });
+      const socket = h.sockets[0];
+      socket.emit('open');
+      assert.equal(socket.sent[0].type, 'hello');
+      await socket.receive(challenge);
+      await until(() => socket.sent.some(frame => frame.type === 'pairing_proof'));
+      const auth = socket.sent.find(frame => frame.type === 'pairing_proof');
+      assert.deepEqual({ ...auth }, { type: 'pairing_proof', scheme: 'hmac-sha256-v1', proof: PAIRING_VECTOR.proof });
+      assert.equal(JSON.stringify(socket.sent).includes(PAIRING_VECTOR.key), false, 'the key must not cross the socket');
+      assert.equal(JSON.stringify(h.status()).includes(PAIRING_VECTOR.key), false, 'status must not expose the key');
+      assert.equal(h.status().connected, true);
+
+      const before = socket.sent.length;
+      await socket.receive({ ...challenge, scheme: 'plain-v0' });
+      await socket.receive({ ...challenge, nonce: 'x'.repeat(257) });
+      await tick(20);
+      assert.equal(socket.sent.length, before, 'unknown schemes and oversized nonces are ignored');
+    } finally { h.stop(); }
+  });
+
+  test(`${build}: a challenge without a pairing key stops the bridge with a clear error`, async () => {
+    const h = pairingHarness(build);
+    try {
+      h.start({});
+      const socket = h.sockets[0];
+      socket.emit('open');
+      await socket.receive(challenge);
+      assert.equal(h.status().approval, 'rejected');
+      assert.match(h.status().lastError, /requires a pairing key/);
+      assert.equal(socket.sent.some(frame => frame.type === 'pairing_proof'), false);
+      if (build === 'firefox') await tick(700); // first backoff is 500 ms
+      assert.equal(h.reconnects(), 0, 'a missing key must not reconnect in a loop');
+    } finally { h.stop(); }
+  });
+
+  test(`${build}: a pairing refusal from the bridge is final until the settings change`, async () => {
+    const h = pairingHarness(build);
+    try {
+      h.start({ pairingKey: 'an-old-pairing-key-0000' });
+      h.sockets[0].emit('open');
+      h.sockets[0].emit('close', { code: 4001, reason: 'Pairing key mismatch' });
+      assert.equal(h.status().approval, 'rejected');
+      assert.equal(h.status().lastError, 'Pairing key mismatch');
+      if (build === 'firefox') await tick(700);
+      assert.equal(h.reconnects(), 0, 'a refused key must not reconnect in a loop');
+
+      h.start({ pairingKey: PAIRING_VECTOR.key });
+      assert.equal(h.sockets.length, 2, 'pasting a new key reconnects immediately');
+    } finally { h.stop(); }
+  });
+}
+
+for (const [label, loadController] of [
+  ['chrome', async () => (await import('../src/chrome/src/cloud-runs.js')).createCloudRunController],
+  ['firefox', async () => createFxController],
+]) {
+  test(`${label}: controller passes the stored pairing key to the bridge`, async () => {
+    const make = await loadController();
+    const store = { webbrainCloudBridgeEnabled: true, webbrainCloudBridgePairingKey: 'stored-pairing-key-0123' };
+    const started = [];
+    const api = {
+      storage: { local: {
+        get: async (keys) => Object.fromEntries([].concat(keys).map(k => [k, store[k]]).filter(([, v]) => v !== undefined)),
+        set: async (obj) => { Object.assign(store, obj); },
+      } },
+      runtime: { getManifest: () => ({ version: '1.0.0' }), sendMessage: async (m) => { started.push(m); return {}; } },
+    };
+    const bridge = { start: (m) => { started.push(m); return {}; }, stop: () => ({}), status: () => ({}) };
+    const controller = make({ chromeApi: api, agent: {}, ensureOffscreen: async () => {}, bridge });
+    await controller.syncBridge();
+    assert.equal(started[0].pairingKey, 'stored-pairing-key-0123');
+  });
+}
