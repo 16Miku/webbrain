@@ -83820,6 +83820,112 @@ test('iframe submit without urlFilter fails before confirmation or dispatch', as
   }
 });
 
+// A coordinate click, type_text without a selector and press_keys go to the
+// document under the point or with focus. On Chrome (CDP) that can be an
+// embedded wallet frame, so a grant for the merchant page must not cover it.
+function receivingFrameGateAgent(AgentClass, tabId, { frameUrls = [], choice = 'deny' } = {}) {
+  const agent = new AgentClass({ getVisionProvider: async () => null });
+  const state = { executed: [], prompts: [], resolved: [] };
+  agent._ensureGateSetting = async () => false;
+  agent._skipPermissionGate = false;
+  agent._currentUrl = async () => 'https://merchant.example/checkout';
+  agent._recordProgressObservation = async () => null;
+  agent._autoRecordProgressAction = () => null;
+  agent._progressWarningForAction = () => '';
+  agent._persist = () => { };
+  agent._detectLikelySubmitAction = async () => null;
+  agent._iframeRectsForCoordinate = async () => [];
+  agent.permissions.hydrate = async () => { };
+  // The merchant page itself is already allowed for every capability.
+  agent.permissions.check = host => host === 'merchant.example'
+    ? { allowed: true, needsPrompt: false }
+    : { allowed: false, needsPrompt: true };
+  agent.permissions.record = async () => { };
+  agent._promptPermission = async (_tabId, capability, host) => {
+    state.prompts.push({ capability, host });
+    return choice;
+  };
+  agent._inputReceivingFrameUrl = async (_tabId, name) => {
+    state.resolved.push(name);
+    return frameUrls.length > 1 ? frameUrls.shift() : frameUrls[0];
+  };
+  agent.executeTool = async (_tabId, name) => {
+    state.executed.push(name);
+    return { success: true };
+  };
+  return { agent, state };
+}
+
+const RECEIVING_FRAME_CALLS = [
+  ['click', { x: 120, y: 80, coordinate_space: 'css' }, 'click'],
+  ['type_text', { text: '4242 4242 4242 4242' }, 'type'],
+  ['press_keys', { key: 'Enter' }, 'click'],
+];
+
+test('Chrome point and focus input is charged to the embedded frame it reaches', async () => {
+  for (const [name, args, capability] of RECEIVING_FRAME_CALLS) {
+    const { agent, state } = receivingFrameGateAgent(AgentCh, 5121, { frameUrls: ['https://wallet.example/pay'] });
+    const messages = [];
+    await agent._executeToolBatch(5121, [{ id: `frame_${name}`, function: { name, arguments: JSON.stringify(args) } }],
+      messages, () => { }, { supportsVision: false }, '', new Set([name]), 1);
+    assert.deepEqual(state.resolved, [name], `${name}: the receiving frame was not resolved before the gate`);
+    assert.deepEqual(state.prompts, [{ capability, host: 'wallet.example' }], `${name}: the merchant grant covered the wallet frame`);
+    assert.deepEqual(state.executed, [], `${name}: input reached the wallet frame without its permission`);
+    assert.match(JSON.parse(messages[0].content).error, /denied permission to .* wallet\.example/, name);
+  }
+});
+
+test('Chrome point and focus input stays on the page grant while it reaches the top document', async () => {
+  for (const [name, args] of RECEIVING_FRAME_CALLS) {
+    const { agent, state } = receivingFrameGateAgent(AgentCh, 5122, { frameUrls: ['https://merchant.example/checkout'] });
+    await agent._executeToolBatch(5122, [{ id: `top_${name}`, function: { name, arguments: JSON.stringify(args) } }],
+      [], () => { }, { supportsVision: false }, '', new Set([name]), 1);
+    assert.deepEqual(state.prompts, [], `${name}: a top-document input asked again`);
+    assert.deepEqual(state.executed, [name], `${name}: a top-document input did not run`);
+  }
+});
+
+test('Chrome point and focus input fails closed when its receiving document is unknown', async () => {
+  for (const [name, args] of RECEIVING_FRAME_CALLS) {
+    const { agent, state } = receivingFrameGateAgent(AgentCh, 5123, { frameUrls: [''] });
+    const messages = [];
+    await agent._executeToolBatch(5123, [{ id: `unknown_${name}`, function: { name, arguments: JSON.stringify(args) } }],
+      messages, () => { }, { supportsVision: false }, '', new Set([name]), 1);
+    assert.deepEqual(state.prompts, [], `${name}: an unidentified frame must not borrow a prompt or the page grant`);
+    assert.deepEqual(state.executed, [], `${name}: input ran without an identified receiving document`);
+    const result = JSON.parse(messages[0].content);
+    assert.equal(result.denied, true, name);
+    assert.match(result.error, /could not identify the site of the document/, name);
+  }
+});
+
+test('Chrome point and focus input is not sent when its document changed while the card was open', async () => {
+  for (const [name, args] of RECEIVING_FRAME_CALLS) {
+    const { agent, state } = receivingFrameGateAgent(AgentCh, 5124, {
+      frameUrls: ['https://wallet.example/pay', 'https://attacker.example/'],
+      choice: 'once',
+    });
+    const messages = [];
+    await agent._executeToolBatch(5124, [{ id: `moved_${name}`, function: { name, arguments: JSON.stringify(args) } }],
+      messages, () => { }, { supportsVision: false }, '', new Set([name]), 1);
+    assert.equal(state.prompts.length, 1, name);
+    assert.deepEqual(state.resolved, [name, name], `${name}: the receiver was not checked again after the card`);
+    assert.deepEqual(state.executed, [], `${name}: input followed the page into a document the user was not asked about`);
+    assert.match(JSON.parse(messages[0].content).error, /changed to one on attacker\.example/, name);
+  }
+});
+
+test('Firefox point and focus input is charged to the top document it stays in', async () => {
+  for (const [name, args] of RECEIVING_FRAME_CALLS) {
+    const { agent, state } = receivingFrameGateAgent(AgentFx, 5125);
+    await agent._executeToolBatch(5125, [{ id: `fx_${name}`, function: { name, arguments: JSON.stringify(args) } }],
+      [], () => { }, { supportsVision: false }, '', new Set([name]), 1);
+    assert.deepEqual(state.resolved, [], `${name}: Firefox has no CDP receiving-frame resolver`);
+    assert.deepEqual(state.prompts, [], name);
+    assert.deepEqual(state.executed, [name], name);
+  }
+});
+
 test('form validation classifier surfaces native and custom submission errors', () => {
   const url = 'https://addons.mozilla.org/en-US/developers/addon/webbrain/versions/submit/';
   const invalidField = {
@@ -113506,6 +113612,33 @@ test('hostForCapability: navigate/network use target URL, others use current pag
   // go_back / go_forward carry no url arg, so they charge the current tab host.
   assert.equal(hostForCapability(Capability.NAVIGATE, {}, 'https://cur.com', 'go_back'), 'cur.com');
   assert.equal(hostForCapability(Capability.NAVIGATE, { steps: 2 }, 'https://cur.com', 'go_forward'), 'cur.com');
+});
+
+test('point and focus input is charged to its receiving document, failing closed without one', () => {
+  for (const [label, Cap, reqHosts] of [['firefox', Capability, requiredHosts], ['chrome', CapabilityCh, requiredHostsCh]]) {
+    const page = 'https://merchant.example/checkout';
+    const wallet = { _inputFrameUrl: 'https://wallet.example/pay' };
+    for (const [name, args, capability] of [
+      ['click', { x: 10, y: 20, ...wallet }, Cap.CLICK],
+      ['type_text', { text: '4242', ...wallet }, Cap.TYPE],
+      ['press_keys', { key: 'Enter', ...wallet }, Cap.CLICK],
+    ]) {
+      assert.deepEqual(reqHosts(capability, args, page, name), ['wallet.example'], `${label}: ${name}`);
+      // No receiving document: never fall back to the page's grant.
+      const { _inputFrameUrl, ...unresolved } = args;
+      assert.deepEqual(reqHosts(capability, unresolved, page, name), [], `${label}: ${name} without a receiver`);
+      assert.deepEqual(reqHosts(capability, { ...args, _inputFrameUrl: '' }, page, name), [], `${label}: ${name} with an opaque receiver`);
+    }
+    // An element WebBrain resolved itself keeps the page host.
+    for (const [name, args, capability] of [
+      ['click', { selector: '#pay', ...wallet }, Cap.CLICK],
+      ['click', { ref_id: 'ref_4', ...wallet }, Cap.CLICK],
+      ['type_text', { selector: '#card', text: '4242', ...wallet }, Cap.TYPE],
+      ['type_ax', { ref_id: 'ref_5', text: '4242', ...wallet }, Cap.TYPE],
+    ]) {
+      assert.deepEqual(reqHosts(capability, args, page, name), ['merchant.example'], `${label}: ${name} ${JSON.stringify(args)}`);
+    }
+  }
 });
 
 test('generate_image permission and result trust are bound to the configured provider in both builds', () => {

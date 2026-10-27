@@ -126,7 +126,7 @@ import {
   cloudflareManagedChallengeStorageKey,
   normalizeCloudflareManagedChallengeState,
 } from './cloudflare-managed-challenge.js';
-import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, urlFilterHostHint, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
+import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, inputReachesReceivingFrame, frameHostMatches, urlFilterHostHint, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
   buildPlannerAlignmentMessages,
@@ -15332,17 +15332,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let aborted = false;
         let failClosed = false;
         let gateDisabled = false;
+        // A coordinate click, type_text without a selector and press_keys are
+        // charged to the document that receives them (permission-gate.js
+        // inputReachesReceivingFrame). On Firefox that is the top document, or
+        // for a vision click a same-origin frame that shares its host: the
+        // content script dispatches synthetic events there, and trusted
+        // companion input on an embedded frame is refused (content.js
+        // prepareBidiTarget, firefox-companion/session.mjs). Chrome's CDP input
+        // does reach cross-origin frames, so its agent.js resolves the frame.
+        // A model-supplied _inputFrameUrl is always overwritten.
+        const receivingFrameInput = inputReachesReceivingFrame(fnName, fnArgs);
         for (const capability of capabilities) {
           if (this._skipPermissionGate) { gateDisabled = true; break; }
           // /allow-api waives ONLY write-method network egress.
           if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && apiMutationsAllowedForRun()) continue;
           // Every distinct host the call touches must be granted. Usually one,
           // but download_files takes a urls[] array that can span many hosts.
-          const gateArgs = fnName === 'generate_image'
+          let gateArgs = fnName === 'generate_image'
             ? { _generativeMediaUrl: imageGenPermissionUrl }
             : fnName === OTP_EMAIL_TOOL_NAME && otpEmailPermissionArgs
             ? otpEmailPermissionArgs
             : this._skillPermissionArgsForCapability(skillCallTool, capability, fnArgs);
+          if (receivingFrameInput) gateArgs = { ...gateArgs, _inputFrameUrl: curUrl };
           const hosts = requiredHosts(capability, gateArgs, curUrl, fnName);
           if (hosts.length === 0) { failClosed = true; break; }
           for (const host of hosts) {
@@ -15387,7 +15398,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             content: JSON.stringify({
               success: false,
               denied: true,
-              error: `Cannot run ${fnName}: the target frame/host couldn't be identified, so it can't be permission-checked. Pass a urlFilter naming the iframe's domain (read it first with iframe_read / get_accessibility_tree) and retry.`,
+              error: receivingFrameInput
+                ? `Cannot run ${fnName}: WebBrain could not identify the site of the document ${fnName === 'click' ? 'under that point' : 'that has keyboard focus'}, so the input can't be permission-checked. Nothing was sent. Look at the page again before retrying; for a field inside an embedded frame, use iframe_click / iframe_type with a urlFilter naming the frame's domain.`
+                : `Cannot run ${fnName}: the target frame/host couldn't be identified, so it can't be permission-checked. Pass a urlFilter naming the iframe's domain (read it first with iframe_read / get_accessibility_tree) and retry.`,
             }),
           });
           predispatchBlocked('permissionMs');

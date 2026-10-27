@@ -134,7 +134,7 @@ import {
   normalizeCloudflareManagedChallengeState,
 } from './cloudflare-managed-challenge.js';
 import { getRecordingStateFresh as recorderStateFresh } from '../recorder/host.js';
-import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, urlFilterHostHint, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
+import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, inputReachesReceivingFrame, frameHostMatches, urlFilterHostHint, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
   buildPlannerAlignmentMessages,
@@ -17185,23 +17185,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let aborted = false;
         let failClosed = false;
         let gateDisabled = false;
+        // A coordinate click, type_text without a selector and press_keys go
+        // to whichever document is under the point or has focus, which can be
+        // an embedded cross-origin frame: the gate charges that document's
+        // host. A model-supplied _inputFrameUrl is always overwritten.
+        const receivingFrameInput = inputReachesReceivingFrame(fnName, fnArgs);
+        const inputFrameUrl = receivingFrameInput
+          ? await this._inputReceivingFrameUrl(tabId, fnName, fnArgs, curUrl)
+          : '';
+        let prompted = false;
         for (const capability of capabilities) {
           if (!requiresMandatoryWebMCPGates && this._skipPermissionGate) { gateDisabled = true; break; }
           // /allow-api waives ONLY write-method network egress.
           if (capability === Capability.NETWORK && isNetworkMutation(fnName, fnArgs) && apiMutationsAllowedForRun()) continue;
           // Every distinct host the call touches must be granted. Usually one,
           // but download_files takes a urls[] array that can span many hosts.
-          const gateArgs = fnName === 'generate_image'
+          let gateArgs = fnName === 'generate_image'
             ? { _generativeMediaUrl: imageGenPermissionUrl }
             : fnName === OTP_EMAIL_TOOL_NAME && otpEmailPermissionArgs
             ? otpEmailPermissionArgs
             : this._skillPermissionArgsForCapability(skillCallTool, capability, fnArgs);
+          if (receivingFrameInput) gateArgs = { ...gateArgs, _inputFrameUrl: inputFrameUrl };
           const hosts = requiredHosts(capability, gateArgs, curUrl, fnName);
           if (hosts.length === 0) { failClosed = true; break; }
           for (const host of hosts) {
             if (!requiresMandatoryWebMCPGates && this._skipPermissionGate) { gateDisabled = true; break; }
             const verdict = this.permissions.check(host, capability, tabId);
             if (verdict.allowed) continue;
+            if (verdict.needsPrompt) prompted = true;
             const choice = verdict.needsPrompt
               ? await this._promptPermission(tabId, capability, host, onUpdate)
               : 'deny'; // a standing "deny" grant for this (capability, host)
@@ -17240,12 +17251,36 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             content: JSON.stringify({
               success: false,
               denied: true,
-              error: `Cannot run ${fnName}: the target frame/host couldn't be identified, so it can't be permission-checked. Pass a urlFilter naming the iframe's domain (read it first with iframe_read / get_accessibility_tree) and retry.`,
+              error: receivingFrameInput
+                ? `Cannot run ${fnName}: WebBrain could not identify the site of the document ${fnName === 'click' ? 'under that point' : 'that has keyboard focus'}, so the input can't be permission-checked. Nothing was sent. Look at the page again before retrying; for a field inside an embedded frame, use iframe_click / iframe_type with a urlFilter naming the frame's domain.`
+                : `Cannot run ${fnName}: the target frame/host couldn't be identified, so it can't be permission-checked. Pass a urlFilter naming the iframe's domain (read it first with iframe_read / get_accessibility_tree) and retry.`,
             }),
           });
           predispatchBlocked('permissionMs');
           if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
           continue;
+        }
+        // While a card was open the page could move a frame under the point or
+        // focus into one; the input would then reach a document the user was
+        // not asked about.
+        if (receivingFrameInput && prompted && !blocked && !gateDisabled) {
+          const currentFrameUrl = await this._inputReceivingFrameUrl(tabId, fnName, fnArgs, await this._currentUrl(tabId));
+          if (!normalizeHost(currentFrameUrl) || normalizeHost(currentFrameUrl) !== normalizeHost(inputFrameUrl)) {
+            messages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: JSON.stringify({
+                success: false,
+                denied: true,
+                noDispatch: true,
+                error: `Not sent: while the permission card was open, the document ${fnName === 'click' ? 'under that point' : 'with keyboard focus'} changed to one on ${normalizeHost(currentFrameUrl) || 'an unidentified site'}. Look at the page again before retrying.`,
+              }),
+            });
+            onUpdate('warning', { message: 'Input not sent: the page moved it to another document while the permission card was open.' });
+            predispatchBlocked('permissionMs');
+            if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+            continue;
+          }
         }
         if (blocked) {
           messages.push({
@@ -37864,6 +37899,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const mode = this.conversationModes.get(tabId) || 'ask';
     messages[0].content = this._buildSystemPrompt(mode, tabId);
     this._persist(tabId);
+  }
+
+  // The URL whose host the gate charges for point or focus input
+  // (permission-gate.js inputReachesReceivingFrame): the tab's address while
+  // the input stays in the top document, the embedded frame's effective URL
+  // when it would land in one, and '' when CDP cannot establish the receiving
+  // document or its site, which fails the gate closed.
+  async _inputReceivingFrameUrl(tabId, fnName, fnArgs, curUrl) {
+    try {
+      const frame = await cdpClient.resolveInputFrame(tabId, fnName === 'click'
+        ? { x: Number(fnArgs?.x), y: Number(fnArgs?.y) }
+        : { focused: true });
+      return frame?.topDocument === true ? String(curUrl || '') : String(frame?.url || '');
+    } catch {
+      return '';
+    }
   }
 
   _skillPermissionArgsForCapability(skillTool, capability, args) {
