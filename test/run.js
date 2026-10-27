@@ -82770,6 +82770,72 @@ for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
   }
 }
 
+for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+  for (const { name, stored, storageError, sitePrompt } of [
+    { name: 'an install without the marker keeps the earlier waiver', stored: {}, sitePrompt: false },
+    { name: 'the new-install marker keeps the site prompt', stored: { apiMutationSitePrompt: true }, sitePrompt: true },
+    { name: 'a malformed marker keeps the site prompt', stored: { apiMutationSitePrompt: 'false' }, sitePrompt: true },
+    { name: 'a storage read failure keeps the site prompt', storageError: true, sitePrompt: true },
+  ]) {
+    test(`${label} API mutation site prompt startup: ${name}`, async () => {
+      const source = fs.readFileSync(path.join(ROOT, `src/${label}/src/background.js`), 'utf8');
+      const start = source.indexOf('const ALWAYS_ALLOW_API_MUTATIONS_KEY =');
+      const end = source.indexOf('agent.setConversationScopeChangeListener(', start);
+      const agent = new AgentClass({});
+      const api = {
+        storage: {
+          local: {
+            get: async (defaults) => {
+              if (storageError) throw new Error('Storage unavailable');
+              return { ...defaults, ...stored };
+            },
+          },
+        },
+      };
+      const ready = vm.runInNewContext(
+        `${source.slice(start, end)}\nalwaysAllowApiMutationsReady;`,
+        { agent, [label === 'chrome' ? 'chrome' : 'browser']: api },
+      );
+      const tabId = 4897;
+      assert.equal(agent.isApiMutationPromptWaived(tabId), false, 'nothing is waived before storage hydration');
+      await ready;
+      assert.equal(agent.apiMutationSitePrompt, sitePrompt);
+      assert.equal(agent.isApiMutationPromptWaived(tabId), !storageError && !sitePrompt);
+    });
+  }
+}
+
+test('a new install keeps the per-site prompt for default-on API mutations; updates are not migrated', async () => {
+  for (const [label, apiName, AgentClass] of [['chrome', 'chrome', AgentCh], ['firefox', 'browser', AgentFx]]) {
+    const bg = fs.readFileSync(path.join(ROOT, `src/${label}/src/background.js`), 'utf8');
+    const start = bg.indexOf('// Always allow API mutations is on by default, so leaving it on');
+    const marker = `  ${apiName}.storage.local.set({ apiMutationSitePrompt: true }).catch(() => {});\n});\n`;
+    const end = bg.indexOf(marker, start);
+    assert.ok(start > -1 && end > start, `${label}: install marker block not found`);
+    for (const reason of ['install', 'update', `${apiName}_update`]) {
+      const stored = reason === 'install' ? {} : { alwaysAllowApiMutations: true };
+      const before = structuredClone(stored);
+      let onInstalled = null;
+      const api = {
+        runtime: { onInstalled: { addListener: (listener) => { onInstalled = listener; } } },
+        storage: { local: { set: async (values) => { Object.assign(stored, values); } } },
+      };
+      vm.runInNewContext(bg.slice(start, end + marker.length), { [apiName]: api });
+      onInstalled({ reason });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(stored, reason === 'install' ? { apiMutationSitePrompt: true } : before, `${label}: ${reason}`);
+    }
+    const onChanged = bg.match(/if \(changes\.apiMutationSitePrompt\) \{[\s\S]*?\n  \}/)?.[0];
+    assert.ok(onChanged, `${label}: live marker changes are not applied`);
+    for (const [newValue, expected] of [[true, true], [undefined, false], [false, false]]) {
+      const agent = new AgentClass({});
+      agent.setApiMutationSitePrompt(!expected);
+      vm.runInNewContext(onChanged, { agent, changes: { apiMutationSitePrompt: { newValue } } });
+      assert.equal(agent.apiMutationSitePrompt, expected, `${label}: live change to ${newValue}`);
+    }
+  }
+});
+
 test('persistent API mutation permission is global and independent of /allow-api lifecycle', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({});
@@ -86754,6 +86820,62 @@ test('agent allows mutating fetch_url after conversation or persistent API appro
       assert.equal(executed, true, `${AgentClass.name}: mutating fetch_url did not run after ${approval}`);
       assert.equal(messages.length, 1, `${AgentClass.name}: expected executed tool result message after ${approval}`);
       assert.doesNotMatch(messages[0].content, /requiresApiAllow/, `${AgentClass.name}: ${approval} mutation was still blocked`);
+    }
+  }
+});
+
+test('default-on API mutation setting leaves the network prompt for each host on new installs', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    for (const { name, grant, sitePrompt, choice = 'once', prompted, ran } of [
+      { name: 'new install: the user allows the host', grant: 'persistent', sitePrompt: true, prompted: true, ran: true },
+      { name: 'new install: the user denies the host', grant: 'persistent', sitePrompt: true, choice: 'deny', prompted: true, ran: false },
+      { name: 'new install with /allow-api', grant: 'conversation', sitePrompt: true, prompted: false, ran: true },
+      { name: 'new install with a cloud run grant', grant: 'temporary', sitePrompt: true, prompted: false, ran: true },
+      { name: 'install from before the marker', grant: 'persistent', sitePrompt: false, prompted: false, ran: true },
+    ]) {
+      const agent = new AgentClass({ getVisionProvider: async () => null });
+      const tabId = 4908;
+      let executed = false;
+      agent.executeTool = async () => {
+        executed = true;
+        return { success: true };
+      };
+      agent._currentUrl = async () => 'https://shop.example/account';
+      agent._skipPermissionGate = false;
+      agent._ensureGateSetting = async () => false;
+      const prompts = [];
+      agent._promptPermission = async (_tabId, capability, host) => {
+        prompts.push({ capability, host });
+        return choice;
+      };
+      agent.setApiMutationSitePrompt(sitePrompt);
+      if (grant === 'persistent') agent.setAlwaysAllowApiMutations(true);
+      if (grant === 'conversation') agent.setApiMutationsAllowed(tabId, true);
+      if (grant === 'temporary') agent.setTemporaryApiMutationsAllowed(tabId, true);
+      const messages = [];
+
+      await agent._executeToolBatch(
+        tabId,
+        [{
+          id: 'api_write',
+          function: {
+            name: 'fetch_url',
+            arguments: JSON.stringify({ url: 'https://collector.example/api/events', method: 'POST', body: '{"a":1}' }),
+          },
+        }],
+        messages,
+        () => { },
+        { supportsVision: false },
+        '',
+        new Set(['fetch_url']),
+        1,
+      );
+
+      const label = `${AgentClass.name}: ${name}`;
+      assert.deepEqual(prompts, prompted ? [{ capability: Capability.NETWORK, host: 'collector.example' }] : [], `${label}: prompts`);
+      assert.equal(executed, ran, `${label}: dispatch`);
+      assert.equal(messages.length, 1, `${label}: one tool result`);
+      assert.doesNotMatch(messages[0].content, /requiresApiAllow/, `${label}: the write was authorized`);
     }
   }
 });

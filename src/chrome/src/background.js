@@ -291,14 +291,19 @@ const agent = new Agent(providerManager);
 agent.strictSecretMode = false;
 agent.setStandaloneOfflineRagService(createOffscreenOfflineRetrievalService());
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
+// apiMutationSitePrompt: true keeps each host's network permission prompt for
+// write requests the default-on setting above allows (written at install, see
+// below). Without it an install keeps the earlier waiver.
 const alwaysAllowApiMutationsReady = chrome.storage.local
-  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
+  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true, apiMutationSitePrompt: false })
   .then((stored) => {
     agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
+    agent.setApiMutationSitePrompt(stored.apiMutationSitePrompt !== false);
   })
   .catch(() => {
     // An unreadable setting must not bypass a stored opt-out.
     agent.setAlwaysAllowApiMutations(false);
+    agent.setApiMutationSitePrompt(true);
   });
 agent.setConversationScopeChangeListener((tabId, state) => {
   chrome.runtime.sendMessage({
@@ -698,6 +703,15 @@ async function mergeTraceTiers(reason) {
 }
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   mergeTraceTiers(reason).catch(() => {});
+});
+
+// Always allow API mutations is on by default, so leaving it on is not a
+// decision to skip a site's permission prompt: a new install keeps that prompt
+// for model-initiated write requests (see Agent.isApiMutationPromptWaived).
+// Installs from before this marker are not migrated and keep the waiver.
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason !== 'install') return;
+  chrome.storage.local.set({ apiMutationSitePrompt: true }).catch(() => {});
 });
 
 async function loadSiteAdapters() {
@@ -1427,6 +1441,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     const value = changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue;
     agent.setAlwaysAllowApiMutations(value === undefined || value === true);
     refreshPrompts = true;
+  }
+  if (changes.apiMutationSitePrompt) {
+    const value = changes.apiMutationSitePrompt.newValue;
+    agent.setApiMutationSitePrompt(value !== undefined && value !== false);
   }
   if (changes.useSiteAdapters) {
     agent.useSiteAdapters = changes.useSiteAdapters.newValue;
