@@ -9,6 +9,7 @@
     "menus",
     "webNavigation",
     "webRequest",
+    "dns",
     "storage",
     "identity",
     "cookies",

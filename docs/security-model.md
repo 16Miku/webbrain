@@ -24,7 +24,7 @@ For vulnerability disclosure, see [SECURITY.md](../SECURITY.md).
 ```
 
 (This is the Chrome MV3 manifest. Firefox MV2 grants a narrower set —
-`activeTab`, `menus`, `webNavigation`, `webRequest`, `storage`,
+`activeTab`, `menus`, `webNavigation`, `webRequest`, `dns`, `storage`,
 `unlimitedStorage`, `tabs`, `tabGroups`, `notifications`, `downloads`,
 `alarms`, `clipboard*`, `<all_urls>` — and has no
 `debugger`/`offscreen`/`tabCapture`/`sidePanel`/`scripting`/`privateNetworkAccess`,
@@ -34,7 +34,8 @@ see Firefox Differences below.)
 |---|---|---|
 | `<all_urls>` | Content script injection anywhere — the agent can read and interact with any page the user visits | A turn needs an action mode (Act or Dev) before clicks/types/navigation, and only the user's own request grants one: in their own words or with `/act` or `/dev` (see **Automatic mode selection** below). Ask mode is read-only. General browser-tab creation, enumeration, activation, and run retargeting are not exposed as model-callable tools. The one OTP-skill-gated Mid/Full reader internally selects an already-open supported mailbox and returns only bounded service-matching content; it exposes no tab catalog. Candidate inspection is read-only, while opening a selected message requires Act/Dev and mailbox-host click permission because it may mark mail read. Its disposable inactive clone consumes exact message continuations to completion or fails closed. |
 | `debugger` | CDP access provides trusted events and full DOM/network control on any tab | The debugger is attached only to the target tab while a CDP-backed run or mode-scoped Dev diagnostics own it. Run cleanup closes run-scoped WebMCP state and detaches unless Dev diagnostics remain active; conversation cleanup and tab removal drain all owners and detach. |
-| `webRequest` | Can observe XHR/fetch metadata for requests made by the active page | API mutation observer is on by default; it keeps only a bounded in-memory per-tab buffer for repeated-click shortcut hints and opaque same-origin replay. |
+| `webRequest` | Can observe XHR/fetch metadata for requests made by the active page | API mutation observer is on by default; it keeps only a bounded in-memory per-tab buffer for repeated-click shortcut hints and opaque same-origin replay. `fetch_url`, `read_page_source` and `research_url` also read the server address of their own requests while they run, to discard responses from blocked addresses (see **Local network blocking**). |
+| `dns` (Firefox only) | Can resolve hostnames | Used only by `fetch_url`, `read_page_source` and `research_url` to resolve the target hostname before sending, so a name that resolves to a blocked address is refused without contacting it. |
 | `downloads` | Can save files to the user's Downloads folder without prompting | Only the agent's explicit download-capable tool calls (`download_files`, `download_file`, `download_resource_from_page`, `download_social_media`, download-job skill tools) use this, and each is gated by the capability × origin permission prompt. |
 | `alarms` | Can wake scheduled jobs in future browser sessions | `schedule_resume` / `schedule_task` are gated; the user-authored `/watch` slash command can also create a page-bound 30–120 second conditional poll. |
 | `offscreen` | An offscreen document can make HTTP requests immune to user CSP, run local inference, or play audio without an open panel | Used for the localhost LLM proxy, the optional endpoint-free WebGPU text and vision providers, tab recording, validated download staging, the local controller bridge, and successful `/watch /beep` tones. The text provider receives the same bounded conversation and allowlisted tool schemas that would be sent to another active provider; dedicated local vision receives only its screenshot/prompt. Model files are downloaded from Hugging Face, while inference stays in the worker. Watch audio receives only a style selector, never page content or an arbitrary URL. |
@@ -48,7 +49,7 @@ see Firefox Differences below.)
 | `notifications` | Can show OS-level notifications | Used as a completion fallback for restricted or discarded background tabs, including scheduled runs. The message is the current tab title, falling back to its URL, so page-controlled titles and sensitive URL components may appear on OS notification surfaces or in notification history. Run output, page bodies, and trace payloads are not intentionally included. |
 | `tabCapture` (Chrome only) | Can capture tab audio/video | Used only for the explicit slash-driven tab/screen recording flow. Recording starts on a user command and stops on completion; there is no background capture. |
 | `clipboardWrite` / `clipboardRead` | Can write to / read from the clipboard | Writes place agent-produced snippets the user asked for; reads support paste-driven tasks. Clipboard content entering a prompt is treated like other untrusted input and never exfiltrated except as the user's requested result. |
-| `privateNetworkAccess` (Chrome only) | Allows requests to local/private-network LLM endpoints | Required for llama.cpp / Ollama / LM Studio on localhost or LAN. Agent network tools block URLs written with private or loopback IP literals and localhost names by default. DNS resolution is not checked, so other hostnames may still reach local addresses. Cloud-metadata IP literals (169.254.169.254) and listed metadata or `*.internal`/`*.local` hostnames remain blocked even when local access is enabled. |
+| `privateNetworkAccess` (Chrome only) | Allows requests to local/private-network LLM endpoints | Required for llama.cpp / Ollama / LM Studio on localhost or LAN. Agent network tools block URLs written with private or loopback IP literals and localhost names by default; `fetch_url`, `read_page_source` and `research_url` also block hostnames that resolve to those addresses (see **Local network blocking**). Cloud-metadata IP literals (169.254.169.254) and listed metadata or `*.internal`/`*.local` hostnames remain blocked even when local access is enabled. |
 | `http://localhost/*`, `http://127.0.0.1/*`, `http://*/*` host permissions | Lets the extension call local-model servers and plain-HTTP endpoints | Localhost entries exist for local LLM servers (llama.cpp, Ollama, LM Studio). Provider inference and discovery requests to a user-configured HTTP endpoint use the provider transport directly and do not pass the agent-tool permission prompt. Model-callable network tools such as `fetch_url` and `research_url` are separately subject to the capability × origin gate; `connect-src *` in the extension CSP does not waive that gate. |
 
 ### Authentication
@@ -234,7 +235,33 @@ The primary threat: a malicious page crafts content that, when read by the agent
 | **Loop detection** | Three independent detectors stop the agent if it's repeating the same action or oscillating. Repeated click loops may include an exact same-tab XHR/fetch URL+method hint so the agent can switch to `fetch_url` instead of clicking forever. Limits damage from a persistently injected prompt. |
 | **Finance adapters** | Adapters with `category: 'finance'` inject extra confirmation guidance and a warning banner. |
 | **Strict secret handling** | Instructs the model not to quote credentials, strikes credentials it filled into sensitive fields from its scratchpad and progress ledger, and in cloud runs strikes every credential it typed, sent, or read from a labelled field out of what gets published. A secret it only saw in page prose still depends on the instruction. |
-| **Local network blocking** | Local-network access is off by default. When access is off, URLs written with private or loopback IP literals and localhost names are blocked. DNS resolution is not checked, so other hostnames may still reach local addresses. Cloud-metadata IP literals (169.254.169.254) and listed metadata or `*.internal`/`*.local` hostnames stay blocked even when local-network access is enabled. |
+| **Local network blocking** | Local-network access is off by default. When access is off, URLs written with private or loopback IP literals and localhost names are blocked. `fetch_url`, `read_page_source` and `research_url` also check the address a hostname resolved to: the browser reports the server address of each response (for `research_url`, every top-level redirect hop of its hidden tab), and a response from a blocked address is discarded before the model sees it. Firefox also resolves the hostname before sending and refuses it when any answer is blocked. Resolved addresses use the same tiers as literals. Cloud-metadata IP literals (169.254.169.254) and listed metadata or `*.internal`/`*.local` hostnames stay blocked even when local-network access is enabled, as do names that resolve to link-local, CGNAT, multicast or unspecified addresses. See **Resolved-address limits** below. |
+
+### Resolved-address limits
+
+Extensions cannot choose or pin the address a request connects to, so the
+resolved-address check has these limits:
+
+- Chrome has no DNS API for extensions. The request, including its method,
+  headers and body, has already reached the address when its response is
+  discarded, so a write-method request can still change state on a local
+  service. Firefox refuses before sending when its lookup returns a blocked
+  address, but the connection may still use a different answer (DNS
+  rebinding); the response check then applies as in Chrome.
+- With a proxy, Chrome reports the proxy's address. If the proxy is on a
+  loopback or private address, these tools are blocked until local-network
+  access is enabled. Firefox reports the proxy and skips the response check
+  for proxied requests, leaving only its lookup before sending. That lookup
+  uses Firefox's own resolver even when a SOCKS proxy is set to resolve names
+  remotely.
+- If the browser reports no address within 1.5 seconds of the response (for
+  example because the user withdrew the extension's site access for that
+  host), the response is kept.
+- `research_url` checks only its hidden tab's top-level document. Frames and
+  subresources that page loads follow the browser's own private-network
+  rules; the tool does not return their content.
+- Other model-callable requests, such as skill HTTP tools and the download
+  tools, still check only the URL text.
 
 ### What is NOT defended
 
