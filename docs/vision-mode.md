@@ -55,6 +55,7 @@ A point is refused before any dispatch when:
 - it lies outside the image;
 - it is the second or later coordinate action of one model turn, or any coordinate action while the last screen update failed (`session.observationFailed`), and the live screen changed near it since the screen the model last saw, or the screen could not be re-captured to check (`_visionStabilityBlock`, checked right before dispatch, after every gate; a `drag_at` is checked at both ends against one capture);
 - the run has no frame of its own yet (`no_frame`);
+- the tab shows another page than its frame did (`page_changed`, `_visionStaleLayoutRefusal`, a navigation page feedback has not reported yet); a full frame follows. A page that only scrolled since the model looked is not refused, but every point of the batch is checked against the live screen first (`session.screenMoved`), so content that scrolled under a point stops it;
 - the browser window was resized or zoomed (CSS viewport size or device pixel ratio) after its frame was taken (`viewport_changed`, `_visionStaleLayoutRefusal`): checked once before each batch that uses points, so a resize page feedback has not reported yet is caught too; a full frame follows. A resize page feedback did report while the model decided sets the decision aside for a fresh full frame before that (`visionScreenFeedback`).
 
 A refused point also stops the rest of the model's batch: the calls after it (a `type_text`, say) were planned on that point.

@@ -61,6 +61,12 @@ export class VisionSession {
     // last saw may no longer be the screen, until the next frame, patch or
     // "no visible change" (vision-runtime.js gates points and typing on it).
     this.observationFailed = false;
+    // Where the screen the model last saw was scrolled (keyframe, patch or
+    // "no visible change"), and whether the page has scrolled since
+    // (vision-runtime.js _visionStaleLayoutRefusal): its points are then
+    // re-checked against the live screen.
+    this.observedScroll = null;
+    this.screenMoved = false;
     this.pendingZooms = [];
     // Bumped each time the model is shown a screen that differs from the one
     // it saw (a patch, a new page or layout, a frame with other pixels), never
@@ -104,6 +110,8 @@ export class VisionSession {
     this.patchChainLength = 0;
     this.forceKeyframe = false;
     this.observationFailed = false;
+    this.screenMoved = false;
+    this.observedScroll = { x: finite(meta.scrollX) || 0, y: finite(meta.scrollY) || 0 };
     const id = this._nextId('f');
     for (const retired of this.retired.values()) if (!retired.replacedBy) retired.replacedBy = id;
     this.keyframe = {
@@ -185,6 +193,12 @@ export class VisionSession {
     if (!this.keyframe) return;
     this.updateSeq += 1;
     this.observationFailed = false;
+  }
+
+  /** A patch or "no visible change" was read at this scroll position. */
+  noteObservedScroll(scrollX, scrollY) {
+    this.observedScroll = { x: finite(scrollX) || 0, y: finite(scrollY) || 0 };
+    this.screenMoved = false;
   }
 
   /**

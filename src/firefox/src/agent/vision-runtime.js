@@ -995,6 +995,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     const zooms = this._visionTakePendingZooms(tabId);
     if (plan.kind === 'none') {
       session.registerNoChange();
+      session.noteObservedScroll(frame.probe.scrollX, frame.probe.scrollY);
       this._visionRefreshZooms(session, zooms, frame);
       const note = visionNoChangeNote(session.keyframe);
       if (zooms.length) {
@@ -1016,6 +1017,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       encodedPatches.push({ region, encoded });
     }
     const patches = session.registerPatches(plan.regions.map(regionLabel), frame.raster.pixels);
+    session.noteObservedScroll(frame.probe.scrollX, frame.probe.scrollY);
     this._visionRefreshZooms(session, zooms, frame);
     const note = visionPatchNote(patches, session.keyframe, { coordinates: session.coordinates });
     const images = patches.map((patch, index) => ({ id: patch.id, kind: 'patch', dataUrl: encodedPatches[index].encoded.dataUrl }));
@@ -1078,7 +1080,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       // A point is re-checked against the live screen when an earlier action
       // of the batch ran, or when the page changed while the model decided
       // (page feedback notes a response it kept despite that).
-      const recheck = actedBefore || session.observationFailed === true
+      const recheck = actedBefore || session.observationFailed === true || session.screenMoved === true
         || (!!call && typeof call === 'object' && this._visionRecheckCalls?.has(call) === true);
       if (VISION_TRANSLATED_TOOLS.has(name) || VISION_NATIVE_TOOLS.has(name)) {
         let args = {};
@@ -1146,7 +1148,26 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       if (isControlFlowError(error)) throw error;
       return null;
     }
-    if (!probe || !session.layoutChanged({ cssWidth: probe.cssWidth, cssHeight: probe.cssHeight, devicePixelRatio: probe.devicePixelRatio })) return null;
+    if (!probe) return null;
+    // Another page than the one the frame shows (a navigation page feedback
+    // has not reported yet): its points no longer apply.
+    if (probe.url && keyframe.url && String(probe.url) !== keyframe.url) {
+      session.forceKeyframe = true;
+      this._visionTraceNote(tabId, 'vision_layout_changed', { frame: keyframe.id, reason: 'page_changed' });
+      return {
+        success: false, dispatched: false, noDispatch: true, visionCoordinateError: 'page_changed',
+        error: `Not dispatched: the tab shows another page than ${keyframe.id} did, so points read from it no longer apply. A fresh full frame follows; read the point again there.`,
+      };
+    }
+    // Scrolled since the model looked (a scroll anchoring on a feed, an
+    // auto-scroll): not refused, but every point is checked against the live
+    // screen before it goes out (_visionTranslateToolCalls, _visionStabilityBlock).
+    const seen = session.observedScroll;
+    if (seen && (Math.abs((Number(probe.scrollX) || 0) - seen.x) > 1 || Math.abs((Number(probe.scrollY) || 0) - seen.y) > 1)) {
+      session.screenMoved = true;
+      this._visionTraceNote(tabId, 'vision_layout_changed', { frame: keyframe.id, reason: 'scrolled' });
+    }
+    if (!session.layoutChanged({ cssWidth: probe.cssWidth, cssHeight: probe.cssHeight, devicePixelRatio: probe.devicePixelRatio })) return null;
     session.forceKeyframe = true;
     const size = (width, height) => `${Math.round(Number(width) || 0)}x${Math.round(Number(height) || 0)}`;
     this._visionTraceNote(tabId, 'vision_layout_changed', {

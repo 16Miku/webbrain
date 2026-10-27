@@ -723,6 +723,32 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.match(stops[5], /six actions/);
   });
 
+  test(`${build}: a page that changed while the model decided refuses its points; a scroll gets them re-checked`, async () => {
+    const ctx = runAgent(step => {
+      if (step === 1) {
+        // Navigated while the model decided, unreported.
+        ctx.scene.url = `${PAGE}?other`;
+        return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      }
+      if (step === 2) {
+        // Scrolled while the model decided (a feed's scroll anchoring).
+        ctx.scene.scrollY = 240;
+        return { toolCalls: [call('click_at', { x: 300, y: 200 })] };
+      }
+      if (step === 3) return { toolCalls: [call('click_at', { x: 320, y: 220 })] };
+      if (step === 4) return { toolCalls: [call('done', { summary: 'Done.', outcome: 'success' })] };
+      return { content: 'done' };
+    });
+    try { await runLoop(ctx.agent, nextTab++, false); } finally { ctx.scene.url = PAGE; ctx.scene.scrollY = 0; }
+    const refusal = toolTexts(ctx.requests[1]).at(-1);
+    assert.match(refusal, /"visionCoordinateError":"page_changed"/, refusal);
+    assert.match(textOf(visionMessages(ctx.requests[1].messages).at(-1)), /UNTRUSTED SCREENSHOT f\d+/);
+    const clicks = ctx.dispatched.filter(entry => entry.name === 'click');
+    assert.equal(clicks.length, 2, 'the scrolled point went out after its re-check, the next one plainly');
+    assert.equal(clicks[0].vision.needsStabilityCheck, true);
+    assert.equal(clicks[1].vision.needsStabilityCheck, false);
+  });
+
   test(`${build}: a new run never shows or uses the previous run's frame when its first capture fails`, async () => {
     const ctx = runAgent(step => {
       if (step === 1) return { toolCalls: [call('done', { summary: 'Looked.', outcome: 'success' })] };
