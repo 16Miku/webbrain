@@ -733,6 +733,52 @@ export function requiredHosts(capability, args, currentUrlOrHost, toolName) {
 }
 
 /**
+ * upload_file puts a local file into a page's file input, and the page can
+ * read that File the moment it lands. Its approval therefore names the exact
+ * file and the page host, never the host alone. `sourceKey` is the source the
+ * handler will read: attachment:<id>, download:<id>, path:<path> or picker
+ * (Firefox's own file picker, where the user chooses the file).
+ */
+export function uploadApprovalKey(host, sourceKey) {
+  const h = normalizeHost(host);
+  const source = String(sourceKey || '');
+  return h && source ? `upload_file\n${h}\n${source}` : '';
+}
+
+/**
+ * What the upload card shows about the file, bounded and stripped of control
+ * characters. A download's address is shown only when it is a web address
+ * (staged downloads have blob: or data: addresses that tell the user nothing).
+ */
+export function uploadApprovalCard(upload = {}) {
+  const text = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max);
+  const kind = ['attachment', 'download', 'path', 'picker'].includes(upload?.kind) ? upload.kind : 'path';
+  const path = text(upload?.path, 500);
+  const sourceUrl = text(upload?.sourceUrl, 500);
+  return {
+    kind,
+    runOwned: upload?.runOwned === true,
+    name: text(upload?.name || path.split(/[\\/]/).pop(), 200),
+    path,
+    sourceUrl: /^https?:\/\//i.test(sourceUrl) ? sourceUrl : '',
+  };
+}
+
+/** English wording of the upload card, also kept by scheduled pending cards. */
+export function uploadApprovalQuestion(host, upload = {}) {
+  const card = uploadApprovalCard(upload);
+  const file = card.kind === 'picker'
+    ? 'a file you choose in WebBrain\'s file picker'
+    : card.kind === 'attachment'
+      ? `the file you attached${card.name ? ` ("${card.name}")` : ''}`
+      : card.kind === 'download'
+        ? `the downloaded file ${card.path || card.name}${card.sourceUrl ? ` (from ${card.sourceUrl})` : ''}`
+        : `the local file ${card.path}`;
+  const origin = card.runOwned ? '' : ' You did not attach this file and this task did not download it.';
+  return `WebBrain wants to attach ${file} to a page on ${normalizeHost(host) || 'this site'}. The page can read the file as soon as it is attached.${origin} Allow it?`;
+}
+
+/**
  * Stores and evaluates (capability, host) grants. Pure logic — storage is
  * injected via async load/save hooks so this stays Node-testable. `skipAll`
  * is an optional escape hatch (e.g. an explicit autopilot setting).

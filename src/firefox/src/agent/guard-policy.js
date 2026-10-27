@@ -162,7 +162,7 @@ export const GUARDS = Object.freeze({
   "browser-control-handoff-stale-batch": { class: "user_control", family: "predispatch", decides: "knows", onDecided: "block", onCannotDecide: "block",
     summary: "Browser control changed hands (manual takeover or cloud handoff) after the batch was planned: every remaining call is skipped and a fresh app-owned tree is injected." },
   "capability-host-permission": { class: "permission_gate", family: "predispatch", decides: "knows", onDecided: "block", onCannotDecide: "block",
-    summary: "Capability x host permission gate: a standing deny or a Deny on the capability card (navigate, click, type, execute_js, dev_patch, network, download, upload, window, schedule) refuses the call on that host." },
+    summary: "Capability x host permission gate: a standing deny or a Deny on the capability card (navigate, click, type, execute_js, dev_patch, network, download, upload, window, schedule) refuses the call on that host. upload_file is approved for its exact file; a file from outside the run is asked about every call, even with prompts off, and refused in an unattended run." },
   "captcha-gate-action-block": { class: "host_check", family: "predispatch", decides: "knows", onDecided: "block", onCannotDecide: "block",
     summary: "A supported verification challenge is active (solve_required) or its one solve has not been confirmed cleared (verification_pending): page mutations, network mutations and done(success)/done_json are refused until solve_captcha runs once / a read confirms clearance." },
   "captcha-gate-manual-required": { class: "host_check", family: "predispatch", decides: "knows", onDecided: "block", onCannotDecide: "block",

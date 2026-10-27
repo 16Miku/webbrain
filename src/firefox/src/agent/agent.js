@@ -126,7 +126,7 @@ import {
   cloudflareManagedChallengeStorageKey,
   normalizeCloudflareManagedChallengeState,
 } from './cloudflare-managed-challenge.js';
-import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, urlFilterHostHint, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
+import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, urlFilterHostHint, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, uploadApprovalCard, uploadApprovalKey, uploadApprovalQuestion, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
   buildPlannerAlignmentMessages,
@@ -962,6 +962,11 @@ export class Agent extends LoopDetector {
     // Handles exist only while one agent run is active and let upload_file
     // reuse the exact bytes already supplied through the side panel.
     this._userAttachmentHandles = new Map();
+    // tabId -> downloadIds this run's own download tools saved. Like the
+    // attachment handles above, they are files the run itself provided, so
+    // upload_file may attach them under the ordinary upload gate; any other
+    // download needs the user's approval for that file each time.
+    this._runDownloadIds = new Map();
     // Deterministic capability × origin permission gate. "Always" grants are
     // persisted in extension storage; "once" grants live for the current turn.
     this.permissions = new PermissionManager({
@@ -15276,6 +15281,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
       predispatch.lap('submitConfirmationMs');
+      // upload_file hands a file to a page that can read it at once, so its
+      // approval names the exact file instead of the host-wide upload grant,
+      // and a download from outside this run is asked about even with prompts
+      // off (_authorizeUploadFileSource). The handler re-checks the source.
+      let uploadSourceKey = null;
+      if (fnName === 'upload_file' && capabilities.includes(Capability.UPLOAD)) {
+        capabilities = capabilities.filter(capability => capability !== Capability.UPLOAD);
+        const uploadGate = await this._authorizeUploadFileSource(tabId, fnArgs, onUpdate, {
+          promptTier,
+          gateBypassed: this._skipPermissionGate || scheduledBypassesGate,
+          unattended: scheduledBypassesGate,
+        });
+        if (uploadGate.aborted || (uploadGate.prompted && this._hasPendingSteering(tabId))) {
+          if (this._hasPendingSteering(tabId) && !this._checkAbort(tabId)) return skipSteeredPermissionWait(toolIndex);
+          const value = '[Stopped by user before executing requested tool calls.]';
+          this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+            success: false,
+            cancelled: true,
+            error: value,
+          }));
+          onUpdate('warning', { message: 'Stopped by user.' });
+          return { action: 'abort', value };
+        }
+        if (!uploadGate.allowed) {
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(uploadGate.result) });
+          predispatchBlocked('permissionMs');
+          if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
+          continue;
+        }
+        uploadSourceKey = uploadGate.sourceKey;
+      }
       if (capabilities.length && !this._skipPermissionGate && !scheduledBypassesGate) {
         await this.permissions.hydrate();
         const curUrl = await this._currentUrl(tabId);
@@ -15782,6 +15818,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               // The typing target's ref, for a write by selector or focus.
               typingTargetRef: String(pipelineToolbarPreflight.probe?.refId || ''),
               ...messageRecipientExecutionContext,
+              ...(uploadSourceKey != null ? { uploadSourceKey } : {}),
               iframeTargetUnresolved: pipelineToolbarPreflight.iframeTargetUnresolved === true,
               richTextToolbarWrongTargetAdvised: pipelineToolbarPreflight.wrongTargetAdvised === true,
               imageGenConfig,
@@ -16007,6 +16044,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // read survives context compaction even if the model never calls
       // scratchpad_write itself — the failure that made it invent file paths.
       this._pinDownloadHandles(tabId, fnName, toolResult);
+      this._rememberRunDownloads(tabId, fnName, toolResult);
       const replayTracking = this._trackBulkApiReplayResult(tabId, fnName, fnArgs, toolResult);
 
       let progressObserved = null;
@@ -27102,8 +27140,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Returns 'once' | 'always' | 'deny', or null (aborted/cancelled).
    * Fails safe: anything that isn't a clear allow is treated as 'deny'.
    */
-  async _promptPermission(tabId, capability, host, onUpdate) {
+  async _promptPermission(tabId, capability, host, onUpdate, upload = null) {
     const clarifyId = `perm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    // An upload card names the exact file (_authorizeUploadFileSource) and has
+    // no "always": a host-wide grant would approve every other file too.
+    const uploadCard = capability === Capability.UPLOAD && upload && typeof upload === 'object'
+      ? uploadApprovalCard(upload)
+      : null;
 
     const tabPending = this._pendingClarifications.get(tabId) || new Map();
     this._pendingClarifications.set(tabId, tabPending);
@@ -27121,9 +27164,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('clarify', {
           promptKind: 'permission',
           clarifyId,
-          permission: { capability, host },
-          question: `WebBrain wants to ${CAPABILITY_LABEL[capability] || 'act on'} ${host}. Allow it?`,
-          options: ['once', 'always', 'deny'],
+          permission: uploadCard ? { capability, host, upload: uploadCard } : { capability, host },
+          question: uploadCard
+            ? uploadApprovalQuestion(host, uploadCard)
+            : `WebBrain wants to ${CAPABILITY_LABEL[capability] || 'act on'} ${host}. Allow it?`,
+          options: uploadCard ? ['once', 'deny'] : ['once', 'always', 'deny'],
         });
       } catch { /* UI emit must never break the run */ }
     }
@@ -27134,7 +27179,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     if (response && response.cancelled) return null;
     const v = String(response?.answer || '').trim().toLowerCase();
-    if (v === 'always') return 'always';
+    if (v === 'always') return uploadCard ? 'deny' : 'always';
     if (v === 'once') return 'once';
     return 'deny'; // 'deny', or anything unexpected → fail safe
   }
@@ -35819,6 +35864,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._queueCloudflareManagedChallengeCleanup(tabId).catch(() => {});
     }
     this._userAttachmentHandles.delete(tabId);
+    this._runDownloadIds.delete(tabId);
     this._clearResearchEscalationAuthorizations(tabId);
     this._runUpdateCallbacks.delete(tabId);
     if (!preserveRunGuard) this.persistenceDegradedTabs.delete(tabId);
@@ -36132,6 +36178,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._pinDownloadId(tabId, result.downloadId);
       }
     } catch { /* best-effort */ }
+  }
+
+  /**
+   * Remember the downloads this run's own download tools saved, so upload_file
+   * can tell them from any other download (_uploadFileSource). The ids come
+   * from browser.downloads through WebBrain's own tool code, never from the
+   * page or the model.
+   */
+  _rememberRunDownloads(tabId, name, result) {
+    try {
+      if (!result || result.error || result.success === false) return;
+      const ids = [];
+      if (name === 'download_files' || name === 'download_file') {
+        for (const d of (result.downloads || [])) if (d && d.success && d.downloadId != null) ids.push(d.downloadId);
+      } else if (name === 'download_resource_from_page'
+        || this._activeSkillToolForName(tabId, name)?.requiresDownloadPermission) {
+        ids.push(result.downloadId);
+      } else if (name === 'download_social_media') {
+        ids.push(result.savedFile?.downloadId);
+      }
+      for (const raw of ids) {
+        const id = Number(raw);
+        if (raw == null || !Number.isSafeInteger(id) || id < 0) continue;
+        if (!this._runDownloadIds.has(tabId)) this._runDownloadIds.set(tabId, new Set());
+        this._runDownloadIds.get(tabId).add(id);
+      }
+    } catch { /* best-effort: an unremembered download is only asked about */ }
   }
   _isCompressionPlaceholderResponse(text) {
     const normalized = String(text || '').trim().toLowerCase();
@@ -41238,6 +41311,86 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  async _uploadDownloadItem(id) {
+    if (!Number.isSafeInteger(id) || id < 0 || typeof globalThis.browser?.downloads?.search !== 'function') return null;
+    try {
+      const items = await browser.downloads.search({ id });
+      return (items && items[0]) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The file an upload_file call would attach, resolved in the handler's own
+   * order: a filePath is refused before anything is read, then attachmentId,
+   * then a complete downloadId, else WebBrain's file picker, where the user
+   * chooses the file. runOwned marks a file the user attached or chooses, or
+   * one this run's download tools saved; any other download could be any
+   * file the browser ever saved. Kind "none" means the handler has nothing it
+   * could read and will fail on its own.
+   */
+  async _uploadFileSource(tabId, args = {}, promptTier = this._resolvePromptTier()) {
+    args = args || {};
+    const given = key => args[key] != null && !(typeof args[key] === 'string' && !args[key].trim());
+    const none = { kind: 'none', key: 'none', runOwned: true };
+    if (given('filePath')) return none;
+    if (promptTier === 'compact' && (given('selector') || args.downloadId != null)) return none;
+    if (given('attachmentId')) {
+      const id = String(args.attachmentId).trim();
+      const attachment = this._userAttachmentHandles.get(tabId)?.get(id);
+      return { kind: 'attachment', key: `attachment:${id}`, runOwned: true,
+        name: attachment ? this._sanitizeAttachmentName(attachment.name) : '' };
+    }
+    if (args.downloadId == null) return { kind: 'picker', key: 'picker', runOwned: true };
+    const id = Number(args.downloadId);
+    const item = await this._uploadDownloadItem(id);
+    if (!item || !item.url || item.state !== 'complete') return none;
+    return { kind: 'download', key: `download:${id}`, downloadId: id, runOwned: !!this._runDownloadIds.get(tabId)?.has(id),
+      path: String(item.filename || ''), sourceUrl: String(item.url || '') };
+  }
+
+  /**
+   * The permission gate for upload_file. A page can read a File the moment it
+   * lands in its input, so the approval names the exact file and the page
+   * host: a host-wide upload grant no longer approves a file, though a
+   * standing deny still refuses. A file the user attached or chooses, or one
+   * this run downloaded, keeps the ordinary gate (skipped when prompts are
+   * off) and its approval lasts for the turn. Any other download is approved
+   * on the card one call at a time, with prompts on or off; a run that cannot
+   * show the card refuses it. Returns { allowed, sourceKey } for the handler
+   * to re-check, { aborted }, or { allowed: false, result }.
+   */
+  async _authorizeUploadFileSource(tabId, args, onUpdate, { promptTier, gateBypassed = false, unattended = false } = {}) {
+    const source = await this._uploadFileSource(tabId, args, promptTier);
+    const allowed = { allowed: true, sourceKey: source.key };
+    if (source.kind === 'none' || (gateBypassed && source.runOwned)) return allowed;
+    const refused = error => ({ allowed: false,
+      result: { success: false, denied: true, dispatched: false, noDispatch: true, permissionRequired: true, error } });
+    const host = requiredHosts(Capability.UPLOAD, args, await this._currentUrl(tabId), 'upload_file')[0] || '';
+    if (!host) return refused('Cannot run upload_file: the page host could not be identified, so the file cannot be approved for it.');
+    const file = source.kind === 'download' ? `downloadId ${source.downloadId}`
+      : source.kind === 'picker' ? 'a file the user chooses' : 'this file';
+    if (!source.runOwned && (unattended || typeof onUpdate !== 'function')) {
+      return refused(`Nothing was attached: ${file} is neither a file the user attached nor one this run downloaded, so the user must approve this exact file, and this run cannot ask. Use a file the user attached or one this run downloaded, or report that the upload needs the user.`);
+    }
+    const denied = refused(`The user did not allow attaching ${file} to a page on ${host}. Do NOT retry it. If the task needs a file, ask the user to attach it in the chat.`);
+    await this.permissions.hydrate();
+    const standing = this.permissions.check(host, Capability.UPLOAD, tabId);
+    if (!standing.needsPrompt && !standing.allowed) return denied;
+    const key = uploadApprovalKey(host, source.key);
+    const prior = this.permissions.checkIntent(key, tabId, Capability.UPLOAD);
+    if (!prior.needsPrompt) return prior.allowed ? allowed : denied;
+    const choice = await this._promptPermission(tabId, Capability.UPLOAD, host, onUpdate, source);
+    if (choice === null) return { allowed: false, aborted: true };
+    if (choice !== 'once') {
+      this.permissions.recordIntent(key, [Capability.UPLOAD], 'deny', tabId);
+      return { ...denied, prompted: true };
+    }
+    if (source.runOwned) this.permissions.recordIntent(key, [Capability.UPLOAD], 'allow', tabId);
+    return { ...allowed, prompted: true };
+  }
+
   _userAttachmentNotice(attachments, options = {}) {
     const entries = (attachments || []).map(att => ({
       attachmentId: String(att?.attachmentId || '').trim(),
@@ -44512,10 +44665,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (recipientUpload.block) return recipientUpload.block;
 
         let base64, filename, mimeType;
+        // The permission gate approved one exact source (_authorizeUploadFileSource).
+        // A download that finished or vanished since then would make this call
+        // read another file than the one the user saw, so it attaches nothing.
+        const sourceChanged = key => typeof dispatchContext.uploadSourceKey === 'string'
+          && dispatchContext.uploadSourceKey !== key
+          ? { success: false, dispatched: false, noDispatch: true, denied: true,
+            error: 'Nothing was attached: the file this call resolves to changed after it was approved. Call upload_file again so the file it now names can be approved.' }
+          : null;
         if (args.attachmentId != null) {
           if (args.downloadId != null) {
             return { success: false, error: 'upload_file accepts only one source. Remove downloadId and retry with the current attachmentId.' };
           }
+          const changed = sourceChanged(`attachment:${String(args.attachmentId).trim()}`);
+          if (changed) return changed;
           const resolved = compactAttachmentPayload
             || this._resolveUserAttachment(tabId, args.attachmentId, UPLOAD_MAX_BYTES);
           if (!resolved.ok) return { success: false, error: resolved.error };
@@ -44531,6 +44694,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               error: `Download is in state: ${dl[0].state}, not complete. Wait for it to finish (wait_for_stable / list_downloads) then retry.`,
             };
           }
+          const changed = sourceChanged(`download:${Number(args.downloadId)}`);
+          if (changed) return changed;
           // The bytes the browser saved, read by the companion when this run
           // has one; otherwise the file is fetched again from its address.
           const saved = await this._firefoxSavedDownloadBytes(tabId, dl[0]);
@@ -44641,6 +44806,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             mimeType = dl[0].mime || res.headers.get('content-type') || 'application/octet-stream';
           }
         } else {
+          const changed = sourceChanged('picker');
+          if (changed) return changed;
           const pickerId = `upk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
           const tabPending = this._pendingUploadPickers.get(tabId) || new Map();
           this._pendingUploadPickers.set(tabId, tabPending);
@@ -47693,6 +47860,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         else this.cloudRunContexts.delete(tabId);
       }
       this._userAttachmentHandles.delete(tabId);
+      this._runDownloadIds.delete(tabId);
       this._runUpdateCallbacks.delete(tabId);
       this._clearRunLoopState(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
@@ -49558,6 +49726,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         else this.cloudRunContexts.delete(tabId);
       }
       this._userAttachmentHandles.delete(tabId);
+      this._runDownloadIds.delete(tabId);
       this._runUpdateCallbacks.delete(tabId);
       this._clearRunLoopState(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
