@@ -1133,6 +1133,13 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     }
   };
 
+  // Stop pressed while the checks before an input ran (probes, captures, a
+  // drag's submit test): no input goes out.
+  proto._visionThrowIfStopped = function _visionThrowIfStopped(tabId, context = null) {
+    this._throwIfAborted?.(context?._contentActionAbortSignal);
+    this._throwIfAborted?.(this._runAbortSignal?.(tabId));
+  };
+
   proto._executeVisionToolInner = async function _executeVisionToolInner(tabId, name, args, context, dispatch) {
     const vision = context?._vision || null;
     const state = this._visionRunState(tabId);
@@ -1226,6 +1233,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       const distance = steps * VISION_SCROLL_STEP_CSS_PX;
       const deltaX = direction === 'left' ? -distance : direction === 'right' ? distance : 0;
       const deltaY = direction === 'up' ? -distance : direction === 'down' ? distance : 0;
+      this._visionThrowIfStopped(tabId, context);
       dispatch.started = true;
       const result = await this._visionPlatformWheel(tabId, { x: point.x, y: point.y, deltaX, deltaY });
       return { success: result?.success !== false, dispatched: result?.dispatched !== false, direction, amount: steps, at: point, ...(result || {}) };
@@ -1234,6 +1242,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
       const resolved = await this._visionResolveForTool(tabId, { x: args.x, y: args.y, image: args.image }, vision);
       if (resolved.error) return resolved.error;
       const point = { x: resolved.resolved.cssX, y: resolved.resolved.cssY };
+      this._visionThrowIfStopped(tabId, context);
       dispatch.started = true;
       const result = await this._visionPlatformHover(tabId, point);
       return { success: result?.success !== false, at: point, ...(result || {}) };
@@ -1262,6 +1271,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
           error: 'Not dispatched: the drag starts on a control WebBrain reads as a submit, send, delete or payment action, and a drag never gets the confirmation a click gets. Use click_at on it.',
         };
       }
+      this._visionThrowIfStopped(tabId, context);
       dispatch.started = true;
       const result = await this._visionPlatformDrag(tabId, { from, to, steps: 12 });
       return { success: result?.success !== false, from, to, ...(result || {}) };

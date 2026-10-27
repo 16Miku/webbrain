@@ -17230,6 +17230,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _visionContentInput(tabId, params, kind = 'click') {
+    // Stop pressed while the checks before this input ran: nothing is sent.
+    this._throwIfAborted(this._runAbortSignal(tabId));
     if (firefoxBidi.runs.has(tabId)) {
       let trusted;
       try {
@@ -17245,6 +17247,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await beforePageAgentDispatch(browser, tabId, {
       kind, frameId: 0, navigationCandidate: kind === 'click' && params.type === 'click', fenceOnly: true,
     });
+    this._throwIfAborted(this._runAbortSignal(tabId));
     let response;
     try {
       response = await browser.tabs.sendMessage(tabId, { target: 'content', action: 'vision_input', params }, { frameId: 0 });

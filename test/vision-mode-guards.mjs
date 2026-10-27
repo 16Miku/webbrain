@@ -507,6 +507,54 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(await redact(snapshot([{ kind: 'input', rect: { x: 10, y: 10, w: 20, h: 10 } }]), {}), 'decode_failed');
   });
 
+  test(`${build}: Stop pressed during the checks before a scroll, hover or drag sends no input`, async () => {
+    const agent = agentFor();
+    agent.visionMode = 'auto';
+    const tab = 38;
+    agent._effectiveRunMode = () => 'act';
+    agent._beginVisionRun(tab);
+    const session = agent._visionSessionFor(tab, agent._visionRunState(tab, 'act'));
+    session.registerKeyframe({ imageWidth: 100, imageHeight: 50, cssWidth: 100, cssHeight: 50 }, new Uint8ClampedArray(100 * 50 * 4));
+    const sent = [];
+    for (const kind of ['Wheel', 'Hover', 'Drag']) agent[`_visionPlatform${kind}`] = async () => { sent.push(kind); return { success: true, dispatched: true }; };
+    agent._visionResolveForTool = async () => ({ resolved: { cssX: 20, cssY: 20 } });
+    agent._visionResolvePointsForTool = async () => ({ resolved: [{ cssX: 10, cssY: 10 }, { cssX: 80, cssY: 40 }] });
+    agent._visionSubmitAt = async () => false;
+    let stop;
+    // The person presses Stop while the last check before the input runs.
+    agent._visionDomProbe = async (_tab, request) => {
+      stop.abort();
+      return { points: request.points.map(() => ({ found: true, tag: 'div', clickable: false, opaqueFrame: false })), ...(request.pair ? { pair: { known: true, clickEquivalent: false } } : {}) };
+    };
+    const hoverProbe = agent._visionResolveForTool;
+    for (const [name, args] of [['scroll_at', { direction: 'down' }], ['hover_at', { x: 20, y: 20 }], ['drag_at', { start_x: 10, start_y: 10, end_x: 80, end_y: 40 }]]) {
+      stop = new AbortController();
+      if (name === 'hover_at') agent._visionResolveForTool = async (...callArgs) => { const resolved = await hoverProbe(...callArgs); stop.abort(); return resolved; };
+      await assert.rejects(agent._executeVisionTool(tab, name, args, { _contentActionAbortSignal: stop.signal, _vision: { tool: name } }), error => error?.name === 'AbortError', name);
+    }
+    assert.deepEqual(sent, [], 'no input went out');
+    agent._endVisionRun(tab, null);
+    if (build === 'firefox') {
+      // Every Firefox vision input goes through the content input, which checks Stop first.
+      const hadBrowser = 'browser' in globalThis;
+      const api = globalThis.browser ??= { tabs: {} };
+      api.tabs ??= {};
+      const sendMessage = api.tabs.sendMessage;
+      const messages = [];
+      api.tabs.sendMessage = async (_tab, message) => { messages.push(message); return { success: true }; };
+      const stopped = new AbortController();
+      stopped.abort();
+      agent._runAbortSignal = () => stopped.signal;
+      try {
+        await assert.rejects(agent._visionContentInput(tab, { type: 'click', x: 5, y: 5 }), error => error?.name === 'AbortError');
+        assert.equal(messages.filter(message => message.action === 'vision_input').length, 0);
+      } finally {
+        api.tabs.sendMessage = sendMessage;
+        if (!hadBrowser) delete globalThis.browser;
+      }
+    }
+  });
+
   test(`${build}: Gmail's result counter, which takes no target, stays in the vision tool list`, () => {
     // Offered on a Gmail result list (getGmailResultCountPolicy).
     const names = getToolsForMode('act', { tier: 'full', gmailResultCounting: true, vision: { coordinates: 'pixel' } }).map(tool => tool.function.name);
