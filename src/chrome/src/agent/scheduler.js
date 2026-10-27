@@ -199,6 +199,14 @@ function normalizePendingClarify(data, now = Date.now()) {
       maxSeconds: whole(videoLength.maxSeconds),
     };
   }
+  // WebBrain's card about reading a file from the user's downloads: its name.
+  const downloadRead = asObject(obj.downloadReadConfirmation);
+  if (downloadRead.filename) {
+    pending.downloadReadConfirmation = {
+      filename: String(downloadRead.filename).slice(0, 260),
+      host: String(downloadRead.host || '').slice(0, 300),
+    };
+  }
   return pending;
 }
 

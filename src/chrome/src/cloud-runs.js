@@ -1352,8 +1352,11 @@ export function createCloudRunController({
     if (apiMutationsAllowed && mode !== 'act') {
       throw cloudRunError('API mutation permission requires cloud_run mode `act`.', 400);
     }
+    // The default-on persistent setting alone can still ask per site, so a
+    // run that names API mutations adds its own grant unless one already
+    // waives that prompt.
     const grantApiMutationsForRun = apiMutationsAllowed
-      && agent.isApiMutationsAllowed?.(tabId) !== true;
+      && agent.isApiMutationPromptWaived?.(tabId) !== true;
     const outputSchema = workflow
       ? null
       : msg.outputSchema ?? msg.output_schema ?? msg.responseFormat?.schema ?? msg.response_format?.schema ?? null;
@@ -2007,12 +2010,16 @@ export function createCloudRunController({
     const stored = await api.storage.local.get([
       'webbrainCloudBridgeToken',
       'webbrainCloudBridgeBrowserId',
+      'webbrainCloudBridgeLegacyBearerAuth',
     ]);
     return {
       token: stored.webbrainCloudBridgeToken || '',
       browserId: stored.webbrainCloudBridgeBrowserId || installationId,
       installationId,
       extensionVersion: api.runtime.getManifest?.().version || '',
+      // Deprecated opt-in for controllers that only accept the token in the
+      // hello; off unless explicitly set (docs/cloud-bridge-browser-approval.md).
+      legacyBearerAuth: stored.webbrainCloudBridgeLegacyBearerAuth === true,
     };
   }
 

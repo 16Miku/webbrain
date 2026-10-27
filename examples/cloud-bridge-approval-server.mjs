@@ -2,17 +2,36 @@
 // Minimal local WebSocket backend for the Cloud Bridge browser approval flow.
 // Dependency-free (RFC 6455 text frames only). For local testing, not production.
 //
-//   node examples/cloud-bridge-approval-server.mjs --token dev-token [--port 17374] [--auto-approve]
+//   node examples/cloud-bridge-approval-server.mjs --token dev-token [--port 17374] [--auto-approve] [--legacy-bearer]
 //
 // Interactive commands on stdin once a browser is pending/approved:
 //   approve | reject | run <task> | status [runId] | send {"id":"1","action":"cloud_status","payload":{"runId":"run_x"}}
+//
+// Authentication is the mutual HMAC challenge from
+// docs/cloud-bridge-browser-approval.md. --legacy-bearer also accepts the
+// deprecated hello that carries the token itself (older extension builds, or
+// webbrainCloudBridgeLegacyBearerAuth set in the browser).
 
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+const AUTH_METHOD = 'hmac-sha256-v1';
+const AUTH_LABEL = 'webbrain-bridge-auth-v1';
+const HEX_256 = /^[0-9a-f]{64}$/;
+
+// role is 'controller' (this server's proof) or 'extension' (the browser's).
+function authProof(token, role, ...parts) {
+  return createHmac('sha256', token).update(JSON.stringify([AUTH_LABEL, role, ...parts])).digest('hex');
+}
+
+function sameSecret(a, b) {
+  const left = Buffer.from(String(a ?? ''));
+  const right = Buffer.from(String(b ?? ''));
+  return left.length === right.length && timingSafeEqual(left, right);
+}
 
 function encodeFrame(text) {
   const payload = Buffer.from(text);
@@ -46,7 +65,7 @@ function decodeFrames(buf) {
   return { messages, rest: buf, close };
 }
 
-export function startApprovalServer({ port = 17374, host = '127.0.0.1', token = 'dev-token', autoApprove = false, onMessage = () => {} } = {}) {
+export function startApprovalServer({ port = 17374, host = '127.0.0.1', token = 'dev-token', autoApprove = false, legacyBearer = false, onMessage = () => {} } = {}) {
   const sessions = new Set();
   const server = createServer((_req, res) => { res.writeHead(426).end(); });
   server.on('upgrade', (req, socket) => {
@@ -62,15 +81,24 @@ export function startApprovalServer({ port = 17374, host = '127.0.0.1', token = 
     const session = {
       socket,
       hello: null,
+      browserId: null,
+      installationId: null,
       state: 'connected',
       send: (obj) => socket.write(encodeFrame(JSON.stringify(obj))),
+      pending(identity) {
+        session.browserId = identity.browserId;
+        session.installationId = identity.installationId || null;
+        session.state = 'pending';
+        session.send({ type: 'connection_pending', browserId: session.browserId });
+        if (autoApprove) session.approve();
+      },
       approve() {
         session.state = 'approved';
-        session.send({ type: 'connection_approved', browserId: session.hello?.browserId });
+        session.send({ type: 'connection_approved', browserId: session.browserId });
       },
       reject(reason = 'Rejected by user') {
         session.state = 'rejected';
-        session.send({ type: 'connection_rejected', browserId: session.hello?.browserId, reason });
+        session.send({ type: 'connection_rejected', browserId: session.browserId, reason });
       },
     };
     sessions.add(session);
@@ -83,12 +111,26 @@ export function startApprovalServer({ port = 17374, host = '127.0.0.1', token = 
         try { msg = JSON.parse(text); } catch { continue; }
         if (msg.type === 'hello') {
           session.hello = msg;
-          if (msg.auth?.token !== token || !msg.browserId) session.reject('Invalid token');
-          else {
-            session.state = 'pending';
-            session.send({ type: 'connection_pending', browserId: msg.browserId });
-            if (autoApprove) session.approve();
-          }
+          if (msg.auth?.type === 'challenge' && msg.auth.method === AUTH_METHOD && HEX_256.test(String(msg.auth.nonce))) {
+            // Prove the token first; the browser answers only if this checks out.
+            session.clientNonce = msg.auth.nonce;
+            session.serverNonce = randomBytes(32).toString('hex');
+            session.state = 'authenticating';
+            session.send({
+              type: 'auth_challenge',
+              method: AUTH_METHOD,
+              nonce: session.serverNonce,
+              proof: authProof(token, 'controller', session.clientNonce, session.serverNonce),
+            });
+          } else if (legacyBearer && msg.auth?.type === 'bearer' && sameSecret(msg.auth.token, token) && msg.browserId) {
+            session.pending(msg);
+          } else session.reject('Invalid token');
+        } else if (msg.type === 'auth_response' && session.state === 'authenticating') {
+          const browserId = String(msg.browserId || '');
+          const installationId = String(msg.installationId || '');
+          const expected = authProof(token, 'extension', session.clientNonce, session.serverNonce, browserId, installationId);
+          if (!browserId || msg.method !== AUTH_METHOD || !sameSecret(msg.proof, expected)) session.reject('Invalid token');
+          else session.pending({ browserId, installationId });
         }
         onMessage(msg, session);
       }
@@ -115,6 +157,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     port: Number(opt('--port', 17374)),
     token: opt('--token', 'dev-token'),
     autoApprove: args.includes('--auto-approve'),
+    legacyBearer: args.includes('--legacy-bearer'),
     onMessage: (msg) => console.log('<-', JSON.stringify(msg)),
   });
   console.log(`Listening on ws://127.0.0.1:${srv.port}/extension`);
