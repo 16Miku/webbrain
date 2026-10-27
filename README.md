@@ -313,7 +313,13 @@ npx -y @webbrain/mcp-server
 ```
 
 Once the server is running, open **WebBrain → Settings → Bridge**,
-set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
+set the URL to `ws://127.0.0.1:17374/extension`, paste the pairing key printed by
+`npx -y @webbrain/mcp-server pairing-key` into **Pairing key**, and enable it.
+The server only trusts a socket that proves it holds that key (an HMAC over a
+fresh challenge; the key is never sent), so another local process cannot pose
+as the extension. The LM Studio plugin uses the same key file,
+`~/.webbrain/bridge-key`. Update the extension before upgrading the server: a
+version without the Pairing key field cannot pair.
 On Chromium browsers the bridge runs from the extension's off-screen document.
 Firefox hosts it in the background page and is configured under the same
 **Settings → Bridge** tab (not yet verified against the MCP server on a real Firefox

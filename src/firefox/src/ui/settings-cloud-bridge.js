@@ -1,4 +1,4 @@
-// Settings → Bridge tab: URL, token, browser name, connection test.
+// Settings → Bridge tab: URL, pairing key, token, browser name, connection test.
 // Sole owner of webbrainCloudBridge* keys; identity keys are
 // read by cloud-runs.js when the bridge starts.
 import { t } from './i18n.js';
@@ -9,12 +9,14 @@ const KEYS = {
   token: 'webbrainCloudBridgeToken',
   browserId: 'webbrainCloudBridgeBrowserId',
   installationId: 'webbrainCloudBridgeInstallationId',
+  pairingKey: 'webbrainCloudBridgePairingKey',
 };
 const DEFAULT_URL = 'ws://127.0.0.1:17374/extension';
 const $ = (id) => document.getElementById(id);
 const enabled = $('cb-enabled');
 const urlInput = $('cb-url');
 const tokenInput = $('cb-token');
+const pairingKeyInput = $('cb-pairing-key');
 const nameInput = $('cb-browser-id');
 const installationEl = $('cb-installation-id');
 const statusEl = $('cb-status');
@@ -88,6 +90,7 @@ async function load() {
   urlInput.value = stored[KEYS.url] || DEFAULT_URL;
   markActivePill(urlInput.value);
   tokenInput.value = stored[KEYS.token] || '';
+  pairingKeyInput.value = stored[KEYS.pairingKey] || '';
   nameInput.value = stored[KEYS.browserId] || '';
   installationEl.textContent = stored[KEYS.installationId] || '—';
   const approvalDetails = $('cb-approval-details');
@@ -104,7 +107,7 @@ async function refresh() {
 async function save() {
   const url = normalizeUrl(urlInput.value);
   urlInput.value = url;
-  const patch = { [KEYS.url]: url, [KEYS.enabled]: enabled.checked, [KEYS.token]: tokenInput.value.trim() };
+  const patch = { [KEYS.url]: url, [KEYS.enabled]: enabled.checked, [KEYS.token]: tokenInput.value.trim(), [KEYS.pairingKey]: pairingKeyInput.value.trim() };
   const name = nameInput.value.trim();
   await browser.storage.local.set(patch);
   if (name) await browser.storage.local.set({ [KEYS.browserId]: name });

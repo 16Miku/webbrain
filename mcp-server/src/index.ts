@@ -26,6 +26,7 @@ import { z } from "zod";
 
 import { BridgeError, WebBrainBridge, type CloudSnapshot } from "./bridge.js";
 import { bridgeUrl, config } from "./config.js";
+import { loadPairingKey } from "./pairing.js";
 import { abort, awaitSettled, describeSnapshot, getStatus, respond, startRun } from "./runs.js";
 import { taskMemorySchema } from "./task-memory.js";
 
@@ -393,11 +394,15 @@ server.registerTool(
       );
     }
     return ok(
-      `Not connected. Listening on ${bridgeUrl()}, but no extension has dialled in.\n\n` +
+      `Not connected. Listening on ${bridgeUrl()}, but no paired extension has dialled in.\n\n` +
         "To connect: open a Chromium browser (Chrome, Edge, Brave), then in " +
         "WebBrain → Settings → Bridge set the URL to\n" +
         `  ${bridgeUrl()}\n` +
-        "and enable it. The extension holds one bridge socket at a time, so this cannot " +
+        "paste the pairing key into Pairing key, and enable it. The key comes from " +
+        `${bridge.pairingKeySource()}; when that is a file, the user can print it with ` +
+        "`npx -y @webbrain/mcp-server pairing-key`. " +
+        "Do not ask the user to paste the key into this chat. WebBrain versions without a " +
+        "Pairing key field must be updated first. The extension holds one bridge socket at a time, so this cannot " +
         "run at the same time as WebBrain Cloud on port 17373.\n\n" +
         "Firefox cannot host the bridge — that build has no offscreen document. If the " +
         "user is on Firefox, say so rather than suggesting settings changes.",
@@ -428,15 +433,28 @@ async function shutdown(): Promise<void> {
   process.exit(0);
 }
 
-process.on("SIGINT", () => void shutdown());
-process.on("SIGTERM", () => void shutdown());
-// MCP hosts commonly stop stdio servers by closing the child's stdin rather
-// than sending a signal. Without these handlers the WebSocket listener keeps
-// the event loop alive and leaves port 17374 occupied by an orphan process.
-process.stdin.once("end", () => void shutdown());
-process.stdin.once("close", () => void shutdown());
+if (process.argv[2] === "pairing-key") {
+  // `webbrain-mcp pairing-key` prints the key to paste into WebBrain →
+  // Settings → Bridge (creating it on first use) and exits without serving.
+  try {
+    const { key, source } = loadPairingKey();
+    process.stdout.write(`${key}\n`);
+    console.error(`[webbrain-mcp] pairing key from ${source}`);
+  } catch (error) {
+    console.error("[webbrain-mcp] fatal:", error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
+} else {
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
+  // MCP hosts commonly stop stdio servers by closing the child's stdin rather
+  // than sending a signal. Without these handlers the WebSocket listener keeps
+  // the event loop alive and leaves port 17374 occupied by an orphan process.
+  process.stdin.once("end", () => void shutdown());
+  process.stdin.once("close", () => void shutdown());
 
-main().catch((error) => {
-  console.error("[webbrain-mcp] fatal:", error);
-  process.exit(1);
-});
+  main().catch((error) => {
+    console.error("[webbrain-mcp] fatal:", error);
+    process.exit(1);
+  });
+}

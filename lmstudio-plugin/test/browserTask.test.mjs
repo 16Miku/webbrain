@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import { after, before, test } from "node:test";
@@ -11,11 +12,28 @@ import {
   browserTask,
 } from "../dist/tools/browserTask.js";
 import { main } from "../dist/index.js";
-import { sharedBridge } from "../dist/util/bridgeClient.js";
+import { BridgeClient, sharedBridge } from "../dist/util/bridgeClient.js";
+import { pairingProof } from "../dist/util/pairing.js";
 
+const PAIRING_KEY = "lmstudio-test-pairing-key-0123456789";
 let socket;
 let toolsProvider;
 const received = [];
+
+/** Computed independently of dist/util/pairing.js so a drift in either side fails here. */
+function proofFor(key, nonce) {
+  return createHmac("sha256", key).update(`webbrain-bridge-pairing-v1:${nonce}`).digest("hex");
+}
+
+/** Answer the bridge's pairing challenge the way the extension does. */
+function answerPairing(ws, key = PAIRING_KEY) {
+  ws.on("message", (raw) => {
+    const message = JSON.parse(raw.toString());
+    if (message.type === "pairing_challenge" || message.type === "auth_challenge") {
+      ws.send(JSON.stringify({ type: "pairing_proof", scheme: message.scheme, proof: proofFor(key, message.nonce) }));
+    }
+  });
+}
 
 async function freePort() {
   const server = createServer();
@@ -35,6 +53,7 @@ function reply(message, result) {
 before(async () => {
   process.env.WEBBRAIN_BRIDGE_PORT = String(await freePort());
   process.env.WEBBRAIN_COMMAND_TIMEOUT_MS = "50";
+  process.env.WEBBRAIN_BRIDGE_KEY = PAIRING_KEY;
   const context = {
     withConfigSchematics() {
       return context;
@@ -49,8 +68,10 @@ before(async () => {
   const bridge = sharedBridge();
 
   socket = new WebSocket(bridge.url);
+  answerPairing(socket);
   socket.on("message", (raw) => {
     const message = JSON.parse(raw.toString());
+    if (!message.action) return;
     received.push(message);
 
     if (message.action === "cloud_run") {
@@ -114,7 +135,7 @@ before(async () => {
   });
   await once(socket, "open");
   socket.send(JSON.stringify({ type: "hello", client: "webbrain-extension" }));
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(await bridge.waitForExtension(3_000), true);
 });
 
 after(async () => {
@@ -269,6 +290,47 @@ test("a web-page origin cannot replace the connected extension", async () => {
   assert.equal(receivedCommands, 0);
 });
 
+test("a local process with a forged hello cannot replace the paired extension", async () => {
+  for (const key of [null, "a-guessed-pairing-key-000000"]) {
+    const rogue = new WebSocket(sharedBridge().url);
+    const closed = once(rogue, "close");
+    const frames = [];
+    rogue.on("message", (raw) => frames.push(JSON.parse(raw.toString())));
+    if (key) answerPairing(rogue, key);
+    await once(rogue, "open");
+    rogue.send(JSON.stringify({ type: "hello", client: "webbrain-extension" }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.equal(sharedBridge().isConnected(), true, "an unpaired hello displaced the extension");
+    const result = await browserStatus("still-private-run");
+    assert.equal(result.ok, true);
+    assert.equal(result.runId, "still-private-run");
+    assert.deepEqual(frames.map((frame) => frame.type), ["pairing_challenge"]);
+
+    if (key) {
+      const [code, reason] = await closed;
+      assert.equal(code, 4001);
+      assert.equal(reason.toString(), "Pairing key mismatch");
+    } else {
+      rogue.close();
+      await closed;
+    }
+  }
+});
+
+test("the pairing proof matches the vector the MCP server and extension tests check", () => {
+  assert.equal(
+    pairingProof("webbrain-pairing-test-vector-key", "fixed-nonce-for-cross-checks"),
+    "5d2a446bcc1734f26d8b94e20d3329a07fb2513aa6d036f47f687065d33c55da",
+  );
+});
+
+test("a pairing key shorter than 16 characters keeps the listener closed", async () => {
+  const bridge = new BridgeClient({ port: await freePort(), pairingKey: "short" });
+  await assert.rejects(() => bridge.ensureStarted(), /at least 16 characters/);
+  await bridge.stop();
+});
+
 test("browser_task preserves its generated run ID when the start socket disconnects", async () => {
   const result = await browserTask({ task: "disconnect initial response", timeout: 5_000 });
 
@@ -281,11 +343,11 @@ test("browser_task preserves its generated run ID when the start socket disconne
   assert.equal(request.payload.runId, result.runId);
 });
 
-test("a replacement socket receives nothing until it sends a valid hello", async () => {
+test("an unpaired socket receives no commands while no extension is connected", async () => {
   const rogue = new WebSocket(sharedBridge().url);
   let receivedCommands = 0;
-  rogue.on("message", () => {
-    receivedCommands += 1;
+  rogue.on("message", (raw) => {
+    if (JSON.parse(raw.toString()).action) receivedCommands += 1;
   });
   await once(rogue, "open");
   await new Promise((resolve) => setTimeout(resolve, 20));

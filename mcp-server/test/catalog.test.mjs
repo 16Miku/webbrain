@@ -26,7 +26,7 @@ test("MCP catalog exposes structured extraction alongside run controls", async (
     command: process.execPath,
     args: ["dist/index.js"],
     cwd: packageDir,
-    env: { ...process.env, WEBBRAIN_BRIDGE_PORT: String(port) },
+    env: { ...process.env, WEBBRAIN_BRIDGE_PORT: String(port), WEBBRAIN_BRIDGE_KEY: "spawned-server-test-pairing-key" },
     stderr: "pipe",
   });
   const client = new Client({ name: "webbrain-catalog-test", version: "1.0.0" });

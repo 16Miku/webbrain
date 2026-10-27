@@ -1300,7 +1300,8 @@ browser.storage.onChanged.addListener((changes, areaName) => {
   }
   if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
     || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId
-    || changes.webbrainCloudBridgeLegacyBearerAuth) {
+    || changes.webbrainCloudBridgeLegacyBearerAuth
+    || changes.webbrainCloudBridgePairingKey) {
     cloudRunController.syncBridge().catch(() => {});
   }
   if (areaName === 'local' && changes.browserBatchEnabled) {

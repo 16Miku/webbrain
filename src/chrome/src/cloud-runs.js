@@ -1986,7 +1986,8 @@ export function createCloudRunController({
   }
 
   // Persistent bridge identity (chrome.storage.local). The token is the Cloud
-  // Bridge credential only; it is unrelated to provider API keys.
+  // Bridge credential only; it is unrelated to provider API keys. The pairing
+  // key authenticates this browser to a local MCP / LM Studio bridge.
   //
   // Concurrent starts (a settings save triggers syncBridge while the page also
   // sends cloud_bridge_start) must not each mint an installation id, so the
@@ -2010,6 +2011,7 @@ export function createCloudRunController({
     const stored = await api.storage.local.get([
       'webbrainCloudBridgeToken',
       'webbrainCloudBridgeBrowserId',
+      'webbrainCloudBridgePairingKey',
       'webbrainCloudBridgeLegacyBearerAuth',
     ]);
     return {
@@ -2017,6 +2019,7 @@ export function createCloudRunController({
       browserId: stored.webbrainCloudBridgeBrowserId || installationId,
       installationId,
       extensionVersion: api.runtime.getManifest?.().version || '',
+      pairingKey: stored.webbrainCloudBridgePairingKey || '',
       // Deprecated opt-in for controllers that only accept the token in the
       // hello; off unless explicitly set (docs/cloud-bridge-browser-approval.md).
       legacyBearerAuth: stored.webbrainCloudBridgeLegacyBearerAuth === true,
