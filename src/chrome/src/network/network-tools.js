@@ -2483,21 +2483,32 @@ export async function researchUrl(url, opts = {}) {
 
 // ─── list_downloads ─────────────────────────────────────────────────────
 
-export async function listDownloads(opts = {}) {
+// The browser's download history is the user's own: unrelated files, their
+// source URLs and full local paths (which name the OS account). The model
+// sees only the downloads its conversation produced (`downloadIds`, kept by
+// the agent), and each file only by its basename.
+export function downloadBasename(filename) {
+  return String(filename || '').split(/[\\/]/).pop() || '';
+}
+
+export async function listDownloads(opts = {}, { downloadIds = [] } = {}) {
   try {
     const limit = Math.min(opts.limit || 10, 50);
-    const items = await chrome.downloads.search({
-      orderBy: ['-startTime'],
-      limit,
-      exists: true,
-    });
+    const ids = [...new Set(downloadIds)].filter(id => Number.isSafeInteger(id) && id >= 0).sort((a, b) => b - a);
+    const items = [];
+    for (const id of ids) {
+      if (items.length >= limit) break;
+      const found = (await chrome.downloads.search({ id })).find(item => item.id === id);
+      if (found && found.exists !== false) items.push(found);
+    }
     return {
       success: true,
       count: items.length,
+      ...(items.length ? {} : { note: 'No downloads from this conversation. Only files WebBrain downloaded, or that downloaded while it was working, in this conversation are listed; the browser\'s download history is not. If the user wants another downloaded file read, ask them to attach it.' }),
       downloads: items.map(d => ({
         id: d.id,
         url: d.url,
-        filename: d.filename,
+        filename: downloadBasename(d.filename),
         state: d.state,
         bytesReceived: d.bytesReceived,
         totalBytes: d.totalBytes,
@@ -2546,7 +2557,7 @@ function downloadedFileContent(item, payload, contentSource, savedFileVerified) 
     return { success: false, code: 'saved_download_read_incomplete', error: 'The downloaded-file byte window could not be verified.' };
   }
   const ct = String(item.mime || payload.mimeType || '').toLowerCase();
-  const common = { success: true, filename: item.filename, contentType: ct, sizeBytes: size,
+  const common = { success: true, filename: downloadBasename(item.filename), contentType: ct, sizeBytes: size,
     contentSource, savedFileVerified, sourceRefetched: false, bytesRead: bytes.length };
   if (downloadedFileIsText(item, ct)) {
     // Do not invent the full character count of a bounded byte prefix. A
@@ -2558,7 +2569,7 @@ function downloadedFileContent(item, payload, contentSource, savedFileVerified) 
   }
   if (size > READ_FILE_BASE64_LIMIT * 0.75) {
     return { ...common, note: savedFileVerified
-      ? `Binary file too large to inline (${size} bytes). It is on disk at: ${item.filename}`
+      ? `Binary file too large to inline (${size} bytes). It is saved as ${downloadBasename(item.filename)}.`
       : `Captured binary payload too large to inline (${size} bytes). Firefox cannot verify the current on-disk file.` };
   }
   if (payload.dataTruncated) return { success: false, code: 'saved_download_read_incomplete', error: 'The small binary payload was not read completely.' };

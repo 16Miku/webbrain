@@ -87,6 +87,7 @@ import {
   researchUrl,
   listDownloads,
   readDownloadedFile,
+  downloadBasename,
   downloadResourceFromPage,
   downloadFiles,
   registrableDomain,
@@ -298,6 +299,8 @@ const PLAN_REVIEW_CONFIDENCE_DEFAULT = 0.75;
 // chain cannot grow the anchor without limit.
 const CLARIFICATION_ANSWER_CHARS = 400;
 const CLARIFICATION_ANSWER_LIMIT = 8;
+// Download ids a conversation keeps (and saves); the oldest go first.
+const CONVERSATION_DOWNLOAD_LIMIT = 200;
 // Planner history digest (_buildPlannerHistoryDigest). buildPlannerMessages and
 // the alignment check keep its first 2,000 characters, so it stays within that.
 const PLANNER_DIGEST_MAX_CHARS = 2000;
@@ -898,6 +901,11 @@ export class Agent extends LoopDetector {
     this.autoScreenshotBursts = new Map();
     this.lastSeenAdapter = new Map();
     this._huggingFaceSignupRecoveries = new Map(); // tabId -> task-bound, value-free signup checkpoint
+    // tabId -> Set(downloadId): the downloads this conversation produced, the
+    // only ones list_downloads shows and read_downloaded_file reads without
+    // asking (see _rememberConversationDownload).
+    this._conversationDownloads = new Map();
+    this._runDownloadListener = null;
     this.pendingAdapterMatchTraces = new Map(); // tabId -> Map(adapter@revision -> content-free match metadata)
     this.adapterMatchTraceKeys = new Map(); // runId -> Map(adapter@revision -> OR-merged match metadata)
     this.apiAllowedTabs = new Set();
@@ -5883,6 +5891,7 @@ export class Agent extends LoopDetector {
     // Claim synchronously before awaiting the external guard so teacher-mode
     // startup cannot race a run whose persisted teacher-state check is pending.
     this._runningTabs.add(tabId);
+    this._watchRunDownloads();
     const monitoringRetry = runOptions.trustedContinuation === true
       ? this._failureRecovery.takeMonitoringRetry(this._failureRecoveryBinding(tabId), String(runOptions.detachedRequestId || ''))
       : null;
@@ -7374,6 +7383,9 @@ export class Agent extends LoopDetector {
     if (data.videoLengthConfirmation) {
       display.videoLengthConfirmation = record(data.videoLengthConfirmation, ['estimatedSeconds', 'totalSeconds', 'clipCount', 'maxSeconds']);
     }
+    if (data.downloadReadConfirmation) {
+      display.downloadReadConfirmation = record(data.downloadReadConfirmation, ['filename', 'host'], 300);
+    }
     if (data.researchEscalation) display.researchEscalation = record(data.researchEscalation, ['engine', 'request'], 6000);
     if (data.workflowHealing) {
       const target = value => record(value, ['role', 'name', 'label', 'ariaLabel', 'placeholder',
@@ -7806,6 +7818,12 @@ export class Agent extends LoopDetector {
         }
         this._restorePersistedRichTextToolbarAudit(tabId, entry.richTextToolbarAudit);
         this._restoreTaskAttemptLedger(tabId, entry.taskAttemptLedger, attemptStored?.[attemptKey]);
+        const savedDownloads = entry.conversationDownloads;
+        if (typeof entry.conversationId === 'string' && entry.conversationId
+            && savedDownloads?.conversationId === entry.conversationId && Array.isArray(savedDownloads.ids)) {
+          const ids = savedDownloads.ids.filter(id => Number.isSafeInteger(id) && id >= 0).slice(-CONVERSATION_DOWNLOAD_LIMIT);
+          if (ids.length) this._conversationDownloads.set(tabId, new Set(ids));
+        }
         const savedVideoObligation = entry.videoDurationObligation;
         const videoDurationContract = normalizeVideoDurationContract(savedVideoObligation?.contract);
         if (videoDurationContract && typeof entry.conversationId === 'string' && entry.conversationId
@@ -7991,6 +8009,10 @@ export class Agent extends LoopDetector {
       // The sites the current task attempted, so a correction after a restart
       // still knows them; never authorization.
       taskAttemptLedger: this._persistedTaskAttemptLedger(tabId),
+      // Restored only into this conversation (_rememberConversationDownload).
+      conversationDownloads: conversationId && this._conversationDownloads.get(tabId)?.size
+        ? { conversationId, ids: [...this._conversationDownloads.get(tabId)] }
+        : null,
       captchaGateState: captchaGateState?.cloudflareManagedChallenge === true
         || captchaGateState?.publicGate?.cloudflareManagedChallenge === true
         ? null
@@ -8234,6 +8256,7 @@ export class Agent extends LoopDetector {
     this.conversationModes.set(forkId, 'ask');
     this.conversationIds.set(forkId, `conv_${forkId}_${Date.now().toString(36)}_${secureRandomBase36Token(12)}`);
     this._latestWorkflowDrafts.delete(forkId);
+    this._conversationDownloads.delete(forkId);
     this.selectionGroundingScopes.delete(forkId);
     this.selectionGroundingRestorationPendingTabs.delete(forkId);
     this.progressLedgers.delete(forkId);
@@ -34507,6 +34530,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._cancelUploadPickers(tabId, 'conversation cleared');
     this._cancelPendingPlans(tabId, 'conversation cleared');
     this.conversations.delete(tabId);
+    this._conversationDownloads.delete(tabId);
     this.plannerFollowUpSkipTabs.delete(tabId);
     this.progressLedgers.delete(tabId);
     this.progressPageScopes.delete(tabId);
@@ -36144,6 +36168,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   _pinDownloadId(tabId, downloadId) {
     if (downloadId == null) return;
+    this._rememberConversationDownload(tabId, downloadId);
     this._autoScratchpadNote(tabId, `[auto] Downloaded file (downloadId ${downloadId}) — details are in list_downloads. Re-read with read_downloaded_file({downloadId: ${downloadId}}).`);
   }
 
@@ -36166,11 +36191,127 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._pinDownloadId(tabId, result.downloadId);
       } else if (name === 'download_social_media') {
         const n = Number(result.completedCount || 0);
-        if (n > 0) this._autoScratchpadNote(tabId, `[auto] download_social_media saved ${n} file(s) — find their ids/paths via list_downloads.`);
+        if (n > 0) this._autoScratchpadNote(tabId, `[auto] download_social_media saved ${n} file(s) — find their ids via list_downloads.`);
       } else if (this._activeSkillToolForName(tabId, name)?.requiresDownloadPermission) {
         this._pinDownloadId(tabId, result.downloadId);
       }
     } catch { /* best-effort */ }
+  }
+
+  /**
+   * The downloads this tab's conversation produced: the ids WebBrain's own
+   * download tools returned here (_pinDownloadId) and every download that
+   * started while a run was active on this tab, such as a clicked "Export"
+   * link or download_social_media's page-side saves (_watchRunDownloads).
+   * Only these are listed by list_downloads and read by read_downloaded_file
+   * without asking. The rest of the browser's download history is the user's
+   * own: reading one of those files needs the user's approval of that exact
+   * file (_authorizeDownloadRead). Saved with the conversation, so a worker
+   * restart keeps them; a new, forked or cleared conversation starts empty.
+   */
+  _rememberConversationDownload(tabId, downloadId) {
+    if (tabId == null || !Number.isSafeInteger(downloadId) || downloadId < 0) return;
+    let ids = this._conversationDownloads.get(tabId);
+    if (!ids) this._conversationDownloads.set(tabId, ids = new Set());
+    if (ids.has(downloadId)) return;
+    ids.add(downloadId);
+    while (ids.size > CONVERSATION_DOWNLOAD_LIMIT) ids.delete(ids.values().next().value);
+    this._persist(tabId);
+  }
+
+  _isConversationDownload(tabId, downloadId) {
+    return this._conversationDownloads.get(tabId)?.has(downloadId) === true;
+  }
+
+  // Added with the first run and kept for the worker's lifetime; outside runs
+  // nothing is recorded. A download names no tab, so one that starts while
+  // several tabs run belongs to each of their conversations.
+  _watchRunDownloads() {
+    if (this._runDownloadListener) return;
+    const listener = item => {
+      for (const tabId of this._runningTabs) this._rememberConversationDownload(tabId, item?.id);
+    };
+    try {
+      if (!browser.downloads?.onCreated?.addListener) return;
+      browser.downloads.onCreated.addListener(listener);
+      this._runDownloadListener = listener;
+    } catch { /* without the event only tool-returned ids are kept */ }
+  }
+
+  /**
+   * read_downloaded_file sends a local file's bytes to the model's provider.
+   * A download this conversation produced is read as before. Any other
+   * download is the user's own file: WebBrain names it on its own card and
+   * reads it only on the user's "Read once". The model's arguments, page text
+   * and an unattended run never approve it. Returns null when the read may go
+   * ahead, otherwise the result for the model.
+   */
+  async _authorizeDownloadRead(tabId, downloadId, onUpdate = null) {
+    // readDownloadedFile reports an invalid id itself.
+    if (!Number.isSafeInteger(downloadId) || downloadId < 0 || this._isConversationDownload(tabId, downloadId)) return null;
+    const refused = (error, extra = {}) => ({ success: false, code: 'download_not_from_conversation', ...extra, error });
+    const find = async () => {
+      try { return (await browser.downloads.search({ id: downloadId })).find(item => item.id === downloadId) || null; }
+      catch { return null; }
+    };
+    const item = await find();
+    // Firefox reads only a captured data: payload (readDownloadedFile), so a
+    // card about any other file would approve nothing.
+    if (!item || item.state !== 'complete' || item.exists === false || !item.filename
+        || typeof item.url !== 'string' || !item.url.startsWith('data:')) {
+      return refused(`Download #${downloadId} is not a file downloaded in this conversation. Use a downloadId from this conversation's download results or list_downloads; if the user wants another downloaded file read, ask them to attach it.`);
+    }
+    let host = '';
+    try { host = new URL(item.finalUrl || item.url).hostname; } catch {}
+    const choice = await this._promptDownloadReadConfirmation(tabId, { filename: downloadBasename(item.filename), host }, onUpdate);
+    if (choice === null) return refused('The user stopped or corrected the task before approving this file, so nothing was read.', { cancelled: true });
+    if (choice === 'unavailable') {
+      return refused(`Download #${downloadId} is not a file downloaded in this conversation, and the user cannot be asked to approve reading it in this run, so nothing was read.`);
+    }
+    if (choice !== 'once') {
+      return refused('The user did not approve reading this downloaded file, so nothing was read. Do not ask again; continue without it.', { readDeclined: true });
+    }
+    // The answer covers the file the card named.
+    if ((await find())?.filename !== item.filename) return refused('The downloaded file changed while the user was deciding, so nothing was read.');
+    return null;
+  }
+
+  /**
+   * The card for _authorizeDownloadRead: the file's name (the download's own,
+   * page-settable name, which the side panel shows as text only) and the site
+   * it came from. Like a permission prompt it never times out and never
+   * answers itself; an unattended scheduled run cannot ask. Returns 'once',
+   * 'deny', 'unavailable', or null when Stop or a correction cancelled it.
+   */
+  async _promptDownloadReadConfirmation(tabId, details = {}, onUpdate = null) {
+    const confirmation = {
+      filename: String(details.filename || '').slice(0, 260),
+      host: String(details.host || '').slice(0, 300),
+    };
+    if (this.scheduledRunPolicies.get(tabId)?.requireConsequentialConfirmation === false) return 'unavailable';
+    if (typeof onUpdate !== 'function') return 'unavailable';
+    const clarifyId = `download_read_${secureRandomBase36Token(12)}`;
+    const tabPending = this._pendingClarifications.get(tabId) || new Map();
+    this._pendingClarifications.set(tabId, tabPending);
+    const responsePromise = new Promise((resolve) => {
+      tabPending.set(clarifyId, { resolve, ts: Date.now(), timer: null, settled: false, timeoutSec: 0, deadlineTs: 0, onUpdate });
+    });
+    try {
+      onUpdate('clarify', {
+        promptKind: 'download_read',
+        clarifyId,
+        // English for traces and surfaces without the side panel's localized copy.
+        question: `Let WebBrain read ${confirmation.filename || 'this file'} from your downloads? Its contents go to your AI provider.`,
+        downloadReadConfirmation: confirmation,
+        options: ['once', 'deny'],
+      });
+    } catch { /* UI emit must never break the run */ }
+    const response = await responsePromise;
+    tabPending.delete(clarifyId);
+    if (tabPending.size === 0 && this._pendingClarifications.get(tabId) === tabPending) this._pendingClarifications.delete(tabId);
+    if (response?.cancelled) return null;
+    if (['timeout', 'auto'].includes(response?.source)) return 'deny';
+    return String(response?.answer || '').trim().toLowerCase() === 'once' ? 'once' : 'deny';
   }
   _isCompressionPlaceholderResponse(text) {
     const normalized = String(text || '').trim().toLowerCase();
@@ -44452,10 +44593,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await this._restrictedDomainScreenshotFallback(tabId, name, args.url, result);
     }
     if (name === 'list_downloads') {
-      return await listDownloads(args);
+      return await listDownloads(args, { downloadIds: this._conversationDownloads.get(tabId) || [] });
     }
     if (name === 'read_downloaded_file') {
       const readOwner = this._pageFeedbackOwnerScope?.(tabId) || '';
+      const refused = await this._authorizeDownloadRead(tabId, args.downloadId, onUpdate);
+      if (refused) return refused;
       return await readDownloadedFile(args.downloadId, { tabId,
         signal: executionContext?._contentActionAbortSignal,
         checkStillActive: () => {
