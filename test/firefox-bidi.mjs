@@ -53,6 +53,49 @@ test('an unfocused upload marks the file input instead of the active control', a
     assert.equal((await session.perform(runId, 'upload', { token, base64: 'eA==', filename: 'test.txt', pageFeedbackGuard: guard }, async () => true)).success, true);
   } finally { await session.close(); }
 });
+test('the companion reads a saved download only as the browser recorded it', async () => {
+  const { mkdtemp, writeFile, symlink, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const dir = await mkdtemp(join(tmpdir(), 'webbrain-saved-download-'));
+  const session = new BidiSession(), runId = id();
+  try {
+    const file = join(dir, 'report.pdf');
+    await writeFile(file, Buffer.from('%PDF-saved'));
+    const record = { id: 7, state: 'complete', exists: true, filename: file, fileSize: 10, mime: 'application/pdf' };
+    await assert.rejects(session.readSavedDownload(runId, record), /run stopped/);
+    session.runs.set(runId, { context: 'tab' });
+    const read = await session.readSavedDownload(runId, record);
+    assert.deepEqual({ ...read, base64: Buffer.from(read.base64, 'base64').toString() }, { base64: '%PDF-saved', size: 10, filename: 'report.pdf', mimeType: 'application/pdf' });
+    await assert.rejects(session.readSavedDownload(runId, { ...record, fileSize: 99 }), /no longer matches/);
+    await assert.rejects(session.readSavedDownload(runId, { ...record, state: 'in_progress' }), /completed browser download/);
+    await assert.rejects(session.readSavedDownload(runId, { ...record, filename: 'report.pdf' }), /completed browser download/);
+    const link = join(dir, 'link.pdf');
+    await symlink(file, link);
+    await assert.rejects(session.readSavedDownload(runId, { ...record, filename: link }), /not a regular file/);
+  } finally {
+    await session.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the client asks the companion for saved bytes only when it can read them', async () => {
+  const client = new FirefoxBidiClient({ tabs: { sendMessage: async () => ({}) } });
+  const tab = 956;
+  const requests = [];
+  client.request = async (command, args) => { requests.push({ command, args }); return { base64: 'eA==' }; };
+  client.bindRun = async (_tab, owner) => { owner.bound = true; };
+  const record = { id: 3, state: 'complete', exists: true, filename: '/tmp/x.bin', fileSize: 1, mime: 'application/octet-stream', url: 'https://example.test/x' };
+  assert.equal(await client.readSavedDownload(tab, record), null, 'no run on this tab');
+  client.runs.set(tab, { runId: 'run-1', bound: true });
+  client.connect = async () => ({ connected: true, capabilities: ['point_input'] });
+  assert.equal(await client.readSavedDownload(tab, record), null, 'an older companion');
+  client.connect = async () => ({ connected: true, capabilities: ['point_input', 'saved_download'] });
+  assert.deepEqual(await client.readSavedDownload(tab, record), { base64: 'eA==' });
+  assert.deepEqual(requests, [{ command: 'readSavedDownload', args: { runId: 'run-1',
+    download: { id: 3, state: 'complete', exists: true, filename: '/tmp/x.bin', fileSize: 1, mime: 'application/octet-stream' } } }]);
+});
+
 test('connection loss cannot fall through to synthetic input', async () => {
   let messages = 0;
   const client = new FirefoxBidiClient({ tabs: { sendMessage() { messages++; } } });
@@ -713,10 +756,10 @@ test('release workflows run the full suite on the companion runtime', async () =
 
 test('the companion reports point input when it connects', async () => {
   const { COMPANION_CAPABILITIES } = await import('../firefox-companion/session.mjs');
-  assert.deepEqual([...COMPANION_CAPABILITIES], ['point_input']);
+  assert.deepEqual([...COMPANION_CAPABILITIES], ['point_input', 'saved_download']);
   const session = new BidiSession();
   session.socket = { readyState: 1 };
-  assert.deepEqual(await session.connectSession(9222), { connected: true, capabilities: ['point_input'] });
+  assert.deepEqual(await session.connectSession(9222), { connected: true, capabilities: ['point_input', 'saved_download'] });
 });
 
 function pointSession({ context = 'tab', disabled = false, validate = async () => true } = {}) {

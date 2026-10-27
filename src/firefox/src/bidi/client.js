@@ -223,6 +223,21 @@ export class FirefoxBidiClient {
     }
     return this.request('perform', { runId: owner.runId, action, payload: { ...payload, pageFeedbackGuard } });
   }
+  // A completed download's saved bytes, read by the companion from the path
+  // the browser recorded (upload_file({downloadId})). null: this tab has no
+  // trusted-automation run, or its companion cannot read saved downloads;
+  // the caller then falls back to its own route.
+  async readSavedDownload(tabId, download) {
+    const owner = this.runs.get(tabId);
+    if (!owner || owner.disconnected || owner.signal?.aborted) return null;
+    const connection = await this.connect();
+    if (!Array.isArray(connection?.capabilities) || !connection.capabilities.includes('saved_download')) return null;
+    await this.bindRun(tabId, owner);
+    if (!owner.bound) return null;
+    const { id, state, exists, filename, fileSize, mime } = download || {};
+    return this.request('readSavedDownload', { runId: owner.runId, download: { id, state, exists, filename, fileSize, mime } });
+  }
+
   // Vision mode's point input as trusted input. The content script runs every
   // check of its synthetic sequence (content.js visionInput) and marks the
   // element the top document shows at the point; the companion then moves

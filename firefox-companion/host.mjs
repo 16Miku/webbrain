@@ -41,6 +41,7 @@ async function dispatch(message) {
       case 'closeRun': result = await session.closeRun(args.runId); break;
       case 'perform': result = await session.perform(args.runId, args.action, args.payload || {}, validatePageDispatch); break;
       case 'captureFullPage': result = await session.captureFullPage(args.token, args.url); break;
+      case 'readSavedDownload': result = await session.readSavedDownload(args.runId, args.download || {}); break;
       default: throw new Error('Unknown companion command');
     }
     reply({ id, result });

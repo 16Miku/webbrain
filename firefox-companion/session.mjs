@@ -1,6 +1,6 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, open, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, basename } from 'node:path';
+import { join, basename, isAbsolute } from 'node:path';
 
 // A rendered prefix cannot certify an unsupported rich-text document, and paragraph spacing
 // in innerText is not the document's authored line breaks.
@@ -184,7 +184,8 @@ function unpackRemoteObjectValue(value) {
 // What this companion can do beyond the first protocol, reported by
 // `connect`. point_input: vision mode's click_at and hover_at, trusted input
 // at a viewport point of the run's top document.
-export const COMPANION_CAPABILITIES = Object.freeze(['point_input']);
+export const COMPANION_CAPABILITIES = Object.freeze(['point_input', 'saved_download']);
+const SAVED_DOWNLOAD_MAX_BYTES = 25 * 1024 * 1024;
 // Vision mode's point actions (point_input).
 const POINT_ACTIONS = new Set(['click_at', 'hover_at']);
 
@@ -274,6 +275,45 @@ export class BidiSession {
     if (matches.length !== 1) throw new Error('Tab or element binding is stale or ambiguous; re-read the page');
     return matches[0];
   }
+  /**
+   * The bytes of a completed browser download, read from the path the
+   * browser recorded for it: the extension cannot read files, and fetching
+   * the download's address again can return other bytes or spend a one-time
+   * link. Only for an open run, a regular file (not a link) that still has
+   * the recorded size, at most 25 MB, unchanged while it was read.
+   */
+  async readSavedDownload(runId, download = {}) {
+    if (!this.runs.get(runId)) throw new Error('Firefox run stopped');
+    if (!Number.isSafeInteger(download?.id) || download.id < 0 || download.state !== 'complete' || download.exists === false
+        || typeof download.filename !== 'string' || !isAbsolute(download.filename)) {
+      throw new Error('A completed browser download with its saved path is required');
+    }
+    const link = await lstat(download.filename);
+    if (!link.isFile()) throw new Error('The saved download is not a regular file');
+    const file = await open(download.filename, 'r');
+    try {
+      const before = await file.stat();
+      if (Number.isSafeInteger(download.fileSize) && download.fileSize >= 0 && download.fileSize !== before.size) {
+        throw new Error('The saved download no longer matches its browser record');
+      }
+      if (before.size > SAVED_DOWNLOAD_MAX_BYTES) throw new Error('File size exceeds 25MB limit.');
+      const bytes = Buffer.alloc(before.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const part = await file.read(bytes, offset, bytes.length - offset, offset);
+        if (!part.bytesRead) throw new Error('The saved download changed while it was read');
+        offset += part.bytesRead;
+      }
+      const after = await file.stat();
+      if (!this.runs.get(runId) || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ino !== before.ino) {
+        throw new Error('The saved download or the run changed while it was read');
+      }
+      return { base64: bytes.toString('base64'), size: bytes.length, filename: basename(download.filename), mimeType: String(download.mime || '') };
+    } finally {
+      await file.close();
+    }
+  }
+
   async openRun(id, token, url) {
     if (!/^[a-f0-9-]{36}$/.test(id) || this.runs.has(id) || this.closedRuns.has(id)) throw new Error('Invalid run');
     const match = await this.locate(token, url);

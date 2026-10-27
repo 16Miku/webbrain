@@ -17243,6 +17243,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return Array.isArray(results) ? results[0] || null : null;
   }
 
+  /**
+   * upload_file({downloadId}): the saved file's bytes through the companion
+   * (firefoxBidi.readSavedDownload), null when this run has no companion
+   * that can read them, or { error } when the file is gone or no longer
+   * matches the browser's record.
+   */
+  async _firefoxSavedDownloadBytes(tabId, item) {
+    if (item?.exists === false) return { error: 'The downloaded file is no longer on disk. Download it again before uploading it.' };
+    let saved = null;
+    try { saved = await firefoxBidi.readSavedDownload(tabId, item); }
+    catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      return { error: `Could not read the saved download (${String(error?.message || error).slice(0, 160)}).` };
+    }
+    if (!saved || typeof saved.base64 !== 'string') return null;
+    return {
+      base64: saved.base64,
+      filename: saved.filename || (item?.filename ? item.filename.split(/[\\/]/).pop() : 'downloaded_file'),
+      mimeType: saved.mimeType || item?.mime || 'application/octet-stream',
+    };
+  }
+
   async _visionContentInput(tabId, params, kind = 'click') {
     // Stop pressed while the checks before this input ran: nothing is sent.
     this._throwIfAborted(this._runAbortSignal(tabId));
@@ -44501,102 +44523,115 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               error: `Download is in state: ${dl[0].state}, not complete. Wait for it to finish (wait_for_stable / list_downloads) then retry.`,
             };
           }
-          const targetUrl = dl[0].url;
-          let currentUrl = targetUrl;
-          let initialRegDomain = null;
-          let tabRegDomain = null;
-          try {
-            initialRegDomain = registrableDomain(new URL(targetUrl).hostname);
-            const currentTab = await browser.tabs.get(tabId);
-            if (currentTab && currentTab.url) {
-              tabRegDomain = registrableDomain(new URL(currentTab.url).hostname);
-            }
-          } catch {}
+          // The bytes the browser saved, read by the companion when this run
+          // has one; otherwise the file is fetched again from its address.
+          const saved = await this._firefoxSavedDownloadBytes(tabId, dl[0]);
+          if (saved?.error) return { success: false, error: saved.error };
+          if (saved) {
+            ({ base64, filename, mimeType } = saved);
+          } else {
+            const targetUrl = dl[0].url;
+            let currentUrl = targetUrl;
+            let initialRegDomain = null;
+            let tabRegDomain = null;
+            try {
+              initialRegDomain = registrableDomain(new URL(targetUrl).hostname);
+              const currentTab = await browser.tabs.get(tabId);
+              if (currentTab && currentTab.url) {
+                tabRegDomain = registrableDomain(new URL(currentTab.url).hostname);
+              }
+            } catch {}
 
-          let attachCookies = !!(tabRegDomain && initialRegDomain && tabRegDomain === initialRegDomain);
-          let res = null;
-          for (let hop = 0; hop < 5; hop++) {
-            const v = validateFetchUrl(currentUrl, { allowLocalNetwork: getAllowLocalNetwork() });
-            if (!v.ok) {
-              return { success: false, error: `Invalid download URL: ${v.error}` };
-            }
-            res = await fetch(currentUrl, {
-              method: 'GET',
-              credentials: attachCookies ? 'include' : 'omit',
-              redirect: 'manual',
-            });
-            if (res.status >= 300 && res.status < 400) {
-              const location = res.headers.get('location');
-              if (!location) {
-                return { success: false, error: `Redirect from ${currentUrl} missing Location header` };
+            let attachCookies = !!(tabRegDomain && initialRegDomain && tabRegDomain === initialRegDomain);
+            let res = null;
+            for (let hop = 0; hop < 5; hop++) {
+              const v = validateFetchUrl(currentUrl, { allowLocalNetwork: getAllowLocalNetwork() });
+              if (!v.ok) {
+                return { success: false, error: `Invalid download URL: ${v.error}` };
               }
-              const nextUrl = new URL(location, currentUrl).href;
-              const nextV = validateFetchUrl(nextUrl, { allowLocalNetwork: getAllowLocalNetwork() });
-              if (!nextV.ok) {
-                return { success: false, error: `Invalid redirect URL: ${nextV.error}` };
-              }
-              try {
-                const nextRegDomain = registrableDomain(new URL(nextUrl).hostname);
-                if (nextRegDomain !== initialRegDomain || (tabRegDomain && nextRegDomain !== tabRegDomain)) {
+              res = await fetch(currentUrl, {
+                method: 'GET',
+                credentials: attachCookies ? 'include' : 'omit',
+                redirect: 'manual',
+              });
+              if (res.status >= 300 && res.status < 400) {
+                const location = res.headers.get('location');
+                if (!location) {
+                  return { success: false, error: `Redirect from ${currentUrl} missing Location header` };
+                }
+                const nextUrl = new URL(location, currentUrl).href;
+                const nextV = validateFetchUrl(nextUrl, { allowLocalNetwork: getAllowLocalNetwork() });
+                if (!nextV.ok) {
+                  return { success: false, error: `Invalid redirect URL: ${nextV.error}` };
+                }
+                try {
+                  const nextRegDomain = registrableDomain(new URL(nextUrl).hostname);
+                  if (nextRegDomain !== initialRegDomain || (tabRegDomain && nextRegDomain !== tabRegDomain)) {
+                    attachCookies = false;
+                  }
+                } catch {
                   attachCookies = false;
                 }
-              } catch {
-                attachCookies = false;
+                currentUrl = nextUrl;
+                continue;
               }
-              currentUrl = nextUrl;
-              continue;
+              break;
             }
-            break;
-          }
-          if (!res || !res.ok) {
-            return { success: false, error: `Failed to re-fetch downloaded file from ${targetUrl} (HTTP ${res ? res.status : 'unknown'})` };
-          }
-          const clHeader = res.headers.get('content-length');
-          if (clHeader != null) {
-            const expectedLen = parseInt(clHeader, 10);
-            if (Number.isFinite(expectedLen) && expectedLen > UPLOAD_MAX_BYTES) {
-              return { success: false, error: 'File size exceeds 25MB limit.' };
+            if (!res || !res.ok) {
+              return { success: false, error: `Failed to re-fetch downloaded file from ${targetUrl} (HTTP ${res ? res.status : 'unknown'})` };
             }
-          }
-          // Stream the body with a hard cap so a missing/lying Content-Length
-          // cannot buffer an arbitrary payload into extension memory.
-          let bytes;
-          if (res.body && typeof res.body.getReader === 'function') {
-            const reader = res.body.getReader();
-            const chunks = [];
-            let total = 0;
-            for (;;) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              const part = value instanceof Uint8Array ? value : new Uint8Array(value);
-              if (total + part.byteLength > UPLOAD_MAX_BYTES) {
-                try { await reader.cancel(); } catch {}
+            const clHeader = res.headers.get('content-length');
+            if (clHeader != null) {
+              const expectedLen = parseInt(clHeader, 10);
+              if (Number.isFinite(expectedLen) && expectedLen > UPLOAD_MAX_BYTES) {
                 return { success: false, error: 'File size exceeds 25MB limit.' };
               }
-              chunks.push(part);
-              total += part.byteLength;
             }
-            bytes = new Uint8Array(total);
-            let offset = 0;
-            for (const part of chunks) {
-              bytes.set(part, offset);
-              offset += part.byteLength;
+            // Stream the body with a hard cap so a missing/lying Content-Length
+            // cannot buffer an arbitrary payload into extension memory.
+            let bytes;
+            if (res.body && typeof res.body.getReader === 'function') {
+              const reader = res.body.getReader();
+              const chunks = [];
+              let total = 0;
+              for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const part = value instanceof Uint8Array ? value : new Uint8Array(value);
+                if (total + part.byteLength > UPLOAD_MAX_BYTES) {
+                  try { await reader.cancel(); } catch {}
+                  return { success: false, error: 'File size exceeds 25MB limit.' };
+                }
+                chunks.push(part);
+                total += part.byteLength;
+              }
+              bytes = new Uint8Array(total);
+              let offset = 0;
+              for (const part of chunks) {
+                bytes.set(part, offset);
+                offset += part.byteLength;
+              }
+            } else {
+              const buf = await res.arrayBuffer();
+              if (buf.byteLength > UPLOAD_MAX_BYTES) {
+                return { success: false, error: 'File size exceeds 25MB limit.' };
+              }
+              bytes = new Uint8Array(buf);
             }
-          } else {
-            const buf = await res.arrayBuffer();
-            if (buf.byteLength > UPLOAD_MAX_BYTES) {
-              return { success: false, error: 'File size exceeds 25MB limit.' };
+            // Fetched again from its address: only the bytes the browser saved
+            // may be attached.
+            if (Number.isSafeInteger(dl[0].fileSize) && dl[0].fileSize >= 0 && bytes.length !== dl[0].fileSize) {
+              return { success: false, error: `The file at the download's address is not the one that was saved (${bytes.length} bytes now, ${dl[0].fileSize} saved). Download it again before uploading it.` };
             }
-            bytes = new Uint8Array(buf);
+            let binary = '';
+            const chunk = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunk) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+            }
+            base64 = btoa(binary);
+            filename = dl[0].filename ? dl[0].filename.split(/[\\/]/).pop() : 'downloaded_file';
+            mimeType = dl[0].mime || res.headers.get('content-type') || 'application/octet-stream';
           }
-          let binary = '';
-          const chunk = 0x8000;
-          for (let i = 0; i < bytes.length; i += chunk) {
-            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-          }
-          base64 = btoa(binary);
-          filename = dl[0].filename ? dl[0].filename.split(/[\\/]/).pop() : 'downloaded_file';
-          mimeType = dl[0].mime || res.headers.get('content-type') || 'application/octet-stream';
         } else {
           const pickerId = `upk_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
           const tabPending = this._pendingUploadPickers.get(tabId) || new Map();

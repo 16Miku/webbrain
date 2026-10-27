@@ -626,6 +626,28 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(agent._buildSystemPrompt('act', 1), /call get_captcha_capabilities/);
   });
 
+  if (build === 'firefox') test('firefox: upload_file({downloadId}) uses the saved bytes when the companion can read them', async () => {
+    const { firefoxBidi } = await import('../src/firefox/src/bidi/client.js');
+    const agent = agentFor();
+    const item = { id: 5, state: 'complete', exists: true, filename: '/downloads/clip.mp4', fileSize: 3, mime: 'video/mp4' };
+    const saved = firefoxBidi.readSavedDownload;
+    try {
+      firefoxBidi.readSavedDownload = async () => ({ base64: 'AAAA', size: 3, filename: 'clip.mp4', mimeType: 'video/mp4' });
+      assert.deepEqual(await agent._firefoxSavedDownloadBytes(9, item), { base64: 'AAAA', filename: 'clip.mp4', mimeType: 'video/mp4' });
+      firefoxBidi.readSavedDownload = async () => null;
+      assert.equal(await agent._firefoxSavedDownloadBytes(9, item), null, 'no companion: the caller fetches again');
+      firefoxBidi.readSavedDownload = async () => { throw new Error('The saved download no longer matches its browser record'); };
+      assert.match((await agent._firefoxSavedDownloadBytes(9, item)).error, /no longer matches/);
+      assert.match((await agent._firefoxSavedDownloadBytes(9, { ...item, exists: false })).error, /no longer on disk/);
+    } finally {
+      firefoxBidi.readSavedDownload = saved;
+    }
+    // The fallback refuses bytes that are not the saved file's.
+    const source = (await import('node:fs')).readFileSync(new URL('../src/firefox/src/agent/agent.js', import.meta.url), 'utf8');
+    assert.match(source, /const saved = await this\._firefoxSavedDownloadBytes\(tabId, dl\[0\]\);[\s\S]{0,400}const targetUrl = dl\[0\]\.url;/);
+    assert.match(source, /bytes\.length !== dl\[0\]\.fileSize\) \{\s*return \{ success: false, error: `The file at the download's address is not the one that was saved/);
+  });
+
   test(`${build}: Gmail's result counter, which takes no target, stays in the vision tool list`, () => {
     // Offered on a Gmail result list (getGmailResultCountPolicy).
     const names = getToolsForMode('act', { tier: 'full', gmailResultCounting: true, vision: { coordinates: 'pixel' } }).map(tool => tool.function.name);
