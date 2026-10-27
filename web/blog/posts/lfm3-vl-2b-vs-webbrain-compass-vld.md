@@ -6,7 +6,7 @@ sortOrder: -420
 date: 2026-10-28
 readTime: 8 min read
 description: >
-  We ran Liquid's new LFM3-VL-2B against WebBrain Compass VLD Tiny v5, our MiniCPM-V-4.7-1B fine-tune, on 4,857 BenchKit tasks per model the night LFM3 launched. LFM3 wins six of nine suites. Total cost on RunPod: $0.34.
+  We ran Liquid's new LFM3-VL-2B against WebBrain Compass VLD Tiny v5, our MiniCPM-V-4.7-1B fine-tune, on 4,857 BenchKit tasks per model the night LFM3 launched. LFM3 wins six of nine suites.
 excerpt: >
   LFM3-VL-2B beats Compass VLD Tiny v5 on six of nine general vision and text suites, ties three, and loses none. Compass is still the only one of the two that is also a decision model. Next: an LFM3-based VLD.
 titleTag: >
@@ -18,7 +18,7 @@ ogDescription: >
 twitterTitle: >
   LFM3-VL-2B vs WebBrain Compass VLD Tiny v5
 twitterDescription: >
-  4,857 BenchKit tasks per model on launch day for $0.34. LFM3 wins on vision and text; Compass still folds decisions into the same model. We'll build an LFM3-based VLD next.
+  4,857 BenchKit tasks per model on launch day. LFM3 wins on vision and text; Compass still folds decisions into the same model. We'll build an LFM3-based VLD next.
 keywords:
   - Liquid LFM3
   - LFM3-VL-2B
@@ -34,7 +34,7 @@ author: Emre Sokullu
 authorUrl: https://emresokullu.com
 html: true
 lede: >
-  **Liquid released LFM3 on October 27, and that night we ran LFM3-VL-2B against WebBrain Compass VLD Tiny v5, the small on-device model inside WebBrain.** Same tasks, same engine, same GPU: 4,857 BenchKit tasks per model on a rented RTX A4000 for $0.34. To be frank, Compass loses: LFM3-VL-2B wins six of nine suites and Compass wins none. Compass is still the only one of the two that is also a decision model, and that shapes what we build next.
+  **Liquid released LFM3 on October 27, and that night we ran LFM3-VL-2B against WebBrain Compass VLD Tiny v5, the small on-device model inside WebBrain.** Same tasks, same engine, same GPU: 4,857 BenchKit tasks per model on a rented RTX A4000. To be frank, Compass loses: LFM3-VL-2B wins six of nine suites and Compass wins none. Compass is still the only one of the two that is also a decision model, and that shapes what we build next.
 ---
 
 ## What Compass actually is
@@ -66,7 +66,7 @@ LFM3-VL-2B is about a quarter larger overall. It puts nearly three times as many
 - **Harness:** [BenchKit](https://github.com/DogukanUrker/BenchKit) v0.2.1, headless, temperature 0, 300 seconds per task. Nine suites: four vision (MMVP, V* Bench, OCRBench, ChartQA) and five text (BenchKit's sanity set, IFEval, GSM8K, MMLU-Pro, BANKING77). ChartQA, GSM8K, MMLU-Pro and BANKING77 ran on fixed slices, and BenchKit spreads vision slices across categories.
 - **Engine:** on launch day no vLLM or SGLang release could serve LFM3-VL, and llama.cpp support was an open pull request, [#31252](https://github.com/ggml-org/llama.cpp/pull/31252). We built that branch on the pod; it was merged into llama.cpp later the same day. Both models ran on that single build, BF16 weights with F16 vision encoders, 16 requests in flight. We converted Compass to GGUF from its merged weights with llama.cpp's own converter.
 - **Settings:** thinking off for both. Compass has no thinking mode and LFM3 turns it on by default, so we switched it off to compare like with like. LFM3 kept Liquid's recommended repeat penalty of 1.1; Compass uses none.
-- **Hardware and cost:** one RTX A4000 16 GB on RunPod community cloud at $0.17 an hour. The whole session took 121 minutes, including two llama.cpp builds, the conversion, the d1-2B run further down and some idle time at the end: about **$0.34**.
+- **Hardware:** one RTX A4000 16 GB on RunPod community cloud. The whole session took 121 minutes, including two llama.cpp builds, the conversion, the d1-2B run further down and some idle time at the end.
 - **A check on the port:** LFM3's thinking-off scores land within about a point of Liquid's own model card: V* 79.6 vs 80.6, OCRBench 81.5 vs 82.2, ChartQA 82.0 vs 81.4. The pre-release llama.cpp support behaves.
 
 Both models answered identical tasks, so we compare them task by task. The table gives the paired difference with its 95% interval, and a suite counts as a win only when that interval stays on one side of zero.
