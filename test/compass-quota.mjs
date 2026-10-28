@@ -17,7 +17,7 @@ for (const browser of ['chrome', 'firefox']) {
   const { RunUiJournal, runUiUpdatesForCurrentTask } = await import(new URL('run-ui-journal.js', base));
   const { runDetachedWithReconnect } = await import(new URL('run-reconnect.js', base));
   const { Agent } = await import(new URL('agent/agent.js', base));
-  const { formatQuotaUsd, socialComposer, SOCIAL_PROMOTION_ENABLED } = await import(new URL('ui/compass-quota.js', base));
+  const { createQuotaController, formatQuotaUsd, socialComposer, SOCIAL_PROMOTION_ENABLED } = await import(new URL('ui/compass-quota.js', base));
   const { quotaTranslations } = await import(new URL('ui/locales/compass-quota-copy.mjs', base));
   const payload = {
     error: { code: 'webbrain_cloud_free_tier_exceeded', message: 'Weekly quota exhausted.' },
@@ -84,10 +84,59 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(events.find(e => e.type === 'quota')?.data.quota.usage.base_weekly_allowance_usd, 0.375);
   });
   test(`${browser}: the sharing reward is paused and every locale can show the plain allowance`, () => {
+    // Pins the shipped default (docs/compass-quota-rollout.md): bringing the
+    // reward back means flipping the flag in both builds and this expectation.
     assert.equal(SOCIAL_PROMOTION_ENABLED, false);
     for (const [code, copy] of Object.entries(quotaTranslations)) {
       assert.match(copy['quota.allowance'], /\{base\}/, code);
       assert.doesNotMatch(copy['quota.allowance'], /\{credit\}/, code);
+    }
+  });
+  test(`${browser}: the shipped quota card offers no reward and sends no reward telemetry`, async () => {
+    const node = tag => ({
+      tag, children: [], dataset: {}, attributes: {}, listeners: [], textContent: '', className: '', hidden: false,
+      classList: { add() {}, remove() {} },
+      append(...nodes) { this.children.push(...nodes); },
+      replaceChildren(...nodes) { this.children = nodes; },
+      setAttribute(key, value) { this.attributes[key] = String(value); },
+      addEventListener(type, fn) { if (type === 'click') this.listeners.push(fn); },
+      click() { this.listeners.forEach(fn => fn()); },
+    });
+    const all = root => [root, ...root.children.flatMap(all)];
+    const previous = globalThis.document;
+    globalThis.document = { createElement: node };
+    try {
+      const requests = []; const continued = [];
+      let claim = { eligible: false, status: 'redeemed', remaining_credit_usd: 0 };
+      const quota = { code: 'webbrain_cloud_free_tier_exceeded', subscribe_url: 'https://buy.stripe.com/test',
+        usage: { tier: 'free', base_weekly_allowance_usd: 0.375, social_claim: claim } };
+      const copy = quotaTranslations.en;
+      const controller = createQuotaController({
+        t: (key, params = {}) => String(copy[key] || key).replace(/\{(\w+)\}/g, (_, k) => params[k] ?? ''),
+        locale: () => 'en', openUrl() {}, persist() {},
+        continueTask: (_button, context) => continued.push(context),
+        request: async (path, body) => { requests.push({ path, body }); return path === '/usage' ? { ...quota.usage, social_claim: claim } : {}; },
+      });
+      const host = Object.assign(node('div'), { isConnected: true });
+      assert.equal(controller.mount(host, quota, { mode: 'act' }), true);
+      await new Promise(resolve => setImmediate(resolve));
+      const nodes = all(host);
+      assert.equal(nodes.some(n => /quota-share|quota-claim/.test(n.className)), false, 'no share button or claim form');
+      assert.deepEqual(nodes.find(n => n.className === 'quota-choices').children.map(n => n.className), ['subscribe-btn']);
+      assert.equal(nodes.find(n => n.className === 'quota-balance').textContent, 'Weekly allowance: $0.375');
+      nodes.find(n => n.className === 'subscribe-resume-btn').click();
+      assert.equal(continued.length, 1);
+      assert.equal(requests.some(r => r.path.startsWith('/promotions/social')), false);
+      assert.equal(requests.some(r => r.body?.event === 'continuation_after_reward'), false, 'no reward telemetry while paused');
+      // Credit earned before the pause stays visible; a sub-display remainder does not.
+      claim = { ...claim, remaining_credit_usd: 0.25 };
+      await controller.refreshAll();
+      assert.match(nodes.find(n => n.className === 'quota-balance').textContent, /Reward balance: \$0\.25/);
+      claim = { ...claim, remaining_credit_usd: 4e-7 };
+      await controller.refreshAll();
+      assert.equal(nodes.find(n => n.className === 'quota-balance').textContent, 'Weekly allowance: $0.375');
+    } finally {
+      if (previous === undefined) delete globalThis.document; else globalThis.document = previous;
     }
   });
   test(`${browser}: structured card routing works without a Subscribe string`, () => {

@@ -12,6 +12,7 @@ await mkdir(output, { recursive: true });
 const fixture = (build, locale) => `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/src/${build}/styles/sidepanel.css">
 <style>:root{--accent:#6c5dd3;--accent-dim:#f0edfb;--accent-hover:#5546b8;--text-primary:#242235;--border:#dedbe8;--bg-secondary:#fff}body{margin:0;padding:12px;box-sizing:border-box;background:#faf9ff;color:#242235;font:14px system-ui;overflow:auto}main{width:100%;box-sizing:border-box}.message{margin:0;width:100%}.message-text{padding:12px;box-sizing:border-box;border:1px solid #dedbe8;border-radius:10px}</style>
 <main id="history"><div class="message assistant" data-run-mode="act"><div id="card" class="message-text"></div></div></main>
+<section class="message assistant"><div id="paused" class="message-text"></div></section>
 <script type="module">
 import { createQuotaController } from '/src/${build}/src/ui/compass-quota.js';
 import { quotaTranslations } from '/src/${build}/src/ui/locales/compass-quota-copy.mjs';
@@ -23,7 +24,7 @@ const t=(key,params={})=>(quotaTranslations[code][key] || dict[key] || en[key] |
 window.requests=[];window.opened=[];window.switched=[];window.continuations=[];window.settingsOpened=0;window.deferredRefresh=[];
 window.claim={eligible:true,status:'draft',claim_id:null,share_url:null,remaining_credit_usd:0};
 window.usage={tier:'free',base_weekly_allowance_usd:0.375,weekly_limit_usd:0.375,promotional_balance_usd:0,next_reset_at:'2026-10-12T00:00:00Z'};
-window.makeController=()=>createQuotaController({t,locale:()=>code,request:async(path,body)=>{
+window.makeController=(options={})=>createQuotaController({t,locale:()=>code,request:async(path,body)=>{
  requests.push({path,body});if(window.offline)throw Error('offline');
  if(path==='/promotions/events')return {};
  if(path==='/promotions/social/claims'){
@@ -36,7 +37,9 @@ window.makeController=()=>createQuotaController({t,locale:()=>code,request:async
  if(window.delayRefresh)return new Promise((resolve,reject)=>deferredRefresh.push(()=>window.failDelayedRefresh?reject(Error('offline')):resolve(snapshot)));
  return snapshot;
 },openUrl:url=>opened.push(url),providers:async()=>[{id:'webbrain_cloud',label:'WebBrain Compass'},{id:'own-key',label:'My API key'},{id:'local',label:'Local model'}],switchProvider:async id=>{if(window.providerError)throw Error(window.providerError);switched.push(id);},openSettings:()=>settingsOpened++,continueTask:(_button,context)=>continuations.push(context),persist:()=>{},
- ...(new URLSearchParams(location.search).get('promo')==='off'?{}:{socialPromotion:true})});
+ socialPromotion:new URLSearchParams(location.search).get('promo')!=='off',...options});
+window.remount=()=>{const history=document.querySelector('#history');history.innerHTML=history.innerHTML;controller=makeController();controller.restore(history);};
+window.mountPaused=()=>makeController({socialPromotion:false}).mount(document.querySelector('#paused'),{code:'webbrain_cloud_free_tier_exceeded',usage:{...usage,social_claim:{...claim}},subscribe_url:'https://buy.stripe.com/test?client_reference_id=device-guid'},{mode:'act'});
 window.controller=makeController();controller.mount(document.querySelector('#card'),{code:'webbrain_cloud_free_tier_exceeded',usage:{...usage,social_claim:claim},subscribe_url:'https://buy.stripe.com/test?client_reference_id=device-guid'},{mode:'act',foreground:true});
 window.ready=true;
 </script>`;
@@ -71,9 +74,9 @@ try {
     if (process.env.QUOTA_UI_BROWSER && process.env.QUOTA_UI_BROWSER !== build) continue;
     const browser = await engine.launch();
     try {
-      // The sharing reward is paused by default: the card offers only the
+      // The sharing reward is paused in the shipped card: it offers only the
       // subscription and never asks for a share link.
-      for (const lang of ['en', 'de']) {
+      for (const lang of ['en']) {
         const page = await browser.newPage({ viewport: { width: 280, height: 1000 }, timezoneId: 'Europe/Istanbul' });
         const errors = []; page.on('pageerror', e => errors.push(e.message));
         await page.goto(`${origin}/quota?build=${build}&locale=${lang}&promo=off`);
@@ -94,12 +97,21 @@ try {
           assert.match(await page.locator('.quota-balance').textContent(), /Reward balance: \$0\.25/);
           assert.doesNotMatch(await page.locator('.quota-status').textContent(), /Approved/); checks += 2;
           // A card saved with its claim form open is restored without it.
-          await page.evaluate(() => { const card = document.querySelector('#card'); card.dataset.claimOpen = 'true'; claim = { ...claim, eligible: true, status: 'draft', share_url: 'https://webbrain.one/?share=x', remaining_credit_usd: 0 }; const html = document.querySelector('#history').innerHTML; document.querySelector('#history').innerHTML = html; controller = makeController(); controller.restore(document.querySelector('#history')); });
+          await page.evaluate(() => { document.querySelector('#card').dataset.claimOpen = 'true'; claim = { ...claim, eligible: true, status: 'draft', share_url: 'https://webbrain.one/?share=x', remaining_credit_usd: 0 }; remount(); });
           await page.locator('.quota-refresh').click();
           assert.equal(await page.locator('.quota-claim *').count(), 0);
           assert.equal(await page.locator('.quota-share').count(), 0); checks += 2;
+          // Continue after an earlier reward sends no reward telemetry while the offer is paused.
+          await page.evaluate(() => { claim = { ...claim, eligible: false, status: 'redeemed' }; });
+          await page.locator('.quota-refresh').click();
           await page.locator('.subscribe-resume-btn').click();
-          assert.equal(await page.evaluate(() => continuations.length), 1); checks++;
+          assert.equal(await page.evaluate(() => continuations.length), 1);
+          assert.equal(await page.evaluate(() => requests.filter(r => r.body?.event === 'continuation_after_reward').length), 0); checks += 2;
+          // A remainder too small to display is no reward balance.
+          await page.evaluate(() => { claim = { ...claim, remaining_credit_usd: 4e-7 }; });
+          await page.locator('.quota-refresh').click();
+          await page.waitForFunction(() => !/Reward/.test(document.querySelector('.quota-balance').textContent));
+          assert.equal(await page.locator('.quota-balance').textContent(), 'Weekly allowance: $0.375'); checks++;
         }
         assert.equal(await page.evaluate(() => requests.filter(r => r.path.startsWith('/promotions/social')).length), 0); checks++;
         assert.deepEqual(errors, []); checks++;
@@ -146,7 +158,7 @@ try {
           assert.equal(new URL(await page.evaluate(() => opened.at(-1))).searchParams.get('text'), copy); checks += 2;
           await page.locator('.quota-claim select').selectOption('bluesky');
           await page.locator('.quota-claim input').fill('https://bsky.app/profile/a.bsky.social/post/3abc');
-          await page.evaluate(() => { const html = document.querySelector('#history').innerHTML; document.querySelector('#history').innerHTML = html; controller = makeController(); controller.restore(document.querySelector('#history')); });
+          await page.evaluate(() => { remount(); });
           assert.equal(await page.locator('.quota-claim textarea').inputValue(), copy);
           assert.equal(await page.locator('.quota-claim select').inputValue(), 'bluesky');
           assert.match(await page.locator('.quota-claim input').inputValue(), /bsky\.app/); checks += 3;
@@ -199,7 +211,7 @@ try {
           assert.match(await page.locator('.quota-balance').textContent(), /\$0\.50/);
           assert.equal(await page.evaluate(() => continuations.length), 0); checks += 3;
           assert.equal(await page.locator('.quota-providers').count(), 0); checks++;
-          await page.evaluate(() => { const html = document.querySelector('#history').innerHTML; document.querySelector('#history').innerHTML = html; controller = makeController(); controller.restore(document.querySelector('#history')); });
+          await page.evaluate(() => { remount(); });
           assert.equal(await page.locator('.quota-share:visible').count(), 0); checks++;
           await page.locator('.subscribe-resume-btn').click();
           assert.equal(await page.evaluate(() => continuations.length), 1);
@@ -220,10 +232,16 @@ try {
           assert.equal(await page.locator('#card').evaluate(el => JSON.parse(el.dataset.quota).usage.social_claim.remaining_credit_usd), 0.5); checks++;
           assert.equal(await page.evaluate(() => continuations.length), 0); checks++;
         }
+        // The card that ships (reward paused), in this locale at 280 px.
+        await page.evaluate(() => mountPaused());
+        assert.equal(await page.locator('#paused .quota-choices button:visible').count(), 1);
+        assert.equal(await page.locator('#paused .quota-share, #paused .quota-claim').count(), 0);
+        assert.equal(await page.locator('#paused').evaluate(el => /quota\.|\{(?:base|credit|time)\}/.test(el.textContent)), false);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${build}/${lang}: paused card overflow`); checks += 4;
         assert.deepEqual(errors, []); checks++;
         await page.close();
       }
-      console.log(`${build}: paused reward card, quota UI, keyboard navigation, 23 locales, restored claim form and explicit continuation passed`);
+      console.log(`${build}: paused reward card in 23 locales, quota UI, keyboard navigation, restored claim form and explicit continuation passed`);
     } finally { await browser.close(); }
   }
   console.log(`${checks} rendered UI assertions passed. Screenshots: ${output}`);

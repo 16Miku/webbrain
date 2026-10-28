@@ -44,10 +44,11 @@ export function createQuotaController({ t, locale, request, openUrl, continueTas
     const balance = el('div', '', 'quota-balance');
     const reset = el('div', '', 'quota-reset');
     const actions = el('div', '', 'quota-choices');
-    const claimArea = el('div', '', 'quota-claim');
+    // The share button and claim form exist only while the reward is offered.
+    const claimArea = socialPromotion ? el('div', '', 'quota-claim') : null;
     const status = el('div', '', 'quota-status');
     status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
-    const share = button(t('quota.get'), async () => {
+    const share = socialPromotion && button(t('quota.get'), async () => {
       host.dataset.claimOpen = 'true';
       try {
         if (social?.status === 'pending') { await inflight; await refresh(); return; }
@@ -58,22 +59,24 @@ export function createQuotaController({ t, locale, request, openUrl, continueTas
       } catch (error) { status.textContent = error.message; }
     }, 'quota-share');
     const subscribe = button(t('quota.subscribe'), () => { event('checkout_open'); openUrl(quota.subscribe_url); }, 'subscribe-btn');
-    actions.append(...(socialPromotion ? [share] : []), subscribe);
+    actions.append(...[share, subscribe].filter(Boolean));
     const resume = button(t(context.retry ? 'sp.retry' : 'sp.continue_btn'), () => {
-      if (social && !social.eligible) event('continuation_after_reward');
+      // Reward telemetry: a paused offer has no reward to continue after.
+      if (socialPromotion && social && !social.eligible) event('continuation_after_reward');
       continueTask(resume, context);
     }, 'subscribe-resume-btn');
     resume.dataset.resumeMode = context.mode || 'act';
     resume.dataset.resumeForeground = context.foreground ? 'true' : 'false';
     const refreshButton = button(t('quota.refresh'), () => refresh(), 'quota-refresh');
-    host.append(info, balance, reset, actions, claimArea, status, refreshButton, resume);
+    host.append(...[info, balance, reset, actions, claimArea, status, refreshButton, resume].filter(Boolean));
 
     function renderState() {
       if (cards.get(host)?.refresh !== refresh) return;
       const base = state.base_weekly_allowance_usd ?? state.weekly_limit_usd ?? state.daily_limit_usd;
       const credit = social?.remaining_credit_usd ?? state.promotional_balance_usd;
       // Credit a device already earned stays visible while the offer is paused.
-      balance.textContent = base == null ? '' : socialPromotion || Number(credit) > 0
+      // A remainder that formatQuotaUsd would print as $0.00 counts as none.
+      balance.textContent = base == null ? '' : socialPromotion || Math.round(Number(credit) * 1e6) > 0
         ? t('quota.balance', { base: formatQuotaUsd(base, locale()), credit: formatQuotaUsd(credit, locale()) })
         : t('quota.allowance', { base: formatQuotaUsd(base, locale()) });
       const date = new Date(state.next_reset_at || social?.next_reset_at || '');
