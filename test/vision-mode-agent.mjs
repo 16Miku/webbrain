@@ -1396,7 +1396,7 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
         log.push(`capture, hidden: ${hidden}`);
         if (log.filter(entry => entry.startsWith('capture')).length === 2) hidden = false;
         return capture.call(this, tabId, options);
-      });
+      }, { hold: options?.hold });
     };
     try {
       await agent._visionCaptureSettled(tab, state);
@@ -1407,10 +1407,52 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.deepEqual(captures, Array(4).fill('capture, hidden: true'), log.join('\n'));
     assert.equal(log.filter(entry => entry === 'WB_SHOW_AFTER_TOOL_USE').length, 1, log.join('\n'));
     assert.equal(log.at(-1), 'WB_SHOW_AFTER_TOOL_USE', 'shown again after the last capture');
-    assert.equal(agent._indicatorHolds?.has(tab), false);
   });
 
-  test(`${build}: indicator hide respects capture deadline and abort, cleaning up holds`, async () => {
+  test(`${build}: a screenshot that never answers does not keep WebBrain's page UI hidden`, async () => {
+    const scene = tickingScene({ x: 300, y: 200, w: 400, h: 300 });
+    const { agent } = runAgent(() => ({ content: 'done' }), { scene });
+    const tab = nextTab++;
+    const state = agent._visionRunState(tab, 'act');
+    const tabs = (build === 'chrome' ? globalThis.chrome : globalThis.browser).tabs;
+    const send = tabs.sendMessage;
+    let hidden = false;
+    tabs.sendMessage = async (id, message) => {
+      if (id !== tab) return send(id, message);
+      if (message.type === 'WB_HIDE_FOR_TOOL_USE') {
+        const changed = !hidden;
+        hidden = true;
+        return { ok: true, changed };
+      }
+      if (message.type === 'WB_SHOW_AFTER_TOOL_USE') hidden = false;
+      return { ok: true };
+    };
+    // The hide answers, then the first screenshot never does (a stalled
+    // debugger), and the capture deadline gives up on it.
+    const capture = agent._visionPlatformCapture;
+    let stalled = false;
+    agent._visionPlatformCapture = function (tabId, options) {
+      return this._withIndicatorsHidden(tabId, () => {
+        if (stalled) return capture.call(this, tabId, options);
+        stalled = true;
+        return new Promise(() => {});
+      }, { hold: options?.hold });
+    };
+    agent._visionCaptureDeadlineMs = 50;
+    try {
+      await assert.rejects(() => agent._visionCaptureSettled(tab, state), (err) => err.code === 'vision_capture_timeout');
+      assert.equal(hidden, false, 'shown again when the screen update gave up');
+      agent._visionCaptureDeadlineMs = 0;
+      await agent._visionCaptureSettled(tab, state);
+      assert.equal(hidden, false, 'shown again after the next screen update');
+      await agent._visionCaptureFrame(tab, state);
+      assert.equal(hidden, false, 'shown again after a capture of its own');
+    } finally {
+      tabs.sendMessage = send;
+    }
+  });
+
+  test(`${build}: indicator hide respects capture deadline and abort, and the page UI is shown again`, async () => {
     const scene = tickingScene({ x: 300, y: 200, w: 400, h: 300 });
     const { agent } = runAgent(() => ({ content: 'done' }), { scene });
     const tab = nextTab++;
@@ -1426,13 +1468,17 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
       }
       return { ok: true };
     };
+    // Each capture hides around itself, as both platform layers do.
+    const capture = agent._visionPlatformCapture;
+    agent._visionPlatformCapture = function (tabId, options) {
+      return this._withIndicatorsHidden(tabId, () => capture.call(this, tabId, options), { hold: options?.hold });
+    };
     agent._visionCaptureDeadlineMs = 50;
     try {
       await assert.rejects(
         () => agent._visionCaptureSettled(tab, state),
         (err) => err.code === 'vision_capture_timeout'
       );
-      assert.equal(agent._indicatorHolds?.has(tab), false, 'hold cleaned up on timeout');
       assert.ok(log.includes('WB_SHOW_AFTER_TOOL_USE'), 'show attempted on timeout');
     } finally {
       tabs.sendMessage = send;
@@ -1457,7 +1503,6 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
         () => agent._visionCaptureSettled(abortTab, abortState),
         (err) => err.name === 'AbortError'
       );
-      assert.equal(agent._indicatorHolds?.has(abortTab), false, 'hold cleaned up on abort');
       assert.ok(abortLog.includes('WB_SHOW_AFTER_TOOL_USE'), 'show attempted on abort');
     } finally {
       tabs.sendMessage = send;
