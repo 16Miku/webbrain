@@ -1,5 +1,5 @@
-// The composer's model picker shows the selected model's logo, with an
-// engine fallback; its name remains in the tooltip and accessible name.
+// The composer's model picker shows the selected provider's logo, with an
+// engine fallback; the model's name remains in the tooltip and accessible name.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
