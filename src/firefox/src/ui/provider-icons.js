@@ -12,6 +12,8 @@ import {
 
 export const PROVIDER_ICON_FILES = {
   webbrain_cloud: 'webbrain_cloud.png',
+  // Compass Max is the same provider at a larger tier.
+  webbrain_cloud_max: 'webbrain_cloud.png',
   webbrain_companion: 'webbrain_cloud.png',
   llamacpp: 'llamacpp.svg',
   ollama: 'ollama.svg',

@@ -159,8 +159,10 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         const green = await resolved(page, '--success');
         await page.waitForFunction(green => getComputedStyle(document.getElementById('status-dot')).backgroundColor === green, green);
 
+        const logoBefore = await page.locator('.provider-picker-logo').elementHandle();
         await selectModel(page, 'anthropic/claude-sonnet-4');
         await loadedLogo(page, 'openrouter.svg');
+        assert.equal(await logoBefore.evaluate(img => img.isConnected), true, 'a model change keeps the logo instead of loading it again');
         assert.equal(await page.locator('#provider-picker-btn').getAttribute('aria-label'), 'Model: openrouter · anthropic/claude-sonnet-4',
           'the model is still named in the tooltip');
         await selectModel(page, 'claude-sonnet-4', 'anthropic');
@@ -214,6 +216,13 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         assert.equal(await page.locator('.provider-picker-fallback').isVisible(), true);
         assert.equal(await page.locator('.provider-picker-logo').count(), 0);
         assert.equal(await page.locator('#status-dot').isVisible(), true);
+      });
+    });
+
+    test('Compass Max shows the Compass logo even without an alias from the menu', async () => {
+      await panel(async (page) => {
+        await selectModel(page, 'max', 'webbrain_cloud_max');
+        await loadedLogo(page, 'webbrain_cloud.png');
       });
     });
 

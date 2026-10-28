@@ -8492,7 +8492,10 @@ function appendProviderPickerOption(id, name, meta, iconProviderId = id) {
       return;
     }
     providerSelect.value = id;
-    syncProviderPickerButton();
+    // "More providers…" only opens Settings, and the change handler puts the
+    // current provider back. Syncing the button to it first would drop the
+    // logo and the connection status, which nothing checks again.
+    if (id !== MORE_PROVIDERS_OPTION_VALUE) syncProviderPickerButton();
     providerSelect.dispatchEvent(new Event('change', { bubbles: true }));
   });
 
