@@ -309,6 +309,13 @@ export class ProviderManager {
         || (!String(config.model || '').trim() && config.visionDetection != null)
       );
     });
+    const companionVisionConfigMigrated = Object.entries(data.providers || {}).some(([id, config]) => {
+      const defId = config?.duplicateOf || id;
+      return defId === 'webbrain_companion' && (
+        !VISION_MODES.has(config.visionMode)
+        || Object.hasOwn(config, 'supportsVision')
+      );
+    });
     const hadLegacyClaudeSubscription = Object.hasOwn(data.providers || {}, 'claude_subscription');
     const rawStoredProviders = data.providers || {};
     const stored = this._migrateStoredProviderConfigs(rawStoredProviders);
@@ -360,6 +367,14 @@ export class ProviderManager {
       }
     }
     for (const [id, config] of Object.entries(configs)) {
+      if ((config?.duplicateOf || id) === 'webbrain_companion') {
+        if (!VISION_MODES.has(config.visionMode)) {
+          config.visionMode = typeof config.supportsVision === 'boolean'
+            ? (config.supportsVision ? 'on' : 'off')
+            : 'auto';
+        }
+        delete config.supportsVision;
+      }
       if (config.duplicateOf && !this._isValidDuplicateConfig(id, config, configs)) {
         delete configs[id];
         providerStateMigrated = true;
@@ -373,6 +388,7 @@ export class ProviderManager {
     // token bundle here — otherwise a previously-signed-in user's raw
     // access/refresh tokens would sit in storage with no UI path to clear them.
     if (hadLegacyClaudeSubscription) await signOutClaude();
+    if (companionVisionConfigMigrated) providerStateMigrated = true;
     const deviceGuid = await this._getDeviceGuid(data[WEBBRAIN_DEVICE_GUID_KEY]);
     for (const id of WEBBRAIN_CLOUD_PROVIDER_IDS) {
       if (!configs[id]) continue;
@@ -601,7 +617,7 @@ export class ProviderManager {
         contextWindow: LOCAL_OPENAI_PROXY_CONTEXT_WINDOW,
         apiKey: '',
         supportsAskStreaming: true,
-        supportsVision: false,
+        visionMode: 'auto',
         enabled: true,
       },
       local_openai_proxy: {
@@ -1246,6 +1262,14 @@ export class ProviderManager {
         : 'auto';
       delete normalizedConfig.supportsVision;
     }
+    if (definitionId === 'webbrain_companion') {
+      normalizedConfig.visionMode = VISION_MODES.has(normalizedConfig.visionMode)
+        ? normalizedConfig.visionMode
+        : (typeof normalizedConfig.supportsVision === 'boolean'
+          ? (normalizedConfig.supportsVision ? 'on' : 'off')
+          : 'auto');
+      delete normalizedConfig.supportsVision;
+    }
     if (visionProviderKind(definitionId, normalizedConfig)) {
       const legacySupportsVision = normalizedConfig.supportsVision;
       normalizedConfig.visionMode = VISION_MODES.has(normalizedConfig.visionMode)
@@ -1664,6 +1688,15 @@ export class ProviderManager {
       if (currentIdentity?.key !== nextIdentity?.key || current.visionMode !== merged.visionMode) {
         merged.visionDetection = null;
       }
+    }
+    if (this._providerDefinitionId(id, current) === 'webbrain_companion') {
+      const explicitLegacyVision = Object.hasOwn(config, 'supportsVision') && !Object.hasOwn(config, 'visionMode')
+        ? config.supportsVision
+        : null;
+      merged.visionMode = typeof explicitLegacyVision === 'boolean'
+        ? (explicitLegacyVision ? 'on' : 'off')
+        : (VISION_MODES.has(merged.visionMode) ? merged.visionMode : 'auto');
+      delete merged.supportsVision;
     }
     const definitionId = this._providerDefinitionId(id, merged);
     const genericVisionKind = visionProviderKind(definitionId, merged);

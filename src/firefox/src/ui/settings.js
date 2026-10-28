@@ -71,6 +71,10 @@ import {
 import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 import { AUTO_VISION_PROVIDER_IDS, visionDetectionMatches } from '../providers/vision-capabilities.js';
 import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
+import {
+  COMPANION_PREFERRED_MODEL_PATTERNS,
+  selectPreferredCompanionModel,
+} from '../providers/companion-config.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
 const VISION_UI_PROVIDER_IDS = new Set(['ollama', ...AUTO_VISION_PROVIDER_IDS]);
@@ -2421,6 +2425,119 @@ const SHARE_RESEARCH_FIELD = {
   type: 'checkbox',
 };
 
+export {
+  COMPANION_PREFERRED_MODEL_PATTERNS,
+  selectPreferredCompanionModel,
+};
+
+if (typeof window !== 'undefined') {
+  window.COMPANION_PREFERRED_MODEL_PATTERNS = COMPANION_PREFERRED_MODEL_PATTERNS;
+  window.selectPreferredCompanionModel = selectPreferredCompanionModel;
+}
+
+const companionAutoCheckInFlight = new Set();
+const companionAutoCheckedAt = new Map();
+
+function updateCollapsedProviderHeader(id, config) {
+  const card = document.querySelector(`.provider-card[data-provider-id="${id}"]`);
+  if (!card) return;
+  const isSelected = id === activeProviderId;
+  const isConfigured = id !== 'webbrain_cloud' && config.configured === true;
+  if (isConfigured) {
+    card.classList.add('configured');
+  } else {
+    card.classList.remove('configured');
+  }
+  const header = card.querySelector('.provider-header');
+  if (!header) return;
+  const left = header.querySelector('.provider-header-left');
+  if (left) {
+    let modelBadge = left.querySelector('.provider-model');
+    const modelStr = (config.model && String(config.model).trim()) || '';
+    if (modelStr) {
+      if (!modelBadge) {
+        modelBadge = document.createElement('span');
+        modelBadge.className = 'provider-model';
+        left.appendChild(modelBadge);
+      }
+      modelBadge.title = modelStr;
+      modelBadge.textContent = modelStr;
+    } else if (modelBadge) {
+      modelBadge.remove();
+    }
+  }
+  const badges = header.querySelector('.provider-status-badges');
+  if (badges) {
+    let activeBadge = badges.querySelector('.provider-status-badge.active');
+    if (isConfigured) {
+      if (!activeBadge) {
+        activeBadge = document.createElement('span');
+        activeBadge.className = 'provider-status-badge active';
+        activeBadge.textContent = t('st.providers.active');
+        badges.prepend(activeBadge);
+      }
+    } else if (activeBadge) {
+      activeBadge.remove();
+    }
+  }
+  refreshActiveProviderFilterCount();
+  refreshProviderCardStatus(id);
+}
+
+async function checkAndAutoSelectCompanionModel(id) {
+  if (companionAutoCheckInFlight.has(id)) return;
+  const lastCheck = companionAutoCheckedAt.get(id) || 0;
+  if (Date.now() - lastCheck < 10000) return;
+  companionAutoCheckInFlight.add(id);
+  companionAutoCheckedAt.set(id, Date.now());
+
+  try {
+    const res = await sendToBackground('list_provider_models', { providerId: id });
+    if (!res?.ok || !Array.isArray(res.models) || res.models.length === 0) {
+      return;
+    }
+
+    const config = providersData[id];
+    if (!config) return;
+
+    const currentModel = String(config.model || '').trim();
+    let selectedModel = currentModel;
+    if (!currentModel || !res.models.includes(currentModel)) {
+      selectedModel = selectPreferredCompanionModel(res.models);
+    }
+    if (!selectedModel) return;
+
+    const needsUpdate = config.model !== selectedModel || !config.configured;
+    if (needsUpdate) {
+      config.model = selectedModel;
+      config.configured = true;
+      if (res.baseUrl && (!config.baseUrl || config.baseUrl === 'http://127.0.0.1:8327/v1')) {
+        config.baseUrl = res.baseUrl;
+      }
+      if (res.contextWindow && (!config.contextWindow || config.manualContextWindow !== true)) {
+        config.contextWindow = res.contextWindow;
+      }
+
+      await sendToBackground('update_provider', {
+        providerId: id,
+        config: {
+          model: selectedModel,
+          configured: true,
+          ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+          ...(config.contextWindow ? { contextWindow: config.contextWindow } : {}),
+        },
+        markConfigured: true,
+      });
+
+      updateCollapsedProviderHeader(id, config);
+    }
+  } catch {
+    // Companion is not running or unreachable — do not error or warn
+  } finally {
+    companionAutoCheckInFlight.delete(id);
+  }
+}
+
 async function confirmResearchSharing(event) {
   const input = event.currentTarget;
   if (!input.checked) return;
@@ -3055,7 +3172,7 @@ function renderProviders() {
         OPTIONAL_LOCAL_API_KEY_FIELD,
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'model listed in WebBrain Companion' },
         LOCAL_PROXY_CONTEXT_WINDOW_FIELD,
-        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
+        VISION_MODE_FIELD,
         PROMPT_TIER_FIELD,
       ],
     },
@@ -3383,6 +3500,9 @@ function renderProviders() {
     if (providerQuery && !providerSearchTextForEntry(id, config, fieldDefs).includes(providerQuery)) continue;
     visibleCount++;
 
+    const isCompanion = definitionId === 'webbrain_companion';
+    let topFieldsHTML = '';
+    let detailsFieldsHTML = '';
     let fieldsHTML = '';
     let collapsedFieldsHTML = '';
     for (const field of fieldDefs) {
@@ -3481,10 +3601,33 @@ function renderProviders() {
           </div>
         `;
       }
-      if (field.collapsed) collapsedFieldsHTML += fieldHTML;
-      else fieldsHTML += fieldHTML;
+      if (isCompanion) {
+        if (field.key === 'model' || field.key === 'shareQueriesForResearch') {
+          topFieldsHTML += fieldHTML;
+        } else {
+          detailsFieldsHTML += fieldHTML;
+        }
+      } else if (field.collapsed) {
+        collapsedFieldsHTML += fieldHTML;
+      } else {
+        fieldsHTML += fieldHTML;
+      }
     }
-    if (collapsedFieldsHTML) {
+    const compatibilitySettings = renderProviderCompatibilitySettings(id, config);
+    if (isCompanion) {
+      fieldsHTML = `
+        ${topFieldsHTML}
+        <details class="provider-compatibility provider-companion-details">
+          <summary>
+            <span class="provider-compatibility-title">${escapeHtml(t('st.providers.companion_guide.details'))}</span>
+          </summary>
+          <div class="provider-compatibility-body">
+            ${detailsFieldsHTML}
+            ${compatibilitySettings}
+          </div>
+        </details>
+      `;
+    } else if (collapsedFieldsHTML) {
       fieldsHTML += `
         <details class="provider-compatibility provider-local-auth">
           <summary>
@@ -3531,7 +3674,6 @@ function renderProviders() {
               target="_blank" rel="noopener noreferrer">${escapeHtml(t('st.providers.ollama_warning.link'))} ↗</a>
          </aside>`
       : '';
-    const compatibilitySettings = renderProviderCompatibilitySettings(id, config);
     const duplicateDisabledKey = !config.canDuplicate
       ? 'st.providers.duplicate_unavailable'
       : ((!isConfigured || dirtyProviderIds.has(id)) ? 'st.providers.duplicate_inactive' : '');
@@ -3548,7 +3690,7 @@ function renderProviders() {
       ${providerNote}
       ${id === 'webbrain_cloud' ? '<div class="webbrain-payment-notice" role="status" hidden></div>' : ''}
       ${ollamaWarning}
-      ${compatibilitySettings}
+      ${isCompanion ? '' : compatibilitySettings}
       <div class="btn-row">
         <button class="btn-primary btn-save" data-provider="${id}">${escapeHtml(t('st.providers.save'))}</button>
         <button class="btn-secondary btn-test" data-provider="${id}">${escapeHtml(t('st.providers.test'))}</button>
@@ -3561,6 +3703,10 @@ function renderProviders() {
     `;
 
     providersContainer.appendChild(wrapCollapsibleCard(id, config, isSelected, isConfigured, body));
+    const expanded = isSelected || expandedProviders.has(id);
+    if (!expanded && isCompanion) {
+      void checkAndAutoSelectCompanionModel(id);
+    }
   }
 
   if (visibleCount === 0) {
@@ -3831,8 +3977,12 @@ function wrapCollapsibleCard(id, config, isSelected, isConfigured, bodyHtml) {
     // Snapshot unsaved typing in other expanded cards before we rebuild
     // the DOM — same reason as the filter-pill handler above.
     syncInputsIntoProvidersData();
-    if (expandedProviders.has(id)) expandedProviders.delete(id);
-    else expandedProviders.add(id);
+    if (expandedProviders.has(id)) {
+      expandedProviders.delete(id);
+      companionAutoCheckedAt.delete(id);
+    } else {
+      expandedProviders.add(id);
+    }
     renderProviders();
   });
 

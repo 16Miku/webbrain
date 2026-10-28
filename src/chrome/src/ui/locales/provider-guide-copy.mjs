@@ -4,6 +4,7 @@ export const providerGuideEnglish = Object.freeze({
   'st.providers.companion_guide.supported': 'Supports Claude (Pro, Max or Team), ChatGPT (Plus or Pro via Codex), Google Gemini (via Antigravity), SuperGrok (via Grok Build), Kimi Code (kimi.ai or kimi.com), Meta Muse (Muse Code), and Devin.',
   'st.providers.companion_guide.body': 'Get WebBrain Companion, start it, then load a model. No API key is needed on this computer.',
   'st.providers.companion_guide.download': 'Download WebBrain Companion',
+  'st.providers.companion_guide.details': 'Details',
   'st.providers.subscription_guide.card_body': 'Have a {product} account or subscription instead of an API key?',
   'st.providers.subscription_guide.card_link': 'See third-party proxy setup & risks',
   'st.providers.subscription_guide.local_body': 'Using EasyCLIProxyAPI or CLIProxyAPI?',
@@ -15,6 +16,32 @@ const companionGuideTranslations = {
   fr: ['Installez WebBrain Companion, lancez-le, puis chargez un modèle. Aucune clé API n’est nécessaire sur cet ordinateur.', 'Télécharger WebBrain Companion'],
   tr: ['WebBrain Companion’ı kurup başlatın ve bir model yükleyin. Bu bilgisayarda API anahtarı gerekmez.', 'WebBrain Companion’ı indir'],
   zh: ['安装并启动 WebBrain Companion，然后加载模型。本机无需 API 密钥。', '下载 WebBrain Companion'],
+};
+
+const companionDetailsTranslations = {
+  ar: 'التفاصيل',
+  bn: 'বিস্তারিত',
+  de: 'Details',
+  en: 'Details',
+  es: 'Detalles',
+  fa: 'جزئیات',
+  fr: 'Détails',
+  he: 'פרטים',
+  hi: 'विवरण',
+  id: 'Detail',
+  ja: '詳細',
+  ko: '세부 정보',
+  ms: 'Butiran',
+  nl: 'Details',
+  pl: 'Szczegóły',
+  pt: 'Detalhes',
+  ru: 'Подробности',
+  th: 'รายละเอียด',
+  tl: 'Mga Detalye',
+  tr: 'Ayrıntılar',
+  uk: 'Подробиці',
+  vi: 'Chi tiết',
+  zh: '详情',
 };
 
 export const providerGuideTranslations = Object.freeze(Object.fromEntries(Object.entries({
@@ -181,7 +208,10 @@ export const providerGuideTranslations = Object.freeze(Object.fromEntries(Object
     'st.providers.subscription_guide.local_link': 'Anleitung zu Einrichtung, Sicherheit und Kontorisiken lesen',
   },
 }).map(([code, copy]) => [code, {
+  'st.providers.companion_guide.summary': providerGuideEnglish['st.providers.companion_guide.summary'],
+  'st.providers.companion_guide.supported': providerGuideEnglish['st.providers.companion_guide.supported'],
   'st.providers.companion_guide.body': companionGuideTranslations[code]?.[0] || providerGuideEnglish['st.providers.companion_guide.body'],
   'st.providers.companion_guide.download': companionGuideTranslations[code]?.[1] || providerGuideEnglish['st.providers.companion_guide.download'],
+  'st.providers.companion_guide.details': companionDetailsTranslations[code] || providerGuideEnglish['st.providers.companion_guide.details'],
   ...copy,
 }])));
