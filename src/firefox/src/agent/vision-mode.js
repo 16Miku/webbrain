@@ -1,7 +1,7 @@
 // Vision mode setting and per-run resolution (browser-free).
 // Shared verbatim by the Chrome and Firefox builds (test/vision-mode.mjs).
 //
-// Settings → Advanced → "Vision mode" (storage key `visionMode`):
+// Settings → Advanced → "Tesla mode", called "Vision mode" before (storage key `visionMode`):
 //   'auto' — Act runs see the page as screenshots and act with coordinates
 //            whenever the run's model accepts images. This is the default.
 //            The option was called On before, so a stored 'on' (or true)
