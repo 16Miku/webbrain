@@ -3175,9 +3175,9 @@ test('companion banner: links to the companion page in the WebBrain language whe
   }
 });
 
-test('companion banner: the demo has a mark for every plan and it shows only in an empty bulletin slot', () => {
+test('companion banner: every plan has a mark and it shows only where no bulletin is shown', () => {
   const view = readFileSync(nt('features/companion/CompanionPromo.jsx'), 'utf8');
-  for (const plan of companionPromo.DEMO_PLANS) {
+  for (const plan of companionPromo.PLANS) {
     assert.ok(existsSync(nt('assets', 'providers', `${plan.logo}.svg`)), plan.logo);
     assert.ok(view.includes(`${plan.logo}: ${plan.logo}Logo`), `${plan.logo} is wired into LOGOS`);
     // The marks are shown as <img>, where currentColor would always be black.

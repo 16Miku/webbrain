@@ -140,11 +140,12 @@ bulletin (`src/*/src/ui/apocalypse-comm.js`), which reads its own file.
 
 ## WebBrain Companion invitation
 
-While no bulletin is shown, the bulletin slot under the box invites the user to install
+While no bulletin is shown, a card under the box invites the user to install
 [WebBrain Companion](https://www.webbrain.one/companion/), the tray app that serves their Claude,
-ChatGPT, Google, Grok and Kimi subscriptions to WebBrain on `127.0.0.1:8327`. It is a card at the
-bulletin's width. Source: `newtab/src/features/companion/`, shown from
-`newtab/src/features/bulletin/Bulletin.jsx`.
+ChatGPT, Google, Grok and Kimi subscriptions to WebBrain on `127.0.0.1:8327`. It is its own card,
+up to 1100 px wide, not the bulletin's frame: the marks of Claude Max, ChatGPT Pro, Google AI Pro,
+SuperGrok and Kimi (Lobe Icons copies in `newtab/src/assets/providers/`), the text, and a button.
+Source: `newtab/src/features/companion/`, shown from `newtab/src/features/bulletin/Bulletin.jsx`.
 
 - **When it shows.** Only after the bulletin check found nothing to show (an empty file, an
   unreachable one, or a bulletin dismissed earlier). A bulletin dismissed on the page itself
@@ -153,14 +154,10 @@ bulletin's width. Source: `newtab/src/features/companion/`, shown from
   the user presses × (`wbNewtabCompanionPromoDismissed` in `chrome.storage.local`), and is not
   shown while WebBrain has a Companion provider (`webbrain_companion`, or a card with that
   `duplicateOf`) with a model saved in `providers`. Clicking the button does not hide it; setting
-  the Companion up does. Storage that cannot be read hides it. Up to 620 px wide it drops the
-  demo.
+  the Companion up does. Storage that cannot be read hides it.
 - **The link** opens the companion page in the same tab, in the WebBrain language when the page
   is translated (`web/companion/<code>/`; Polish falls back to English), with no referrer.
-- **The demo** cycles Claude Max, ChatGPT Pro, Google AI Pro, SuperGrok and Kimi: the plan's mark
-  (Lobe Icons copies in `newtab/src/assets/providers/`) sends a packet through the tray app to a
-  browser window with WebBrain's side panel, which writes an answer with that plan in its
-  composer. CSS animations only; with reduced motion or Mue's animations setting off it is a still.
+- **Layout.** Below 1024 px wide the marks move above the text; below 560 px everything stacks.
 
 ## Things to know
 

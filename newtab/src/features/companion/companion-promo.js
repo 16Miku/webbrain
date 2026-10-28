@@ -1,10 +1,11 @@
 /**
- * WebBrain Companion invitation in the new tab's bulletin slot, under the task box.
+ * WebBrain Companion invitation, under the task box where the bulletin goes.
  *
- * Shown there only while no bulletin is published (features/bulletin/Bulletin.jsx). Invites the user to install WebBrain Companion, the tray app that serves their Claude,
- * ChatGPT, Google, Grok and Kimi subscriptions to WebBrain on 127.0.0.1. Whether to show it is
- * decided from extension storage alone: the page makes no request to the companion's port or
- * to webbrain.one for it. It goes away for good once the user dismisses it, and is not shown
+ * Shown only while there is no bulletin to show (features/bulletin/Bulletin.jsx). Invites the
+ * user to install WebBrain Companion, the tray app that serves their Claude, ChatGPT, Google,
+ * Grok and Kimi subscriptions to WebBrain on 127.0.0.1. Whether to show it is decided from
+ * extension storage alone: the page makes no request to the companion's port or to
+ * webbrain.one for it. It goes away for good once the user dismisses it, and is not shown
  * while WebBrain already has a Companion provider with a model saved (the providers manager in
  * src/{chrome,firefox}/src/providers/manager.js keeps them under `providers`, keyed by id;
  * a duplicated card carries `duplicateOf`).
@@ -17,39 +18,14 @@ const COMPANION_PAGE_LOCALES = new Set(
   'ar bn de es fa fr he hi id ja ko ms nl pt ru th tl tr uk vi zh'.split(' '),
 );
 
-// The plans the demo cycles through. `logo` names a mark in assets/providers (picked up by
-// CompanionPromo.jsx), drawn on a `tile` background; `color` tints the packets and highlights;
-// `left` is the share of the plan still available, drawn as the meter under the mark.
-export const DEMO_PLANS = [
-  {
-    name: 'Claude Max',
-    logo: 'anthropic',
-    tile: '#d97757',
-    color: '#d97757',
-    left: 64,
-  },
-  {
-    name: 'ChatGPT Pro',
-    logo: 'openai',
-    tile: '#0d0d0d',
-    color: '#10a37f',
-    left: 57,
-  },
-  {
-    name: 'Google AI Pro',
-    logo: 'gemini',
-    tile: '#ffffff',
-    color: '#3186ff',
-    left: 71,
-  },
-  {
-    name: 'SuperGrok',
-    logo: 'xai',
-    tile: '#0d0d0d',
-    color: '#9ca3af',
-    left: 38,
-  },
-  { name: 'Kimi', logo: 'kimi', tile: '#ffffff', color: '#027aff', left: 83 },
+// The plans whose marks the invitation shows, in this order. `logo` names a mark in
+// assets/providers (picked up by CompanionPromo.jsx), drawn on a `tile` background.
+export const PLANS = [
+  { name: 'Claude Max', logo: 'anthropic', tile: '#d97757' },
+  { name: 'ChatGPT Pro', logo: 'openai', tile: '#0d0d0d' },
+  { name: 'Google AI Pro', logo: 'gemini', tile: '#ffffff' },
+  { name: 'SuperGrok', logo: 'xai', tile: '#0d0d0d' },
+  { name: 'Kimi', logo: 'kimi', tile: '#ffffff' },
 ];
 
 export function companionPageUrl(locale) {
