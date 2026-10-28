@@ -17,7 +17,7 @@ for (const browser of ['chrome', 'firefox']) {
   const { RunUiJournal, runUiUpdatesForCurrentTask } = await import(new URL('run-ui-journal.js', base));
   const { runDetachedWithReconnect } = await import(new URL('run-reconnect.js', base));
   const { Agent } = await import(new URL('agent/agent.js', base));
-  const { formatQuotaUsd, socialComposer } = await import(new URL('ui/compass-quota.js', base));
+  const { formatQuotaUsd, socialComposer, SOCIAL_PROMOTION_ENABLED } = await import(new URL('ui/compass-quota.js', base));
   const { quotaTranslations } = await import(new URL('ui/locales/compass-quota-copy.mjs', base));
   const payload = {
     error: { code: 'webbrain_cloud_free_tier_exceeded', message: 'Weekly quota exhausted.' },
@@ -82,6 +82,13 @@ for (const browser of ['chrome', 'firefox']) {
     assert.match(String(result), /Weekly quota exhausted/);
     assert.equal(calls, 1, 'quota must not trigger automatic provider retries');
     assert.equal(events.find(e => e.type === 'quota')?.data.quota.usage.base_weekly_allowance_usd, 0.375);
+  });
+  test(`${browser}: the sharing reward is paused and every locale can show the plain allowance`, () => {
+    assert.equal(SOCIAL_PROMOTION_ENABLED, false);
+    for (const [code, copy] of Object.entries(quotaTranslations)) {
+      assert.match(copy['quota.allowance'], /\{base\}/, code);
+      assert.doesNotMatch(copy['quota.allowance'], /\{credit\}/, code);
+    }
   });
   test(`${browser}: structured card routing works without a Subscribe string`, () => {
     const panel = fs.readFileSync(new URL('ui/sidepanel.js', base), 'utf8');

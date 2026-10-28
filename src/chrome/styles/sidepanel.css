@@ -3758,7 +3758,7 @@ html[data-ui-scale="175"] .conversation-action-label {
   padding: 4px 4px 4px 5px;
 }
 
-/* Keep the model logo and engine fallback the same size, so switching
+/* Keep the provider logo and engine fallback the same size, so switching
    providers never moves the connection badge or crowds the toolbar. */
 .provider-picker-icon {
   display: inline-flex;

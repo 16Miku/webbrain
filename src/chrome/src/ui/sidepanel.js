@@ -82,7 +82,7 @@ import {
   buildFeedbackUrl,
   normalizeState as normalizeStoreReviewState,
 } from './store-review-prompt.js';
-import { modelIconUrl, providerIconUrl } from './provider-icons.js';
+import { providerIconUrl } from './provider-icons.js';
 import { getFeedbackCopy } from './feedback-copy.js';
 import { requestFeedbackConsent, submitFeedbackWithTrace } from './feedback-consent.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
@@ -8510,7 +8510,9 @@ function syncProviderPickerIcon() {
   const icon = providerPickerBtn?.querySelector('.provider-picker-icon');
   if (!icon) return;
   const id = providerSelect?.value || '';
-  const src = modelIconUrl(providerPickerModelById.get(id), providerPickerSourceById.get(id) || id);
+  // The provider's logo, as in the menu: a model's brand (Claude on
+  // OpenRouter, Qwen on Ollama) would hide which provider runs it.
+  const src = providerIconUrl(providerPickerSourceById.get(id) || id);
   if (icon.dataset.src === src) return;
   icon.dataset.src = src;
   icon.classList.remove('has-logo');
@@ -8588,7 +8590,7 @@ function appendProviderPickerOption(id, name, meta, iconProviderId = id) {
   btn.dataset.value = id;
   btn.setAttribute('aria-selected', 'false');
 
-  // Menu rows identify the provider; the closed button resolves its model's logo.
+  // Menu rows and the closed button both show the provider's logo.
   const iconSrc = providerIconUrl(iconProviderId);
   if (iconSrc) {
     const img = document.createElement('img');

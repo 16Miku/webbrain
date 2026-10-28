@@ -11,7 +11,14 @@ export function socialComposer(platform, text, shareUrl) {
       : `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl || 'https://webbrain.one/')}`;
 }
 
-export function createQuotaController({ t, locale, request, openUrl, continueTask, persist }) {
+// The $0.50 sharing reward (publish a post about WebBrain, claim credit) is
+// paused because it invited abuse. Its flow stays behind this switch so it can
+// return: while it is off the card offers only the subscription, never asks
+// /promotions/social for a share link and shows no claim status.
+export const SOCIAL_PROMOTION_ENABLED = false;
+
+export function createQuotaController({ t, locale, request, openUrl, continueTask, persist,
+  socialPromotion = SOCIAL_PROMOTION_ENABLED }) {
   const cards = new Map();
   const event = name => { void request('/promotions/events', { event: name }).catch(() => {}); };
   function mount(host, quota, context = {}) {
@@ -51,7 +58,7 @@ export function createQuotaController({ t, locale, request, openUrl, continueTas
       } catch (error) { status.textContent = error.message; }
     }, 'quota-share');
     const subscribe = button(t('quota.subscribe'), () => { event('checkout_open'); openUrl(quota.subscribe_url); }, 'subscribe-btn');
-    actions.append(share, subscribe);
+    actions.append(...(socialPromotion ? [share] : []), subscribe);
     const resume = button(t(context.retry ? 'sp.retry' : 'sp.continue_btn'), () => {
       if (social && !social.eligible) event('continuation_after_reward');
       continueTask(resume, context);
@@ -64,17 +71,22 @@ export function createQuotaController({ t, locale, request, openUrl, continueTas
     function renderState() {
       if (cards.get(host)?.refresh !== refresh) return;
       const base = state.base_weekly_allowance_usd ?? state.weekly_limit_usd ?? state.daily_limit_usd;
-      balance.textContent = base == null ? '' : t('quota.balance', { base: formatQuotaUsd(base, locale()),
-        credit: formatQuotaUsd(social?.remaining_credit_usd ?? state.promotional_balance_usd, locale()) });
+      const credit = social?.remaining_credit_usd ?? state.promotional_balance_usd;
+      // Credit a device already earned stays visible while the offer is paused.
+      balance.textContent = base == null ? '' : socialPromotion || Number(credit) > 0
+        ? t('quota.balance', { base: formatQuotaUsd(base, locale()), credit: formatQuotaUsd(credit, locale()) })
+        : t('quota.allowance', { base: formatQuotaUsd(base, locale()) });
       const date = new Date(state.next_reset_at || social?.next_reset_at || '');
       reset.textContent = Number.isNaN(date.getTime()) ? '' : t('quota.reset', { time: date.toLocaleString(locale(), { timeZoneName: 'short' }) });
-      share.hidden = social?.eligible === false;
-      share.textContent = t(social?.status === 'pending' ? 'quota.check' : 'quota.get');
-      if (social?.status === 'pending') status.textContent = t('quota.pending');
-      if (social?.status === 'rejected') status.textContent = t('quota.rejected', { reason: social.reason });
-      if (social?.status === 'approved') status.textContent = t('quota.approved');
-      if (social?.status === 'redeemed') status.textContent = t('quota.redeemed');
-      if (host.dataset.claimOpen === 'true') showClaim(false);
+      if (socialPromotion) {
+        share.hidden = social?.eligible === false;
+        share.textContent = t(social?.status === 'pending' ? 'quota.check' : 'quota.get');
+        if (social?.status === 'pending') status.textContent = t('quota.pending');
+        if (social?.status === 'rejected') status.textContent = t('quota.rejected', { reason: social.reason });
+        if (social?.status === 'approved') status.textContent = t('quota.approved');
+        if (social?.status === 'redeemed') status.textContent = t('quota.redeemed');
+        if (host.dataset.claimOpen === 'true') showClaim(false);
+      }
       host.dataset.quota = JSON.stringify({ ...quota, usage: { ...state, social_claim: social } });
       persist();
     }
