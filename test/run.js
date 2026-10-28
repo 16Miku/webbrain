@@ -76473,7 +76473,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 82);
+  assert.equal(expectedIds.length, 83);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -76488,8 +76488,8 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   ]) {
     const defaults = new PM()._defaultConfigs();
     // Includes the sidepanel-only WebBrain Compass XL runtime profile, which is
-    // deliberately omitted from the 116/115 Settings provider cards.
-    const expectedDefaultCount = label === 'chrome' ? 117 : 116;
+    // deliberately omitted from the 117/116 Settings provider cards.
+    const expectedDefaultCount = label === 'chrome' ? 118 : 117;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -76664,6 +76664,30 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.opper.suggestions,
     ['gpt-5.4-mini', 'claude-sonnet-4-6', 'gemini-3.8-flash', 'deepseek-v4-flash'],
+  );
+  assert.deepEqual(
+    {
+      baseUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['api-route'].baseUrl,
+      model: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['api-route'].model,
+      contextWindow: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['api-route'].contextWindow,
+      supportsVision: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['api-route'].supportsVision,
+      supportsTools: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['api-route'].supportsTools,
+      supportsAskStreaming: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['api-route'].supportsAskStreaming,
+      apiKeyUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS['api-route'].apiKeyUrl,
+    },
+    {
+      baseUrl: 'https://global.api-route.com/v1',
+      model: 'gpt-6.1-sol',
+      contextWindow: 32768,
+      supportsVision: true,
+      supportsTools: true,
+      supportsAskStreaming: true,
+      apiKeyUrl: 'https://api-route.com',
+    },
+  );
+  assert.deepEqual(
+    ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['api-route'].suggestions,
+    ['gpt-6.1-sol'],
   );
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['kimi-for-coding'].suggestions,

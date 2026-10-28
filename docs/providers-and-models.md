@@ -506,11 +506,11 @@ times the standard rate.
 
 ### Extended provider catalog
 
-WebBrain also ships 82 disabled-by-default provider cards. Most are sourced
+WebBrain also ships 83 disabled-by-default provider cards. Most are sourced
 from the OpenCode provider catalog snapshot at commit
 `62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
 their official API documentation. Together with the original cards, the
-Providers page lists **116 built-in providers on Chromium** and **115 on Firefox**; the
+Providers page lists **117 built-in providers on Chromium** and **116 on Firefox**; the
 difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs                                                                                                                                                                                                                                                                                                                        |
@@ -598,6 +598,18 @@ In WebBrain, open **Providers -> LLM -> Opper**. Create an API key at
 the default `gpt-5.4-mini` model (400000 tokens), then click **Test
 Connection**. Interactive Ask streaming, tool calls, and vision work through
 the existing OpenAI-compatible path.
+
+#### API Route
+
+[API Route](https://api-route.com) is an OpenAI-compatible provider at
+`https://global.api-route.com/v1`. Open **Providers -> LLM -> API Route**, enter
+your own API key, keep the default model `gpt-6.1-sol`, and click **Test
+Connection**. API Route bills usage separately. The card starts disabled.
+
+Interactive Ask streaming, tool calls, and vision work through the existing
+OpenAI-compatible path. The 32768-token context setting is a conservative
+application budget, not an advertised model context limit; adjust it to a limit
+verified for your selected model and account.
 
 ### Ask response streaming
 
@@ -1210,9 +1222,3 @@ myprovider: {
 ```
 
 Vision is auto-detected via model-name regex. If the provider has a known set of vision models, extend `_modelNameSniffedVision()` in `openai.js`, or add a vendor subclass the way `providers/deepseek.js` does. Set `supportsStreamUsageOptions: true` only for providers that accept OpenAI-style `stream_options.include_usage`; leave it false when a provider returns usage without accepting that request field.
-
-## API Route
-
-[API Route](https://api-route.com) is an OpenAI-compatible provider. Open **Providers -> LLM -> API Route**, enter your own API key, keep the default model gpt-6.1-sol, and click **Test Connection**. Requests use https://global.api-route.com/v1; API Route bills usage separately. The card starts disabled.
-
-Text chat, Ask streaming and tool calls use the existing compatible adapter. Vision is disabled by default. The 32768-token context setting is a conservative WebBrain budget, not a claim about the model or upstream context limit; adjust it only to a limit verified for your selected model and account. No price metadata is assumed.

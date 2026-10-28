@@ -18,7 +18,7 @@ for (const browser of ['chrome', 'firefox']) {
   assert.equal(apiRoute.contextWindow, 32768);
   assert.equal(apiRoute.enabled, false);
   assert.equal(apiRoute.apiKey, '');
-  assert.equal(apiRoute.supportsVision, false);
+  assert.equal(apiRoute.supportsVision, true);
   assert.equal(apiRoute.supportsTools, true);
   assert.equal(apiRoute.supportsAskStreaming, true);
   assert.deepEqual(ADDITIONAL_PROVIDER_UI['api-route'].suggestions, ['gpt-6.1-sol']);
