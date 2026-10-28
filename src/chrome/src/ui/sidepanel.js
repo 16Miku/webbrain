@@ -14,7 +14,7 @@ import { mountActivityBrain } from './activity-brain.js';
 import { createComposerModePins } from './composer-mode-pin.js';
 import { reportSidePanelPresence } from '../sidepanel-presence.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
-import { CAPABILITY_LABEL, uploadApprovalCard } from '../agent/permission-gate.js';
+import { CAPABILITY_LABEL, PERMISSION_GATE_SESSION_OFF_KEY, uploadApprovalCard } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks, linkifyPlainUrls } from './markdown-link.js';
 import { installChatLinkIcons } from './chat-link-icons.js';
 import { codeFenceLanguage, createMarkdownPlaceholders, highlightCode, renderMarkdownBlockquotes, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
@@ -82,7 +82,7 @@ import {
   buildFeedbackUrl,
   normalizeState as normalizeStoreReviewState,
 } from './store-review-prompt.js';
-import { modelIconUrl, providerIconUrl } from './provider-icons.js';
+import { providerIconUrl } from './provider-icons.js';
 import { getFeedbackCopy } from './feedback-copy.js';
 import { requestFeedbackConsent, submitFeedbackWithTrace } from './feedback-consent.js';
 import { parseWatchSlashCommand, WATCH_COMMAND_USAGE } from './watch-command.js';
@@ -1687,6 +1687,10 @@ const ACT_WARNING_DISMISSED_KEY = 'actWarningDismissed';
 const PERMISSION_EDUCATION_KEY = 'permissionPromptEducation';
 const PERMISSION_EDUCATION_THRESHOLD = 2;
 let askBeforeConsequential = true; // gate ON by default
+// Prompts are off when either switch is: the stored setting, or the
+// browser-session one the permission card's skip dialog can set.
+let permissionGateStoredOff = false;
+let permissionGateSessionOff = false;
 let actWarningDismissed = false;
 let actWarningPreferenceLoaded = false;
 let permissionEducationState = { promptCount: 0, hintShown: false };
@@ -1798,13 +1802,138 @@ async function maybeShowPermissionEducationHint(card) {
   scrollToBottom();
 }
 
-chrome.storage.local.get([PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY]).then((stored) => {
-  if (stored && stored[PERMISSION_GATE_KEY] === false) askBeforeConsequential = false;
-  actWarningDismissed = stored?.[ACT_WARNING_DISMISSED_KEY] === true;
-  actWarningPreferenceLoaded = true;
+function syncAskBeforeConsequential() {
+  askBeforeConsequential = !(permissionGateStoredOff || permissionGateSessionOff);
   updateActWarning();
   updateInputPlaceholder();
   renderPermissionGateControl();
+}
+
+// storage.session ends with the browser, so a "this session only" skip
+// cannot outlive it. A missing storage.session rejects instead of throwing.
+function writePermissionGateSessionOff(off) {
+  return Promise.resolve().then(() => (off
+    ? chrome.storage.session.set({ [PERMISSION_GATE_SESSION_OFF_KEY]: true })
+    : chrome.storage.session.remove(PERMISSION_GATE_SESSION_OFF_KEY)));
+}
+
+// --- "Dangerously skip permissions" dialog (opened from a permission card) ---
+// Turns the permission gate off for this browser session or for good (the
+// stored setting /dangerously-skip-permissions also writes), then allows the
+// card that opened it and the tab's other waiting permission cards. Closing
+// the dialog leaves the card waiting for an answer.
+const permissionSkipDialogEl = document.getElementById('permission-skip-dialog');
+const permissionSkipDialogCloseBtn = document.getElementById('permission-skip-dialog-close');
+let permissionSkipDialogState = null;
+
+function bindPermissionSkipButton(btn, card, tabId, clarifyId) {
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = 'true';
+  btn.addEventListener('click', () => openPermissionSkipDialog(card, tabId, clarifyId));
+}
+
+function openPermissionSkipDialog(card, tabId, clarifyId) {
+  if (permissionSkipDialogState || newConversationConfirmationState || !appEl || !permissionSkipDialogEl) return;
+  if (!card?.isConnected || card.classList.contains('clarify-answered')) return;
+  permissionSkipDialogState = {
+    card,
+    tabId,
+    clarifyId,
+    appWasInert: appEl.inert,
+    previouslyFocusedElement: document.activeElement,
+  };
+  applyDOMTranslations(permissionSkipDialogEl);
+  appEl.inert = true;
+  permissionSkipDialogEl.classList.remove('hidden');
+  permissionSkipDialogCloseBtn?.focus({ preventScroll: true });
+}
+
+function closePermissionSkipDialog({ restoreFocus = true } = {}) {
+  const state = permissionSkipDialogState;
+  if (!state) return null;
+  permissionSkipDialogState = null;
+  permissionSkipDialogEl?.classList.add('hidden');
+  if (appEl) appEl.inert = state.appWasInert;
+  if (restoreFocus && state.previouslyFocusedElement?.isConnected
+      && typeof state.previouslyFocusedElement.focus === 'function') {
+    state.previouslyFocusedElement.focus({ preventScroll: true });
+  }
+  return state;
+}
+
+async function skipPermissionsFromDialog(scope) {
+  const state = closePermissionSkipDialog({ restoreFocus: false });
+  if (!state) return;
+  try {
+    if (scope === 'session') {
+      await writePermissionGateSessionOff(true);
+      permissionGateSessionOff = true;
+    } else {
+      await chrome.storage.local.set({ [PERMISSION_GATE_KEY]: false });
+      permissionGateStoredOff = true;
+    }
+  } catch (error) {
+    // Nothing was switched off, so the card stays for the user to answer.
+    showComposerToast(t('sp.error_prefix', { msg: error?.message || String(error) }), { duration: 5000 });
+    if (state.card.isConnected) state.card.querySelector('.clarify-skip-permissions')?.focus({ preventScroll: true });
+    return;
+  }
+  syncAskBeforeConsequential();
+  // The card the user clicked is answered as their own choice; the agent
+  // re-reads the gate after it, so the rest of the run is not asked again.
+  submitClarify(state.card, state.tabId, state.clarifyId, 'once', 'option');
+  resolvePendingPermissionPromptsForTab(state.tabId);
+  if (sameTabId(currentTabId, state.tabId)) {
+    addPersistentSlashMessage(systemHtml(t(scope === 'session'
+      ? 'sp.permissions.disabled_session_html'
+      : 'sp.permissions.disabled_html')));
+  }
+  inputEl?.focus({ preventScroll: true });
+}
+
+function handlePermissionSkipDialogKeydown(event) {
+  if (!permissionSkipDialogState) return false;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closePermissionSkipDialog();
+  } else if (event.key === 'Tab') {
+    const focusable = Array.from(permissionSkipDialogEl.querySelectorAll('[data-permission-skip-action]:not([disabled])'));
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const activeElement = document.activeElement;
+    if (!first) {
+      event.preventDefault();
+      permissionSkipDialogEl.focus({ preventScroll: true });
+    } else if (event.shiftKey && (activeElement === first || !permissionSkipDialogEl.contains(activeElement))) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+    } else if (!event.shiftKey && (activeElement === last || !permissionSkipDialogEl.contains(activeElement))) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
+  }
+  event.stopImmediatePropagation();
+  return true;
+}
+
+document.addEventListener('keydown', handlePermissionSkipDialogKeydown, true);
+permissionSkipDialogCloseBtn?.addEventListener('click', () => closePermissionSkipDialog());
+permissionSkipDialogEl?.querySelectorAll('[data-permission-skip-scope]').forEach((btn) => {
+  btn.addEventListener('click', () => { void skipPermissionsFromDialog(btn.dataset.permissionSkipScope); });
+});
+permissionSkipDialogEl?.addEventListener('click', (event) => {
+  if (event.target === permissionSkipDialogEl) closePermissionSkipDialog();
+});
+
+Promise.all([
+  chrome.storage.local.get([PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY]),
+  Promise.resolve().then(() => chrome.storage.session.get(PERMISSION_GATE_SESSION_OFF_KEY)).catch(() => ({})),
+]).then(([stored, session]) => {
+  permissionGateStoredOff = stored?.[PERMISSION_GATE_KEY] === false;
+  permissionGateSessionOff = session?.[PERMISSION_GATE_SESSION_OFF_KEY] === true;
+  actWarningDismissed = stored?.[ACT_WARNING_DISMISSED_KEY] === true;
+  actWarningPreferenceLoaded = true;
+  syncAskBeforeConsequential();
 }).catch(() => {});
 chrome.storage.onChanged.addListener((changes) => {
   if (changes[PERMISSION_EDUCATION_KEY]) {
@@ -1814,10 +1943,12 @@ chrome.storage.onChanged.addListener((changes) => {
     updateInputPlaceholder();
   }
   if (changes[PERMISSION_GATE_KEY]) {
-    askBeforeConsequential = changes[PERMISSION_GATE_KEY].newValue !== false;
-    updateActWarning();
-    updateInputPlaceholder();
-    renderPermissionGateControl();
+    permissionGateStoredOff = changes[PERMISSION_GATE_KEY].newValue === false;
+    syncAskBeforeConsequential();
+  }
+  if (changes[PERMISSION_GATE_SESSION_OFF_KEY]) {
+    permissionGateSessionOff = changes[PERMISSION_GATE_SESSION_OFF_KEY].newValue === true;
+    syncAskBeforeConsequential();
   }
   if (changes[ACT_WARNING_DISMISSED_KEY]) {
     actWarningDismissed = changes[ACT_WARNING_DISMISSED_KEY].newValue === true;
@@ -2045,10 +2176,13 @@ function setPermissionGateFromPanel(askBefore) {
   const write = permissionGateWriteQueue.then(async () => {
     const changed = askBeforeConsequential !== askBefore;
     await chrome.storage.local.set({ [PERMISSION_GATE_KEY]: askBefore });
-    askBeforeConsequential = askBefore;
-    updateActWarning();
-    updateInputPlaceholder();
-    renderPermissionGateControl();
+    permissionGateStoredOff = !askBefore;
+    // Turning prompts back on also ends a "this session only" skip.
+    if (askBefore) {
+      await writePermissionGateSessionOff(false).catch(() => {});
+      permissionGateSessionOff = false;
+    }
+    syncAskBeforeConsequential();
     if (!changed) return;
     if (askBefore) showComposerToast(t('sp.permissions.enabled'));
     else addPersistentSlashMessage(systemHtml(t('sp.permissions.disabled_html')));
@@ -6699,6 +6833,7 @@ function rebindClarifyCards() {
     if (tabId == null || Number.isNaN(tabId)) return;
 
     card.querySelectorAll('.permission-education-action').forEach(bindPermissionEducationAction);
+    card.querySelectorAll('.clarify-skip-permissions').forEach(btn => bindPermissionSkipButton(btn, card, tabId, clarifyId));
 
     card.querySelectorAll('.clarify-option').forEach(btn => {
       if (btn.dataset.bound) return;
@@ -8375,7 +8510,9 @@ function syncProviderPickerIcon() {
   const icon = providerPickerBtn?.querySelector('.provider-picker-icon');
   if (!icon) return;
   const id = providerSelect?.value || '';
-  const src = modelIconUrl(providerPickerModelById.get(id), providerPickerSourceById.get(id) || id);
+  // The provider's logo, as in the menu: a model's brand (Claude on
+  // OpenRouter, Qwen on Ollama) would hide which provider runs it.
+  const src = providerIconUrl(providerPickerSourceById.get(id) || id);
   if (icon.dataset.src === src) return;
   icon.dataset.src = src;
   icon.classList.remove('has-logo');
@@ -8453,7 +8590,7 @@ function appendProviderPickerOption(id, name, meta, iconProviderId = id) {
   btn.dataset.value = id;
   btn.setAttribute('aria-selected', 'false');
 
-  // Menu rows identify the provider; the closed button resolves its model's logo.
+  // Menu rows and the closed button both show the provider's logo.
   const iconSrc = providerIconUrl(iconProviderId);
   if (iconSrc) {
     const img = document.createElement('img');
@@ -9700,9 +9837,8 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
 
   if (command.value === '/dangerously-skip-permissions') {
     await chrome.storage.local.set({ [PERMISSION_GATE_KEY]: false }).catch(() => {});
-    askBeforeConsequential = false;
-    updateActWarning();
-    updateInputPlaceholder();
+    permissionGateStoredOff = true;
+    syncAskBeforeConsequential();
     if (options.permissionSkipContext) {
       resolvePendingPermissionPromptForContext(options.permissionSkipContext);
     } else {
@@ -12197,6 +12333,17 @@ function renderClarifyCard(data) {
       b.dataset.value = value;
       b.addEventListener('click', () => submitClarify(card, tabId, clarifyId, value, 'option'));
       optionsEl.appendChild(b);
+    }
+    // Not a .clarify-option: it opens the skip dialog instead of answering,
+    // and a restored card must not send its label as the answer.
+    if (!upload) {
+      const skip = document.createElement('button');
+      skip.type = 'button';
+      skip.className = 'clarify-skip-permissions';
+      skip.dataset.i18n = 'sp.perm.skip_all';
+      skip.textContent = t('sp.perm.skip_all');
+      bindPermissionSkipButton(skip, card, tabId, clarifyId);
+      optionsEl.appendChild(skip);
     }
     card.appendChild(optionsEl);
     content.appendChild(card);

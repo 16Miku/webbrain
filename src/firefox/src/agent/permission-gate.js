@@ -35,6 +35,12 @@ export const Capability = {
   SCHEDULE: 'schedule',          // schedule_resume / schedule_task persistent future work
 };
 
+// storage.session key set by the permission card's "Dangerously skip
+// permissions" dialog when the user picks "This session only". True turns the
+// gate off just as askBeforeConsequentialActions === false does in
+// storage.local, and the browser clears it when it restarts.
+export const PERMISSION_GATE_SESSION_OFF_KEY = 'skipPermissionPromptsThisSession';
+
 // Human-readable verb for the permission prompt: "WebBrain wants to <label> <host>".
 export const CAPABILITY_LABEL = {
   [Capability.NAVIGATE]: 'navigate to',

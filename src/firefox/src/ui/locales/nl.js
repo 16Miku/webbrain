@@ -748,7 +748,7 @@ export default {
   "st.display.lean_mode.on": "Aan",
   "st.display.lean_mode.off": "Uit",
   "st.display.vision_mode.label": "Visuele modus",
-  "st.display.vision_mode.desc": "In de modus Handelen ziet de agent de pagina als schermafbeeldingen en klikt, typt en scrolt hij op schermcoördinaten in plaats van de toegankelijkheidsboom te lezen. Vereist een model dat afbeeldingen accepteert; andere modellen blijven de toegankelijkheidsboom gebruiken. Na elke actie wordt alleen het gewijzigde deel van het scherm verzonden. Retina-schermen en browserzoom worden automatisch verwerkt.",
+  "st.display.vision_mode.desc": "Alleen zicht (ook wel \"Tesla\"-modus), zoals een Tesla die alleen op camera’s rijdt. Uit lijkt meer op Waymo, dat andere sensoren toevoegt: de agent leest ook de toegankelijkheidsboom. In de modus Handelen ziet de agent de pagina als schermafbeeldingen en klikt, typt en scrolt hij op schermcoördinaten in plaats van de toegankelijkheidsboom te lezen. Vereist een model dat afbeeldingen accepteert; andere modellen blijven de toegankelijkheidsboom gebruiken. Na elke actie wordt alleen het gewijzigde deel van het scherm verzonden. Retina-schermen en browserzoom worden automatisch verwerkt.",
   "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Uit",
   "st.display.vision_quality.label": "Schermafbeeldingsgrootte in visuele modus",

@@ -15,6 +15,10 @@ The backend now uses a stable **`USAGE_PATH.lock`** and atomically replaces the 
 
 Production storage must support POSIX directory `fsync`: verify file and parent-directory syncing on the actual usage-store filesystem. Windows PHP cannot sync directory handles; its local validation covers process interruptions, while the Linux durability test exercises directory-sync failures and idempotent retries. Client telemetry is best-effort and globally capped at 10,000 retained device/day observations; excess events return `recorded: false`. Actual metered consumption and lifetime awards are independent of that telemetry cap.
 
+## Sharing reward paused
+
+The extension hides the sharing reward: `SOCIAL_PROMOTION_ENABLED` in `src/*/src/ui/compass-quota.js` is `false`, because the offer invited abuse. The quota card then shows the weekly allowance (`quota.allowance`), the reset time, Subscribe, Refresh status and Continue/Retry. It never requests `/promotions/social`, shows no claim status, and a restored card that had its claim form open comes back without it. Credit a device already earned still appears as the reward balance, and the backend still spends it. The claim flow below is unchanged and still tested (`test/compass-quota-ui.mjs` mounts it with `socialPromotion: true`); setting the flag back to `true` in both builds restores it.
+
 ## Automatic rewards
 
 A syntactically valid supported public post URL submitted to `/promotions/social/claims` immediately grants the one-time $0.50 reward under the usage-store lock. The response is already `approved`, with `eligible: false` and a $0.50 balance. The quota card offers sharing credit and a Compass subscription; it has no provider-switch choice.

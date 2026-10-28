@@ -1,10 +1,11 @@
-// The provider's online/offline dot is a badge on the composer's model logo,
+// The provider's online/offline dot is a badge on the composer's provider logo,
 // inside the model picker button: it reads as the model's status, and clicking
 // it opens the menu like the rest of the button. Runs the real panel markup and
 // styles in each build's engine, with the real icon helper and bundled assets.
 // The dot's class is set the way testConnection() sets it.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { after, before, describe, test } from 'node:test';
 import { chromium, firefox } from 'playwright';
 
@@ -50,7 +51,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         await page.goto('https://owned-panel.invalid/panel');
         await page.addStyleTag({ content: css });
         await page.addScriptTag({ type: 'module', content: `
-          import { modelIconUrl } from '/src/ui/provider-icons.js';
+          import { providerIconUrl } from '/src/ui/provider-icons.js';
           const providerPickerBtn = document.getElementById('provider-picker-btn');
           const providerPickerLabel = document.getElementById('provider-picker-label');
           const providerPickerMenu = document.getElementById('provider-picker-menu');
@@ -147,10 +148,10 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       return logo;
     };
 
-    test('the selected model logo changes within one provider and retains the green/red status badge', async () => {
+    test('the logo is the provider\'s, whatever model it runs, and keeps the green/red status badge', async () => {
       await panel(async (page) => {
         await selectModel(page, 'openai/gpt-6-luna');
-        await loadedLogo(page, 'openai.svg');
+        await loadedLogo(page, 'openrouter.svg');
         assert.equal(await page.locator('#provider-picker-btn').getAttribute('aria-label'), 'Model: openrouter · openai/gpt-6-luna');
         const before = await geometry(page);
         assert.ok(before.dot.width >= 6 && before.dot.height >= 6);
@@ -159,17 +160,21 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         await page.waitForFunction(green => getComputedStyle(document.getElementById('status-dot')).backgroundColor === green, green);
 
         await selectModel(page, 'anthropic/claude-sonnet-4');
+        await loadedLogo(page, 'openrouter.svg');
+        assert.equal(await page.locator('#provider-picker-btn').getAttribute('aria-label'), 'Model: openrouter · anthropic/claude-sonnet-4',
+          'the model is still named in the tooltip');
+        await selectModel(page, 'claude-sonnet-4', 'anthropic');
         await loadedLogo(page, 'anthropic.svg');
         await page.locator('#status-dot').evaluate(el => { el.className = 'status-dot offline'; });
         const red = await resolved(page, '--error');
         await page.waitForFunction(red => getComputedStyle(document.getElementById('status-dot')).backgroundColor === red, red);
         const after = await geometry(page);
-        assert.deepEqual(after.icon, before.icon, 'changing model logos does not shift the badge');
+        assert.deepEqual(after.icon, before.icon, 'changing provider logos does not shift the badge');
         assert.deepEqual(after.dot, before.dot);
         assert.equal(after.hitsButton, true);
 
         await fs.mkdir(new URL('../.build/model-picker-logo/', import.meta.url), { recursive: true });
-        await page.locator('.composer-toolbar').screenshot({ path: new URL(`../.build/model-picker-logo/${build}.png`, import.meta.url).pathname });
+        await page.locator('.composer-toolbar').screenshot({ path: fileURLToPath(new URL(`../.build/model-picker-logo/${build}.png`, import.meta.url)) });
       });
     });
 
@@ -178,7 +183,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         let resumeLogo;
         let requestStarted;
         const started = new Promise(resolve => { requestStarted = resolve; });
-        await page.route('**/icons/providers/openai.svg', async route => {
+        await page.route('**/icons/providers/openrouter.svg', async route => {
           await new Promise(resolve => { resumeLogo = resolve; requestStarted(); });
           await route.fallback();
         });
@@ -194,17 +199,17 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         } finally {
           resumeLogo();
         }
-        await loadedLogo(page, 'openai.svg');
+        await loadedLogo(page, 'openrouter.svg');
         const after = await geometry(page);
         assert.deepEqual(after.icon, before.icon);
         assert.deepEqual(after.dot, before.dot);
       });
     });
 
-    test('unknown models and providers show the engine fallback after switching from a loaded logo', async () => {
+    test('a duplicated provider keeps its source\'s logo; an unknown provider shows the engine fallback', async () => {
       await panel(async (page) => {
         await selectModel(page, 'qwen3.5-9b', 'local-instance', 'ollama');
-        await loadedLogo(page, 'alibaba.svg');
+        await loadedLogo(page, 'ollama.svg');
         await selectModel(page, 'unknown-family', 'unknown-provider');
         assert.equal(await page.locator('.provider-picker-fallback').isVisible(), true);
         assert.equal(await page.locator('.provider-picker-logo').count(), 0);
@@ -215,8 +220,8 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     test('a missing logo asset restores the engine fallback with the status badge visible', async () => {
       await panel(async (page) => {
         await selectModel(page, 'openai/gpt-6-luna');
-        await loadedLogo(page, 'openai.svg');
-        await selectModel(page, 'anthropic/claude-sonnet-4');
+        await loadedLogo(page, 'openrouter.svg');
+        await selectModel(page, 'claude-sonnet-4', 'anthropic');
         await page.waitForFunction(() => !document.querySelector('.provider-picker-logo'));
         assert.equal(await page.locator('.provider-picker-fallback').isVisible(), true);
         const g = await geometry(page);

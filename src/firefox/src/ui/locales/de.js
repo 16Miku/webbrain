@@ -768,7 +768,7 @@ export default {
   "st.display.lean_mode.on": "An",
   "st.display.lean_mode.off": "Aus",
   "st.display.vision_mode.label": "Visueller Modus",
-  "st.display.vision_mode.desc": "Im Modus „Handeln“ sieht der Agent die Seite als Screenshots und klickt, tippt und scrollt an Bildschirmkoordinaten, statt den Barrierefreiheitsbaum zu lesen. Erfordert ein Modell, das Bilder annimmt; andere Modelle nutzen weiter den Barrierefreiheitsbaum. Nach jeder Aktion wird nur der geänderte Teil des Bildschirms gesendet. Retina-Displays und Browser-Zoom werden automatisch berücksichtigt.",
+  "st.display.vision_mode.desc": "Nur Sehen (alias „Tesla“-Modus), wie ein Tesla, der allein mit Kameras fährt. Aus ähnelt eher Waymo, das weitere Sensoren nutzt: Der Agent liest zusätzlich den Barrierefreiheitsbaum. Im Modus „Handeln“ sieht der Agent die Seite als Screenshots und klickt, tippt und scrollt an Bildschirmkoordinaten, statt den Barrierefreiheitsbaum zu lesen. Erfordert ein Modell, das Bilder annimmt; andere Modelle nutzen weiter den Barrierefreiheitsbaum. Nach jeder Aktion wird nur der geänderte Teil des Bildschirms gesendet. Retina-Displays und Browser-Zoom werden automatisch berücksichtigt.",
   "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Aus",
   "st.display.vision_quality.label": "Screenshot-Größe im visuellen Modus",

@@ -58,38 +58,6 @@ export function providerIconUrl(id) {
   return `../../icons/providers/${file}`;
 }
 
-// Match model families as tokens, including namespaced IDs and quantized
-// filenames. More specific families precede base families in distill names.
-const MODEL_ICON_FAMILIES = [
-  [/(?:^|[^a-z0-9])claude(?=$|[^a-z])/, 'anthropic'],
-  [/(?:^|[^a-z0-9])(?:(?:chat)?gpt|o\d+)(?=$|[^a-z])/, 'openai'],
-  [/^openai$/, 'openai'],
-  [/(?:^|[^a-z0-9])deepseek(?=$|[^a-z])/, 'deepseek'],
-  [/(?:^|[^a-z0-9])nemotron(?=$|[^a-z])/, 'nvidia'],
-  [/(?:^|[^a-z0-9])qwen(?=$|[^a-z])/, 'alibaba'],
-  [/(?:^|[^a-z0-9])(?:gemini|gemma)(?=$|[^a-z])/, 'gemini'],
-  [/(?:^|[^a-z0-9])(?:mistral|mixtral|ministral|magistral|codestral|devstral|pixtral)(?=$|[^a-z])/, 'mistral'],
-  [/(?:^|[^a-z0-9])(?:chatglm|glm)(?=$|[^a-z])/, 'z_ai'],
-  [/(?:^|[^a-z0-9])kimi(?=$|[^a-z])/, 'kimi'],
-  [/(?:^|[^a-z0-9])minimax(?=$|[^a-z])/, 'minimax'],
-  [/(?:^|[^a-z0-9])grok(?=$|[^a-z])/, 'xai'],
-  [/(?:^|[^a-z0-9])llama(?=$|[^a-z])/, 'llama'],
-  [/(?:^|[^a-z0-9])command(?=$|[^a-z])/, 'cohere'],
-  [/(?:^|[^a-z0-9])sonar(?=$|[^a-z])/, 'perplexity'],
-  [/(?:^|[^a-z0-9])step(?=$|[^a-z])/, 'stepfun'],
-  [/(?:^|[^a-z0-9])solar(?=$|[^a-z])/, 'upstage'],
-  [/(?:^|[^a-z0-9])mimo(?=$|[^a-z])/, 'xiaomi'],
-  [/(?:^|[^a-z0-9])ling(?=$|[^a-z])/, 'bailing'],
-];
-
-/** Prefer the selected model's brand, then its provider; unknowns stay empty. */
-export function modelIconUrl(model, providerId) {
-  const name = typeof model === 'string' ? model.trim().toLowerCase() : '';
-  const family = MODEL_ICON_FAMILIES.find(([pattern]) => pattern.test(name));
-  const id = family?.[1] || (providerId === 'webbrain_cloud_max' ? 'webbrain_cloud' : providerId);
-  return Object.hasOwn(PROVIDER_ICON_FILES, id) ? providerIconUrl(id) : '';
-}
-
 /**
  * @param {string} id
  * @param {string} [label] unused when decorative (default); kept for call-site compat

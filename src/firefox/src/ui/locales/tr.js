@@ -945,7 +945,7 @@ export default {
   "st.display.lean_mode.on": "Açık",
   "st.display.lean_mode.off": "Kapalı",
   "st.display.vision_mode.label": "Görsel mod",
-  "st.display.vision_mode.desc": "“Uygula” modunda ajan, erişilebilirlik ağacını okumak yerine sayfayı ekran görüntüleri olarak görür; ekran koordinatlarına tıklar, yazar ve kaydırır. Görüntü kabul eden bir model gerekir; diğer modeller erişilebilirlik ağacıyla devam eder. Her işlemden sonra ekranın yalnızca değişen kısmı gönderilir. Retina ekranlar ve tarayıcı yakınlaştırması otomatik olarak hesaba katılır.",
+  "st.display.vision_mode.desc": "Yalnızca görüntü (namıdiğer \"Tesla\" modu), tıpkı yalnızca kameralarla giden bir Tesla gibi. Kapalıyken daha çok Waymo’ya benzer; başka sensörler de ekler: ajan erişilebilirlik ağacını da okur. “Uygula” modunda ajan, erişilebilirlik ağacını okumak yerine sayfayı ekran görüntüleri olarak görür; ekran koordinatlarına tıklar, yazar ve kaydırır. Görüntü kabul eden bir model gerekir; diğer modeller erişilebilirlik ağacıyla devam eder. Her işlemden sonra ekranın yalnızca değişen kısmı gönderilir. Retina ekranlar ve tarayıcı yakınlaştırması otomatik olarak hesaba katılır.",
   "st.display.vision_mode.auto": "Otomatik",
   "st.display.vision_mode.off": "Kapalı",
   "st.display.vision_quality.label": "Görsel ekran görüntüsü boyutu",
