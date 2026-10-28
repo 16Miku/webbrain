@@ -2299,10 +2299,21 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       assert.equal(await page.evaluate(() => document.querySelectorAll('#webbrain-agent-effect').length), 1, 'the previous effect is removed after a switch');
       assert.equal((await page.evaluate(() => feedback)).length, 0, JSON.stringify(await page.evaluate(() => feedback)));
       // Screenshot capture hides every part, and nothing intercepts real input.
-      await page.evaluate(() => messageListeners.forEach(listener => listener({ type: 'WB_HIDE_FOR_TOOL_USE' }, {}, () => {})));
-      assert.deepEqual(await page.evaluate(() => ['webbrain-agent-effect', 'webbrain-agent-target-cursor', 'webbrain-agent-stop-container']
-        .map(id => getComputedStyle(document.getElementById(id)).display)), ['none', 'none', 'none']);
+      // The captures of one screen update each ask: a repeat changes nothing,
+      // and the one show after the last capture brings every part back.
+      const parts = () => page.evaluate(() => ['webbrain-agent-effect', 'webbrain-agent-target-cursor', 'webbrain-agent-stop-container']
+        .map(id => getComputedStyle(document.getElementById(id)).display));
+      const shown = await parts();
+      const hideReplies = await page.evaluate(() => [1, 2].map(() => {
+        const replies = [];
+        messageListeners.forEach(listener => listener({ type: 'WB_HIDE_FOR_TOOL_USE' }, {}, reply => replies.push(reply)));
+        return replies.find(reply => reply && 'changed' in reply) || null;
+      }));
+      assert.deepEqual(hideReplies, [{ ok: true, changed: true }, { ok: true, changed: false }]);
+      assert.deepEqual(await parts(), ['none', 'none', 'none']);
       await page.evaluate(() => messageListeners.forEach(listener => listener({ type: 'WB_SHOW_AFTER_TOOL_USE' }, {}, () => {})));
+      assert.deepEqual(await parts(), shown);
+      assert.ok(shown.every(display => display !== 'none'), shown.join());
       await page.locator('#human').click();
       assert.ok((await page.evaluate(() => feedback)).some(event => event.kind === 'click' && event.source === 'user'));
       // Reduced motion: the canvas keeps one still frame, and the glow and the ring stop pulsing.

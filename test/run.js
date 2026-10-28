@@ -21859,9 +21859,132 @@ test('chrome screenshot tool saves pre-budget data URL when save:true', () => {
   );
   assert.match(
     body,
-    /wantSave[\s\S]*captureScreenshot[\s\S]*scale: 1[\s\S]*_shrinkImageForBudget/,
-    'save:true non-coord path should full-capture then shrink for the model',
+    /wantSave[\s\S]*_captureViewportImage\(tabId, probe, cssW, cssH, \{ format: 'png' \}\)[\s\S]*_shrinkImageForBudget/,
+    'save:true non-coord path should capture native device pixels, then shrink for the model',
   );
+});
+
+test('chrome tree-mode viewport captures read the tab surface without a clip and scale it locally', async () => {
+  // A CDP clip makes Chromium resize the tab's view to clip x scale while it
+  // captures, which a visible tab shows as a shrunken page: at scale 1/DPR on
+  // a retina screen, and in every budget-scaled capture. Only a pinch-zoomed
+  // page, or a capture whose local crop fails, still uses one.
+  const originalAttach = cdpClientCh.attach;
+  const originalSendCommand = cdpClientCh.sendCommand;
+  const shots = [];
+  const crops = [];
+  let viewport = { innerWidth: 1263, innerHeight: 760, scrollX: 0, scrollY: 600, dpr: 2 };
+  let visual = { zoom: 1, scale: 1 };
+  let failCrop = false;
+  try {
+    cdpClientCh.attach = async () => ({ attached: true });
+    cdpClientCh.sendCommand = async (_tabId, method, params) => {
+      if (method === 'Page.captureScreenshot') {
+        shots.push(params);
+        return { data: 'c3VyZmFjZQ==' };
+      }
+      if (method === 'Runtime.evaluate') return { result: { value: { readyState: 'complete', ...viewport } } };
+      if (method === 'Page.getLayoutMetrics') return { cssVisualViewport: visual };
+      return {};
+    };
+    const agent = new AgentCh({
+      getActive: () => ({ name: 'vision-test', supportsVision: true }),
+      getVisionProvider: async () => null,
+    });
+    agent._withIndicatorsHidden = async (_tabId, capture) => capture();
+    agent._cropAndScaleImage = async (dataUrl, rect, width, height, options) => {
+      crops.push({ dataUrl, rect, width, height, options });
+      if (failCrop) throw new Error('no canvas');
+      return `data:${options.mimeType};base64,Y3JvcA==`;
+    };
+    const surfaceJpeg = { format: 'jpeg', quality: 90, fromSurface: true };
+    const next = () => { shots.length = 0; crops.length = 0; };
+
+    // Coordinate-aligned: the CSS-sized JPEG at q60, cut from the DPR 2 surface.
+    const aligned = await agent._captureAutoScreenshot(51, { coordAligned: true });
+    assert.deepEqual(shots, [surfaceJpeg]);
+    assert.deepEqual(crops, [{
+      dataUrl: 'data:image/jpeg;base64,c3VyZmFjZQ==',
+      rect: { x: 0, y: 0, width: 2526, height: 1520 },
+      width: 1263,
+      height: 760,
+      options: { mimeType: 'image/jpeg', quality: 0.6 },
+    }]);
+    assert.deepEqual(aligned, { dataUrl: 'data:image/jpeg;base64,Y3JvcA==', width: 1263, height: 760, coordAligned: true });
+
+    // Budget: the planned size and JPEG quality, from the same surface.
+    viewport = { ...viewport, innerWidth: 1728, innerHeight: 1080 };
+    const [targetW, targetH] = AgentCh._fitImageDimensions(1728, 1080, agent._budgetForCapture());
+    assert.ok(targetW < 1728, `the budget scales this viewport down (${targetW}x${targetH})`);
+    next();
+    const budgeted = await agent._captureAutoScreenshot(51);
+    assert.deepEqual(shots, [surfaceJpeg]);
+    assert.deepEqual(crops.map(({ rect, width, height, options }) => ({ rect, width, height, options })), [{
+      rect: { x: 0, y: 0, width: 3456, height: 2160 },
+      width: targetW,
+      height: targetH,
+      options: { mimeType: 'image/jpeg', quality: 0.75 },
+    }]);
+    assert.deepEqual(budgeted, { dataUrl: 'data:image/jpeg;base64,Y3JvcA==', width: targetW, height: targetH, coordAligned: false });
+
+    // The screenshot tool: lossless at CSS size for coord_aligned, the budget otherwise.
+    viewport = { ...viewport, innerWidth: 1263, innerHeight: 760 };
+    next();
+    const tool = await agent.executeTool(51, 'screenshot', { coord_aligned: true });
+    assert.equal(tool.success, true, JSON.stringify(tool));
+    assert.deepEqual(shots, [{ format: 'png', fromSurface: true }]);
+    assert.deepEqual(crops.map(({ rect, width, height, options }) => ({ rect, width, height, options })), [{
+      rect: { x: 0, y: 0, width: 2526, height: 1520 }, width: 1263, height: 760, options: { mimeType: 'image/png' },
+    }]);
+    next();
+    assert.equal((await agent.executeTool(51, 'screenshot', {})).success, true);
+    assert.deepEqual(shots, [surfaceJpeg]);
+    assert.deepEqual(crops.map(({ width, height, options }) => ({ width, height, options })), [{
+      width: 1263, height: 760, options: { mimeType: 'image/jpeg', quality: 0.75 },
+    }]);
+
+    // Visible-media localization keeps a CSS-sized PNG.
+    next();
+    const media = await agent._captureVisibleMediaScreenshot(51);
+    assert.deepEqual(shots, [{ format: 'png', fromSurface: true }]);
+    assert.equal(media.cropDataUrl, 'data:image/png;base64,Y3JvcA==');
+    assert.deepEqual([media.width, media.height], [1263, 760]);
+
+    // Native device pixels (screenshot save:true) are the surface itself.
+    const probe = await agent._captureViewportProbe(51);
+    next();
+    assert.deepEqual(await agent._captureViewportImage(51, probe, 1263, 760, { format: 'png' }), { data: 'c3VyZmFjZQ==' });
+    assert.deepEqual(shots, [{ format: 'png', fromSurface: true }]);
+    assert.equal(crops.length, 0);
+
+    // A crop that fails falls back to the clipped capture.
+    failCrop = true;
+    next();
+    const fallback = await agent._captureAutoScreenshot(51, { coordAligned: true });
+    assert.deepEqual(shots, [surfaceJpeg, {
+      format: 'jpeg', quality: 60, fromSurface: true,
+      clip: { x: 0, y: 600, width: 1263, height: 760, scale: 0.5 },
+    }]);
+    assert.equal(fallback.dataUrl, 'data:image/jpeg;base64,c3VyZmFjZQ==');
+    failCrop = false;
+
+    // A pinch-zoomed page: its surface shows the magnified visual viewport,
+    // so the layout viewport is still captured with a clip.
+    visual = { zoom: 1, scale: 2 };
+    next();
+    await agent._captureAutoScreenshot(51, { coordAligned: true });
+    const pinched = await agent._captureViewportProbe(51);
+    assert.equal(pinched.pageScale, 2);
+    await agent._captureViewportImage(51, pinched, 1263, 760, { format: 'png' });
+    assert.deepEqual(shots, [
+      { format: 'jpeg', quality: 60, fromSurface: true, clip: { x: 0, y: 600, width: 1263, height: 760, scale: 0.5 } },
+      { format: 'png', fromSurface: true, clip: { x: 0, y: 600, width: 1263, height: 760, scale: 1 } },
+    ]);
+    assert.equal(crops.length, 0);
+  } finally {
+    cdpClientCh.attach = originalAttach;
+    cdpClientCh.sendCommand = originalSendCommand;
+  }
 });
 
 test('existing dims under caps stay within the monotonic bound', () => {

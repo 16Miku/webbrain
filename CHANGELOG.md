@@ -13,6 +13,11 @@ This changelog was generated from the repository Git history and release tags. V
 - Settings → Advanced → **Vision mode** now carries a monochrome Tesla mark and is explained as "Tesla" mode: on, Act runs work from screenshots alone, like a Tesla driving on cameras; Off works more like Waymo and reads the page's accessibility tree too. The setting, its values and saved configurations are unchanged. Chrome and Firefox.
 - The agent cursor no longer disappears three seconds after an action. It now keeps one, smaller size: it glides from target to target, presses once with a ripple when WebBrain clicks, and between actions stays where it last acted, slowly fading in and out until the task ends. The ring around the target still fades after a moment. Chrome and Firefox.
 
+### Fixed
+- Vision mode no longer makes the page flicker in Chrome. Each screenshot made Chrome redraw the tab shrunk into its top-left corner for a moment, several times after every action; WebBrain now captures the tab as it is on screen and crops and scales the image itself. Only a `zoom` that needs more detail than the screen has, as most do on a display at 100% scaling, still re-renders the page for its capture. Right-to-left pages wider than the window are now captured as they appear rather than as a blank frame.
+- While the screen settles after an action, WebBrain's border, cursor and Stop button now disappear once and come back after the last screenshot, instead of blinking around each one, and the Stop button keeps its layout afterwards. Chrome and Firefox.
+- Screenshots outside vision mode no longer make the page flicker in Chrome either. Automatic screenshots (after each navigation by default), the **screenshot** and **inspect_viewport** tools and the screenshot crop of **download_social_media** redrew the tab shrunk into its top-left corner for a moment: on retina displays, and on any display when the image budget scales the screenshot down. They now capture the tab as it is on screen and crop and scale the image in WebBrain; image sizes, coordinates and redaction are unchanged. A right-to-left page wider than the window, which came out blank, is now captured as shown.
+
 ## [44.0.0] - 2026-10-27
 
 ### Added

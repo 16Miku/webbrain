@@ -21,7 +21,7 @@ import {
   VISION_PROFILES, planVisionImageSize, planZoomImageSize, estimateVisionTokens, visionEncodingFor,
   normalizeVisionQuality,
 } from './vision-budget.js';
-import { rasterizeFrame, encodeCanvasRegion, supportsWebpEncoding } from './vision-encoder.js';
+import { rasterizeFrame, encodeCanvasRegion, cropImage, supportsWebpEncoding } from './vision-encoder.js';
 import {
   VISION_NATIVE_TOOLS, VISION_TRANSLATED_TOOLS, VISION_NO_OBSERVE_TOOLS, VISION_TOOL_NAMES,
   VISION_SCROLL_STEP_CSS_PX, VISION_DEFAULT_SCROLL_STEPS, VISION_MAX_WAIT_SECONDS,
@@ -647,6 +647,11 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
     return encodeCanvasRegion(canvas, region, options);
   };
 
+  /** Chrome's capture cuts the viewport out of the tab surface here (agent _visionPlatformCapture). */
+  proto._visionCropImage = function _visionCropImage(dataUrl, rect, width, height) {
+    return cropImage(dataUrl, rect, width, height);
+  };
+
   /**
    * Runs one platform read (`what` names it in the error) against the run's
    * Stop and VISION_CAPTURE_DEADLINE_MS (`_visionCaptureDeadlineMs` overrides
@@ -737,21 +742,27 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
   /**
    * Capture until two consecutive frames match (bounded). Micro changes (a
    * caret, a clock, a spinner) count as a match: they never stop, and waiting
-   * for them only cost the full settle time on every step.
+   * for them only cost the full settle time on every step. WebBrain's own
+   * page UI (border, cursor, Stop button) is hidden once for all of the
+   * captures, not around each (agent _withIndicatorsHidden), so it does not
+   * blink on every step.
    */
   proto._visionCaptureSettled = async function _visionCaptureSettled(tabId, state) {
     await sleep(SETTLE_INITIAL_DELAY_MS);
-    let frame = await this._visionCaptureFrame(tabId, state);
-    for (let attempt = 0; attempt < SETTLE_MAX_EXTRA_CAPTURES; attempt++) {
-      await sleep(SETTLE_POLL_MS);
-      let next;
-      try { next = await this._visionCaptureFrame(tabId, state); } catch { break; }
-      const sameShape = next.size.width === frame.size.width && next.size.height === frame.size.height;
-      const moving = !sameShape || !isMicroScreenChange(diffFrames(frame.raster.pixels, next.raster.pixels, next.size.width, next.size.height));
-      frame = next;
-      if (!moving) break;
-    }
-    return frame;
+    this._throwIfAborted?.(this._runAbortSignal?.(tabId));
+    return this._withIndicatorsHidden(tabId, async () => {
+      let frame = await this._visionCaptureFrame(tabId, state);
+      for (let attempt = 0; attempt < SETTLE_MAX_EXTRA_CAPTURES; attempt++) {
+        await sleep(SETTLE_POLL_MS);
+        let next;
+        try { next = await this._visionCaptureFrame(tabId, state); } catch { break; }
+        const sameShape = next.size.width === frame.size.width && next.size.height === frame.size.height;
+        const moving = !sameShape || !isMicroScreenChange(diffFrames(frame.raster.pixels, next.raster.pixels, next.size.width, next.size.height));
+        frame = next;
+        if (!moving) break;
+      }
+      return frame;
+    });
   };
 
   /**
