@@ -48,6 +48,7 @@ export const PROVIDER_ICON_FILES = {
   fireworks: 'fireworks.svg',
   z_ai: 'z_ai.svg',
   ...Object.fromEntries(ADDITIONAL_PROVIDER_IDS.map((id) => [id, `${id}.svg`])),
+  'api-route': 'api-route.png',
 };
 
 export function providerIconUrl(id) {

@@ -76458,7 +76458,7 @@ test('_defaultConfigs: every entry carries an explicit category', () => {
 
 test('extended provider catalog is complete, mirrored, safe, and excluded-provider clean', async () => {
   const expectedIds = `
-    302ai abacus aihubmix alibaba-coding-plan alibaba-coding-plan-cn
+    api-route 302ai abacus aihubmix alibaba-coding-plan alibaba-coding-plan-cn
     azure-cognitive-services bailing baseten berget cerebras cheaperinference chutes clarifai
     cloudferro-sherlock cohere cortecs deepinfra digitalocean dinference drun
     evroc fastrouter freebuff2api friendli google-vertex google-vertex-anthropic helicone
@@ -76508,6 +76508,11 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
       );
       assert.ok(config.model || config.requiresModel === true || id === 'azure-cognitive-services', `${label}: ${id} missing model`);
 
+      if (id === 'api-route') {
+        const icon = fs.readFileSync(path.join(ROOT, prefix, 'icons/providers/api-route.png'));
+        assert.deepEqual([...icon.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+        continue;
+      }
       const icon = path.join(ROOT, prefix, 'icons/providers', `${id}.svg`);
       assert.equal(fs.existsSync(icon), true, `${label}: missing icon for ${id}`);
       const svg = fs.readFileSync(icon, 'utf8');

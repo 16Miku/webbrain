@@ -29,3 +29,4 @@ Brand trademarks remain property of their owners; used only for provider identif
 | Where | Source |
 |-------|--------|
 | Settings → Advanced → Vision mode (inline SVG in `src/ui/settings.html`) | [Simple Icons](https://simpleicons.org/) `tesla` path data (CC0). Tesla is a trademark of Tesla, Inc.; the mark only illustrates the "Tesla" mode analogy and implies no affiliation. |
+| api-route.png | API Route official two-color ginkgo logo, supplied by the contributor affiliated with [API Route](https://api-route.com) |

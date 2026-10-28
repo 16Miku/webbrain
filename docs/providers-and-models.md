@@ -515,7 +515,7 @@ difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs                                                                                                                                                                                                                                                                                                                        |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `cheaperinference`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
+| `api-route`, `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `cheaperinference`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
 | `freebuff2api`, `google-vertex`, `google-vertex-anthropic`, `helicone`, `iflowcn`, `inception`, `inference`, `io-net`, `jiekou`, `kilo`, `kimi-for-coding`, `kuae-cloud-coding-plan`, `llama`, `lucidquery`, `meganova`, `minimax-cn-coding-plan`, `minimax-coding-plan`, `moark`, `modelscope`, `morph`                       |
 | `nano-gpt`, `nearai`, `nebius`, `nova`, `novita-ai`, `ollama-cloud`, `opencode`, `opencode-go`, `opper`, `orcarouter`, `ovhcloud`, `perplexity`, `perplexity-agent`, `poe`, `pollinations`, `privatemode-ai`, `qihang-ai`, `qiniu-ai`, `requesty`, `scaleway`, `siliconflow`, `siliconflow-cn`, `stackit`                      |
 | `stepfun`, `submodel`, `synthetic`, `tencent-coding-plan`, `upstage`, `v0`, `venice`, `vercel`, `vivgrid`, `vultr`, `wandb`, `xiaomi`, `zai-coding-plan`, `zenmux`, `zhipuai`, `zhipuai-coding-plan`                                                                                                                       |
@@ -1210,3 +1210,9 @@ myprovider: {
 ```
 
 Vision is auto-detected via model-name regex. If the provider has a known set of vision models, extend `_modelNameSniffedVision()` in `openai.js`, or add a vendor subclass the way `providers/deepseek.js` does. Set `supportsStreamUsageOptions: true` only for providers that accept OpenAI-style `stream_options.include_usage`; leave it false when a provider returns usage without accepting that request field.
+
+## API Route
+
+[API Route](https://api-route.com) is an OpenAI-compatible provider. Open **Providers -> LLM -> API Route**, enter your own API key, keep the default model gpt-6.1-sol, and click **Test Connection**. Requests use https://global.api-route.com/v1; API Route bills usage separately. The card starts disabled.
+
+Text chat, Ask streaming and tool calls use the existing compatible adapter. Vision is disabled by default. The 32768-token context setting is a conservative WebBrain budget, not a claim about the model or upstream context limit; adjust it only to a limit verified for your selected model and account. No price metadata is assumed.

@@ -27,6 +27,7 @@ export const PROVIDER_ICON_FILES = {
   gpt4all: 'gpt4all.svg',
   local_openai_proxy: 'local_openai_proxy.svg',
   unsloth: 'unsloth.svg',
+  webgpu: 'webgpu.svg',
   azure_openai: 'azure_openai.svg',
   aws_bedrock: 'aws_bedrock.svg',
   openai: 'openai.svg',
@@ -47,6 +48,7 @@ export const PROVIDER_ICON_FILES = {
   fireworks: 'fireworks.svg',
   z_ai: 'z_ai.svg',
   ...Object.fromEntries(ADDITIONAL_PROVIDER_IDS.map((id) => [id, `${id}.svg`])),
+  'api-route': 'api-route.png',
 };
 
 export function providerIconUrl(id) {
@@ -97,6 +99,7 @@ export const PROVIDER_SHORT_LABELS = {
   gpt4all: 'GPT4All',
   local_openai_proxy: 'Local Proxy',
   unsloth: 'Unsloth Studio',
+  webgpu: 'WebGPU',
   azure_openai: 'Azure OpenAI',
   aws_bedrock: 'AWS Bedrock',
   openai: 'OpenAI',

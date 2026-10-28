@@ -11,6 +11,20 @@ for (const browser of ['chrome', 'firefox']) {
     pathToFileURL(path.join(prefix, 'providers', 'provider-catalog.js')).href
   );
 
+  const apiRoute = ADDITIONAL_PROVIDER_DEFAULTS['api-route'];
+  assert.equal(apiRoute.type, 'openai');
+  assert.equal(apiRoute.baseUrl, 'https://global.api-route.com/v1');
+  assert.equal(apiRoute.model, 'gpt-6.1-sol');
+  assert.equal(apiRoute.contextWindow, 32768);
+  assert.equal(apiRoute.enabled, false);
+  assert.equal(apiRoute.apiKey, '');
+  assert.equal(apiRoute.supportsVision, false);
+  assert.equal(apiRoute.supportsTools, true);
+  assert.equal(apiRoute.supportsAskStreaming, true);
+  assert.deepEqual(ADDITIONAL_PROVIDER_UI['api-route'].suggestions, ['gpt-6.1-sol']);
+  const { providerIconUrl } = await import(pathToFileURL(path.join(prefix, 'ui', 'provider-icons.js')).href);
+  assert.ok(providerIconUrl('api-route').endsWith('/api-route.png'));
+
   const ioNet = ADDITIONAL_PROVIDER_DEFAULTS['io-net'];
   assert.equal(ioNet.type, 'openai', `${browser}: IO.NET must use the OpenAI-compatible adapter`);
   assert.equal(ioNet.baseUrl, 'https://api.intelligence.io.solutions/api/v1', `${browser}: IO.NET endpoint changed`);
