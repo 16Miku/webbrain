@@ -6,17 +6,35 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+## [45.0.0] - 2026-10-29
+
 ### Added
 - Settings → General → **Agent activity effect** chooses how a tab looks while WebBrain works on it: **Neural circuit**, the new default, where circuit traces grow in from the edges and signals run along them toward each element WebBrain acts on; **Aurora**, a soft purple band that drifts around the frame; **Scan**, corner brackets with a slow scanning beam; **Gears**, meshing cog trains turning in the corners; or **Classic glow**, the pulsing border used until now. Every style lets clicks, typing and scrolling through to the page, is hidden while WebBrain takes a screenshot, and holds still when your system asks to reduce motion. A new choice applies to a running task at once and is included in settings export and import. Chrome and Firefox.
+- Extended provider catalog: Added **Opper** (an EU-hosted OpenAI-compatible AI gateway offering 700+ models from 50+ providers), **API Route**, and **Cheaper Inference** cards with full Chrome and Firefox parity.
+- CAPTCHA providers: Added **Solvecha** as a supported CAPTCHA solver provider with schema verification and fallback integration.
+- Permission card: Added **Dangerously skip permissions** to the permission prompt card, allowing users to temporarily (for the session) or permanently bypass permission prompts on trusted environments, matching Turbo mode behavior.
+- Active provider branding: The closed model picker in the composer's bottom bar now shows the active provider's logo (including Compass Max and duplicated provider instances) rather than model-family badges.
+- WebBrain Companion: Simplified card layout showing Title, Model, and Share queries at top level, with connection and parameter knobs under a collapsible Details section and automated preferred model selection when collapsed.
 
 ### Changed
 - Settings → Advanced → **Vision mode** now carries a monochrome Tesla mark and is explained as "Tesla" mode: on, Act runs work from screenshots alone, like a Tesla driving on cameras; Off works more like Waymo and reads the page's accessibility tree too. The setting, its values and saved configurations are unchanged. Chrome and Firefox.
 - The agent cursor no longer disappears three seconds after an action. It now keeps one, smaller size: it glides from target to target, presses once with a ripple when WebBrain clicks, and between actions stays where it last acted, slowly fading in and out until the task ends. The ring around the target still fades after a moment. Chrome and Firefox.
+- Guarded actions: Allow explicit user approval and confirmation overrides on guarded actions and form submissions.
+- Quota card: Paused the Compass $0.50 sharing reward promo.
 
 ### Fixed
 - Vision mode no longer makes the page flicker in Chrome. Each screenshot made Chrome redraw the tab shrunk into its top-left corner for a moment, several times after every action; WebBrain now captures the tab as it is on screen and crops and scales the image itself. Only a `zoom` that needs more detail than the screen has, as most do on a display at 100% scaling, still re-renders the page for its capture. Right-to-left pages wider than the window are now captured as they appear rather than as a blank frame.
 - While the screen settles after an action, WebBrain's border, cursor and Stop button now disappear once and come back after the last screenshot, instead of blinking around each one, and the Stop button keeps its layout afterwards. Chrome and Firefox.
 - Screenshots outside vision mode no longer make the page flicker in Chrome either. Automatic screenshots (after each navigation by default), the **screenshot** and **inspect_viewport** tools and the screenshot crop of **download_social_media** redrew the tab shrunk into its top-left corner for a moment: on retina displays, and on any display when the image budget scales the screenshot down. They now capture the tab as it is on screen and crop and scale the image in WebBrain; image sizes, coordinates and redaction are unchanged. A right-to-left page wider than the window, which came out blank, is now captured as shown.
+- Keeping a stalled screenshot from permanently hiding the page UI by bounding indicator hide requests by capture deadline and abort signal.
+
+### Security
+- File upload binding: `upload_file` approvals are bound to the exact local file path and display the resolved file name, local path, and download source in the permission card; host-wide upload grants no longer approve arbitrary local files.
+- Download tools scope: `list_downloads` and `read_downloaded_file` are restricted to files downloaded during the current conversation session, requiring explicit user confirmation before accessing other files.
+- Frame origin authorization: Coordinate clicks, untargeted text typing, and key dispatches are resolved and charged to the specific receiving document and frame origin, preventing cross-origin target confusion.
+- Bridge peer authentication: The extension must complete an HMAC-SHA256 challenge-response handshake to pair with the MCP and LM Studio loopback bridges before trusting connections, and Cloud Bridge controllers authenticate before receiving tokens.
+- DNS rebinding & private network protection: Outbound network tools verify the resolved connection IP address and block responses from private/internal network addresses unless explicitly enabled by the user setting. LM Studio plugin pins fetches to verified DNS answers.
+- Untrusted content wrapping: Tab URLs and document titles are wrapped with untrusted data boundaries in the action model's context to defend against prompt injection.
 
 ## [44.0.0] - 2026-10-27
 
