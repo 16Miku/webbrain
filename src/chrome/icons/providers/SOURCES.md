@@ -20,6 +20,7 @@ Most brand marks come from [Lobe Icons](https://github.com/lobehub/lobe-icons)
 | orcarouter | OrcaRouter official docs favicon (`Continuum-AI-Corp/docs`, MIT) |
 | nearai | WebBrain-authored simple N mark (not an official NEAR brand asset) |
 | cheaperinference | Cheaper Inference logo mark (cheaperinference.com) |
+| opper | Opper official logo mark (opper.ai) |
 
 Brand trademarks remain property of their owners; used only for provider identification in the settings UI.
 
