@@ -953,7 +953,7 @@ export default {
   "st.display.lean_mode.on": "Wł.",
   "st.display.lean_mode.off": "Wył.",
   "st.display.vision_mode.label": "Tryb wizualny",
-  "st.display.vision_mode.desc": "Tylko wzrok (zwany też trybem „Tesla”), jak Tesla jeżdżąca wyłącznie na kamerach. Wyłączony przypomina raczej Waymo, które dokłada inne czujniki: agent czyta też drzewo dostępności. W trybie Działaj agent widzi stronę jako zrzuty ekranu i klika, pisze oraz przewija we współrzędnych ekranu zamiast czytać drzewo dostępności. Wymaga modelu, który przyjmuje obrazy; inne modele nadal używają drzewa dostępności. Po każdej akcji wysyłana jest tylko zmieniona część ekranu. Ekrany Retina i powiększenie przeglądarki są obsługiwane automatycznie.",
+  "st.display.vision_mode.desc": "Tylko wzrok (zwany też trybem „Tesla”), jak Tesla jeżdżąca wyłącznie na kamerach. W trybie Działaj agent widzi stronę jako zrzuty ekranu i klika, pisze oraz przewija we współrzędnych ekranu zamiast czytać drzewo dostępności. Wyłączony przypomina raczej Waymo, które dokłada inne czujniki: agent czyta też drzewo dostępności. Wymaga modelu, który przyjmuje obrazy; inne modele nadal używają drzewa dostępności. Po każdej akcji wysyłana jest tylko zmieniona część ekranu. Ekrany Retina i powiększenie przeglądarki są obsługiwane automatycznie.",
   "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Wyłączony",
   "st.display.vision_quality.label": "Rozmiar zrzutów w trybie wizualnym",

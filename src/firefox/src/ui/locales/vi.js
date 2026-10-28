@@ -771,7 +771,7 @@ export default {
   "st.display.lean_mode.on": "Bật",
   "st.display.lean_mode.off": "Tắt",
   "st.display.vision_mode.label": "Chế độ hình ảnh",
-  "st.display.vision_mode.desc": "Chỉ dùng thị giác (còn gọi là chế độ \"Tesla\"), như chiếc Tesla lái chỉ bằng camera. Khi tắt, nó giống Waymo hơn, dùng thêm các cảm biến khác: tác tử còn đọc cây trợ năng. Ở chế độ Hành động, tác tử nhìn trang dưới dạng ảnh chụp màn hình và nhấp, gõ, cuộn theo tọa độ màn hình thay vì đọc cây trợ năng. Cần một mô hình nhận được hình ảnh; các mô hình khác vẫn dùng cây trợ năng. Sau mỗi thao tác, chỉ phần màn hình thay đổi được gửi đi. Màn hình Retina và thu phóng trình duyệt được xử lý tự động.",
+  "st.display.vision_mode.desc": "Chỉ dùng thị giác (còn gọi là chế độ \"Tesla\"), như chiếc Tesla lái chỉ bằng camera. Ở chế độ Hành động, tác tử nhìn trang dưới dạng ảnh chụp màn hình và nhấp, gõ, cuộn theo tọa độ màn hình thay vì đọc cây trợ năng. Khi tắt, nó giống Waymo hơn, dùng thêm các cảm biến khác: tác tử còn đọc cây trợ năng. Cần một mô hình nhận được hình ảnh; các mô hình khác vẫn dùng cây trợ năng. Sau mỗi thao tác, chỉ phần màn hình thay đổi được gửi đi. Màn hình Retina và thu phóng trình duyệt được xử lý tự động.",
   "st.display.vision_mode.auto": "Tự động",
   "st.display.vision_mode.off": "Tắt",
   "st.display.vision_quality.label": "Kích thước ảnh chụp ở chế độ hình ảnh",

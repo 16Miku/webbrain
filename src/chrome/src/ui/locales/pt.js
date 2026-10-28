@@ -775,7 +775,7 @@ export default {
   "st.display.lean_mode.on": "Ligado",
   "st.display.lean_mode.off": "Desligado",
   "st.display.vision_mode.label": "Modo visual",
-  "st.display.vision_mode.desc": "Só visão (vulgo modo \"Tesla\"), como um Tesla que dirige apenas com câmeras. Desativado se parece mais com o Waymo, que soma outros sensores: o agente também lê a árvore de acessibilidade. No modo Agir, o agente vê a página como capturas de tela e clica, digita e rola em coordenadas da tela em vez de ler a árvore de acessibilidade. Requer um modelo que aceite imagens; os outros modelos continuam com a árvore de acessibilidade. Após cada ação, só a parte da tela que mudou é enviada. Telas Retina e o zoom do navegador são tratados automaticamente.",
+  "st.display.vision_mode.desc": "Só visão (vulgo modo \"Tesla\"), como um Tesla que dirige apenas com câmeras. No modo Agir, o agente vê a página como capturas de tela e clica, digita e rola em coordenadas da tela em vez de ler a árvore de acessibilidade. Desativado se parece mais com o Waymo, que soma outros sensores: o agente também lê a árvore de acessibilidade. Requer um modelo que aceite imagens; os outros modelos continuam com a árvore de acessibilidade. Após cada ação, só a parte da tela que mudou é enviada. Telas Retina e o zoom do navegador são tratados automaticamente.",
   "st.display.vision_mode.auto": "Automático",
   "st.display.vision_mode.off": "Desativado",
   "st.display.vision_quality.label": "Tamanho das capturas no modo visual",

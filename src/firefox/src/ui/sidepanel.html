@@ -187,7 +187,7 @@
           data-permission-skip-scope="session"
         >
           <span class="permission-skip-dialog-action-label" data-i18n="sp.perm.skip_dialog.session">This session only</span>
-          <span class="permission-skip-dialog-action-hint" data-i18n="sp.perm.skip_dialog.session_hint">Until you close the browser</span>
+          <span class="permission-skip-dialog-action-hint" data-i18n="sp.perm.skip_dialog.session_hint">Until you quit the browser</span>
         </button>
         <button
           id="permission-skip-dialog-forever"
@@ -412,9 +412,10 @@
           </button>
           <div class="provider-picker" id="provider-picker">
             <!-- Native select kept as the value source for existing handlers.
-                 The chosen model's logo shares the button with its connection
-                 badge. The engine is the fallback for a missing logo; the
-                 model's name remains in the tooltip and accessible name. -->
+                 The selected provider's logo, the same as its menu row, shares
+                 the button with its connection badge. The engine is the
+                 fallback for a missing logo; the model's name remains in the
+                 tooltip and accessible name. -->
             <select id="provider-select" class="provider-select-native" title="LLM Provider" tabindex="-1" aria-hidden="true"></select>
             <button type="button" id="provider-picker-btn" class="provider-picker-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="provider-picker-menu" aria-describedby="status-dot" aria-label="LLM Provider">
               <span class="provider-picker-engine">

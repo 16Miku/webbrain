@@ -110,7 +110,7 @@ async function panel(f, options = {}) {
       isTabAbortRequested: () => window.abortPending === true, showActivity: noop, startThinkingActivity: noop,
       syncSendButtonState: noop, hideActivity: noop, playClarifySound: () => window.soundCount++,
       addMessage: () => { const node = document.createElement('div'); node.className = 'message assistant'; node.innerHTML = '<div class="message-content"><div class="message-text"></div></div>'; window.messagesEl.appendChild(node); return node; },
-      maybeShowPermissionEducationHint: async () => {}, scrollToBottom: noop,
+      maybeShowPermissionEducationHint: async () => {}, bindPermissionSkipButton: noop, scrollToBottom: noop,
       getOrCreateStepsContainer: () => document.querySelector('.message-content'), clearClarifyCountdown: noop,
       startClarifyCountdown: (card, value) => { card.dataset.originalDeadline = String(value.deadlineTs); },
       applyClarifyTimeoutExtension: data => { const card = document.querySelector(`[data-clarify-id="${CSS.escape(data.clarifyId)}"]`); if(card) card.dataset.deadlineTs = String(data.deadlineTs); },

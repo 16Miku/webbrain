@@ -27,8 +27,15 @@ async function loadLocaleWithComposerCopy(localeDir, language) {
   const { composerDeliveryTranslations } = await import(
     pathToFileURL(path.join(localeDir, 'composer-delivery-copy.mjs')).href
   );
-  // i18n.js applies this translated settings overlay to the base dictionaries.
-  return { ...base, ...(composerDeliveryTranslations[language] || {}) };
+  const { permissionSkipTranslations } = await import(
+    pathToFileURL(path.join(localeDir, 'permission-skip-copy.mjs')).href
+  );
+  // i18n.js applies these translated overlays to the base dictionaries.
+  return {
+    ...base,
+    ...(composerDeliveryTranslations[language] || {}),
+    ...(permissionSkipTranslations[language] || {}),
+  };
 }
 
 function escapeRegExpLiteral(value) {
@@ -49128,8 +49135,10 @@ test('sidepanel composer permission switch drives the Settings gate in both buil
     assert.doesNotMatch(block, /resolvePendingPermissionPrompt/, `${label}: the composer switch must never approve a pending permission card`);
     assert.match(block, /permissionGateWriteQueue = write\.catch\(\(\) => renderPermissionGateControl\(\)\)/, `${label}: a failed write should restore the stored state`);
     assert.match(block, /runtime\.getURL\('src\/ui\/permissions\.html'\)/, `${label}: the popover should open the site permission page`);
-    assert.match(panel, /if \(changes\[PERMISSION_GATE_KEY\]\) \{[\s\S]*?renderPermissionGateControl\(\);/, `${label}: changes made in Settings or by the command should update the switch`);
-    assert.match(panel, /storage\.local\.get\(\[PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY\]\)\.then\([\s\S]*?renderPermissionGateControl\(\);/, `${label}: the stored gate should hydrate the switch`);
+    assert.match(panel, /if \(changes\[PERMISSION_GATE_KEY\]\) \{\s*permissionGateStoredOff = [^;]+;\s*syncAskBeforeConsequential\(\);/, `${label}: changes made in Settings or by the command should update the switch`);
+    assert.match(panel, /if \(changes\[PERMISSION_GATE_SESSION_OFF_KEY\]\) \{\s*permissionGateSessionOff = [^;]+;\s*syncAskBeforeConsequential\(\);/, `${label}: a session skip should update the switch`);
+    assert.match(panel, /function syncAskBeforeConsequential\(\) \{[^}]*renderPermissionGateControl\(\);/, `${label}: the gate sync should render the switch`);
+    assert.match(panel, /storage\.local\.get\(\[PERMISSION_GATE_KEY, ACT_WARNING_DISMISSED_KEY\]\),[\s\S]*?storage\.session\.get\(PERMISSION_GATE_SESSION_OFF_KEY\)[\s\S]*?syncAskBeforeConsequential\(\);/, `${label}: the stored gate should hydrate the switch`);
     assert.match(panel, /if \(closeUiScalePopover\(\)\) \{[\s\S]*?\}\n\s*if \(closePermissionGatePopover\(\)\) \{[\s\S]*?permissionGateBtn\?\.focus\(\);\s*return;/, `${label}: Escape should close the switch instead of aborting the active run`);
     assert.match(css, /#btn-permission-gate\.is-gate-off \{\s*color: var\(--warning\);/, `${label}: prompts off should keep the trigger in the warning color`);
     assert.match(css, /#btn-attach,\n#btn-mic \{[\s\S]*?width: 28px;\n  height: 28px;/, `${label}: the composer icon buttons keep their size`);
@@ -52779,7 +52788,8 @@ test('sidepanel exposes dangerously-skip-permissions in both builds', () => {
     assert.notEqual(commandIdx, -1, `${label}: parser missing /dangerously-skip-permissions`);
     const commandBody = panel.slice(commandIdx, panel.indexOf("if (command.value === '/compact')", commandIdx));
     assert.match(commandBody, /storage\.local\.set\(\{ \[PERMISSION_GATE_KEY\]: false \}\)/, `${label}: command should disable the same storage-backed gate as settings`);
-    assert.match(commandBody, /askBeforeConsequential = false;[\s\S]*?updateActWarning\(\);/, `${label}: command should update the local Act-mode warning immediately`);
+    assert.match(commandBody, /permissionGateStoredOff = true;\s*syncAskBeforeConsequential\(\);/, `${label}: command should update the local Act-mode warning immediately`);
+    assert.match(panel, /function syncAskBeforeConsequential\(\) \{[^}]*updateActWarning\(\);/, `${label}: the gate sync should refresh the Act-mode warning`);
     assert.match(commandBody, /resolvePendingPermissionPromptsForTab\(tabId\);/, `${label}: command should unblock the active permission prompt after disabling prompts`);
     assert.match(commandBody, /sp\.permissions\.disabled_html/, `${label}: command should warn visibly after disabling prompts`);
     const resolverIdx = panel.indexOf('function resolvePendingPermissionPromptsForTab(tabId) {');

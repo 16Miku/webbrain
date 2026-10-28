@@ -1854,16 +1854,26 @@ function closePermissionSkipDialog({ restoreFocus = true } = {}) {
   permissionSkipDialogState = null;
   permissionSkipDialogEl?.classList.add('hidden');
   if (appEl) appEl.inert = state.appWasInert;
-  if (restoreFocus && state.previouslyFocusedElement?.isConnected
-      && typeof state.previouslyFocusedElement.focus === 'function') {
-    state.previouslyFocusedElement.focus({ preventScroll: true });
+  if (restoreFocus) {
+    const opener = state.previouslyFocusedElement;
+    if (opener?.isConnected && opener !== document.body && typeof opener.focus === 'function') {
+      opener.focus({ preventScroll: true });
+    } else {
+      inputEl?.focus({ preventScroll: true });
+    }
   }
   return state;
 }
 
 async function skipPermissionsFromDialog(scope) {
-  const state = closePermissionSkipDialog({ restoreFocus: false });
-  if (!state) return;
+  const state = permissionSkipDialogState;
+  if (!state || state.busy) return;
+  // The dialog stays up, its choices disabled, until the switch is saved: a
+  // second click must not reach the card underneath it.
+  state.busy = true;
+  const choices = [...(permissionSkipDialogEl?.querySelectorAll('[data-permission-skip-scope]') || [])];
+  choices.forEach((btn) => { btn.disabled = true; });
+  let failure = null;
   try {
     if (scope === 'session') {
       await writePermissionGateSessionOff(true);
@@ -1873,21 +1883,29 @@ async function skipPermissionsFromDialog(scope) {
       permissionGateStoredOff = true;
     }
   } catch (error) {
+    failure = error;
+  }
+  choices.forEach((btn) => { btn.disabled = false; });
+  if (permissionSkipDialogState === state) closePermissionSkipDialog({ restoreFocus: !!failure });
+  if (failure) {
     // Nothing was switched off, so the card stays for the user to answer.
-    showComposerToast(t('sp.error_prefix', { msg: error?.message || String(error) }), { duration: 5000 });
-    if (state.card.isConnected) state.card.querySelector('.clarify-skip-permissions')?.focus({ preventScroll: true });
+    showComposerToast(t('sp.error_prefix', { msg: failure?.message || String(failure) }), { duration: 5000 });
     return;
   }
   syncAskBeforeConsequential();
   // The card the user clicked is answered as their own choice; the agent
   // re-reads the gate after it, so the rest of the run is not asked again.
-  submitClarify(state.card, state.tabId, state.clarifyId, 'once', 'option');
+  // A chat that was rendered again since shows a copy of the card: answer that.
+  const card = state.card.isConnected ? state.card
+    : document.querySelector(`.clarify-card[data-permission="1"][data-clarify-id="${CSS.escape(String(state.clarifyId))}"]`) || state.card;
+  submitClarify(card, state.tabId, state.clarifyId, 'once', 'option');
   resolvePendingPermissionPromptsForTab(state.tabId);
-  if (sameTabId(currentTabId, state.tabId)) {
-    addPersistentSlashMessage(systemHtml(t(scope === 'session'
-      ? 'sp.permissions.disabled_session_html'
-      : 'sp.permissions.disabled_html')));
-  }
+  // The notice goes to the chat that showed the card (a scheduled task's card
+  // belongs to another tab) and says how long prompts stay off: a stored
+  // "off" outlives the browser session.
+  addPersistentSlashMessage(systemHtml(t(permissionGateStoredOff
+    ? 'sp.permissions.disabled_html'
+    : 'sp.permissions.disabled_session_html')));
   inputEl?.focus({ preventScroll: true });
 }
 
@@ -1904,7 +1922,8 @@ function handlePermissionSkipDialogKeydown(event) {
     if (!first) {
       event.preventDefault();
       permissionSkipDialogEl.focus({ preventScroll: true });
-    } else if (event.shiftKey && (activeElement === first || !permissionSkipDialogEl.contains(activeElement))) {
+    } else if (event.shiftKey && (activeElement === first || activeElement === permissionSkipDialogEl
+        || !permissionSkipDialogEl.contains(activeElement))) {
       event.preventDefault();
       last.focus({ preventScroll: true });
     } else if (!event.shiftKey && (activeElement === last || !permissionSkipDialogEl.contains(activeElement))) {
@@ -5871,6 +5890,8 @@ async function switchToTab(newTabId) {
         && !sameTabId(newConversationConfirmationState.tabId, newTabId)) {
       settleNewConversationConfirmation(false, { restoreFocus: false });
     }
+    // The skip dialog decides for a card in the chat being left.
+    closePermissionSkipDialog({ restoreFocus: false });
     // The activity strip is a single panel-wide DOM node, unlike the tab-scoped
     // chat and run journals. Clear the outgoing tab's transient status before
     // any async restore work can yield; restoreActiveRunState (or a queued target
@@ -8627,7 +8648,10 @@ function appendProviderPickerOption(id, name, meta, iconProviderId = id) {
       return;
     }
     providerSelect.value = id;
-    syncProviderPickerButton();
+    // "More providers…" only opens Settings, and the change handler puts the
+    // current provider back. Syncing the button to it first would drop the
+    // logo and the connection status, which nothing checks again.
+    if (id !== MORE_PROVIDERS_OPTION_VALUE) syncProviderPickerButton();
     providerSelect.dispatchEvent(new Event('change', { bubbles: true }));
   });
 
@@ -12340,7 +12364,6 @@ function renderClarifyCard(data) {
       const skip = document.createElement('button');
       skip.type = 'button';
       skip.className = 'clarify-skip-permissions';
-      skip.dataset.i18n = 'sp.perm.skip_all';
       skip.textContent = t('sp.perm.skip_all');
       bindPermissionSkipButton(skip, card, tabId, clarifyId);
       optionsEl.appendChild(skip);
