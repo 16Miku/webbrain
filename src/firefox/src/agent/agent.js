@@ -18617,23 +18617,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Best-effort: if the content script isn't loaded (about:* / file://
    * pages, or pre-existing tabs that loaded before the extension), the
    * sendMessage rejects and we capture as-is.
+   *
+   * Calls for a tab nest: a vision screen update holds one around all of
+   * its captures (vision-runtime.js _visionCaptureSettled). Every call
+   * still hides, which a hidden indicator ignores but a page that
+   * navigated in between needs, and the indicator comes back once, when
+   * the last call ends, instead of blinking around every capture.
    */
   async _withIndicatorsHidden(tabId, fn) {
-    let needsRestore = false;
+    const holds = (this._indicatorHolds ??= new Map());
+    const hold = holds.get(tabId) || { count: 0, hidden: false };
+    hold.count += 1;
+    holds.set(tabId, hold);
     try {
-      await browser.tabs.sendMessage(tabId, { type: 'WB_HIDE_FOR_TOOL_USE' });
-      needsRestore = true;
-      // Give the renderer one paint frame to apply the display:none the
-      // content script just set, before we capture.
-      await new Promise((r) => setTimeout(r, 16));
-    } catch { /* content script absent — capture without hiding */ }
-    try {
+      try {
+        const reply = await browser.tabs.sendMessage(tabId, { type: 'WB_HIDE_FOR_TOOL_USE' });
+        hold.hidden = true;
+        // Give the renderer one paint frame to apply the display:none the
+        // content script just set, before we capture (none when it was
+        // hidden already).
+        if (reply?.changed !== false) await new Promise((r) => setTimeout(r, 16));
+      } catch { /* content script absent — capture without hiding */ }
       return await fn();
     } finally {
-      if (needsRestore) {
-        try {
-          browser.tabs.sendMessage(tabId, { type: 'WB_SHOW_AFTER_TOOL_USE' }).catch(() => {});
-        } catch { /* ignore */ }
+      hold.count -= 1;
+      if (hold.count === 0) {
+        holds.delete(tabId);
+        if (hold.hidden) {
+          try {
+            browser.tabs.sendMessage(tabId, { type: 'WB_SHOW_AFTER_TOOL_USE' }).catch(() => {});
+          } catch { /* ignore */ }
+        }
       }
     }
   }

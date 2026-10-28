@@ -1791,7 +1791,8 @@
     if (styleLoaded) startEffect();
 
     if (stopContainerEl) {
-      stopContainerEl.style.display = '';
+      // The container lays its button out as flex (createStopButton).
+      stopContainerEl.style.display = 'flex';
     } else {
       stopContainerEl = createStopButton();
       root.appendChild(stopContainerEl);
@@ -1852,9 +1853,12 @@
   /**
    * Hide everything without tearing it down — for the brief window around a
    * screenshot capture, so the agent doesn't see its own effect or cursor in
-   * the screenshots it sends back to the model.
+   * the screenshots it sends back to the model. The captures of one screen
+   * update each ask while it is already hidden: a repeat keeps what the
+   * first call saved. Returns whether anything was hidden.
    */
   function hideForToolUse() {
+    if (suspendedForToolUse) return false;
     suspendedForToolUse = true;
     savedStopVisible = !!(stopContainerEl && stopContainerEl.style.display !== 'none');
     savedTargetOutlineVisible = !!(targetOutlineEl && targetOutlineEl.style.display !== 'none');
@@ -1862,13 +1866,14 @@
     cursor?.suspend();
     if (stopContainerEl) stopContainerEl.style.display = 'none';
     if (targetOutlineEl) targetOutlineEl.style.display = 'none';
+    return true;
   }
 
   function showAfterToolUse() {
     suspendedForToolUse = false;
     effect?.resume();
     cursor?.resume();
-    if (savedStopVisible && stopContainerEl) stopContainerEl.style.display = '';
+    if (savedStopVisible && stopContainerEl) stopContainerEl.style.display = 'flex';
     if (savedTargetOutlineVisible && targetOutlineEl) targetOutlineEl.style.display = '';
     savedStopVisible = false;
     savedTargetOutlineVisible = false;
@@ -1894,8 +1899,7 @@
         sendResponse({ ok: true, active: indicatorsActive });
         break;
       case 'WB_HIDE_FOR_TOOL_USE':
-        hideForToolUse();
-        sendResponse({ ok: true });
+        sendResponse({ ok: true, changed: hideForToolUse() });
         break;
       case 'WB_SHOW_AFTER_TOOL_USE':
         showAfterToolUse();

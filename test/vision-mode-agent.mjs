@@ -1367,6 +1367,99 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     }
   });
 
+  test(`${build}: a screen update hides WebBrain's page UI once for all of its captures`, async () => {
+    const scene = tickingScene({ x: 300, y: 200, w: 400, h: 300 });
+    const { agent } = runAgent(() => ({ content: 'done' }), { scene });
+    const tab = nextTab++;
+    const state = agent._visionRunState(tab, 'act');
+    const tabs = (build === 'chrome' ? globalThis.chrome : globalThis.browser).tabs;
+    const send = tabs.sendMessage;
+    const log = [];
+    let hidden = false;
+    // The indicator content script's answers: a hide while hidden changes nothing.
+    tabs.sendMessage = async (id, message) => {
+      if (id !== tab) return send(id, message);
+      log.push(message.type);
+      if (message.type === 'WB_HIDE_FOR_TOOL_USE') {
+        const changed = !hidden;
+        hidden = true;
+        return { ok: true, changed };
+      }
+      if (message.type === 'WB_SHOW_AFTER_TOOL_USE') hidden = false;
+      return { ok: true };
+    };
+    // Each capture hides around itself, as both platform layers do; the page
+    // navigates after the second, and the new page shows its UI again.
+    const capture = agent._visionPlatformCapture;
+    agent._visionPlatformCapture = function (tabId, options) {
+      return this._withIndicatorsHidden(tabId, async () => {
+        log.push(`capture, hidden: ${hidden}`);
+        if (log.filter(entry => entry.startsWith('capture')).length === 2) hidden = false;
+        return capture.call(this, tabId, options);
+      });
+    };
+    try {
+      await agent._visionCaptureSettled(tab, state);
+    } finally {
+      tabs.sendMessage = send;
+    }
+    const captures = log.filter(entry => entry.startsWith('capture'));
+    assert.deepEqual(captures, Array(4).fill('capture, hidden: true'), log.join('\n'));
+    assert.equal(log.filter(entry => entry === 'WB_SHOW_AFTER_TOOL_USE').length, 1, log.join('\n'));
+    assert.equal(log.at(-1), 'WB_SHOW_AFTER_TOOL_USE', 'shown again after the last capture');
+    assert.equal(agent._indicatorHolds?.has(tab), false);
+  });
+
+  if (build === 'chrome') {
+    test('chrome: a vision capture reads the tab surface as it is and crops it; only a zoom needing more detail than the screen has, or a pinch-zoomed page, uses a clip', async () => {
+      const { agent } = runAgent(() => ({ content: 'done' }));
+      // The real CDP platform capture, not the fake scene's.
+      delete agent._visionPlatformCapture;
+      const tab = nextTab++;
+      const shots = [];
+      const crops = [];
+      const saved = { attach: cdpClient.attach, sendCommand: cdpClient.sendCommand };
+      Object.assign(cdpClient, {
+        attach: async () => {},
+        sendCommand: async (_tab, method, params) => {
+          if (method !== 'Page.captureScreenshot') return {};
+          shots.push(params);
+          return { data: 'c2hvdA==' };
+        },
+      });
+      agent._visionCropImage = async (dataUrl, rect, width, height) => {
+        crops.push({ dataUrl, rect, width, height });
+        return 'data:image/jpeg;base64,Y3JvcA==';
+      };
+      const probe = { cssWidth: 1263, cssHeight: 760, scrollX: 0, scrollY: 600, devicePixelRatio: 2, zoom: 1, pageScale: 1 };
+      const region = { x: 100, y: 50, width: 300, height: 200 };
+      try {
+        // A frame: the surface without a clip (a clip resizes the tab's view
+        // for the capture), the visual viewport cut out of it.
+        assert.equal(await agent._visionPlatformCapture(tab, { probe, outWidth: 1024, outHeight: 616 }), 'data:image/jpeg;base64,Y3JvcA==');
+        assert.deepEqual(shots.at(-1), { format: 'jpeg', quality: 90, fromSurface: true });
+        assert.deepEqual(crops.at(-1), { dataUrl: 'data:image/jpeg;base64,c2hvdA==', rect: { x: 0, y: 0, width: 2526, height: 1520 }, width: 1024, height: 616 });
+        // A zoom the screen's pixels cover (2 per CSS px at DPR 2) is a crop too.
+        await agent._visionPlatformCapture(tab, { probe, cssRegion: region, outWidth: 600, outHeight: 400 });
+        assert.equal(shots.at(-1).clip, undefined);
+        assert.deepEqual(crops.at(-1).rect, { x: 200, y: 100, width: 600, height: 400 });
+        // At DPR 1 the same zoom asks for 1.5 image px per CSS px, which only a re-render has.
+        const flat = { ...probe, devicePixelRatio: 1 };
+        await agent._visionPlatformCapture(tab, { probe: flat, cssRegion: region, outWidth: 450, outHeight: 300 });
+        assert.deepEqual(shots.at(-1).clip, { x: 100, y: 650, width: 300, height: 200, scale: 1.5 });
+        // A frame never re-renders, even zoomed out below one device pixel per CSS pixel.
+        await agent._visionPlatformCapture(tab, { probe: { ...flat, devicePixelRatio: 0.8, zoom: 0.8 }, outWidth: 1200, outHeight: 722 });
+        assert.equal(shots.at(-1).clip, undefined);
+        // A pinch-zoomed page: its surface is not the visual viewport.
+        await agent._visionPlatformCapture(tab, { probe: { ...probe, pageScale: 2 }, outWidth: 1024, outHeight: 616 });
+        assert.ok(shots.at(-1).clip, JSON.stringify(shots.at(-1)));
+        assert.equal(crops.length, 3);
+      } finally {
+        Object.assign(cdpClient, saved);
+      }
+    });
+  }
+
   test(`${build}: a requested frame verifies an action only once it was captured`, async () => {
     let failing = false;
     const ctx = runAgent(step => {

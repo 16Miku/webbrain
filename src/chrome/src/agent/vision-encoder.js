@@ -19,8 +19,8 @@ export function createCanvas(width, height) {
   throw new Error('No canvas implementation is available for vision screenshots.');
 }
 
-function context2d(canvas) {
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+function context2d(canvas, { willReadFrequently = true } = {}) {
+  const ctx = canvas.getContext('2d', { willReadFrequently });
   if (!ctx) throw new Error('The browser could not create a 2D canvas context.');
   return ctx;
 }
@@ -102,6 +102,34 @@ async function canvasToBlob(canvas, type, quality) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(blob => (blob ? resolve(blob) : reject(new Error('Canvas encoding failed.'))), type, quality);
   });
+}
+
+/**
+ * Cut `rect` (source pixels, fractions allowed) out of an encoded image and
+ * scale it to `width`x`height`, as a data URL. Chrome's vision capture takes
+ * the tab's surface as it is on screen and crops it here (agent
+ * _visionPlatformCapture): a CDP clip instead resizes the tab's view while
+ * the capture renders, which a visible tab shows as a flash.
+ */
+export async function cropImage(source, rect, width, height, { mimeType = 'image/jpeg', quality = 0.92 } = {}) {
+  const image = await decodeImage(source);
+  try {
+    const decoded = sourceSize(image);
+    const x = Math.min(Math.max(0, Number(rect?.x) || 0), Math.max(0, decoded.width - 1));
+    const y = Math.min(Math.max(0, Number(rect?.y) || 0), Math.max(0, decoded.height - 1));
+    const w = Math.max(1, Math.min(decoded.width - x, Number(rect?.width) || decoded.width));
+    const h = Math.max(1, Math.min(decoded.height - y, Number(rect?.height) || decoded.height));
+    const canvas = createCanvas(width || w, height || h);
+    // Drawn once and encoded, never read back: no CPU-backed canvas needed.
+    const ctx = context2d(canvas, { willReadFrequently: false });
+    ctx.imageSmoothingEnabled = true;
+    if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(image, x, y, w, h, 0, 0, canvas.width, canvas.height);
+    const blob = await canvasToBlob(canvas, mimeType, quality);
+    return `data:${blob.type || mimeType};base64,${arrayBufferToBase64(await blob.arrayBuffer())}`;
+  } finally {
+    try { image?.close?.(); } catch {}
+  }
 }
 
 let webpSupport = null;

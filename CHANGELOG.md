@@ -12,6 +12,10 @@ This changelog was generated from the repository Git history and release tags. V
 ### Changed
 - The agent cursor no longer disappears three seconds after an action. It now keeps one, smaller size: it glides from target to target, presses once with a ripple when WebBrain clicks, and between actions stays where it last acted, slowly fading in and out until the task ends. The ring around the target still fades after a moment. Chrome and Firefox.
 
+### Fixed
+- Vision mode no longer makes the page flicker in Chrome. Each screenshot made Chrome redraw the tab shrunk into its top-left corner for a moment, several times after every action; WebBrain now captures the tab as it is on screen and crops and scales the image itself. Only a `zoom` that needs more detail than the screen has, as most do on a display at 100% scaling, still re-renders the page for its capture. Right-to-left pages wider than the window are now captured as they appear rather than as a blank frame.
+- While the screen settles after an action, WebBrain's border, cursor and Stop button now disappear once and come back after the last screenshot, instead of blinking around each one, and the Stop button keeps its layout afterwards. Chrome and Firefox.
+
 ## [44.0.0] - 2026-10-27
 
 ### Added

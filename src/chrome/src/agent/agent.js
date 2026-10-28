@@ -19538,23 +19538,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * chrome-extension:// / file:// pages), the sendMessage rejects and
    * we capture as-is. Same on tabs the user opened before the extension
    * had a chance to inject.
+   *
+   * Calls for a tab nest: a vision screen update holds one around all of
+   * its captures (vision-runtime.js _visionCaptureSettled). Every call
+   * still hides, which a hidden indicator ignores but a page that
+   * navigated in between needs, and the indicator comes back once, when
+   * the last call ends, instead of blinking around every capture.
    */
   async _withIndicatorsHidden(tabId, fn) {
-    let needsRestore = false;
+    const holds = (this._indicatorHolds ??= new Map());
+    const hold = holds.get(tabId) || { count: 0, hidden: false };
+    hold.count += 1;
+    holds.set(tabId, hold);
     try {
-      await chrome.tabs.sendMessage(tabId, { type: 'WB_HIDE_FOR_TOOL_USE' });
-      needsRestore = true;
-      // One paint frame for Chrome to apply the display:none the
-      // content script just set, before CDP grabs the surface.
-      await new Promise((r) => setTimeout(r, 16));
-    } catch { /* content script absent — that's fine, no UI to hide */ }
-    try {
+      try {
+        const reply = await chrome.tabs.sendMessage(tabId, { type: 'WB_HIDE_FOR_TOOL_USE' });
+        hold.hidden = true;
+        // One paint frame for Chrome to apply the display:none the
+        // content script just set, before CDP grabs the surface (none
+        // when it was hidden already).
+        if (reply?.changed !== false) await new Promise((r) => setTimeout(r, 16));
+      } catch { /* content script absent — that's fine, no UI to hide */ }
       return await fn();
     } finally {
-      if (needsRestore) {
-        try {
-          chrome.tabs.sendMessage(tabId, { type: 'WB_SHOW_AFTER_TOOL_USE' }).catch(() => {});
-        } catch { /* ignore */ }
+      hold.count -= 1;
+      if (hold.count === 0) {
+        holds.delete(tabId);
+        if (hold.hidden) {
+          try {
+            chrome.tabs.sendMessage(tabId, { type: 'WB_SHOW_AFTER_TOOL_USE' }).catch(() => {});
+          } catch { /* ignore */ }
+        }
       }
     }
   }
@@ -21160,17 +21174,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       devicePixelRatio: Number(value.dpr) || 1,
       // Browser zoom (CSS px -> device-independent px); part of the DPR.
       zoom: Number(visual?.zoom) > 0 ? Number(visual.zoom) : 1,
+      // Pinch zoom of the visual viewport (_visionPlatformCapture).
+      pageScale: Number(visual?.scale) > 0 ? Number(visual.scale) : 1,
       url,
     };
   }
 
   /**
    * Capture the viewport (or `cssRegion` of it) close to outWidth x
-   * outHeight. The clip is in device-independent pixels (CSS px x browser
-   * zoom) and the compositor renders clip x scale x device scale factor, so
-   * with the DPR (= device scale factor x zoom) divided out of the scale the
-   * output is outWidth wide. Whatever size actually comes back is resampled
-   * to the plan by the runtime.
+   * outHeight.
+   *
+   * The tab's surface is captured as it is on screen, and the region is
+   * cut out and scaled locally (_visionCropImage). Given a `clip`,
+   * Chromium instead resizes the tab's view to clip x scale and re-renders
+   * the page into it for the capture (page_handler.cc CaptureScreenshot):
+   * a visible tab flashes a shrunken page in its top-left corner, on each
+   * of the captures of a screen update. The surface starts at the visual
+   * viewport's top left (Chromium keeps the page scrollbar on the right,
+   * in RTL pages too) and has devicePixelRatio pixels per CSS pixel.
+   *
+   * A clip is still used where the surface cannot serve: a zoom that asks
+   * for more detail than the screen has (more image pixels per CSS pixel
+   * than the DPR), which only a re-render provides, and a pinch-zoomed page.
+   * The clip is in device-independent pixels (CSS px x browser zoom) and the
+   * compositor renders clip x scale x device scale factor, so with the DPR
+   * (= device scale factor x zoom) divided out of the scale the output is
+   * outWidth wide. Whatever size actually comes back is resampled to the
+   * plan by the runtime.
    */
   async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight }) {
     await cdpClient.attach(tabId);
@@ -21180,9 +21210,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // (vision-runtime.js _visionBounded no longer waits for it).
     this._throwIfAborted(this._runAbortSignal(tabId));
     const region = cssRegion || { x: 0, y: 0, width: probe.cssWidth, height: probe.cssHeight };
+    const width = Math.max(1, region.width);
+    const height = Math.max(1, region.height);
     const dpr = Math.max(0.25, Number(probe?.devicePixelRatio) || 1);
+    const pinched = Math.abs((Number(probe?.pageScale) || 1) - 1) > 0.01;
+    // 2% slack: a zoom planned at the DPR itself is a crop.
+    const needsDetail = !!cssRegion && Number(outWidth) > width * dpr * 1.02;
+    if (!pinched && !needsDetail) {
+      const shot = await this._withIndicatorsHidden(tabId, () => cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
+        format: 'jpeg',
+        quality: 90,
+        fromSurface: true,
+      }));
+      if (!shot?.data) return null;
+      return this._visionCropImage(`data:image/jpeg;base64,${shot.data}`,
+        { x: region.x * dpr, y: region.y * dpr, width: width * dpr, height: height * dpr }, outWidth, outHeight);
+    }
     const zoom = Math.max(0.25, Number(probe?.zoom) || 1);
-    const scale = Math.max(0.05, Math.min(4, Number(outWidth) / (Math.max(1, region.width) * dpr)));
+    const scale = Math.max(0.05, Math.min(4, Number(outWidth) / (width * dpr)));
     const shot = await this._withIndicatorsHidden(tabId, () => cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
       format: 'jpeg',
       quality: 90,
@@ -21190,8 +21235,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       clip: {
         x: ((Number(probe?.scrollX) || 0) + region.x) * zoom,
         y: ((Number(probe?.scrollY) || 0) + region.y) * zoom,
-        width: Math.max(1, region.width) * zoom,
-        height: Math.max(1, region.height) * zoom,
+        width: width * zoom,
+        height: height * zoom,
         scale,
       },
     }));
