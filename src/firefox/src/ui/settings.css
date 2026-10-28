@@ -958,6 +958,19 @@ button:active { transform: scale(0.97); }
   font-weight: 600;
   margin-bottom: 2px;
 }
+/* A setting named after something people recognise (Tesla mode) shows its
+   mark in the label's own color, like the rest of the interface icons. */
+.setting-label-with-icon {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.setting-label-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: currentColor;
+}
 .setting-desc {
   font-size: 11px;
   color: var(--text2);
