@@ -22,3 +22,9 @@ Most brand marks come from [Lobe Icons](https://github.com/lobehub/lobe-icons)
 | cheaperinference | Cheaper Inference logo mark (cheaperinference.com) |
 
 Brand trademarks remain property of their owners; used only for provider identification in the settings UI.
+
+## Other marks
+
+| Where | Source |
+|-------|--------|
+| Settings → Advanced → Vision mode (inline SVG in `src/ui/settings.html`) | [Simple Icons](https://simpleicons.org/) `tesla` path data (CC0). Tesla is a trademark of Tesla, Inc.; the mark only illustrates the "Tesla" mode analogy and implies no affiliation. |
