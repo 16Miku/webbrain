@@ -262,7 +262,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await fixture(async ({ page }) => {
           await page.locator('.clarify-card').screenshot({ path: resolve(screenshots, `${build}-${locale}-card-280.png`) });
           await page.click('.clarify-skip-permissions');
-          await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished)));
+          await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
           const fit = await page.evaluate(() => {
             const card = document.querySelector('.permission-skip-dialog-card').getBoundingClientRect();
             const buttons = [...document.querySelectorAll('.permission-skip-dialog-actions button')].map((b) => ({
