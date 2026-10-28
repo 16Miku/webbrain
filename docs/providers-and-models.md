@@ -506,18 +506,18 @@ times the standard rate.
 
 ### Extended provider catalog
 
-WebBrain also ships 81 disabled-by-default provider cards. Most are sourced
+WebBrain also ships 82 disabled-by-default provider cards. Most are sourced
 from the OpenCode provider catalog snapshot at commit
 `62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
 their official API documentation. Together with the original cards, the
-Providers page lists **115 built-in providers on Chromium** and **114 on Firefox**; the
+Providers page lists **116 built-in providers on Chromium** and **115 on Firefox**; the
 difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs                                                                                                                                                                                                                                                                                                                        |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `cheaperinference`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
 | `freebuff2api`, `google-vertex`, `google-vertex-anthropic`, `helicone`, `iflowcn`, `inception`, `inference`, `io-net`, `jiekou`, `kilo`, `kimi-for-coding`, `kuae-cloud-coding-plan`, `llama`, `lucidquery`, `meganova`, `minimax-cn-coding-plan`, `minimax-coding-plan`, `moark`, `modelscope`, `morph`                       |
-| `nano-gpt`, `nearai`, `nebius`, `nova`, `novita-ai`, `ollama-cloud`, `opencode`, `opencode-go`, `orcarouter`, `ovhcloud`, `perplexity`, `perplexity-agent`, `poe`, `pollinations`, `privatemode-ai`, `qihang-ai`, `qiniu-ai`, `requesty`, `scaleway`, `siliconflow`, `siliconflow-cn`, `stackit`                               |
+| `nano-gpt`, `nearai`, `nebius`, `nova`, `novita-ai`, `ollama-cloud`, `opencode`, `opencode-go`, `opper`, `orcarouter`, `ovhcloud`, `perplexity`, `perplexity-agent`, `poe`, `pollinations`, `privatemode-ai`, `qihang-ai`, `qiniu-ai`, `requesty`, `scaleway`, `siliconflow`, `siliconflow-cn`, `stackit`                      |
 | `stepfun`, `submodel`, `synthetic`, `tencent-coding-plan`, `upstage`, `v0`, `venice`, `vercel`, `vivgrid`, `vultr`, `wandb`, `xiaomi`, `zai-coding-plan`, `zenmux`, `zhipuai`, `zhipuai-coding-plan`                                                                                                                       |
 
 Most use the OpenAI-compatible Chat Completions contract and bearer API keys.
@@ -583,6 +583,21 @@ In WebBrain, open **Providers -> LLM -> Cheaper Inference**. Paste an API key
 into the card, keep the default `gpt-5.4-mini` model (400000 tokens), then
 click **Test Connection**. Interactive Ask streaming, tool calls, and vision
 work through the existing OpenAI-compatible path.
+
+#### Opper
+
+[Opper](https://opper.ai) is an EU-hosted, OpenAI-compatible AI gateway at
+`https://api.opper.ai/v3/compat`. One API key gives access to 700+ models from
+50+ providers; model IDs are bare pool names (such as `gpt-5.4-mini`,
+`claude-sonnet-4-6`, `gemini-3.8-flash`, and `deepseek-v4-flash`), and a
+`provider/model` ID such as `anthropic/claude-sonnet-4-6` pins one route. See
+the [docs](https://docs.opper.ai).
+
+In WebBrain, open **Providers -> LLM -> Opper**. Create an API key at
+[platform.opper.ai](https://platform.opper.ai), paste it into the card, keep
+the default `gpt-5.4-mini` model (400000 tokens), then click **Test
+Connection**. Interactive Ask streaming, tool calls, and vision work through
+the existing OpenAI-compatible path.
 
 ### Ask response streaming
 
