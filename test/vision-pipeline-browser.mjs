@@ -35,6 +35,15 @@ const FIXTURE = `<!doctype html><meta charset="utf-8"><title>Vision fixture</tit
   });
 </script>`;
 
+// A right-to-left page wider than the window opens scrolled to its right end.
+const RTL_FIXTURE = `<!doctype html><html dir="rtl"><meta charset="utf-8"><title>RTL fixture</title>
+<style>
+  body { margin: 0; width: 3000px; height: 3000px; background: #fff; }
+  #start { position: fixed; left: 0; top: 0; width: 60px; height: 60px; background: rgb(0, 200, 0); }
+  #end { position: fixed; right: 0; top: 0; width: 60px; height: 60px; background: rgb(200, 0, 200); }
+</style>
+<div id="start"></div><div id="end"></div></html>`;
+
 function serve() {
   const server = http.createServer((request, response) => {
     if (request.url.startsWith('/agent/')) {
@@ -45,7 +54,7 @@ function serve() {
       return;
     }
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    response.end(FIXTURE);
+    response.end(request.url === '/rtl' ? RTL_FIXTURE : FIXTURE);
   });
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
@@ -86,14 +95,16 @@ for (const dpr of [1, 2, 3]) {
       }, { probe });
       assert.ok(plan.width < probe.cssWidth, `economy downscales: ${JSON.stringify(plan)} for ${probe.cssWidth}`);
 
-      // Capture exactly like _visionPlatformCapture.
+      // Capture exactly like _visionPlatformCapture: the surface as it is on
+      // screen, the visual viewport cut out of it and scaled to the plan.
       const capture = async () => {
-        const scale = plan.width / (probe.cssWidth * probe.devicePixelRatio);
-        const shot = await cdp.send('Page.captureScreenshot', {
-          format: 'jpeg', quality: 90, fromSurface: true,
-          clip: { x: probe.scrollX, y: probe.scrollY, width: probe.cssWidth, height: probe.cssHeight, scale },
-        });
-        return `data:image/jpeg;base64,${shot.data}`;
+        const shot = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 90, fromSurface: true });
+        return page.evaluate(async ({ data, plan, probe }) => {
+          const encoder = await import('/agent/vision-encoder.js');
+          const dpr = probe.devicePixelRatio;
+          return encoder.cropImage(`data:image/jpeg;base64,${data}`,
+            { x: 0, y: 0, width: probe.cssWidth * dpr, height: probe.cssHeight * dpr }, plan.width, plan.height);
+        }, { data: shot.data, plan, probe });
       };
       const first = await capture();
       const analysis = await page.evaluate(async ({ dataUrl, plan, probe }) => {
@@ -116,11 +127,11 @@ for (const dpr of [1, 2, 3]) {
           jpeg: { bytes: jpeg.bytes, mime: jpeg.mimeType },
         };
       }, { dataUrl: first, plan, probe });
-      // The compositor honoured the DPR-divided scale (or the runtime resampled).
+      // The crop came back at the planned size.
       assert.deepEqual(analysis.size, { width: plan.width, height: plan.height });
-      assert.ok(Math.abs(analysis.decoded.width - plan.width) <= 2, `capture came back at the planned size: ${JSON.stringify(analysis.decoded)} vs ${plan.width}`);
+      assert.deepEqual(analysis.decoded, { width: plan.width, height: plan.height });
       // The pixel at the mapped point is the blue target, not white page: the
-      // clip used document coordinates of the scrolled viewport.
+      // surface shows the scrolled viewport, from its top left.
       const [r, g, b] = analysis.rgb;
       assert.ok(b > 180 && r < 80 && g > 80 && g < 170, `mapped pixel is the target button: ${analysis.rgb}`);
       assert.equal(analysis.webp.mime, 'image/webp');
@@ -164,6 +175,88 @@ for (const dpr of [1, 2, 3]) {
     }
   });
 }
+
+test('a vision capture leaves the tab on screen as it is, where a clipped capture shrinks it', async () => {
+  // DPR 2, where the clip's scale is smallest. The screencast reports every
+  // frame the tab shows; an animation keeps them coming during captures.
+  const browser = await chromium.launch({ channel: 'chromium', args: ['--force-device-scale-factor=2', '--window-size=1280,860'] });
+  try {
+    const context = await browser.newContext({ viewport: null });
+    const page = await context.newPage();
+    await page.setContent(`<!doctype html><style>body { margin: 0; height: 3000px; }
+      #spin { position: fixed; left: 300px; top: 200px; width: 40px; height: 40px; background: #c0c; animation: spin 1s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }</style><div id="spin"></div>`);
+    await page.evaluate(() => window.scrollTo(0, 400));
+    const cdp = await context.newCDPSession(page);
+    const { cssVisualViewport: vv } = await cdp.send('Page.getLayoutMetrics');
+    const frames = [];
+    cdp.on('Page.screencastFrame', frame => {
+      const png = Buffer.from(frame.data, 'base64');
+      frames.push(`${png.readUInt32BE(16)}x${png.readUInt32BE(20)} image, ${frame.metadata.deviceWidth}x${frame.metadata.deviceHeight} view`);
+      cdp.send('Page.screencastFrameAck', { sessionId: frame.sessionId }).catch(() => {});
+    });
+    await cdp.send('Page.startScreencast', { format: 'png', everyNthFrame: 1 });
+    // Frames arrive slower on a loaded machine: wait for a few, bounded.
+    const awaitFrames = async (count, timeoutMs = 10000) => {
+      const deadline = Date.now() + timeoutMs;
+      while (frames.length < count && Date.now() < deadline) await page.waitForTimeout(50);
+      assert.ok(frames.length >= count, `the screencast sent ${frames.length} frames`);
+    };
+    await awaitFrames(3);
+    const onScreen = [...new Set(frames)];
+    assert.equal(onScreen.length, 1, onScreen.join('; '));
+    // Like _visionPlatformCapture: no clip. Every frame shown during and
+    // after the captures keeps the tab's size and scale.
+    frames.length = 0;
+    for (let i = 0; i < 3; i++) await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 90, fromSurface: true });
+    await awaitFrames(3);
+    assert.deepEqual([...new Set(frames)], onScreen, 'the tab keeps its size and scale through the captures');
+    // The capture before: Chromium resizes the view to the clip's scaled size
+    // and renders the page into it, which the screen shows.
+    const clip = { x: vv.pageX, y: vv.pageY, width: vv.clientWidth, height: vv.clientHeight, scale: 1024 / (vv.clientWidth * 2) };
+    const seen = [];
+    for (let i = 0; i < 6 && !seen.some(size => size !== onScreen[0]); i++) {
+      frames.length = 0;
+      await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 90, fromSurface: true, clip });
+      await awaitFrames(2);
+      seen.push(...frames);
+    }
+    assert.ok(seen.some(size => size !== onScreen[0]), `a clipped capture is seen on screen: ${[...new Set(seen)].join('; ')}`);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a vision capture of a right-to-left page wider than the window shows the screen, scrollbar left out', async () => {
+  // Classic scrollbars, as on Windows and Linux. Chromium keeps the page's
+  // own on the right in RTL too, so the surface's left edge is CSS x 0.
+  const browser = await chromium.launch({ channel: 'chromium', ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--window-size=1000,700'] });
+  try {
+    const context = await browser.newContext({ viewport: null });
+    const page = await context.newPage();
+    await page.goto(`${origin}/rtl`);
+    const cdp = await context.newCDPSession(page);
+    const { cssVisualViewport: vv } = await cdp.send('Page.getLayoutMetrics');
+    const scrollbar = await page.evaluate(() => innerWidth - document.documentElement.clientWidth);
+    assert.ok(scrollbar > 0, 'the page has a classic scrollbar');
+    assert.equal(vv.clientWidth, await page.evaluate(() => document.documentElement.clientWidth));
+    // Like _visionPlatformCapture, at one image pixel per CSS pixel.
+    const shot = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 90, fromSurface: true });
+    const result = await page.evaluate(async ({ data, vv }) => {
+      const encoder = await import('/agent/vision-encoder.js');
+      const dataUrl = await encoder.cropImage(`data:image/jpeg;base64,${data}`, { x: 0, y: 0, width: vv.clientWidth, height: vv.clientHeight }, vv.clientWidth, vv.clientHeight);
+      const raster = await encoder.rasterizeFrame(dataUrl, vv.clientWidth, vv.clientHeight);
+      const at = x => Array.from(raster.pixels.slice((30 * raster.width + x) * 4, (30 * raster.width + x) * 4 + 3));
+      return { width: raster.width, start: at(30), end: at(raster.width - 30), right: at(raster.width - 1) };
+    }, { data: shot.data, vv });
+    const near = (rgb, expected) => rgb.every((value, i) => Math.abs(value - expected[i]) < 40);
+    assert.ok(near(result.start, [0, 200, 0]), `the page's left edge: ${result.start}`);
+    assert.ok(near(result.end, [200, 0, 200]), `its right edge: ${result.end}`);
+    assert.ok(near(result.right, [200, 0, 200]), `the image ends where the page does, before the scrollbar: ${result.right}`);
+  } finally {
+    await browser.close();
+  }
+});
 
 test('screenshot redaction pixelates every region, or returns the image untouched when one region cannot be', async () => {
   const browser = await chromium.launch({ channel: 'chromium' });
