@@ -1011,6 +1011,14 @@ export class Agent extends LoopDetector {
         }
         if (changes.askBeforeConsequentialActions) {
           this._permissionGateOffStored = changes.askBeforeConsequentialActions.newValue === false;
+          // Turning prompts on, from any writer (the composer switch, Settings,
+          // an imported configuration), also ends a "this session only" skip.
+          if (!this._permissionGateOffStored) {
+            this._permissionGateOffForSession = false;
+            void Promise.resolve()
+              .then(() => browser.storage.session.remove(PERMISSION_GATE_SESSION_OFF_KEY))
+              .catch(() => {});
+          }
           this._skipPermissionGate = this._permissionGateOffStored || this._permissionGateOffForSession;
         }
         if (changes[COST_ALLOWANCE_SESSION_KEY]) {
@@ -8721,15 +8729,15 @@ export class Agent extends LoopDetector {
     const force = options?.force === true;
     if (this._gateSettingLoaded && !force) return this._skipPermissionGate;
     this._gateSettingLoaded = true;
-    try {
-      const o = await browser.storage.local.get('askBeforeConsequentialActions');
-      this._permissionGateOffStored = o?.askBeforeConsequentialActions === false;
-    } catch { /* default: gate on */ }
-    try {
-      const o = await browser.storage.session.get(PERMISSION_GATE_SESSION_OFF_KEY);
-      this._permissionGateOffForSession = o?.[PERMISSION_GATE_SESSION_OFF_KEY] === true;
-    } catch { /* default: gate on */ }
-    this._skipPermissionGate = this._permissionGateOffStored || this._permissionGateOffForSession;
+    // Both areas at once. A switch whose area cannot be read keeps its value,
+    // and with neither readable the gate stays as it is (on by default).
+    const [stored, session] = await Promise.all([
+      Promise.resolve().then(() => browser.storage.local.get('askBeforeConsequentialActions')).then(o => o || {}, () => null),
+      Promise.resolve().then(() => browser.storage.session.get(PERMISSION_GATE_SESSION_OFF_KEY)).then(o => o || {}, () => null),
+    ]);
+    if (stored) this._permissionGateOffStored = stored.askBeforeConsequentialActions === false;
+    if (session) this._permissionGateOffForSession = session[PERMISSION_GATE_SESSION_OFF_KEY] === true;
+    if (stored || session) this._skipPermissionGate = this._permissionGateOffStored || this._permissionGateOffForSession;
     return this._skipPermissionGate;
   }
 

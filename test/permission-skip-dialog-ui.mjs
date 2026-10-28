@@ -6,7 +6,8 @@ import { after, before, describe, test } from 'node:test';
 import { chromium, firefox } from 'playwright';
 
 const read = async (build, file) => (await fs.readFile(new URL(`../src/${build}/${file}`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
-const screenshots = resolve(process.env.PERMISSION_SKIP_UI_OUTPUT || resolve(tmpdir(), 'webbrain-permission-skip'));
+// Screenshots are written only when PERMISSION_SKIP_UI_OUTPUT names a folder.
+const screenshots = process.env.PERMISSION_SKIP_UI_OUTPUT ? resolve(process.env.PERMISSION_SKIP_UI_OUTPUT) : '';
 
 // Runs the production "Dangerously skip permissions" dialog block (its gate
 // helpers, dialog and startup load in sidepanel.js) against the real panel
@@ -30,7 +31,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
     });
     after(async () => { await browser?.close(); });
 
-    async function fixture(run, { locale = 'en', width = 420, sessionStored = false, failSessionWrite = false, currentTab = 7 } = {}) {
+    async function fixture(run, { locale = 'en', width = 420, sessionStored = false, failSessionWrite = false, currentTab = 7, storedOff = false } = {}) {
       const context = await browser.newContext({ viewport: { width, height: 640 } });
       const errors = [];
       try {
@@ -56,7 +57,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
           const sessionStore = ${sessionStored ? "{ [PERMISSION_GATE_SESSION_OFF_KEY]: true }" : '{}'};
           const ${api} = { storage: {
             local: {
-              async get() { return {}; },
+              async get() { return ${storedOff} ? { askBeforeConsequentialActions: false } : {}; },
               async set(values) { log.local.push(values); },
             },
             session: {
@@ -71,7 +72,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
           const PERMISSION_GATE_KEY = 'askBeforeConsequentialActions';
           const ACT_WARNING_DISMISSED_KEY = 'actWarningDismissed';
           let askBeforeConsequential = true;
-          let permissionGateStoredOff = false;
+          let permissionGateStoredOff = ${storedOff};
           let permissionGateSessionOff = false;
           let actWarningDismissed = false;
           let actWarningPreferenceLoaded = false;
@@ -143,6 +144,18 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
       assert.match(cardBlock, /skip\.className = 'clarify-skip-permissions';/);
       assert.doesNotMatch(cardBlock, /className = '[^']*clarify-option/);
       assert.match(source, /card\.querySelectorAll\('\.clarify-skip-permissions'\)\.forEach\(btn => bindPermissionSkipButton\(btn, card, tabId, clarifyId\)\);/);
+      // Like its siblings, the button is labelled once, not re-translated on its own.
+      assert.doesNotMatch(cardBlock, /skip\.dataset\.i18n/);
+    });
+
+    test('a tab switch closes the dialog, and the Permissions page follows the session skip', async () => {
+      const tabSwitch = source.indexOf('settleNewConversationConfirmation(false, { restoreFocus: false });');
+      assert.ok(tabSwitch > 0);
+      assert.match(source.slice(tabSwitch, tabSwitch + 300), /closePermissionSkipDialog\(\{ restoreFocus: false \}\);/,
+        'switching tabs must not leave the dialog over another chat');
+      const settings = await read(build, 'src/ui/settings.js');
+      assert.match(settings, /area === 'session' && changes\[PERMISSION_GATE_SESSION_OFF_KEY\]/,
+        'an open Permissions page must follow the session skip');
     });
 
     test('opens over an inert panel and closing returns to the waiting card', async () => {
@@ -153,8 +166,8 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         assert.equal(s.inert, true, 'the panel behind the dialog is inert');
         assert.equal(s.focus, 'permission-skip-dialog-close', 'focus starts on the safe choice');
         assert.equal(await page.textContent('#permission-skip-dialog-title'), 'Skip all permission prompts?');
-        assert.match(await page.textContent('#permission-skip-dialog-description'), /without asking/);
-        assert.match(await page.textContent('#permission-skip-dialog-session'), /This session only[\s\S]*Until you close the browser/);
+        assert.match(await page.textContent('#permission-skip-dialog-description'), /without asking[\s\S]*safety checks still stop or ask/);
+        assert.match(await page.textContent('#permission-skip-dialog-session'), /This session only[\s\S]*Until you quit the browser/);
         assert.match(await page.textContent('#permission-skip-dialog-forever'), /Forever[\s\S]*Until you turn prompts back on/);
         assert.equal(await page.getAttribute('#permission-skip-dialog-close', 'aria-label'), 'Close and go back');
 
@@ -183,6 +196,16 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.mouse.click(4, 4);
         s = await state();
         assert.equal(s.open, false, 'a click outside the card closes it');
+        // Shift+Tab from the dialog container itself stays inside.
+        await page.click('.clarify-skip-permissions');
+        await page.evaluate(() => document.getElementById('permission-skip-dialog').focus());
+        await page.keyboard.press('Shift+Tab');
+        assert.equal((await state()).focus, 'permission-skip-dialog-forever');
+        // With the card gone (its run ended), closing returns focus to the composer.
+        await page.evaluate(() => document.querySelector('.clarify-card').remove());
+        await page.keyboard.press('Escape');
+        assert.equal((await state()).focus, 'user-input');
+        s = await state();
         assert.deepEqual(s.log, { local: [], session: [], removed: [], submits: [], resolved: [], notices: [], toasts: [] },
           'closing changes nothing and answers nothing');
         assert.equal(s.gate.askBeforeConsequential, true);
@@ -202,7 +225,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         assert.deepEqual(s.log.submits, [[7, 'c1', 'once', 'option']], 'the card is answered as the user’s own choice');
         assert.deepEqual(s.log.resolved, [7], 'other waiting permission cards on the tab are allowed too');
         assert.equal(s.log.notices.length, 1);
-        assert.match(s.log.notices[0], /Permission prompts are OFF until you close the browser/);
+        assert.match(s.log.notices[0], /Permission prompts are OFF until you quit the browser/);
         assert.deepEqual(s.gate, { askBeforeConsequential: false, permissionGateStoredOff: false, permissionGateSessionOff: true });
         assert.equal(s.cardConnected, false);
         assert.equal(s.focus, 'user-input', 'focus goes back to the composer');
@@ -237,15 +260,44 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
       }, { failSessionWrite: true });
     });
 
-    test('a card from another tab is allowed without a notice in this chat', async () => {
+    test('a scheduled task\'s card from another tab still gets the notice in this chat', async () => {
       await fixture(async ({ page, state }) => {
         await page.click('.clarify-skip-permissions');
         await page.click('#permission-skip-dialog-forever');
         await page.waitForFunction(() => window.__log.submits.length === 1);
         const s = await state();
-        assert.deepEqual(s.log.notices, []);
+        assert.equal(s.log.notices.length, 1);
+        assert.match(s.log.notices[0], /Permission prompts are OFF\.<\/strong>/);
         assert.deepEqual(s.log.resolved, [7]);
       }, { currentTab: 9 });
+    });
+
+    test('"This session only" while prompts are already off for good says they stay off', async () => {
+      await fixture(async ({ page, state }) => {
+        await page.click('.clarify-skip-permissions');
+        await page.click('#permission-skip-dialog-session');
+        await page.waitForFunction(() => window.__log.submits.length === 1);
+        const s = await state();
+        assert.equal(s.log.notices.length, 1);
+        assert.match(s.log.notices[0], /Permission prompts are OFF\.<\/strong>/, 'not "until you close the browser"');
+      }, { storedOff: true });
+    });
+
+    test('a double activation saves once and answers the card once', async () => {
+      await fixture(async ({ page, state }) => {
+        await page.click('.clarify-skip-permissions');
+        await page.evaluate(() => {
+          const forever = document.getElementById('permission-skip-dialog-forever');
+          forever.click();
+          forever.click();
+        });
+        await page.waitForFunction(() => window.__log.submits.length === 1);
+        const s = await state();
+        assert.deepEqual(s.log.local, [{ askBeforeConsequentialActions: false }]);
+        assert.deepEqual(s.log.submits, [[7, 'c1', 'once', 'option']]);
+        assert.equal(s.open, false);
+        assert.equal(await page.locator('#permission-skip-dialog-forever').isDisabled(), false, 'the choices are usable again next time');
+      });
     });
 
     test('a skip for this browser session is read when the panel opens', async () => {
@@ -257,10 +309,10 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
     });
 
     test('fits a narrow panel in long and right-to-left languages', async () => {
-      await fs.mkdir(screenshots, { recursive: true });
+      if (screenshots) await fs.mkdir(screenshots, { recursive: true });
       for (const locale of ['en', 'de', 'ar', 'ja', 'tl']) {
         await fixture(async ({ page }) => {
-          await page.locator('.clarify-card').screenshot({ path: resolve(screenshots, `${build}-${locale}-card-280.png`) });
+          if (screenshots) await page.locator('.clarify-card').screenshot({ path: resolve(screenshots, `${build}-${locale}-card-280.png`) });
           await page.click('.clarify-skip-permissions');
           await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
           const fit = await page.evaluate(() => {
@@ -279,7 +331,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
           assert.equal(fit.pageScroll, false, `${locale}: no sideways scroll`);
           assert.ok(fit.buttons.every((b) => !b.overflow), `${locale}: button text wraps instead of overflowing`);
           assert.equal(fit.translated, true, `${locale}: every string is translated or falls back to English`);
-          await page.screenshot({ path: resolve(screenshots, `${build}-${locale}-dialog-280.png`) });
+          if (screenshots) await page.screenshot({ path: resolve(screenshots, `${build}-${locale}-dialog-280.png`) });
         }, { locale, width: 280 });
       }
     });

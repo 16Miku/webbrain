@@ -303,6 +303,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 
 .permission-skip-dialog-card {
   position: relative;
+  /* Long translations on a short panel scroll inside the card. */
+  max-height: 100%;
+  overflow-y: auto;
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
   gap: 14px 12px;
@@ -4868,7 +4871,7 @@ html[data-ui-scale="175"] .composer-toolbar {
 }
 
 .clarify-skip-permissions::before {
-  content: "⚡ ";
+  content: "⚡ " / "";
 }
 
 .clarify-skip-permissions:hover {

@@ -58,9 +58,9 @@ for (const build of ['chrome', 'firefox']) {
     await agent._ensureGateSetting({ force: true });
     fire({ [PERMISSION_GATE_SESSION_OFF_KEY]: { newValue: true } }, 'session');
     assert.equal(agent._skipPermissionGate, true);
-    // Turning prompts back on writes the stored setting and removes the session flag.
+    // Turning prompts back on writes the stored setting, which ends the session skip.
     fire({ askBeforeConsequentialActions: { newValue: true } }, 'local');
-    assert.equal(agent._skipPermissionGate, true, 'the session skip still holds until it is removed');
+    assert.equal(agent._skipPermissionGate, false);
     fire({ [PERMISSION_GATE_SESSION_OFF_KEY]: { oldValue: true } }, 'session');
     assert.equal(agent._skipPermissionGate, false);
     fire({ askBeforeConsequentialActions: { newValue: false } }, 'local');
@@ -68,6 +68,39 @@ for (const build of ['chrome', 'firefox']) {
     // A key of the same name in another area means nothing.
     fire({ askBeforeConsequentialActions: { newValue: true } }, 'session');
     assert.equal(agent._skipPermissionGate, true);
+  });
+
+  test(`${build}: a gate that cannot be read keeps its current value`, async () => {
+    const { agent } = fresh();
+    const { local, session } = globalThis.chrome.storage;
+    globalThis.chrome.storage.local = { async get() { throw new Error('storage gone'); } };
+    globalThis.chrome.storage.session = { async get() { throw new Error('storage gone'); } };
+    try {
+      agent._skipPermissionGate = true;
+      assert.equal(await agent._ensureGateSetting({ force: true }), true);
+      agent._skipPermissionGate = false;
+      assert.equal(await agent._ensureGateSetting({ force: true }), false);
+    } finally {
+      globalThis.chrome.storage.local = local;
+      globalThis.chrome.storage.session = session;
+    }
+  });
+
+  test(`${build}: turning prompts on from any writer ends a session skip`, async () => {
+    const { agent, fire } = fresh();
+    stores.session[PERMISSION_GATE_SESSION_OFF_KEY] = true;
+    assert.equal(await agent._ensureGateSetting({ force: true }), true);
+    // An imported configuration writes the stored setting only.
+    fire({ askBeforeConsequentialActions: { oldValue: undefined, newValue: true } }, 'local');
+    assert.equal(agent._skipPermissionGate, false);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(PERMISSION_GATE_SESSION_OFF_KEY in stores.session, false, 'the session flag is removed');
+    // Turning prompts off for good leaves a session flag alone.
+    stores.session[PERMISSION_GATE_SESSION_OFF_KEY] = true;
+    await agent._ensureGateSetting({ force: true });
+    fire({ askBeforeConsequentialActions: { newValue: false } }, 'local');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(stores.session[PERMISSION_GATE_SESSION_OFF_KEY], true);
   });
 
   test(`${build}: without storage.session only the stored setting counts`, async () => {
