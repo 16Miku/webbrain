@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Introducing Tesla Mode - WebBrain Blog</title>
-  <meta name="description" content="Vision mode is now Tesla mode. Like a Tesla that drives on cameras alone, WebBrain&#39;s Act runs see the page only as screenshots and act with the mouse and keyboard. Turn it off and WebBrain works more like Waymo, adding the page&#39;s accessibility tree.">
+  <title>Introducing Vision Mode - WebBrain Blog</title>
+  <meta name="description" content="Vision mode (aka &quot;Tesla&quot; mode) lets WebBrain act on vision alone. Like a Tesla that drives on cameras, WebBrain&#39;s Act runs see the page only as screenshots and act with the mouse and keyboard. Turn it off and WebBrain works more like Waymo, adding the page&#39;s accessibility tree.">
   <meta name="keywords" content="WebBrain, Tesla mode, vision mode, browser agent, computer use, screenshots, accessibility tree, vision language model">
-  <meta property="og:title" content="Introducing Tesla mode">
-  <meta property="og:description" content="WebBrain&#39;s vision mode is now Tesla mode: screenshots in, mouse and keyboard out. Turn it off and it works more like Waymo, with the accessibility tree as an extra sensor.">
+  <meta property="og:title" content="Introducing Vision mode (aka &quot;Tesla&quot; mode)">
+  <meta property="og:description" content="WebBrain&#39;s vision mode (aka &quot;Tesla&quot; mode): screenshots in, mouse and keyboard out. Turn it off and it works more like Waymo, with the accessibility tree as an extra sensor.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://webbrain.one/blog/tesla-mode">
   <meta property="og:image" content="https://webbrain.one/og-image.png">
@@ -17,8 +17,8 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Introducing Tesla mode in WebBrain">
-  <meta name="twitter:description" content="Vision only, like a Tesla on cameras. Turn it off for the Waymo approach: screenshots plus the page&#39;s accessibility tree.">
+  <meta name="twitter:title" content="Introducing Vision mode in WebBrain">
+  <meta name="twitter:description" content="Vision only (aka &quot;Tesla&quot; mode), like a Tesla on cameras. Turn it off for the Waymo approach: screenshots plus the page&#39;s accessibility tree.">
   <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
   <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
   <link rel="icon" type="image/png" href="/favicon.png">
@@ -474,8 +474,8 @@
 {
   "@context": "https://schema.org",
   "@type": "BlogPosting",
-  "headline": "Introducing Tesla mode: WebBrain on vision alone",
-  "description": "Vision mode is now Tesla mode. Like a Tesla that drives on cameras alone, WebBrain's Act runs see the page only as screenshots and act with the mouse and keyboard. Turn it off and WebBrain works more like Waymo, adding the page's accessibility tree.",
+  "headline": "Introducing Vision mode (aka \"Tesla\" mode): WebBrain on vision alone",
+  "description": "Vision mode (aka \"Tesla\" mode) lets WebBrain act on vision alone. Like a Tesla that drives on cameras, WebBrain's Act runs see the page only as screenshots and act with the mouse and keyboard. Turn it off and WebBrain works more like Waymo, adding the page's accessibility tree.",
   "author": {
     "@type": "Person",
     "name": "Emre Sokullu",
@@ -524,26 +524,26 @@
 
   <article>
     <div class="meta">October 28, 2026 &middot; 3 min read &middot; <a href="/blog">&larr; All posts</a></div>
-    <h1>Introducing Tesla mode: WebBrain on vision alone</h1>
-    <p class="lede"><strong>Vision mode has a new name: Tesla mode.</strong> How it works doesn&#39;t change. The new name just explains what it does better than &quot;vision&quot; ever did.</p>
+    <h1>Introducing Vision mode (aka &quot;Tesla&quot; mode): WebBrain on vision alone</h1>
+    <p class="lede"><strong>Vision mode (aka &quot;Tesla&quot; mode) sees the web through pixels alone.</strong> Like a Tesla that drives on cameras, WebBrain&#39;s Act runs can operate directly from screenshots.</p>
 <h2 id="two-ways-to-drive">Two ways to drive</h2>
 <p>There are two well-known ways to build a self-driving car. Tesla bet on cameras: the car looks at the road the way a person does and works out everything else from the pictures. Waymo stacks sensors: lidar, radar and cameras, plus detailed maps, so the car never depends on one kind of input.</p>
 <p>A browser agent has the same choice to make.</p>
-<p>With <strong>Tesla mode</strong> on, an Act run sees the tab only as screenshots. There is no accessibility tree, no element reference and no CSS selector in the model&#39;s view. It clicks, types, scrolls and drags at screen coordinates, the way you would with a mouse and keyboard.</p>
-<p>With Tesla mode <strong>off</strong>, WebBrain works more like Waymo. The agent reads the page&#39;s accessibility tree, targets elements by reference and selector, and uses screenshots as one more input when it needs them.</p>
+<p>With <strong>Vision mode</strong> (aka &quot;Tesla&quot; mode) on, an Act run sees the tab only as screenshots. There is no accessibility tree, no element reference and no CSS selector in the model&#39;s view. It clicks, types, scrolls and drags at screen coordinates, the way you would with a mouse and keyboard.</p>
+<p>With Vision mode <strong>off</strong>, WebBrain works more like Waymo. The agent reads the page&#39;s accessibility tree, targets elements by reference and selector, and uses screenshots as one more input when it needs them.</p>
 <h2 id="why-vision-only">Why vision only</h2>
 <ul><li><strong>It works where the page structure is missing or misleading.</strong> Canvas editors, maps, charts, games and custom widgets often show up as an empty box in the accessibility tree. On screen they are perfectly clear.</li><li><strong>It sees what you see.</strong> If a cookie banner covers a button, the model sees the banner, not a button that looks clickable in the DOM.</li><li><strong>Models are good at it now.</strong> Current vision models point accurately enough to hit small buttons and links. WebBrain maps their answers back to the page for you, through retina displays, browser zoom, and models that answer in 0–1000 coordinates.</li><li><strong>It stays cheap.</strong> A run starts from one full screenshot. After each action WebBrain sends only the part of the screen that changed, a new full frame when most of it did, or a one-line &quot;no visible change&quot;. The model can zoom into small text whenever it needs to.</li></ul>
 <h2 id="when-waymo-wins">When Waymo wins</h2>
 <p>Vision alone is not always enough, and WebBrain already switches to the accessibility tree on its own for a few steps when only the page structure can do the job:</p>
 <ul><li>uploading a file, because the native file chooser opens outside the page, where screenshots can&#39;t reach it;</li><li>site workflows whose completion has to be proved against the page&#39;s own list of elements;</li><li>reading a whole conversation, where WebBrain has to confirm it reached the last message;</li><li>WhatsApp Web and Telegram, where WebBrain checks who a chat is with through the page structure.</li></ul>
 <p>Once that need has passed, the run goes back to vision on a fresh screenshot.</p>
-<p>You may also want to turn Tesla mode off yourself: when you use a small local model that reads text much better than pixels, or when you want the most precise element targeting on a site with long forms. If your model doesn&#39;t take images at all, WebBrain falls back to the accessibility tree automatically.</p>
+<p>You may also want to turn Vision mode off yourself: when you use a small local model that reads text much better than pixels, or when you want the most precise element targeting on a site with long forms. If your model doesn&#39;t take images at all, WebBrain falls back to the accessibility tree automatically.</p>
 <h2 id="how-to-use-it">How to use it</h2>
-<p>Tesla mode is <strong>Auto</strong> by default, so every Act run whose model accepts images already uses it. To change that, open <strong>Settings → Advanced → Tesla mode</strong> and pick <strong>Auto</strong> or <strong>Off</strong>. <strong>Vision screenshot size</strong>, next to it, trades detail for tokens: Economy, Balanced or Sharp.</p>
-<p>Your settings carry over: if you had turned Vision mode off, Tesla mode is off too. Ask and Dev runs are unchanged, because Tesla mode only applies to Act.</p>
+<p>Vision mode is <strong>Auto</strong> by default, so every Act run whose model accepts images already uses it. To change that, open <strong>Settings → Advanced → Vision mode</strong> and pick <strong>Auto</strong> or <strong>Off</strong>. <strong>Vision screenshot size</strong>, next to it, trades detail for tokens: Economy, Balanced or Sharp.</p>
+<p>Your settings carry over: if you had turned Vision mode off, it stays off. Ask and Dev runs are unchanged, because Vision mode only applies to Act.</p>
 <p>Pick the car that suits the road. We&#39;d love to hear which one you drive with.</p>
 <p>Tesla and Waymo are trademarks of their respective owners. WebBrain is not affiliated with either company; the names are only an analogy.</p>
-<p>Tags: #WebBrain #TeslaMode #BrowserAgent #ComputerUse #VisionModels #AccessibilityTree</p>
+<p>Tags: #WebBrain #VisionMode #TeslaMode #BrowserAgent #ComputerUse #VisionModels #AccessibilityTree</p>
 
     <div class="author-box">
       Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain 33.0.0 and later is GPL-3.0-or-later and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.

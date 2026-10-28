@@ -2,7 +2,7 @@
 
 The accessibility-tree (AX) subsystem is the primary page-interaction path for the agent. It replaces the older index-based `get_interactive_elements` for almost all flows.
 
-An Act run in [vision mode](vision-mode.md) (Tesla mode in Settings; the default when the model takes images) does not use this subsystem for its model: it sees screenshots and acts with coordinates. Everything below applies to Ask, Dev, text-only models and Act with vision mode off.
+An Act run in [vision mode](vision-mode.md) (the default when the model takes images) does not use this subsystem for its model: it sees screenshots and acts with coordinates. Everything below applies to Ask, Dev, text-only models and Act with vision mode off.
 
 ---
 

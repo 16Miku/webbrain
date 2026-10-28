@@ -1,16 +1,16 @@
-# Tesla mode (vision mode)
+# Vision mode (aka "Tesla" mode)
 
-Tesla mode is the user-facing name of vision mode (Settings → Advanced, called **Vision mode** before). Like a Tesla that drives on cameras alone, the run works only from what it sees. With the setting Off, WebBrain is closer to Waymo, which adds other sensors: an Act run reads the page's accessibility tree, element refs and selectors, with screenshots as one more input. In code, storage and traces the feature keeps the name vision mode (`visionMode`, `vision_mode`).
+In vision mode (aka "Tesla" mode, configured under Settings → Advanced → **Vision mode**), like a Tesla that drives on cameras alone, the run works only from what it sees. With the setting Off, WebBrain is closer to Waymo, which adds other sensors: an Act run reads the page's accessibility tree, element refs and selectors, with screenshots as one more input. In code, storage and traces the feature keeps the name vision mode (`visionMode`, `vision_mode`).
 
 In vision mode an Act run sees the tab only as screenshots and acts with the mouse and keyboard at coordinates. There is no accessibility tree, no `ref_id` and no CSS selector in the model's view. The run starts from a full frame of the viewport; after every action WebBrain sends only what changed on screen (a patch), a new full frame when most of the screen changed, or a one-line "no visible change".
 
-The accessibility-tree path stays available (Settings → Advanced → **Tesla mode** → Off) and is used automatically when the model cannot take images.
+The accessibility-tree path stays available (Settings → Advanced → **Vision mode** → Off) and is used automatically when the model cannot take images.
 
 ## The setting
 
 Settings → Advanced:
 
-- **Tesla mode** (storage key `visionMode`; called **Vision mode** before): **Auto** (default) or **Off**. Auto applies to Act runs whose model receives screenshots directly (`provider.supportsVision`). A separate describe-only vision model cannot aim clicks, so a text-only model keeps the accessibility tree. Ask and Dev are unchanged. The option was called **On** before; a stored `on` (or `true`), and an exported configuration that carries it, reads as Auto.
+- **Vision mode** (storage key `visionMode`): **Auto** (default) or **Off**. Auto applies to Act runs whose model receives screenshots directly (`provider.supportsVision`). A separate describe-only vision model cannot aim clicks, so a text-only model keeps the accessibility tree. Ask and Dev are unchanged. The option was called **On** before; a stored `on` (or `true`), and an exported configuration that carries it, reads as Auto.
 - **Vision screenshot size** (`visionQuality`): **Economy**, **Balanced** (default) or **Sharp**. It caps the model-facing image (Economy: long edge 1024 px / 0.6 MP; Balanced: 1440 px / 1.05 MP; Sharp: the provider's own limit). The model can always `zoom` for detail.
 
 A run decides once, when it starts (`_beginVisionRun` snapshots both settings), like lean mode. The resolved state is recorded in the trace's runtime config as `vision_mode_setting` and `vision_mode`. The `Agent` class default is `off`, so embedders and unit tests opt in explicitly; `background.js` applies the stored setting, whose default is `on`.

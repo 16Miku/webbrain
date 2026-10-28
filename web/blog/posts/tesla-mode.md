@@ -1,24 +1,24 @@
 ---
 title: >
-  Introducing Tesla mode: WebBrain on vision alone
+  Introducing Vision mode (aka "Tesla" mode): WebBrain on vision alone
 slug: tesla-mode
 sortOrder: -430
 date: 2026-10-28
 readTime: 3 min read
 description: >
-  Vision mode is now Tesla mode. Like a Tesla that drives on cameras alone, WebBrain's Act runs see the page only as screenshots and act with the mouse and keyboard. Turn it off and WebBrain works more like Waymo, adding the page's accessibility tree.
+  Vision mode (aka "Tesla" mode) lets WebBrain act on vision alone. Like a Tesla that drives on cameras, WebBrain's Act runs see the page only as screenshots and act with the mouse and keyboard. Turn it off and WebBrain works more like Waymo, adding the page's accessibility tree.
 excerpt: >
-  Vision mode has a new name. With Tesla mode on, Act runs see the page only through screenshots, like a car that drives on cameras alone. Turn it off and WebBrain works more like Waymo, reading the page's structure too.
+  Vision mode (aka "Tesla" mode) lets Act runs see the page through screenshots, like a car that drives on cameras alone. Turn it off and WebBrain works more like Waymo, reading the page's structure too.
 titleTag: >
-  Introducing Tesla Mode - WebBrain Blog
+  Introducing Vision Mode - WebBrain Blog
 ogTitle: >
-  Introducing Tesla mode
+  Introducing Vision mode (aka "Tesla" mode)
 ogDescription: >
-  WebBrain's vision mode is now Tesla mode: screenshots in, mouse and keyboard out. Turn it off and it works more like Waymo, with the accessibility tree as an extra sensor.
+  WebBrain's vision mode (aka "Tesla" mode): screenshots in, mouse and keyboard out. Turn it off and it works more like Waymo, with the accessibility tree as an extra sensor.
 twitterTitle: >
-  Introducing Tesla mode in WebBrain
+  Introducing Vision mode in WebBrain
 twitterDescription: >
-  Vision only, like a Tesla on cameras. Turn it off for the Waymo approach: screenshots plus the page's accessibility tree.
+  Vision only (aka "Tesla" mode), like a Tesla on cameras. Turn it off for the Waymo approach: screenshots plus the page's accessibility tree.
 keywords:
   - WebBrain
   - Tesla mode
@@ -31,7 +31,7 @@ keywords:
 author: Emre Sokullu
 authorUrl: https://emresokullu.com
 lede: >
-  **Vision mode has a new name: Tesla mode.** How it works doesn't change. The new name just explains what it does better than "vision" ever did.
+  **Vision mode (aka "Tesla" mode) sees the web through pixels alone.** Like a Tesla that drives on cameras, WebBrain's Act runs can operate directly from screenshots.
 ---
 
 ## Two ways to drive
@@ -40,9 +40,9 @@ There are two well-known ways to build a self-driving car. Tesla bet on cameras:
 
 A browser agent has the same choice to make.
 
-With **Tesla mode** on, an Act run sees the tab only as screenshots. There is no accessibility tree, no element reference and no CSS selector in the model's view. It clicks, types, scrolls and drags at screen coordinates, the way you would with a mouse and keyboard.
+With **Vision mode** (aka "Tesla" mode) on, an Act run sees the tab only as screenshots. There is no accessibility tree, no element reference and no CSS selector in the model's view. It clicks, types, scrolls and drags at screen coordinates, the way you would with a mouse and keyboard.
 
-With Tesla mode **off**, WebBrain works more like Waymo. The agent reads the page's accessibility tree, targets elements by reference and selector, and uses screenshots as one more input when it needs them.
+With Vision mode **off**, WebBrain works more like Waymo. The agent reads the page's accessibility tree, targets elements by reference and selector, and uses screenshots as one more input when it needs them.
 
 ## Why vision only
 
@@ -62,16 +62,16 @@ Vision alone is not always enough, and WebBrain already switches to the accessib
 
 Once that need has passed, the run goes back to vision on a fresh screenshot.
 
-You may also want to turn Tesla mode off yourself: when you use a small local model that reads text much better than pixels, or when you want the most precise element targeting on a site with long forms. If your model doesn't take images at all, WebBrain falls back to the accessibility tree automatically.
+You may also want to turn Vision mode off yourself: when you use a small local model that reads text much better than pixels, or when you want the most precise element targeting on a site with long forms. If your model doesn't take images at all, WebBrain falls back to the accessibility tree automatically.
 
 ## How to use it
 
-Tesla mode is **Auto** by default, so every Act run whose model accepts images already uses it. To change that, open **Settings → Advanced → Tesla mode** and pick **Auto** or **Off**. **Vision screenshot size**, next to it, trades detail for tokens: Economy, Balanced or Sharp.
+Vision mode is **Auto** by default, so every Act run whose model accepts images already uses it. To change that, open **Settings → Advanced → Vision mode** and pick **Auto** or **Off**. **Vision screenshot size**, next to it, trades detail for tokens: Economy, Balanced or Sharp.
 
-Your settings carry over: if you had turned Vision mode off, Tesla mode is off too. Ask and Dev runs are unchanged, because Tesla mode only applies to Act.
+Your settings carry over: if you had turned Vision mode off, it stays off. Ask and Dev runs are unchanged, because Vision mode only applies to Act.
 
 Pick the car that suits the road. We'd love to hear which one you drive with.
 
 Tesla and Waymo are trademarks of their respective owners. WebBrain is not affiliated with either company; the names are only an analogy.
 
-Tags: #WebBrain #TeslaMode #BrowserAgent #ComputerUse #VisionModels #AccessibilityTree
+Tags: #WebBrain #VisionMode #TeslaMode #BrowserAgent #ComputerUse #VisionModels #AccessibilityTree
