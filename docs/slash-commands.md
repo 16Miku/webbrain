@@ -36,7 +36,7 @@ for its available flags.
 | `/teach --end` | Stop teaching and compile the captured actions into a value-free saved workflow |
 | `/allow-api` | **Per-conversation API mutation override.** See [below](#allow-api). |
 | `/foreground [prompt]` | Run one local task in the foreground for visual compatibility |
-| `/dangerously-skip-permissions` | **Global permission-prompt bypass.** Turns off `Ask before consequential actions` without opening Settings. WebBrain will act without per-site prompts until you re-enable the setting (the Permissions page, or the warning button next to the microphone in the side panel composer). |
+| `/dangerously-skip-permissions` | **Global permission-prompt bypass.** Turns off `Ask before consequential actions` without opening Settings. WebBrain will act without per-site prompts until you re-enable the setting (the Permissions page, or the warning button next to the microphone in the side panel composer). A permission card's **Dangerously skip permissions** button does the same, or turns prompts off only until the browser closes. |
 | `/compact` | Force context compaction for the current conversation |
 | `/verbose` | Toggle verbose/compact tool display |
 | `/reset` | Clear the conversation and all per-conversation flags |

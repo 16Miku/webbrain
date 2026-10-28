@@ -15,6 +15,9 @@ function fixture(build, invocation) {
     currentTabId: 7,
     PERMISSION_GATE_KEY: 'askBeforeConsequential',
     askBeforeConsequential: true,
+    permissionGateStoredOff: false,
+    permissionGateSessionOff: false,
+    renderPermissionGateControl() {},
     parseSlashInvocation: () => ({ payload: '', optionValues: new Set(), ...invocation }),
     sendToBackground: (action, payload) => { requests.push({ action, payload }); return pending; },
     addPersistentSlashMessage: content => notices.push(content),
@@ -36,6 +39,10 @@ function fixture(build, invocation) {
     storage: { local: { set: data => { requests.push({ action: 'storage.set', payload: data }); return pending; } } },
   };
   vm.runInContext(source.slice(start, end + 2), context);
+  // The command turns the stored setting off through the panel's gate helper.
+  const syncStart = source.indexOf('function syncAskBeforeConsequential() {');
+  assert.ok(syncStart >= 0);
+  vm.runInContext(source.slice(syncStart, source.indexOf('\n}', syncStart) + 2), context);
   return { context, release, reject, notices, requests, downloads, resolvedTabs };
 }
 

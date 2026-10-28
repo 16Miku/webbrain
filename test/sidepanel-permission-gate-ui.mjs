@@ -10,10 +10,16 @@ const read = async (build, file) => (await fs.readFile(new URL(`../src/${build}/
 // chat helpers it calls are fixtures, so the test sees every write and notice.
 for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', firefox, 'browser']]) {
   describe(`${build}: side panel permission switch`, () => {
-    let browser, block, html;
+    let browser, block, gateHelpers, html;
     before(async () => {
       browser = await engine.launch({ headless: true });
       const source = await read(build, 'src/ui/sidepanel.js');
+      // The switch combines the stored setting with the browser-session skip
+      // through these production helpers.
+      const helpersStart = source.indexOf('function syncAskBeforeConsequential() {');
+      const helpersEnd = source.indexOf('\n// --- "Dangerously skip permissions" dialog', helpersStart);
+      assert.ok(helpersStart >= 0 && helpersEnd > helpersStart, 'Use the production gate helpers.');
+      gateHelpers = source.slice(helpersStart, helpersEnd);
       const start = source.indexOf("const permissionGateMenu = document.getElementById('permission-gate-menu');");
       const end = source.indexOf('\nrenderPermissionGateControl();\n', start);
       assert.ok(start >= 0 && end > start, 'Use the entire production switch block.');
@@ -25,7 +31,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
     });
     after(async () => { await browser?.close(); });
 
-    async function fixture(run, { askBefore = true, width = 420, storedPin = null } = {}) {
+    async function fixture(run, { askBefore = true, sessionOff = false, width = 420, storedPin = null } = {}) {
       const context = await browser.newContext({ viewport: { width, height: 640 } });
       const errors = [];
       try {
@@ -47,7 +53,8 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.addScriptTag({ type: 'module', content: `
           import { t, applyDOMTranslations } from '/src/${build}/src/ui/i18n.js';
           import { createComposerModePins } from '/src/${build}/src/ui/composer-mode-pin.js';
-          const log = window.__log = { writes: [], notices: [], toasts: [], opened: [], actWarning: 0, placeholder: 0, scaleClosed: 0, setMode: [], ensure: [], background: [] };
+          import { PERMISSION_GATE_SESSION_OFF_KEY } from '/src/${build}/src/agent/permission-gate.js';
+          const log = window.__log = { writes: [], sessionWrites: [], sessionRemoves: [], notices: [], toasts: [], opened: [], actWarning: 0, placeholder: 0, scaleClosed: 0, setMode: [], ensure: [], background: [] };
           const sendToBackground = async (action, params = {}) => { log.background.push({ action, params }); return {}; };
           // The mode picker's collaborators: the panel's mode state and checks.
           const session = window.__session = { ${storedPin ? `'composerModePin:7': ${JSON.stringify(storedPin)}` : ''} };
@@ -90,12 +97,17 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
                 // Chromium dispatches storage.onChanged before the set() callback resumes
                 askBeforeConsequential = values[PERMISSION_GATE_KEY] !== false;
               }
-            } } },
+            } }, session: {
+              async set(values) { log.sessionWrites.push(values); },
+              async remove(key) { log.sessionRemoves.push(key); },
+            } },
             runtime: { getURL: (path) => 'ext://webbrain/' + path, openOptionsPage() { log.opened.push('options'); } },
             tabs: { async create({ url }) { log.opened.push(url); } },
           };
           const PERMISSION_GATE_KEY = 'askBeforeConsequentialActions';
-          let askBeforeConsequential = ${askBefore};
+          let askBeforeConsequential = ${askBefore && !sessionOff};
+          let permissionGateStoredOff = ${!askBefore};
+          let permissionGateSessionOff = ${sessionOff};
           const updateActWarning = () => { log.actWarning += 1; };
           const updateInputPlaceholder = () => { log.placeholder += 1; };
           const showComposerToast = (message) => { log.toasts.push(message); };
@@ -103,6 +115,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
           const systemHtml = (value) => ({ __systemHtml: value });
           const closeUiScalePopover = () => { log.scaleClosed += 1; return false; };
           applyDOMTranslations(document);
+          ${gateHelpers}
           ${block}
           renderComposerModePicker();
           Object.assign(window, {
@@ -164,6 +177,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.waitForFunction(() => window.__log.writes.length === 1);
         s = await state();
         assert.deepEqual(s.log.writes, [{ askBeforeConsequentialActions: false }]);
+        assert.deepEqual(s.log.sessionRemoves, [], 'turning prompts off leaves the session flag alone');
         assert.equal(s.log.notices.length, 1);
         assert.match(s.log.notices[0], /Permission prompts are OFF/);
         assert.equal(s.off, true);
@@ -202,6 +216,24 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.mouse.click(20, 300);
         assert.equal((await state()).open, false);
       }, { askBefore: false });
+    });
+
+    test('a skip for this browser session shows as off, and turning prompts on ends it', async () => {
+      await fixture(async ({ page, state }) => {
+        let s = await state();
+        assert.equal(s.off, true, 'the session skip turns prompts off even with the stored setting on');
+        assert.equal(s.checked, false);
+        await page.click('#btn-permission-gate');
+        await page.keyboard.press('Space');
+        await page.waitForFunction(() => window.__log.writes.length === 1);
+        s = await state();
+        assert.deepEqual(s.log.writes, [{ askBeforeConsequentialActions: true }]);
+        assert.deepEqual(s.log.sessionRemoves, ['skipPermissionPromptsThisSession']);
+        assert.deepEqual(s.log.sessionWrites, []);
+        assert.deepEqual(s.log.toasts, ['Permission prompts are on again.']);
+        assert.equal(s.off, false);
+        assert.equal(s.checked, true);
+      }, { sessionOff: true });
     });
 
     test('a failed write keeps showing the stored state', async () => {

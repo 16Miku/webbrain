@@ -127,7 +127,7 @@ import {
   cloudflareManagedChallengeStorageKey,
   normalizeCloudflareManagedChallengeState,
 } from './cloudflare-managed-challenge.js';
-import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, inputReachesReceivingFrame, frameHostMatches, urlFilterHostHint, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, uploadApprovalCard, uploadApprovalKey, uploadApprovalQuestion, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
+import { Capability, CAPABILITY_LABEL, PERMISSION_GATE_SESSION_OFF_KEY, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, inputReachesReceivingFrame, frameHostMatches, urlFilterHostHint, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, uploadApprovalCard, uploadApprovalKey, uploadApprovalQuestion, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
   buildPlannerAlignmentMessages,
@@ -991,17 +991,26 @@ export class Agent extends LoopDetector {
     // wrapping + system-prompt contract) stay active regardless — they cost
     // nothing and are the part that protects against injected page content.
     this._skipPermissionGate = false;
+    // Either switch turns the gate off: the stored setting, or the
+    // browser-session one the permission card's skip dialog writes.
+    this._permissionGateOffStored = false;
+    this._permissionGateOffForSession = false;
     this._gateSettingLoaded = false;
     // Keep in-memory state in sync when storage changes out-of-band — a grant
     // revoked on the permissions page, or the master switch toggled.
     try {
       browser.storage.onChanged.addListener((changes, area) => {
+        if (area === 'session' && changes[PERMISSION_GATE_SESSION_OFF_KEY]) {
+          this._permissionGateOffForSession = changes[PERMISSION_GATE_SESSION_OFF_KEY].newValue === true;
+          this._skipPermissionGate = this._permissionGateOffStored || this._permissionGateOffForSession;
+        }
         if (area !== 'local') return;
         if (changes.wb_permissions) {
           this.permissions.hydrateFrom(changes.wb_permissions.newValue || []);
         }
         if (changes.askBeforeConsequentialActions) {
-          this._skipPermissionGate = changes.askBeforeConsequentialActions.newValue === false;
+          this._permissionGateOffStored = changes.askBeforeConsequentialActions.newValue === false;
+          this._skipPermissionGate = this._permissionGateOffStored || this._permissionGateOffForSession;
         }
         if (changes[COST_ALLOWANCE_SESSION_KEY]) {
           this.costAllowanceSessionUsd = this._normalizeCostLimit(changes[COST_ALLOWANCE_SESSION_KEY].newValue);
@@ -8519,8 +8528,13 @@ export class Agent extends LoopDetector {
     this._gateSettingLoaded = true;
     try {
       const o = await browser.storage.local.get('askBeforeConsequentialActions');
-      this._skipPermissionGate = o?.askBeforeConsequentialActions === false;
+      this._permissionGateOffStored = o?.askBeforeConsequentialActions === false;
     } catch { /* default: gate on */ }
+    try {
+      const o = await browser.storage.session.get(PERMISSION_GATE_SESSION_OFF_KEY);
+      this._permissionGateOffForSession = o?.[PERMISSION_GATE_SESSION_OFF_KEY] === true;
+    } catch { /* default: gate on */ }
+    this._skipPermissionGate = this._permissionGateOffStored || this._permissionGateOffForSession;
     return this._skipPermissionGate;
   }
 

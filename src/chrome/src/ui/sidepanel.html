@@ -176,6 +176,65 @@
     </div>
   </div>
 
+  <!-- Opened by a permission card's "Dangerously skip permissions" button.
+       Each choice turns permission prompts off; closing it returns to the card. -->
+  <div
+    id="permission-skip-dialog"
+    class="permission-skip-dialog hidden"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="permission-skip-dialog-title"
+    aria-describedby="permission-skip-dialog-description"
+    tabindex="-1"
+  >
+    <div class="permission-skip-dialog-card">
+      <button
+        id="permission-skip-dialog-close"
+        class="permission-skip-dialog-close"
+        type="button"
+        data-permission-skip-action
+        data-i18n-aria-label="sp.perm.skip_dialog.close"
+        data-i18n-title="sp.perm.skip_dialog.close"
+        aria-label="Close"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+      <div class="permission-skip-dialog-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>
+          <path d="M12 9v4"/>
+          <path d="M12 17h.01"/>
+        </svg>
+      </div>
+      <div class="permission-skip-dialog-copy">
+        <h2 id="permission-skip-dialog-title" data-i18n="sp.perm.skip_dialog.title">Skip all permission prompts?</h2>
+        <p id="permission-skip-dialog-description" data-i18n="sp.perm.skip_dialog.body"></p>
+      </div>
+      <div class="permission-skip-dialog-actions">
+        <button
+          id="permission-skip-dialog-session"
+          class="permission-skip-dialog-session"
+          type="button"
+          data-permission-skip-action
+          data-permission-skip-scope="session"
+        >
+          <span class="permission-skip-dialog-action-label" data-i18n="sp.perm.skip_dialog.session">This session only</span>
+          <span class="permission-skip-dialog-action-hint" data-i18n="sp.perm.skip_dialog.session_hint">Until you close the browser</span>
+        </button>
+        <button
+          id="permission-skip-dialog-forever"
+          class="permission-skip-dialog-forever"
+          type="button"
+          data-permission-skip-action
+          data-permission-skip-scope="forever"
+        >
+          <span class="permission-skip-dialog-action-label" data-i18n="sp.perm.skip_dialog.forever">Forever</span>
+          <span class="permission-skip-dialog-action-hint" data-i18n="sp.perm.skip_dialog.forever_hint">Until you turn prompts back on</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div id="app">
     <!-- Header -->
     <div class="header-shell">
