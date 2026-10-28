@@ -437,6 +437,18 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(tools.getVisionActPrompt({ coordinates: 'normalized' }), /0\.\.1000/);
     assert.match(tools.getVisionActPrompt({ tier: 'compact' }), /cannot schedule/);
   });
+
+  test(`${build}: the vision Act prompt says how a file gets attached without the element tools`, () => {
+    // upload_file is not a vision tool; clicking the upload control hands it over.
+    for (const tier of ['compact', 'mid', 'full']) {
+      const prompt = tools.getVisionActPrompt({ coordinates: 'pixel', tier });
+      assert.match(prompt, /File uploads: to attach [^\n]*click the page's own attach or upload control once with click_at\. WebBrain blocks the OS file dialog[^\n]*gives you upload_file for the next steps/);
+      assert.match(prompt, /Only if WebBrain then says the upload is unavailable, finish the rest and tell the user\./);
+    }
+    // Compact upload_file attaches only the user's own attachments.
+    assert.match(tools.getVisionActPrompt({ tier: 'compact' }), /to attach a file the user attached to their message,/);
+    assert.match(tools.getVisionActPrompt({ tier: 'full' }), /to attach a file the user attached, or one downloaded in this conversation,/);
+  });
 }
 
 for (const build of ['chrome', 'firefox']) {
