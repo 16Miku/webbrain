@@ -53,14 +53,14 @@ With Vision mode **off**, WebBrain works more like Waymo. The agent reads the pa
 
 ## When Waymo wins
 
-Vision alone is not always enough, and WebBrain already switches to the accessibility tree on its own for a few steps when only the page structure can do the job:
+Vision alone is not always enough, and WebBrain already switches to the accessibility tree on its own when only the page structure can do the job:
 
-- uploading a file, because the native file chooser opens outside the page, where screenshots can't reach it;
-- site workflows whose completion has to be proved against the page's own list of elements;
-- reading a whole conversation, where WebBrain has to confirm it reached the last message;
-- WhatsApp Web and Telegram, where WebBrain checks who a chat is with through the page structure.
+- for a few steps around a file upload, because the native file chooser opens outside the page, where screenshots can't reach it;
+- while a site workflow runs whose completion has to be proved against the page's own list of elements;
+- for the rest of the task when you ask it to read a whole conversation, because WebBrain has to confirm it reached the last message;
+- on WhatsApp Web and Telegram, where WebBrain checks who a chat is with through the page structure.
 
-Once that need has passed, the run goes back to vision on a fresh screenshot.
+When the upload is done, or the run leaves the workflow or the chat page, it goes back to vision on a fresh screenshot.
 
 You may also want to turn Vision mode off yourself: when you use a small local model that reads text much better than pixels, or when you want the most precise element targeting on a site with long forms. If your model doesn't take images at all, WebBrain falls back to the accessibility tree automatically.
 
