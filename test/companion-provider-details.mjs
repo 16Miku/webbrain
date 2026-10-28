@@ -30,6 +30,10 @@ for (const build of ['chrome', 'firefox']) {
       selectPreferredCompanionModel(['haiku-5.5', 'luna-6.1']),
       'haiku-5.5',
     );
+    assert.equal(
+      selectPreferredCompanionModel(['gemini-3.8-flash', 'claude-5.5-haiku']),
+      'claude-5.5-haiku',
+    );
 
     // luna-6.1 ranks second
     assert.equal(

@@ -12,8 +12,8 @@ export const WEBBRAIN_COMPANION_DEFAULT_BASE_URL = 'http://127.0.0.1:8327/v1';
 // 2. luna-6.1 (GPT-6.1 Luna)
 // 3. gemini-3.8-flash (Gemini 3.8 Flash)
 export const COMPANION_PREFERRED_MODEL_PATTERNS = [
-  /haiku[-_.]?5[.\-_]?5/i,
-  /luna[-_.]?6[.\-_]?1|gpt[-_.]?6[.\-_]?1.*luna/i,
+  /(?:haiku.*5[.\-_]?5|5[.\-_]?5.*haiku)/i,
+  /(?:luna.*6[.\-_]?1|6[.\-_]?1.*luna)/i,
   /gemini[-_.]?3[.\-_]?8[-_.]?flash/i,
 ];
 
