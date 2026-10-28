@@ -77523,6 +77523,8 @@ test('WebBrain Companion loads models and chats over its keyless local endpoint'
       assert.equal(defaults.baseUrl, 'http://127.0.0.1:8327/v1', `${browser}: Companion URL`);
       assert.equal(defaults.requiresApiKey, undefined, `${browser}: loopback access must be keyless`);
       assert.equal(defaults.requiresModel, true, `${browser}: model selection must be explicit`);
+      assert.equal(defaults.visionMode, 'auto', `${browser}: visionMode must default to auto`);
+      assert.equal(defaults.supportsVision, undefined, `${browser}: legacy supportsVision must not be present in defaults`);
       manager.providers.set('webbrain_companion', manager._createProvider('webbrain_companion', defaults));
       const requests = [];
       globalThis.fetch = async (url, init = {}) => {
@@ -134848,7 +134850,7 @@ test('generate_image tool exists in both builds, full tier only, and settings UI
 
     const agentJs = fs.readFileSync(path.join(ROOT, `src/${build}/src/agent/agent.js`), 'utf8');
     assert.ok(agentJs.includes("name === 'generate_image'"), `${build}: agent.js should dispatch generate_image`);
-    assert.match(agentJs, /generateImage\(args, \{\s*signal: executionContext\?\._contentActionAbortSignal,\s*\.\.\.\(executionContext\?\.imageGenConfig \? \{ config: executionContext\.imageGenConfig \} : \{\}\),/,
+    assert.match(agentJs, /generateImage\(providerArgs, \{\s*signal: executionContext\?\._contentActionAbortSignal,\s*\.\.\.\(config !== undefined \? \{ config \} : \{\}\),/,
       `${build}: agent.js should pass the linked run signal into fal generation`);
 
     assert.equal(untrustedTools.has('generate_image'), true, `${build}: fal.ai output must be untrusted`);
