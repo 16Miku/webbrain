@@ -167,7 +167,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         assert.equal(s.focus, 'permission-skip-dialog-close', 'focus starts on the safe choice');
         assert.equal(await page.textContent('#permission-skip-dialog-title'), 'Skip all permission prompts?');
         assert.match(await page.textContent('#permission-skip-dialog-description'), /without asking[\s\S]*safety checks still stop or ask/);
-        assert.match(await page.textContent('#permission-skip-dialog-session'), /This session only[\s\S]*Until you close the browser/);
+        assert.match(await page.textContent('#permission-skip-dialog-session'), /This session only[\s\S]*Until you quit the browser/);
         assert.match(await page.textContent('#permission-skip-dialog-forever'), /Forever[\s\S]*Until you turn prompts back on/);
         assert.equal(await page.getAttribute('#permission-skip-dialog-close', 'aria-label'), 'Close and go back');
 
@@ -196,6 +196,16 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         await page.mouse.click(4, 4);
         s = await state();
         assert.equal(s.open, false, 'a click outside the card closes it');
+        // Shift+Tab from the dialog container itself stays inside.
+        await page.click('.clarify-skip-permissions');
+        await page.evaluate(() => document.getElementById('permission-skip-dialog').focus());
+        await page.keyboard.press('Shift+Tab');
+        assert.equal((await state()).focus, 'permission-skip-dialog-forever');
+        // With the card gone (its run ended), closing returns focus to the composer.
+        await page.evaluate(() => document.querySelector('.clarify-card').remove());
+        await page.keyboard.press('Escape');
+        assert.equal((await state()).focus, 'user-input');
+        s = await state();
         assert.deepEqual(s.log, { local: [], session: [], removed: [], submits: [], resolved: [], notices: [], toasts: [] },
           'closing changes nothing and answers nothing');
         assert.equal(s.gate.askBeforeConsequential, true);
@@ -215,7 +225,7 @@ for (const [build, engine, api] of [['chrome', chromium, 'chrome'], ['firefox', 
         assert.deepEqual(s.log.submits, [[7, 'c1', 'once', 'option']], 'the card is answered as the user’s own choice');
         assert.deepEqual(s.log.resolved, [7], 'other waiting permission cards on the tab are allowed too');
         assert.equal(s.log.notices.length, 1);
-        assert.match(s.log.notices[0], /Permission prompts are OFF until you close the browser/);
+        assert.match(s.log.notices[0], /Permission prompts are OFF until you quit the browser/);
         assert.deepEqual(s.gate, { askBeforeConsequential: false, permissionGateStoredOff: false, permissionGateSessionOff: true });
         assert.equal(s.cardConnected, false);
         assert.equal(s.focus, 'user-input', 'focus goes back to the composer');

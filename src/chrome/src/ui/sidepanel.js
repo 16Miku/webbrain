@@ -1854,9 +1854,13 @@ function closePermissionSkipDialog({ restoreFocus = true } = {}) {
   permissionSkipDialogState = null;
   permissionSkipDialogEl?.classList.add('hidden');
   if (appEl) appEl.inert = state.appWasInert;
-  if (restoreFocus && state.previouslyFocusedElement?.isConnected
-      && typeof state.previouslyFocusedElement.focus === 'function') {
-    state.previouslyFocusedElement.focus({ preventScroll: true });
+  if (restoreFocus) {
+    const opener = state.previouslyFocusedElement;
+    if (opener?.isConnected && opener !== document.body && typeof opener.focus === 'function') {
+      opener.focus({ preventScroll: true });
+    } else {
+      inputEl?.focus({ preventScroll: true });
+    }
   }
   return state;
 }
@@ -1918,7 +1922,8 @@ function handlePermissionSkipDialogKeydown(event) {
     if (!first) {
       event.preventDefault();
       permissionSkipDialogEl.focus({ preventScroll: true });
-    } else if (event.shiftKey && (activeElement === first || !permissionSkipDialogEl.contains(activeElement))) {
+    } else if (event.shiftKey && (activeElement === first || activeElement === permissionSkipDialogEl
+        || !permissionSkipDialogEl.contains(activeElement))) {
       event.preventDefault();
       last.focus({ preventScroll: true });
     } else if (!event.shiftKey && (activeElement === last || !permissionSkipDialogEl.contains(activeElement))) {

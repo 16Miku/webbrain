@@ -454,7 +454,7 @@ export default {
   'sp.perm.skip_dialog.title': 'Skip all permission prompts?',
   'sp.perm.skip_dialog.body': 'WebBrain will allow this request, then click, type, navigate, run JavaScript, upload, download, record and schedule future work on every site without asking, even on pages whose content may be attacker-controlled. Its safety checks still stop or ask before it sends to someone you didn\'t name, deletes something, spends money, uses credentials or attaches a file you didn\'t choose.',
   'sp.perm.skip_dialog.session': 'This session only',
-  'sp.perm.skip_dialog.session_hint': 'Until you close the browser',
+  'sp.perm.skip_dialog.session_hint': 'Until you quit the browser',
   'sp.perm.skip_dialog.forever': 'Forever',
   'sp.perm.skip_dialog.forever_hint': 'Until you turn prompts back on',
   'sp.perm.skip_dialog.close': 'Close and go back',
@@ -520,7 +520,7 @@ export default {
 
   'sp.api.enabled_html': '🔓 <strong>API mutations enabled</strong> for this conversation. The agent may now use POST/PUT/PATCH/DELETE via fetch_url and execute_js when it judges API to be more reliable than UI for a step. UI-first remains the default. This flag clears when you reset the conversation.',
   'sp.permissions.disabled_html': '⚠️ <strong>Permission prompts are OFF.</strong> WebBrain will click, type, navigate, run JavaScript, upload, download, record, and schedule future work without asking first. Re-enable this from the ⚠ button next to the microphone.',
-  'sp.permissions.disabled_session_html': '⚠️ <strong>Permission prompts are OFF until you close the browser.</strong> WebBrain will click, type, navigate, run JavaScript, upload, download, record, and schedule future work without asking first. Re-enable this from the ⚠ button next to the microphone.',
+  'sp.permissions.disabled_session_html': '⚠️ <strong>Permission prompts are OFF until you quit the browser.</strong> WebBrain will click, type, navigate, run JavaScript, upload, download, record, and schedule future work without asking first. Re-enable this from the ⚠ button next to the microphone.',
   'sp.permissions.button': 'Permission prompts: on',
   'sp.permissions.button_off': 'Permission prompts: off',
   'sp.permissions.gate_desc': 'WebBrain asks the first time it clicks, types, downloads or runs code on a site.',
