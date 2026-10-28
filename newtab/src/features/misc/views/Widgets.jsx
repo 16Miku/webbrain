@@ -57,7 +57,7 @@ const Widgets = () => {
         <Fragment key={key}>{Object.hasOwn(widgets, element) ? widgets[element] : null}</Fragment>
       ))}
       {enabled('taskBox') && <TaskBox />}
-      {/* Under the task box; renders nothing unless webbrain.one publishes a bulletin. */}
+      {/* Under the task box: a bulletin from webbrain.one, else the Companion invitation. */}
       <Bulletin />
       {enabled('recentChats') && <RecentChats />}
     </WidgetsLayout>
