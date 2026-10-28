@@ -755,7 +755,7 @@ for (const { build, Agent, adapters, Scheduler } of builds) {
     assert.equal(again.unverifiedStepConfirmation?.guardId, 'social-publication-draft-quality', 'it is asked about again');
   });
 
-  test(`${build}: an unobserved account, a wrong reply target, or Strict checks keep the draft refusal without a card`, async () => {
+  test(`${build}: missing accounts refuse while reply changes and Strict checks offer an explicit override`, async () => {
     const account = socialFixture();
     delete account.detected.publicationSnapshot.account;
     const noAccount = await account.agent._workflowPreSubmitDispatchBlock(account.tab, 'click_ax', { ref_id: 'ref_post' }, account.detected, account.provider);
@@ -765,13 +765,15 @@ for (const { build, Agent, adapters, Scheduler } of builds) {
     context.detected.publicationSnapshot.posts[0].context = { kind: 'reply', target: 'https://x.com/bob/status/1' };
     const wrongContext = await context.agent._workflowPreSubmitDispatchBlock(context.tab, 'click_ax', { ref_id: 'ref_post' }, context.detected, context.provider);
     assert.ok(wrongContext.publicationValidation.issues.some(issue => issue.reason === 'context_mismatch'));
-    assert.equal(wrongContext.unverifiedStepConfirmation, undefined, 'the reply target is not a readback question');
+    assert.equal(wrongContext.unverifiedStepConfirmation.guardId, 'social-publication-authorization-guard');
+    assert.equal(wrongContext.unverifiedStepConfirmation.hard, true, 'only the user may approve a changed reply target');
     // Strict checks: the guard's refusal itself is under test.
     const strict = socialFixture();
     strict.agent.strictGuards = true;
     const refused = await strict.agent._workflowPreSubmitDispatchBlock(strict.tab, 'click_ax', { ref_id: 'ref_post' }, strict.detected, strict.provider);
     assert.deepEqual(refused.publicationValidation.issues.map(issue => issue.reason), ['body_mismatch']);
-    assert.equal(refused.unverifiedStepConfirmation, undefined);
+    assert.equal(refused.unverifiedStepConfirmation.guardId, 'social-publication-authorization-guard');
+    assert.equal(refused.unverifiedStepConfirmation.hard, true, 'Strict checks still allow the user to decide');
     // A body the composer did not expose asks the user to check the page.
     const unobserved = socialFixture();
     delete unobserved.detected.publicationSnapshot.posts[0].bodyText;
@@ -780,10 +782,10 @@ for (const { build, Agent, adapters, Scheduler } of builds) {
     assert.equal(ask.unverifiedStepConfirmation.text, '');
   });
 
-  test(`${build}: media that does not match, or a composer read only in part, keeps the refusal without a card`, async () => {
-    // The card shows only the composer's text. An attachment the request did
-    // not ask for, or a part of the composer that was never read, cannot be
-    // judged from it by the user, let alone by a timeout.
+  test(`${build}: changed media needs an explicit override and an incomplete composer still refuses`, async () => {
+    // Media is not a quality/readback choice: a hard card names the observed
+    // attachments and only the user may override the mismatch. An incomplete
+    // composer still cannot define the action the user would approve.
     const image = [{ type: 'image', src: 'https://pbs.twimg.com/media/unrequested.jpg' }];
     const check = f => f.agent._workflowPreSubmitDispatchBlock(f.tab, 'click_ax', { ref_id: 'ref_post' }, f.detected, f.provider);
     const media = socialFixture();
@@ -792,12 +794,15 @@ for (const { build, Agent, adapters, Scheduler } of builds) {
     const wrongMedia = await check(media);
     assert.equal(wrongMedia.noDispatch, true);
     assert.deepEqual(wrongMedia.publicationValidation.issues.map(issue => issue.reason), ['media_mismatch']);
-    assert.equal(wrongMedia.unverifiedStepConfirmation, undefined, 'the card cannot show the media');
+    assert.equal(wrongMedia.unverifiedStepConfirmation.guardId, 'social-publication-authorization-guard');
+    assert.equal(wrongMedia.unverifiedStepConfirmation.hard, true);
+    assert.match(wrongMedia.unverifiedStepConfirmation.text, /Attachment: image/);
     const both = socialFixture();
     both.detected.publicationSnapshot.posts[0].attachments = image;
     const textAndMedia = await check(both);
     assert.deepEqual(textAndMedia.publicationValidation.issues.map(issue => issue.reason), ['body_mismatch', 'media_mismatch']);
-    assert.equal(textAndMedia.unverifiedStepConfirmation, undefined, 'a text issue does not open the card for the media');
+    assert.equal(textAndMedia.unverifiedStepConfirmation.guardId, 'social-publication-authorization-guard');
+    assert.equal(textAndMedia.unverifiedStepConfirmation.hard, true, 'media cannot inherit a quality timeout');
     const partial = socialFixture();
     partial.detected.publicationSnapshot.complete = false;
     partial.detected.publicationSnapshot.posts[0].bodyText = 'Hello';
