@@ -134,6 +134,28 @@ bulletin (`src/*/src/ui/apocalypse-comm.js`), which reads its own file.
 - It is shown whether or not the box itself is turned on, and only when the page is shown
   at all (the gate above runs first).
 
+## WebBrain Companion banner
+
+A banner fixed to the bottom of the page invites the user to install
+[WebBrain Companion](https://www.webbrain.one/companion/), the tray app that serves their Claude,
+ChatGPT, Google, Grok and Kimi subscriptions to WebBrain on `127.0.0.1:8327`. Source:
+`newtab/src/features/companion/`.
+
+- **When it shows.** Decided from extension storage only; the page makes no request to the
+  companion's port or to webbrain.one for it. It is hidden for good once the user presses ×
+  (`wbNewtabCompanionPromoDismissed` in `chrome.storage.local`), and is not shown while WebBrain
+  has a Companion provider (`webbrain_companion`, or a card with that `duplicateOf`) with a model
+  saved in `providers`. Clicking the button does not hide it; setting the Companion up does.
+  Storage that cannot be read hides it. It is also hidden under Maximise and in windows less than
+  560 px tall, and drops the demo below 1024 px wide.
+- **The link** opens the companion page in the same tab, in the WebBrain language when the page
+  is translated (`web/companion/<code>/`; Polish falls back to English), with no referrer.
+- **The demo** cycles Claude Max, ChatGPT Pro, Google AI Pro, SuperGrok and Kimi: the plan's mark
+  (Lobe Icons copies in `newtab/src/assets/providers/`) sends a packet through the tray app to a
+  browser window with WebBrain's side panel, which writes an answer with that plan in its
+  composer. CSS animations only; with reduced motion or Mue's animations setting off it is a still.
+- While it is on screen the photo credit moves up above it (`--wbcp-height`).
+
 ## Things to know
 
 - The page reads recent chats from the `webbrain_chat_history` IndexedDB read-only and

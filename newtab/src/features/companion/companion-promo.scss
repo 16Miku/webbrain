@@ -1,0 +1,888 @@
+@use 'scss/variables' as *;
+
+// Invitation to install WebBrain Companion, fixed to the bottom of the page. The demo on the
+// left plays one plan per --wbcp-step (set from CompanionPromo.jsx): its mark comes in, a packet
+// runs to the tray app, on to WebBrain's side panel in a browser window, and the answer is
+// written there with that plan in the composer. The base styles are the end state of every
+// animation, so with motion off the demo is a still.
+.wbCompanionPromo {
+  @extend %basic;
+
+  --wbcp-rose: #ff6fa5;
+  --wbcp-rose-deep: #c42d62;
+  --wbcp-faint: rgb(255 255 255 / 10%);
+  --wbcp-dim: rgb(255 255 255 / 30%);
+  --wbcp-edge: rgb(255 255 255 / 16%);
+
+  position: fixed;
+  inset-inline: 0;
+  bottom: 16px;
+  z-index: 2;
+  box-sizing: border-box;
+  width: min(1100px, calc(100vw - 32px));
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 22px;
+  padding-block: 12px;
+  padding-inline: 14px 52px;
+  overflow: hidden;
+  border-radius: 20px;
+  font-size: 1rem;
+  text-align: start;
+  animation: wbcpIn 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.4s both;
+
+  // Rose glow behind the demo.
+  &::before {
+    content: '';
+    position: absolute;
+    inset-block: -60%;
+    inset-inline-start: -8%;
+    z-index: -1;
+    width: 440px;
+    background: radial-gradient(closest-side, rgb(255 111 165 / 30%), transparent);
+    pointer-events: none;
+    animation: wbcpGlow 6s ease-in-out infinite alternate;
+  }
+
+  // A light that runs along the top edge.
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 35%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--wbcp-rose), transparent);
+    pointer-events: none;
+    animation: wbcpEdge 5s linear infinite;
+  }
+
+  &.leaving {
+    animation: wbcpOut 0.26s ease-in both;
+  }
+}
+
+// --wbcp-edge outlines the logo tiles, so a black tile shows on a dark banner and a white one
+// on a light banner.
+.light .wbCompanionPromo {
+  --wbcp-faint: rgb(0 0 0 / 7%);
+  --wbcp-dim: rgb(0 0 0 / 22%);
+  --wbcp-edge: rgb(0 0 0 / 10%);
+}
+
+.dark .wbCompanionPromo {
+  --wbcp-faint: rgb(255 255 255 / 10%);
+  --wbcp-dim: rgb(255 255 255 / 30%);
+  --wbcp-edge: rgb(255 255 255 / 16%);
+}
+
+// Maximise (navbar) shows only the background.
+html[data-bg-maximised] .wbCompanionPromo {
+  display: none;
+}
+
+// The photo credit sits in the bottom-left corner: keep it above the banner, not under it.
+// Its position is an inline style (PhotoInformation.jsx), hence !important.
+@media (height >= 560px) {
+  .wbCompanionPromoShown .photoInformation {
+    bottom: calc(16px + var(--wbcp-height, 110px) + 10px) !important;
+    transition: bottom 0.4s ease;
+  }
+}
+
+/* demo */
+
+.wbcpDemo {
+  padding: 4px 2px;
+}
+
+// The flow reads left to right in every language, like the address in it.
+.wbcpStage {
+  direction: ltr;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+// Fixed width, so plan names of different lengths do not move the rest of the flow.
+.wbcpPlan {
+  width: 36px;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+}
+
+.wbcpTile {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--wbcp-tile);
+  box-shadow:
+    inset 0 0 0 1px var(--wbcp-edge),
+    0 8px 18px -8px var(--wbcp-plan);
+  animation: wbcpTile var(--wbcp-step) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+
+  img {
+    display: block;
+    width: 20px;
+    height: 20px;
+  }
+}
+
+.wbcpPlanName {
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0.8;
+  animation: wbcpTile var(--wbcp-step) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.wbcpMeter {
+  width: 36px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--wbcp-faint);
+}
+
+.wbcpMeterFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--wbcp-plan);
+  transform: scaleX(var(--wbcp-left));
+  transform-origin: left;
+  animation: wbcpMeter var(--wbcp-step) ease-out both;
+}
+
+.wbcpWire {
+  position: relative;
+  width: 26px;
+  height: 2px;
+  background: repeating-linear-gradient(90deg, var(--wbcp-dim) 0 4px, transparent 4px 8px);
+  animation: wbcpFlow 0.8s linear infinite;
+}
+
+.wbcpPacket {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wbcp-plan);
+  box-shadow: 0 0 10px 2px var(--wbcp-plan);
+  opacity: 0;
+  animation: wbcpPacketIn var(--wbcp-step) ease-in-out both;
+}
+
+.wbcpWireOut .wbcpPacket {
+  animation-name: wbcpPacketOut;
+}
+
+.wbcpTray {
+  position: relative;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px 0 7px;
+  border-radius: 12px;
+  background: var(--wbcp-faint);
+  box-shadow: inset 0 0 0 1px var(--wbcp-faint);
+
+  img {
+    display: block;
+    width: 20px;
+    height: 20px;
+  }
+
+  // Lights up as the packet arrives.
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border: 2px solid var(--wbcp-plan);
+    border-radius: inherit;
+    opacity: 0;
+    animation: wbcpRingIn var(--wbcp-step) ease-out both;
+  }
+}
+
+.wbcpAddr {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.wbcpLive {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2ecc71;
+  animation: wbcpLive 1.6s ease-out infinite;
+}
+
+// A browser window: the page on the left, WebBrain's side panel docked on the right.
+.wbcpWindow {
+  box-sizing: border-box;
+  width: 156px;
+  height: 74px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 9px;
+  background: var(--wbcp-faint);
+  box-shadow: inset 0 0 0 1px var(--wbcp-faint);
+}
+
+.wbcpWindowBar {
+  flex: none;
+  height: 12px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  background: var(--wbcp-faint);
+
+  i {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--wbcp-dim);
+  }
+
+  // Address bar.
+  b {
+    width: 54px;
+    height: 5px;
+    margin-inline-start: 6px;
+    border-radius: 3px;
+    background: var(--wbcp-faint);
+  }
+}
+
+.wbcpWindowBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.wbcpPage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 7px 0;
+
+  i {
+    display: block;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--wbcp-faint);
+  }
+
+  i:nth-child(1) {
+    width: 70%;
+    height: 6px;
+    background: var(--wbcp-dim);
+  }
+
+  i:nth-child(2) {
+    width: 92%;
+  }
+
+  i:nth-child(3) {
+    width: 80%;
+  }
+
+  // An image block.
+  i:nth-child(4) {
+    width: 100%;
+    height: 14px;
+    border-radius: 3px;
+  }
+}
+
+.wbcpPanel {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 62px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 5px 5px;
+  background: var(--wbcp-faint);
+  box-shadow: inset 1px 0 0 var(--wbcp-faint);
+
+  // Lights up as the packet arrives.
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 2px solid var(--wbcp-plan);
+    border-radius: 0 0 9px;
+    opacity: 0;
+    animation: wbcpRingOut var(--wbcp-step) ease-out both;
+  }
+}
+
+.wbcpPanelHead {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+
+  img {
+    display: block;
+    width: 9px;
+    height: 9px;
+  }
+
+  b {
+    width: 24px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--wbcp-dim);
+  }
+}
+
+.wbcpAsk {
+  align-self: flex-end;
+  width: 64%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--wbcp-rose);
+  opacity: 0.85;
+}
+
+.wbcpReply {
+  display: grid;
+  gap: 2px;
+
+  i {
+    display: block;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--wbcp-dim);
+    transform-origin: left;
+    animation: wbcpLine1 var(--wbcp-step) ease-out both;
+  }
+
+  i:nth-child(1) {
+    width: 92%;
+  }
+
+  i:nth-child(2) {
+    width: 74%;
+    animation-name: wbcpLine2;
+  }
+
+  i:nth-child(3) {
+    width: 50%;
+    animation-name: wbcpLine3;
+  }
+}
+
+// The composer at the bottom of the panel, with the plan's mark in its model picker.
+.wbcpComposer {
+  margin-top: auto;
+  height: 11px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 2px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--wbcp-dim);
+
+  b {
+    flex: 1;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--wbcp-faint);
+  }
+}
+
+.wbcpComposerLogo {
+  width: 9px;
+  height: 9px;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  background: var(--wbcp-tile);
+  box-shadow: inset 0 0 0 0.5px var(--wbcp-edge);
+  animation: wbcpModel var(--wbcp-step) ease-out both;
+
+  img {
+    display: block;
+    width: 7px;
+    height: 7px;
+  }
+}
+
+/* text and actions */
+
+.wbcpText {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.wbcpEyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+
+  img {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.wbcpTitle {
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.wbcpBody {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 0.86rem;
+  line-height: 1.35;
+  opacity: 0.78;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.wbcpActions {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.wbcpCta {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-block: 11px;
+  padding-inline: 20px 18px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--wbcp-rose) 0%, var(--wbcp-rose-deep) 100%);
+  box-shadow: 0 8px 22px -8px rgb(196 45 98 / 75%);
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    filter 0.18s ease;
+
+  // A sheen that crosses the button now and then.
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      110deg,
+      transparent 35%,
+      rgb(255 255 255 / 45%) 50%,
+      transparent 65%
+    );
+    transform: translateX(-120%);
+    animation: wbcpShine 4.5s ease-in-out 1.6s infinite;
+  }
+
+  &:hover {
+    filter: brightness(1.06);
+    box-shadow: 0 12px 26px -8px rgb(196 45 98 / 85%);
+    transform: translateY(-1px);
+
+    .wbcpCtaArrow {
+      transform: translateX(3px);
+    }
+  }
+
+  &:focus-visible {
+    outline: 2px solid currentcolor;
+    outline-offset: 3px;
+  }
+}
+
+.wbcpCtaArrow {
+  font-size: 1.1em;
+  transition: transform 0.18s ease;
+}
+
+[dir='rtl'] .wbcpCtaArrow {
+  transform: scaleX(-1);
+}
+
+[dir='rtl'] .wbcpCta:hover .wbcpCtaArrow {
+  transform: translateX(-3px) scaleX(-1);
+}
+
+.wbcpPlatforms {
+  font-size: 0.7rem;
+  white-space: nowrap;
+  opacity: 0.6;
+}
+
+.wbcpDismiss {
+  position: absolute;
+  top: 10px;
+  inset-inline-end: 10px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  opacity: 0.6;
+
+  &:hover {
+    background: var(--wbcp-faint);
+    opacity: 1;
+  }
+
+  &:focus-visible {
+    outline: 2px solid currentcolor;
+    outline-offset: 2px;
+    opacity: 1;
+  }
+}
+
+/* layout on smaller windows */
+
+@media (width < 1024px) {
+  .wbCompanionPromo {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .wbcpDemo {
+    display: none;
+  }
+}
+
+@media (width < 560px) {
+  .wbCompanionPromo {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding-inline: 16px 44px;
+  }
+
+  .wbcpActions {
+    justify-items: start;
+  }
+
+  .wbcpPlatforms {
+    display: none;
+  }
+}
+
+// Too short to share the screen with the clock and the task box.
+@media (height < 560px) {
+  .wbCompanionPromo {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wbCompanionPromo,
+  .wbCompanionPromo::before,
+  .wbCompanionPromo::after,
+  .wbCompanionPromo *,
+  .wbCompanionPromo *::before,
+  .wbCompanionPromo *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.no-animations {
+  .wbCompanionPromo,
+  .wbCompanionPromo::before,
+  .wbCompanionPromo::after,
+  .wbCompanionPromo *,
+  .wbCompanionPromo *::before,
+  .wbCompanionPromo *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* keyframes: the step ones are percentages of --wbcp-step */
+
+@keyframes wbcpIn {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes wbcpOut {
+  to {
+    opacity: 0;
+    transform: translateY(24px) scale(0.98);
+  }
+}
+
+@keyframes wbcpGlow {
+  from {
+    opacity: 0.7;
+    transform: translateX(-12px) scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(16px) scale(1.05);
+  }
+}
+
+@keyframes wbcpEdge {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(290%);
+  }
+}
+
+@keyframes wbcpTile {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.85);
+  }
+
+  10%,
+  88% {
+    opacity: 1;
+    transform: none;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.9);
+  }
+}
+
+@keyframes wbcpMeter {
+  0%,
+  6% {
+    transform: scaleX(0);
+  }
+
+  24%,
+  100% {
+    transform: scaleX(var(--wbcp-left));
+  }
+}
+
+@keyframes wbcpFlow {
+  to {
+    background-position: 8px 0;
+  }
+}
+
+@keyframes wbcpPacketIn {
+  0%,
+  12% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+
+  15% {
+    opacity: 1;
+  }
+
+  28% {
+    opacity: 1;
+    transform: translateX(18px);
+  }
+
+  31%,
+  100% {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+}
+
+@keyframes wbcpPacketOut {
+  0%,
+  36% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+
+  39% {
+    opacity: 1;
+  }
+
+  52% {
+    opacity: 1;
+    transform: translateX(18px);
+  }
+
+  55%,
+  100% {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+}
+
+@keyframes wbcpRingIn {
+  0%,
+  29% {
+    opacity: 0;
+    transform: none;
+  }
+
+  31% {
+    opacity: 0.9;
+  }
+
+  46%,
+  100% {
+    opacity: 0;
+    transform: scale(1.12, 1.3);
+  }
+}
+
+@keyframes wbcpRingOut {
+  0%,
+  53% {
+    opacity: 0;
+  }
+
+  55% {
+    opacity: 0.9;
+  }
+
+  70%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes wbcpLive {
+  from {
+    box-shadow: 0 0 0 0 rgb(46 204 113 / 55%);
+  }
+
+  to {
+    box-shadow: 0 0 0 7px rgb(46 204 113 / 0%);
+  }
+}
+
+@keyframes wbcpLine1 {
+  0%,
+  56% {
+    opacity: 1;
+    transform: scaleX(0);
+  }
+
+  66%,
+  92% {
+    opacity: 1;
+    transform: none;
+  }
+
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+@keyframes wbcpLine2 {
+  0%,
+  62% {
+    opacity: 1;
+    transform: scaleX(0);
+  }
+
+  72%,
+  92% {
+    opacity: 1;
+    transform: none;
+  }
+
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+@keyframes wbcpLine3 {
+  0%,
+  68% {
+    opacity: 1;
+    transform: scaleX(0);
+  }
+
+  78%,
+  92% {
+    opacity: 1;
+    transform: none;
+  }
+
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+@keyframes wbcpModel {
+  0%,
+  54% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+
+  60%,
+  92% {
+    opacity: 1;
+    transform: none;
+  }
+
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
+@keyframes wbcpShine {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  30%,
+  100% {
+    transform: translateX(120%);
+  }
+}

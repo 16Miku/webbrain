@@ -1537,7 +1537,7 @@ test('every WebBrain locale has every new tab string', async (t) => {
   const expected = 'en zh ar bn nl tl fr de he hi id ja ko ms fa pl pt ru es th tr uk vi'.split(' ');
   assert.deepEqual(Object.keys(WB_STRINGS).sort(), [...expected].sort());
   const keys = Object.keys(WB_STRINGS.en);
-  assert.equal(keys.length, 20);
+  assert.equal(keys.length, 24);
   for (const lang of expected) {
     for (const k of keys) {
       assert.ok(String(WB_STRINGS[lang][k] ?? '').trim(), `${lang} is missing ${k}`);
@@ -3123,4 +3123,66 @@ test('bulletin: both built new tabs carry the same bulletin code', () => {
   assert.equal(chrome.length, 1, 'the bulletin is bundled once');
   assert.deepEqual(withBulletin('firefox'), chrome);
   assert.equal(readFileSync(path.join(assets('chrome'), chrome[0]), 'utf8'), readFileSync(path.join(assets('firefox'), chrome[0]), 'utf8'));
+});
+
+// ---------------------------------------------------------------------------
+// WebBrain Companion banner at the bottom (newtab/src/features/companion)
+// ---------------------------------------------------------------------------
+const companionPromo = await load(nt('features/companion/companion-promo.js'));
+
+test('companion banner: hidden once a Companion provider has a model, shown before that', () => {
+  const { hasCompanionProvider } = companionPromo;
+  assert.equal(hasCompanionProvider(undefined), false);
+  assert.equal(hasCompanionProvider({}), false);
+  // The default card ships with no model: not set up yet.
+  assert.equal(hasCompanionProvider({ webbrain_companion: { baseUrl: 'http://127.0.0.1:8327/v1', model: '' } }), false);
+  assert.equal(hasCompanionProvider({ webbrain_companion: { model: '   ' } }), false);
+  assert.equal(hasCompanionProvider({ webbrain_companion: { model: 'claude-haiku-5-5' } }), true);
+  // A duplicated card counts; another provider with a model does not.
+  assert.equal(hasCompanionProvider({ webbrain_companion_2: { duplicateOf: 'webbrain_companion', model: 'luna-6.1' } }), true);
+  assert.equal(hasCompanionProvider({ openai: { model: 'gpt-6' }, local_openai_proxy: { model: 'x' } }), false);
+});
+
+test('companion banner: storage decides, a dismissal sticks, unreadable storage hides it', async () => {
+  const { shouldShowCompanionPromo, dismissCompanionPromo, COMPANION_PROMO_DISMISSED_KEY } = companionPromo;
+  const store = bulletinStore({ providers: { webbrain_companion: { model: '' } } });
+  assert.equal(await shouldShowCompanionPromo(store), true);
+  await dismissCompanionPromo(store);
+  assert.ok(Number.isFinite(store.data[COMPANION_PROMO_DISMISSED_KEY]));
+  assert.equal(await shouldShowCompanionPromo(store), false);
+  assert.equal(await shouldShowCompanionPromo(bulletinStore({ providers: { webbrain_companion: { model: 'kimi-k3' } } })), false);
+  assert.equal(await shouldShowCompanionPromo({ get: async () => { throw new Error('denied'); }, set: async () => {} }), false);
+  // A plain preview page has no extension storage and shows it.
+  assert.equal(await shouldShowCompanionPromo(null), true);
+  // Dismissing without storage, or with storage that throws, never throws.
+  await dismissCompanionPromo(null);
+  await dismissCompanionPromo({ get: async () => ({}), set: async () => { throw new Error('quota'); } });
+});
+
+test('companion banner: links to the companion page in the WebBrain language when it is translated', () => {
+  const { companionPageUrl, COMPANION_PAGE } = companionPromo;
+  assert.equal(COMPANION_PAGE, 'https://www.webbrain.one/companion/');
+  assert.equal(companionPageUrl('en'), COMPANION_PAGE);
+  assert.equal(companionPageUrl('tr'), 'https://www.webbrain.one/companion/tr/');
+  assert.equal(companionPageUrl('zh_CN'), 'https://www.webbrain.one/companion/zh/');
+  // Polish has no companion page yet; unknown or empty values fall back to English.
+  assert.equal(companionPageUrl('pl'), COMPANION_PAGE);
+  assert.equal(companionPageUrl(''), COMPANION_PAGE);
+  // Every translated page the link can point at exists in the site.
+  for (const code of 'ar bn de es fa fr he hi id ja ko ms nl pt ru th tl tr uk vi zh'.split(' ')) {
+    assert.ok(existsSync(path.join(root, 'web', 'companion', code, 'index.html')), code);
+    assert.equal(companionPageUrl(code), `${COMPANION_PAGE}${code}/`);
+  }
+});
+
+test('companion banner: the demo has a mark for every plan and the banner is mounted outside #center', () => {
+  const view = readFileSync(nt('features/companion/CompanionPromo.jsx'), 'utf8');
+  for (const plan of companionPromo.DEMO_PLANS) {
+    assert.ok(existsSync(nt('assets', 'providers', `${plan.logo}.svg`)), plan.logo);
+    assert.ok(view.includes(`${plan.logo}: ${plan.logo}Logo`), `${plan.logo} is wired into LOGOS`);
+    // The marks are shown as <img>, where currentColor would always be black.
+    assert.doesNotMatch(readFileSync(nt('assets', 'providers', `${plan.logo}.svg`), 'utf8'), /currentColor/);
+  }
+  const app = readFileSync(nt('App.jsx'), 'utf8');
+  assert.match(app, /<\/div>\s*<CompanionPromo \/>\s*<\/TranslationProvider>/);
 });
