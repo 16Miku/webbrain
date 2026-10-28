@@ -210,6 +210,58 @@ for (const build of ['chrome', 'firefox']) {
   });
 }
 
+for (const build of ['chrome', 'firefox']) {
+  test(`${build}: "More providers…" opens Settings without dropping the logo or the connection status`, async () => {
+    const en = (await import(`../src/${build}/src/ui/locales/en.js`)).default;
+    const panel = read(build, 'src/ui/sidepanel.js');
+    const syncedIcons = [];
+    const buttons = [];
+    let settingsOpened = 0;
+    const providerSelect = { value: 'openrouter', selectedOptions: [{ textContent: 'OpenRouter — Active' }] };
+    const element = () => ({
+      dataset: {}, listeners: [], setAttribute() {}, appendChild() {},
+      addEventListener(type, fn) { if (type === 'click') this.listeners.push(fn); },
+    });
+    const context = vm.createContext({
+      syncProviderPickerIcon() { syncedIcons.push(providerSelect.value); },
+      t: (key, params = {}) => String(en[key] || key).replace(/\{(\w+)\}/g, (_, k) => params[k] ?? ''),
+      document: { createElement: element },
+      Event: class { constructor(type) { this.type = type; } },
+      providerIconUrl: () => '',
+      setProviderPickerOpen() {},
+      providerSelect,
+      MORE_PROVIDERS_OPTION_VALUE: '__more_providers__',
+      selectedProviderId: 'openrouter',
+      providerSelectionRequestId: 0,
+      providerTestRequestId: 0,
+      providerPickerLabel: { textContent: '' },
+      providerPickerLabelById: new Map([['openrouter', 'OpenRouter']]),
+      providerPickerModelById: new Map(),
+      providerPickerSourceById: new Map(),
+      providerPickerBtn: { title: '', setAttribute() {} },
+      providerPickerMenu: { appendChild(btn) { buttons.push(btn); }, querySelectorAll: () => [] },
+      statusDot: { className: 'status-dot online', title: 'Connected (anthropic/claude-sonnet-4)' },
+      statusDotProviderId: 'openrouter',
+      statusDotTitle: () => 'Connected (anthropic/claude-sonnet-4)',
+      openProvidersSettingsPage: async () => { settingsOpened++; },
+    });
+    vm.runInContext(['setStatusDot', 'syncProviderPickerButton', 'markSelectedProviderUntested', 'appendProviderPickerOption']
+      .map((name) => extract(panel, name)).join('\n'), context);
+    const start = panel.indexOf("providerSelect.addEventListener('change', async () => {");
+    const handler = vm.runInContext(`(${panel.slice(panel.indexOf('async () => {', start), panel.indexOf('\n});', start) + 2)})`, context);
+    let change;
+    providerSelect.dispatchEvent = () => { change = handler(); };
+    context.appendProviderPickerOption('__more_providers__', 'More providers…', '');
+    buttons[0].listeners[0]();
+    await change;
+    assert.equal(settingsOpened, 1);
+    assert.equal(providerSelect.value, 'openrouter', 'the current provider stays selected');
+    assert.equal(syncedIcons.includes('__more_providers__'), false, 'the logo is never resolved for the sentinel');
+    assert.deepEqual([context.statusDot.className, context.statusDot.title],
+      ['status-dot online', 'Connected (anthropic/claude-sonnet-4)'], 'the connection status is kept');
+  });
+}
+
 test('every language names the active model', async () => {
   for (const build of ['chrome', 'firefox']) {
     for (const code of ['en', 'tr', 'es', 'fr', 'de', 'nl', 'pt', 'pl', 'ru', 'uk', 'zh', 'ja', 'ko', 'ar', 'he', 'fa', 'hi', 'bn', 'id', 'ms', 'tl', 'th', 'vi']) {
