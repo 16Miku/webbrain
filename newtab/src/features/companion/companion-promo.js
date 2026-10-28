@@ -1,7 +1,7 @@
 /**
- * WebBrain Companion banner at the bottom of the new tab.
+ * WebBrain Companion invitation in the new tab's bulletin slot, under the task box.
  *
- * Invites the user to install WebBrain Companion, the tray app that serves their Claude,
+ * Shown there only while no bulletin is published (features/bulletin/Bulletin.jsx). Invites the user to install WebBrain Companion, the tray app that serves their Claude,
  * ChatGPT, Google, Grok and Kimi subscriptions to WebBrain on 127.0.0.1. Whether to show it is
  * decided from extension storage alone: the page makes no request to the companion's port or
  * to webbrain.one for it. It goes away for good once the user dismisses it, and is not shown

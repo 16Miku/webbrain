@@ -3,7 +3,6 @@ import { ToastContainer } from 'react-toastify';
 import Background from 'features/background/Background';
 import Widgets from 'features/misc/views/Widgets';
 import Modals from 'features/misc/modals/Modals';
-import CompanionPromo from 'features/companion/CompanionPromo';
 import { loadSettings, moveSettings } from 'utils/settings';
 import EventBus from 'utils/eventbus';
 import variables from 'config/variables';
@@ -103,7 +102,6 @@ const App = () => {
         <Widgets />
         <Modals />
       </div>
-      <CompanionPromo />
     </TranslationProvider>
   );
 };

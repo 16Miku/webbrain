@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MdArrowForward, MdClose } from 'react-icons/md';
 import { wbT } from 'lib/wb-strings';
 import { resolveWebBrainLocale } from 'lib/locale';
@@ -21,9 +21,6 @@ import './companion-promo.scss';
 // One plan per step. The keyframes in companion-promo.scss are percentages of this (--wbcp-step).
 const STEP_MS = 3200;
 const LEAVE_MS = 260;
-// Lifts the photo credit above the banner while it is on screen; the banner's height (which
-// depends on how the text wraps in each language) goes in --wbcp-height (companion-promo.scss).
-const SHOWN_CLASS = 'wbCompanionPromoShown';
 const LOGOS = {
   anthropic: anthropicLogo,
   openai: openaiLogo,
@@ -77,8 +74,7 @@ function Demo() {
           <span className="wbcpPacket" />
         </span>
         <span className="wbcpTray">
-          <img src={companionIcon} alt="" width="20" height="20" />
-          <span className="wbcpAddr">127.0.0.1:8327</span>
+          <img src={companionIcon} alt="" width="22" height="22" />
           <span className="wbcpLive" />
         </span>
         <span className="wbcpWire wbcpWireOut">
@@ -123,11 +119,10 @@ function Demo() {
   );
 }
 
-// Fixed to the bottom of the page, outside #center: it is a fixed overlay, not part of the
-// centred widget column. Renders nothing until storage says to show it (companion-promo.js).
+// Shown in the bulletin slot under the task box while no bulletin is published (Bulletin.jsx).
+// Renders nothing until storage says to show it (companion-promo.js).
 function CompanionPromo() {
   const [state, setState] = useState('checking');
-  const banner = useRef(null);
 
   useEffect(() => {
     let alive = true;
@@ -140,27 +135,6 @@ function CompanionPromo() {
   }, []);
 
   useEffect(() => {
-    if (state !== 'shown') return undefined;
-    const root = document.documentElement;
-    root.classList.add(SHOWN_CLASS);
-    const observer =
-      typeof globalThis.ResizeObserver === 'function' && banner.current
-        ? new globalThis.ResizeObserver(([entry]) => {
-            root.style.setProperty(
-              '--wbcp-height',
-              `${Math.ceil(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height)}px`,
-            );
-          })
-        : null;
-    observer?.observe(banner.current);
-    return () => {
-      observer?.disconnect();
-      root.classList.remove(SHOWN_CLASS);
-      root.style.removeProperty('--wbcp-height');
-    };
-  }, [state]);
-
-  useEffect(() => {
     if (state !== 'leaving') return undefined;
     const timer = setTimeout(() => setState('gone'), LEAVE_MS);
     return () => clearTimeout(timer);
@@ -170,7 +144,6 @@ function CompanionPromo() {
 
   return (
     <aside
-      ref={banner}
       className={state === 'leaving' ? 'wbCompanionPromo leaving' : 'wbCompanionPromo'}
       aria-label="WebBrain Companion"
     >

@@ -3126,7 +3126,7 @@ test('bulletin: both built new tabs carry the same bulletin code', () => {
 });
 
 // ---------------------------------------------------------------------------
-// WebBrain Companion banner at the bottom (newtab/src/features/companion)
+// WebBrain Companion invitation in the bulletin slot (newtab/src/features/companion)
 // ---------------------------------------------------------------------------
 const companionPromo = await load(nt('features/companion/companion-promo.js'));
 
@@ -3175,7 +3175,7 @@ test('companion banner: links to the companion page in the WebBrain language whe
   }
 });
 
-test('companion banner: the demo has a mark for every plan and the banner is mounted outside #center', () => {
+test('companion banner: the demo has a mark for every plan and it shows only in an empty bulletin slot', () => {
   const view = readFileSync(nt('features/companion/CompanionPromo.jsx'), 'utf8');
   for (const plan of companionPromo.DEMO_PLANS) {
     assert.ok(existsSync(nt('assets', 'providers', `${plan.logo}.svg`)), plan.logo);
@@ -3183,6 +3183,19 @@ test('companion banner: the demo has a mark for every plan and the banner is mou
     // The marks are shown as <img>, where currentColor would always be black.
     assert.doesNotMatch(readFileSync(nt('assets', 'providers', `${plan.logo}.svg`), 'utf8'), /currentColor/);
   }
-  const app = readFileSync(nt('App.jsx'), 'utf8');
-  assert.match(app, /<\/div>\s*<CompanionPromo \/>\s*<\/TranslationProvider>/);
+  // The bulletin slot under the task box shows it once the bulletin check found nothing to
+  // show, unless a bulletin was dismissed on this page; it is mounted nowhere else.
+  const slot = readFileSync(nt('features/bulletin/Bulletin.jsx'), 'utf8');
+  assert.match(slot, /if \(!bulletin\) return checked && !dismissedHere \? <CompanionPromo \/> : null;/);
+  assert.doesNotMatch(readFileSync(nt('App.jsx'), 'utf8'), /CompanionPromo/);
+});
+
+test("bulletin: the dev server serves the site's bulletin files, not the page for unknown paths", () => {
+  const config = readFileSync(path.join(root, 'newtab', 'vite.config.mjs'), 'utf8');
+  assert.match(config, /BULLETIN_FILES = \['newtab-comm\.html', 'newtab-comm-placeholder\.html'\]/);
+  assert.match(config, /apply: 'serve'/);
+  assert.match(config, /plugins: \[bulletinFiles\]/);
+  for (const name of ['newtab-comm.html', 'newtab-comm-placeholder.html']) {
+    assert.ok(existsSync(path.join(root, 'web', name)), name);
+  }
 });
