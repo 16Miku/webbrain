@@ -17519,7 +17519,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * the whole content area, classic scrollbars included, while the probe's
    * visual viewport excludes them, and points would drift by the scrollbar.
    */
-  async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight }) {
+  async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight, hold = null }) {
     const region = cssRegion || { x: 0, y: 0, width: probe.cssWidth, height: probe.cssHeight };
     const scale = Math.max(0.05, Math.min(4, Number(outWidth) / Math.max(1, region.width)));
     const options = {
@@ -17533,7 +17533,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         height: Math.max(1, region.height),
       },
     };
-    return this._withIndicatorsHidden(tabId, () => browser.tabs.captureTab(tabId, options));
+    return this._withIndicatorsHidden(tabId, () => browser.tabs.captureTab(tabId, options), { hold });
   }
 
   /**
@@ -18618,51 +18618,50 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * pages, or pre-existing tabs that loaded before the extension), the
    * sendMessage rejects and we capture as-is.
    *
-   * Calls for a tab nest: a vision screen update holds one around all of
-   * its captures (vision-runtime.js _visionCaptureSettled). Every call
-   * still hides, which a hidden indicator ignores but a page that
-   * navigated in between needs, and the indicator comes back once, when
-   * the last call ends, instead of blinking around every capture.
+   * A vision screen update keeps the indicator hidden across all of its
+   * captures (vision-runtime.js _visionCaptureSettled) and passes them its
+   * `hold`. Each capture still hides, which a hidden indicator ignores but
+   * a page that navigated in between needs, and leaves the show to the
+   * update, which sends it once at its end instead of blinking around
+   * every capture. Nothing is counted per tab: a capture that outlives its
+   * update (one _visionBounded gave up on) shows by itself if it ever
+   * finishes, and one that never finishes holds nothing back.
    *
    * The hide is bounded by the capture deadline and run abort signal so an
    * unresponsive renderer or stop request cannot leave the run hung.
    */
-  async _withIndicatorsHidden(tabId, fn) {
-    const holds = (this._indicatorHolds ??= new Map());
-    const hold = holds.get(tabId) || { count: 0, hidden: false };
-    hold.count += 1;
-    holds.set(tabId, hold);
-    let hideFailed = false;
+  async _withIndicatorsHidden(tabId, fn, { hold = null } = {}) {
+    let hidden = false;
     try {
       try {
         const sendHide = () => browser.tabs.sendMessage(tabId, { type: 'WB_HIDE_FOR_TOOL_USE' });
         const reply = typeof this._visionBounded === 'function'
           ? await this._visionBounded(tabId, 'screenshot', sendHide)
           : await sendHide();
-        hold.hidden = true;
+        hidden = true;
         // Give the renderer one paint frame to apply the display:none the
         // content script just set, before we capture (none when it was
         // hidden already).
         if (reply?.changed !== false) await new Promise((r) => setTimeout(r, 16));
       } catch (error) {
         if (error?.name === 'AbortError' || error?.code === 'vision_capture_timeout' || this._runAbortSignal?.(tabId)?.aborted) {
-          hideFailed = true;
+          // The hide may still arrive, so a show must follow it.
+          hidden = true;
           throw error;
         }
         /* content script absent — capture without hiding */
       }
       return await fn();
     } finally {
-      hold.count -= 1;
-      if (hold.count === 0) {
-        holds.delete(tabId);
-        if (hold.hidden || hideFailed) {
-          try {
-            browser.tabs.sendMessage(tabId, { type: 'WB_SHOW_AFTER_TOOL_USE' }).catch(() => {});
-          } catch { /* ignore */ }
-        }
-      }
+      if (hidden && (!hold || hold.ended)) this._showIndicatorsAfterToolUse(tabId);
     }
+  }
+
+  /** Brings back what _withIndicatorsHidden hid; with nothing hidden it changes nothing. */
+  _showIndicatorsAfterToolUse(tabId) {
+    try {
+      browser.tabs.sendMessage(tabId, { type: 'WB_SHOW_AFTER_TOOL_USE' }).catch(() => {});
+    } catch { /* ignore */ }
   }
 
   async _captureViewportProbe(tabId) {

@@ -19539,51 +19539,50 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * we capture as-is. Same on tabs the user opened before the extension
    * had a chance to inject.
    *
-   * Calls for a tab nest: a vision screen update holds one around all of
-   * its captures (vision-runtime.js _visionCaptureSettled). Every call
-   * still hides, which a hidden indicator ignores but a page that
-   * navigated in between needs, and the indicator comes back once, when
-   * the last call ends, instead of blinking around every capture.
+   * A vision screen update keeps the indicator hidden across all of its
+   * captures (vision-runtime.js _visionCaptureSettled) and passes them its
+   * `hold`. Each capture still hides, which a hidden indicator ignores but
+   * a page that navigated in between needs, and leaves the show to the
+   * update, which sends it once at its end instead of blinking around
+   * every capture. Nothing is counted per tab: a capture that outlives its
+   * update (one _visionBounded gave up on) shows by itself if it ever
+   * finishes, and one that never finishes holds nothing back.
    *
    * The hide is bounded by the capture deadline and run abort signal so an
    * unresponsive renderer or stop request cannot leave the run hung.
    */
-  async _withIndicatorsHidden(tabId, fn) {
-    const holds = (this._indicatorHolds ??= new Map());
-    const hold = holds.get(tabId) || { count: 0, hidden: false };
-    hold.count += 1;
-    holds.set(tabId, hold);
-    let hideFailed = false;
+  async _withIndicatorsHidden(tabId, fn, { hold = null } = {}) {
+    let hidden = false;
     try {
       try {
         const sendHide = () => chrome.tabs.sendMessage(tabId, { type: 'WB_HIDE_FOR_TOOL_USE' });
         const reply = typeof this._visionBounded === 'function'
           ? await this._visionBounded(tabId, 'screenshot', sendHide)
           : await sendHide();
-        hold.hidden = true;
+        hidden = true;
         // One paint frame for Chrome to apply the display:none the
         // content script just set, before CDP grabs the surface (none
         // when it was hidden already).
         if (reply?.changed !== false) await new Promise((r) => setTimeout(r, 16));
       } catch (error) {
         if (error?.name === 'AbortError' || error?.code === 'vision_capture_timeout' || this._runAbortSignal?.(tabId)?.aborted) {
-          hideFailed = true;
+          // The hide may still arrive, so a show must follow it.
+          hidden = true;
           throw error;
         }
         /* content script absent — that's fine, no UI to hide */
       }
       return await fn();
     } finally {
-      hold.count -= 1;
-      if (hold.count === 0) {
-        holds.delete(tabId);
-        if (hold.hidden || hideFailed) {
-          try {
-            chrome.tabs.sendMessage(tabId, { type: 'WB_SHOW_AFTER_TOOL_USE' }).catch(() => {});
-          } catch { /* ignore */ }
-        }
-      }
+      if (hidden && (!hold || hold.ended)) this._showIndicatorsAfterToolUse(tabId);
     }
+  }
+
+  /** Brings back what _withIndicatorsHidden hid; with nothing hidden it changes nothing. */
+  _showIndicatorsAfterToolUse(tabId) {
+    try {
+      chrome.tabs.sendMessage(tabId, { type: 'WB_SHOW_AFTER_TOOL_USE' }).catch(() => {});
+    } catch { /* ignore */ }
   }
 
   _showAgentTarget(tabId, rect, source = 'interaction') {
@@ -21215,7 +21214,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * outWidth wide. Whatever size actually comes back is resampled to the
    * plan by the runtime.
    */
-  async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight }) {
+  async _visionPlatformCapture(tabId, { probe, cssRegion = null, outWidth, outHeight, hold = null }) {
     await cdpClient.attach(tabId);
     await cdpClient.sendCommand(tabId, 'Page.enable').catch(() => {});
     await this._preparePageForCapture(tabId);
@@ -21234,7 +21233,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         format: 'jpeg',
         quality: 90,
         fromSurface: true,
-      }));
+      }), { hold });
       if (!shot?.data) return null;
       return this._visionCropImage(`data:image/jpeg;base64,${shot.data}`,
         { x: region.x * dpr, y: region.y * dpr, width: width * dpr, height: height * dpr }, outWidth, outHeight);
@@ -21252,7 +21251,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         height: height * zoom,
         scale,
       },
-    }));
+    }), { hold });
     return shot?.data ? `data:image/jpeg;base64,${shot.data}` : null;
   }
 
