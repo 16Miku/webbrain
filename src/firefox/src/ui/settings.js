@@ -20,7 +20,7 @@ import { MEDIA_PROVIDERS, mediaProvider, validateMediaConfig } from '../agent/me
 import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 import { renderSkillMarkdown } from './skill-markdown.js';
-import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
+import { CAPABILITY_LABEL, PERMISSION_GATE_SESSION_OFF_KEY } from '../agent/permission-gate.js';
 import {
   CUSTOM_SKILLS_STORAGE_KEY,
   DEFAULT_SKILL_SOURCES,
@@ -801,11 +801,22 @@ async function initPermissionGateToggle() {
   const warning = document.getElementById('permission-gate-warning');
   if (!toggle) return;
   const stored = await browser.storage.local.get(GATE_KEY);
-  const askBefore = stored[GATE_KEY] ?? true; // gate ON by default
+  // The side panel's skip dialog can also turn prompts off until the browser
+  // closes (storage.session); the switch shows that too.
+  const session = await Promise.resolve()
+    .then(() => browser.storage.session.get(PERMISSION_GATE_SESSION_OFF_KEY))
+    .catch(() => ({}));
+  const askBefore = (stored[GATE_KEY] ?? true) && session?.[PERMISSION_GATE_SESSION_OFF_KEY] !== true; // gate ON by default
   toggle.checked = askBefore;
   if (warning) warning.style.display = askBefore ? 'none' : '';
   toggle.addEventListener('change', async () => {
     await browser.storage.local.set({ [GATE_KEY]: toggle.checked });
+    // Turning prompts back on also ends a "this session only" skip.
+    if (toggle.checked) {
+      await Promise.resolve()
+        .then(() => browser.storage.session.remove(PERMISSION_GATE_SESSION_OFF_KEY))
+        .catch(() => {});
+    }
     if (warning) warning.style.display = toggle.checked ? 'none' : '';
   });
 }
