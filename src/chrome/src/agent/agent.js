@@ -19544,27 +19544,40 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * still hides, which a hidden indicator ignores but a page that
    * navigated in between needs, and the indicator comes back once, when
    * the last call ends, instead of blinking around every capture.
+   *
+   * The hide is bounded by the capture deadline and run abort signal so an
+   * unresponsive renderer or stop request cannot leave the run hung.
    */
   async _withIndicatorsHidden(tabId, fn) {
     const holds = (this._indicatorHolds ??= new Map());
     const hold = holds.get(tabId) || { count: 0, hidden: false };
     hold.count += 1;
     holds.set(tabId, hold);
+    let hideFailed = false;
     try {
       try {
-        const reply = await chrome.tabs.sendMessage(tabId, { type: 'WB_HIDE_FOR_TOOL_USE' });
+        const sendHide = () => chrome.tabs.sendMessage(tabId, { type: 'WB_HIDE_FOR_TOOL_USE' });
+        const reply = typeof this._visionBounded === 'function'
+          ? await this._visionBounded(tabId, 'screenshot', sendHide)
+          : await sendHide();
         hold.hidden = true;
         // One paint frame for Chrome to apply the display:none the
         // content script just set, before CDP grabs the surface (none
         // when it was hidden already).
         if (reply?.changed !== false) await new Promise((r) => setTimeout(r, 16));
-      } catch { /* content script absent — that's fine, no UI to hide */ }
+      } catch (error) {
+        if (error?.name === 'AbortError' || error?.code === 'vision_capture_timeout' || this._runAbortSignal?.(tabId)?.aborted) {
+          hideFailed = true;
+          throw error;
+        }
+        /* content script absent — that's fine, no UI to hide */
+      }
       return await fn();
     } finally {
       hold.count -= 1;
       if (hold.count === 0) {
         holds.delete(tabId);
-        if (hold.hidden) {
+        if (hold.hidden || hideFailed) {
           try {
             chrome.tabs.sendMessage(tabId, { type: 'WB_SHOW_AFTER_TOOL_USE' }).catch(() => {});
           } catch { /* ignore */ }

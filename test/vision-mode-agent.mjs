@@ -1410,6 +1410,60 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     assert.equal(agent._indicatorHolds?.has(tab), false);
   });
 
+  test(`${build}: indicator hide respects capture deadline and abort, cleaning up holds`, async () => {
+    const scene = tickingScene({ x: 300, y: 200, w: 400, h: 300 });
+    const { agent } = runAgent(() => ({ content: 'done' }), { scene });
+    const tab = nextTab++;
+    const state = agent._visionRunState(tab, 'act');
+    const tabs = (build === 'chrome' ? globalThis.chrome : globalThis.browser).tabs;
+    const send = tabs.sendMessage;
+    const log = [];
+    tabs.sendMessage = async (id, message) => {
+      if (id !== tab) return send(id, message);
+      log.push(message.type);
+      if (message.type === 'WB_HIDE_FOR_TOOL_USE') {
+        return new Promise(() => {});
+      }
+      return { ok: true };
+    };
+    agent._visionCaptureDeadlineMs = 50;
+    try {
+      await assert.rejects(
+        () => agent._visionCaptureSettled(tab, state),
+        (err) => err.code === 'vision_capture_timeout'
+      );
+      assert.equal(agent._indicatorHolds?.has(tab), false, 'hold cleaned up on timeout');
+      assert.ok(log.includes('WB_SHOW_AFTER_TOOL_USE'), 'show attempted on timeout');
+    } finally {
+      tabs.sendMessage = send;
+    }
+
+    const abortTab = nextTab++;
+    const abortState = agent._visionRunState(abortTab, 'act');
+    const abortLog = [];
+    const controller = new AbortController();
+    agent._runAbortSignal = (id) => (id === abortTab ? controller.signal : null);
+    tabs.sendMessage = async (id, message) => {
+      if (id !== abortTab) return send(id, message);
+      abortLog.push(message.type);
+      if (message.type === 'WB_HIDE_FOR_TOOL_USE') {
+        controller.abort();
+        return new Promise(() => {});
+      }
+      return { ok: true };
+    };
+    try {
+      await assert.rejects(
+        () => agent._visionCaptureSettled(abortTab, abortState),
+        (err) => err.name === 'AbortError'
+      );
+      assert.equal(agent._indicatorHolds?.has(abortTab), false, 'hold cleaned up on abort');
+      assert.ok(abortLog.includes('WB_SHOW_AFTER_TOOL_USE'), 'show attempted on abort');
+    } finally {
+      tabs.sendMessage = send;
+    }
+  });
+
   if (build === 'chrome') {
     test('chrome: a vision capture reads the tab surface as it is and crops it; only a zoom needing more detail than the screen has, or a pinch-zoomed page, uses a clip', async () => {
       const { agent } = runAgent(() => ({ content: 'done' }));

@@ -749,6 +749,7 @@ export function installVisionRuntime(AgentClass, { trace = null } = {}) {
    */
   proto._visionCaptureSettled = async function _visionCaptureSettled(tabId, state) {
     await sleep(SETTLE_INITIAL_DELAY_MS);
+    this._throwIfAborted?.(this._runAbortSignal?.(tabId));
     return this._withIndicatorsHidden(tabId, async () => {
       let frame = await this._visionCaptureFrame(tabId, state);
       for (let attempt = 0; attempt < SETTLE_MAX_EXTRA_CAPTURES; attempt++) {
