@@ -936,7 +936,7 @@ export default {
   "st.display.lean_mode.on": "Naka-on",
   "st.display.lean_mode.off": "Naka-off",
   "st.display.vision_mode.label": "Visual mode",
-  "st.display.vision_mode.desc": "Sa Act mode, nakikita ng agent ang page bilang mga screenshot at nagki-click, nagta-type at nag-i-scroll sa mga coordinate ng screen sa halip na basahin ang accessibility tree. Kailangan ng modelong tumatanggap ng larawan; ang ibang modelo ay patuloy na gumagamit ng accessibility tree. Pagkatapos ng bawat aksyon, ang nagbagong bahagi lang ng screen ang ipinapadala. Awtomatikong naaayos ang mga Retina display at browser zoom.",
+  "st.display.vision_mode.desc": "Paningin lang (kilala rin bilang \"Tesla\" mode), gaya ng Tesla na nagmamaneho gamit lang ang mga camera. Kapag naka-off, mas kahawig ito ng Waymo na gumagamit ng iba pang sensor: binabasa rin ng agent ang accessibility tree. Sa Act mode, nakikita ng agent ang page bilang mga screenshot at nagki-click, nagta-type at nag-i-scroll sa mga coordinate ng screen sa halip na basahin ang accessibility tree. Kailangan ng modelong tumatanggap ng larawan; ang ibang modelo ay patuloy na gumagamit ng accessibility tree. Pagkatapos ng bawat aksyon, ang nagbagong bahagi lang ng screen ang ipinapadala. Awtomatikong naaayos ang mga Retina display at browser zoom.",
   "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Naka-off",
   "st.display.vision_quality.label": "Laki ng screenshot sa visual mode",

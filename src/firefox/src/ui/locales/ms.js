@@ -936,7 +936,7 @@ export default {
   "st.display.lean_mode.on": "Hidup",
   "st.display.lean_mode.off": "Mati",
   "st.display.vision_mode.label": "Mod visual",
-  "st.display.vision_mode.desc": "Dalam mod Bertindak, ejen melihat halaman sebagai tangkapan skrin dan mengklik, menaip serta menatal pada koordinat skrin dan bukannya membaca pepohon kebolehcapaian. Memerlukan model yang menerima imej; model lain terus menggunakan pepohon kebolehcapaian. Selepas setiap tindakan hanya bahagian skrin yang berubah dihantar. Paparan Retina dan zum pelayar dikendalikan secara automatik.",
+  "st.display.vision_mode.desc": "Penglihatan sahaja (alias mod \"Tesla\"), seperti Tesla yang memandu dengan kamera semata-mata. Apabila dimatikan ia lebih seperti Waymo yang menambah penderia lain: ejen turut membaca pepohon kebolehcapaian. Dalam mod Bertindak, ejen melihat halaman sebagai tangkapan skrin dan mengklik, menaip serta menatal pada koordinat skrin dan bukannya membaca pepohon kebolehcapaian. Memerlukan model yang menerima imej; model lain terus menggunakan pepohon kebolehcapaian. Selepas setiap tindakan hanya bahagian skrin yang berubah dihantar. Paparan Retina dan zum pelayar dikendalikan secara automatik.",
   "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Mati",
   "st.display.vision_quality.label": "Saiz tangkapan skrin mod visual",

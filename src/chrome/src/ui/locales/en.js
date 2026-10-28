@@ -789,7 +789,7 @@ export default {
   "st.display.lean_mode.on": "On",
   "st.display.lean_mode.off": "Off",
   "st.display.vision_mode.label": "Vision mode",
-  "st.display.vision_mode.desc": "In Act mode the agent sees the page as screenshots and clicks, types and scrolls at screen coordinates instead of reading the accessibility tree. Needs a model that accepts images; other models keep the accessibility tree. After each action only the changed part of the screen is sent. Retina displays and browser zoom are handled automatically.",
+  "st.display.vision_mode.desc": "Vision only (aka \"Tesla\" mode), like a Tesla driving on cameras alone: in Act mode the agent sees the page as screenshots and clicks, types and scrolls at screen coordinates. Off works more like Waymo, which adds other sensors: the agent also reads the page's accessibility tree. Needs a model that accepts images; other models keep the accessibility tree. After each action only the changed part of the screen is sent. Retina displays and browser zoom are handled automatically.",
   "st.display.vision_mode.auto": "Auto",
   "st.display.vision_mode.off": "Off",
   "st.display.vision_quality.label": "Vision screenshot size",

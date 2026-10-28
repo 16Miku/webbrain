@@ -1,4 +1,6 @@
-# Vision mode
+# Vision mode (aka "Tesla" mode)
+
+In vision mode (aka "Tesla" mode, configured under Settings → Advanced → **Vision mode**), like a Tesla that drives on cameras alone, the run works only from what it sees. With the setting Off, WebBrain is closer to Waymo, which adds other sensors: an Act run reads the page's accessibility tree, element refs and selectors, with screenshots as one more input. In code, storage and traces the feature keeps the name vision mode (`visionMode`, `vision_mode`).
 
 In vision mode an Act run sees the tab only as screenshots and acts with the mouse and keyboard at coordinates. There is no accessibility tree, no `ref_id` and no CSS selector in the model's view. The run starts from a full frame of the viewport; after every action WebBrain sends only what changed on screen (a patch), a new full frame when most of the screen changed, or a one-line "no visible change".
 
