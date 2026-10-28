@@ -1,0 +1,318 @@
+@use 'scss/variables' as *;
+
+// Invitation to install WebBrain Companion, under the task box while there is no bulletin to
+// show (Bulletin.jsx). It has its own width, wider than the bulletin: the marks of the plans
+// the Companion serves, the text, and the button.
+.wbCompanionPromo {
+  @extend %basic;
+
+  --wbcp-rose: #ff6fa5;
+  --wbcp-rose-deep: #c42d62;
+  --wbcp-faint: rgb(255 255 255 / 10%);
+  --wbcp-edge: rgb(255 255 255 / 16%);
+
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  width: min(1100px, calc(100vw - 32px));
+  margin-top: 1rem;
+  display: grid;
+  grid-template: 'plans text actions' auto / auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 24px;
+  padding-block: 14px;
+  padding-inline: 18px 52px;
+  overflow: hidden;
+  border-radius: 20px;
+  font-size: 1rem;
+  text-align: start;
+  animation: wbcpIn 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+
+  // Rose glow behind the marks.
+  &::before {
+    content: '';
+    position: absolute;
+    inset-block: -60%;
+    inset-inline-start: -6%;
+    z-index: -1;
+    width: 360px;
+    background: radial-gradient(closest-side, rgb(255 111 165 / 26%), transparent);
+    pointer-events: none;
+  }
+
+  &.leaving {
+    animation: wbcpOut 0.26s ease-in both;
+  }
+}
+
+// --wbcp-edge outlines the logo tiles, so a black tile shows on a dark card and a white one on
+// a light card.
+.light .wbCompanionPromo {
+  --wbcp-faint: rgb(0 0 0 / 7%);
+  --wbcp-edge: rgb(0 0 0 / 10%);
+}
+
+.dark .wbCompanionPromo {
+  --wbcp-faint: rgb(255 255 255 / 10%);
+  --wbcp-edge: rgb(255 255 255 / 16%);
+}
+
+.wbcpPlans {
+  grid-area: plans;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wbcpTile {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--wbcp-tile);
+  box-shadow:
+    inset 0 0 0 1px var(--wbcp-edge),
+    0 6px 14px -8px rgb(0 0 0 / 50%);
+
+  img {
+    display: block;
+    width: 22px;
+    height: 22px;
+  }
+}
+
+.wbcpText {
+  grid-area: text;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.wbcpEyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+
+  img {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.wbcpTitle {
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.wbcpBody {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 0.86rem;
+  line-height: 1.35;
+  opacity: 0.78;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.wbcpActions {
+  grid-area: actions;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.wbcpCta {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-block: 11px;
+  padding-inline: 20px 18px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--wbcp-rose) 0%, var(--wbcp-rose-deep) 100%);
+  box-shadow: 0 8px 22px -8px rgb(196 45 98 / 75%);
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    filter 0.18s ease;
+
+  // A sheen that crosses the button now and then.
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      110deg,
+      transparent 35%,
+      rgb(255 255 255 / 45%) 50%,
+      transparent 65%
+    );
+    transform: translateX(-120%);
+    animation: wbcpShine 4.5s ease-in-out 1.6s infinite;
+  }
+
+  &:hover {
+    filter: brightness(1.06);
+    box-shadow: 0 12px 26px -8px rgb(196 45 98 / 85%);
+    transform: translateY(-1px);
+
+    .wbcpCtaArrow {
+      transform: translateX(3px);
+    }
+  }
+
+  &:focus-visible {
+    outline: 2px solid currentcolor;
+    outline-offset: 3px;
+  }
+}
+
+.wbcpCtaArrow {
+  font-size: 1.1em;
+  transition: transform 0.18s ease;
+}
+
+[dir='rtl'] .wbcpCtaArrow {
+  transform: scaleX(-1);
+}
+
+[dir='rtl'] .wbcpCta:hover .wbcpCtaArrow {
+  transform: translateX(-3px) scaleX(-1);
+}
+
+.wbcpPlatforms {
+  font-size: 0.7rem;
+  white-space: nowrap;
+  opacity: 0.6;
+}
+
+.wbcpDismiss {
+  position: absolute;
+  top: 10px;
+  inset-inline-end: 10px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  opacity: 0.6;
+
+  &:hover {
+    background: var(--wbcp-faint);
+    opacity: 1;
+  }
+
+  &:focus-visible {
+    outline: 2px solid currentcolor;
+    outline-offset: 2px;
+    opacity: 1;
+  }
+}
+
+/* layout on smaller windows */
+
+@media (width < 1024px) {
+  .wbCompanionPromo {
+    grid-template:
+      'plans plans' auto
+      'text actions' auto / minmax(0, 1fr) auto;
+  }
+
+  .wbcpTile {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+
+    img {
+      width: 19px;
+      height: 19px;
+    }
+  }
+}
+
+@media (width < 560px) {
+  .wbCompanionPromo {
+    grid-template:
+      'plans' auto
+      'text' auto
+      'actions' auto / minmax(0, 1fr);
+    gap: 10px;
+    padding-inline: 16px 44px;
+  }
+
+  .wbcpActions {
+    justify-items: start;
+  }
+
+  .wbcpPlatforms {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wbCompanionPromo,
+  .wbCompanionPromo *,
+  .wbCompanionPromo *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.no-animations {
+  .wbCompanionPromo,
+  .wbCompanionPromo *,
+  .wbCompanionPromo *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@keyframes wbcpIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes wbcpOut {
+  to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes wbcpShine {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  30%,
+  100% {
+    transform: translateX(120%);
+  }
+}

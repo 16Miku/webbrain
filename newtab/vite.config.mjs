@@ -1,11 +1,31 @@
 import { defineConfig } from 'vite';
+import { readFileSync } from 'fs';
 import path from 'path';
+
+// The bulletin check reads /newtab-comm.html from a localhost page (features/bulletin), and the
+// dev server answers unknown paths with index.html, whose <noscript> text then showed up as a
+// bulletin. Serve the site's own files, as the web site's preview does: the shipped empty one,
+// and the sample for ?newtab-comm=placeholder.
+const BULLETIN_FILES = ['newtab-comm.html', 'newtab-comm-placeholder.html'];
+const bulletinFiles = {
+  name: 'webbrain-bulletin-files',
+  apply: 'serve',
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      const name = (req.url || '').split('?')[0].slice(1);
+      if (!BULLETIN_FILES.includes(name)) return next();
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(readFileSync(path.resolve(__dirname, '../web', name)));
+    });
+  },
+};
 
 // Output lands in ../src/chrome/newtab (scripts/build.mjs mirrors it to Firefox).
 // base './' keeps every asset URL relative: extension pages are served from
 // chrome-extension://<id>/newtab/ and moz-extension://<uuid>/newtab/.
 export default defineConfig({
   base: './',
+  plugins: [bulletinFiles],
   // JSX goes through Vite's built-in esbuild: no SWC/Babel native addon needed.
   esbuild: { jsx: 'automatic' },
   build: {

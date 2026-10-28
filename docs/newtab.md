@@ -112,7 +112,8 @@ bulletin (`src/*/src/ui/apocalypse-comm.js`), which reads its own file.
 
 - **Off while empty.** Both files ship empty. Whitespace, a doctype and complete HTML comments
   count as empty, so commenting a notice out also switches it off. While the file is empty the
-  page renders nothing and reserves no space. To publish, put a small self-contained HTML
+  slot shows the WebBrain Companion invitation instead (below), or nothing once that is
+  dismissed or the Companion is set up. To publish, put a small self-contained HTML
   banner (≤ 128 KB, no scripts; the placeholder is a template) in `web/newtab-comm.html` and
   deploy the site; to clear it, empty the file again. The file must stay in `web/` even when
   empty: the site rewrites unknown paths to the landing page.
@@ -122,7 +123,7 @@ bulletin (`src/*/src/ui/apocalypse-comm.js`), which reads its own file.
   (`wbNewtabBulletin`), coordinated across tabs via a storage lease so opening many tabs
   causes at most one request per 10 minutes. If the file cannot be read, the last bulletin
   stays up for at most 24 hours and the next attempt waits another 10 minutes. Offline or on
-  any error the page shows nothing.
+  any error no bulletin is shown (the slot falls back to the Companion invitation).
 - **Checks.** https only, the response (after redirects) must come from `webbrain.one` or
   `www.webbrain.one`, at most 128 KB, a 5 s deadline. The markup is shown in a sandboxed
   `srcdoc` iframe that cannot run scripts (`allow-popups` only), with a Content Security
@@ -133,6 +134,30 @@ bulletin (`src/*/src/ui/apocalypse-comm.js`), which reads its own file.
   hash of its markup); a different bulletin shows again.
 - It is shown whether or not the box itself is turned on, and only when the page is shown
   at all (the gate above runs first).
+- **Dev server.** `npm --prefix newtab run dev` serves `web/newtab-comm.html` and
+  `web/newtab-comm-placeholder.html` for the check (`vite.config.mjs`); otherwise Vite would
+  answer with the page itself and its `<noscript>` text would show as a bulletin.
+
+## WebBrain Companion invitation
+
+While no bulletin is shown, a card under the box invites the user to install
+[WebBrain Companion](https://www.webbrain.one/companion/), the tray app that serves their Claude,
+ChatGPT, Google, Grok and Kimi subscriptions to WebBrain on `127.0.0.1:8327`. It is its own card,
+up to 1100 px wide, not the bulletin's frame: the marks of Claude Max, ChatGPT Pro, Google AI Pro,
+SuperGrok and Kimi (Lobe Icons copies in `newtab/src/assets/providers/`), the text, and a button.
+Source: `newtab/src/features/companion/`, shown from `newtab/src/features/bulletin/Bulletin.jsx`.
+
+- **When it shows.** Only after the bulletin check found nothing to show (an empty file, an
+  unreachable one, or a bulletin dismissed earlier). A bulletin dismissed on the page itself
+  leaves the slot empty there. Beyond that it is decided from extension storage only; the page
+  makes no request to the companion's port or to webbrain.one for it. It is hidden for good once
+  the user presses × (`wbNewtabCompanionPromoDismissed` in `chrome.storage.local`), and is not
+  shown while WebBrain has a Companion provider (`webbrain_companion`, or a card with that
+  `duplicateOf`) with a model saved in `providers`. Clicking the button does not hide it; setting
+  the Companion up does. Storage that cannot be read hides it.
+- **The link** opens the companion page in the same tab, in the WebBrain language when the page
+  is translated (`web/companion/<code>/`; Polish falls back to English), with no referrer.
+- **Layout.** Below 1024 px wide the marks move above the text; below 560 px everything stacks.
 
 ## Things to know
 

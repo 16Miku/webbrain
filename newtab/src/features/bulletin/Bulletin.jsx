@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { MdClose } from 'react-icons/md';
 import { wbT } from 'lib/wb-strings';
+import CompanionPromo from 'features/companion/CompanionPromo';
 import { bulletinDocument, dismissBulletin, loadBulletin } from './bulletin';
 
 import './bulletin.scss';
@@ -14,22 +15,27 @@ const loadOnce = () => {
   return pending;
 };
 
-// Rendered under the task box. Until webbrain.one publishes something it renders nothing,
-// so the page looks and lays out exactly as it did without it.
+// Rendered under the task box. While webbrain.one publishes nothing (or the file cannot be
+// read), the slot invites people to install WebBrain Companion instead, which decides for
+// itself whether to show (companion-promo.js). A bulletin dismissed on this page leaves the
+// slot empty here rather than putting the invitation in its place.
 function Bulletin() {
   const [bulletin, setBulletin] = useState(null);
+  const [checked, setChecked] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let alive = true;
     // After first paint: the page never waits for webbrain.one.
     loadOnce().then((result) => {
-      if (alive) setBulletin(result && result.hash !== dismissedHere ? result : null);
+      if (!alive) return;
+      setBulletin(result && result.hash !== dismissedHere ? result : null);
+      setChecked(true);
     });
     return () => { alive = false; };
   }, []);
 
-  if (!bulletin) return null;
+  if (!bulletin) return checked && !dismissedHere ? <CompanionPromo /> : null;
 
   return (
     <aside className={loaded ? 'wbBulletin loaded' : 'wbBulletin'} aria-label={wbT('wb.bulletin_label')}>
