@@ -45,6 +45,7 @@ import { LoopDetector } from './loop-detector.js';
 import { recordCollectionReadProgress } from './collection-read-progress.js';
 import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
+import { cropImage } from './vision-encoder.js';
 import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
 import { guardRecentSubmitClick } from './submit-click-guard.js';
 import { isExplicitGuardOverrideRequest } from './guard-override.js';
@@ -19863,7 +19864,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * document coordinates (a clip at 0,0 on a scrolled page captures the
    * unrendered top of the document: a blank frame), and the output is
    * clip x scale x devicePixelRatio (scale 1 on a retina screen is twice the
-   * CSS size), so the scale divides the DPR out.
+   * CSS size), so the scale divides the DPR out. Only pinch-zoomed pages and
+   * failed local crops still capture with a clip (_captureViewportImage).
    */
   _viewportCaptureClip(probe, cssW, cssH, scale = 1) {
     const dpr = Math.max(0.25, Number(probe?.dpr) || 1);
@@ -19879,15 +19881,64 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
+  /**
+   * The visible viewport, cssW x cssH CSS px from its top left, as a
+   * `width` x `height` image, or at native device pixels without `width`.
+   * Returns what Page.captureScreenshot does ({ data }).
+   *
+   * The tab's surface is captured as it is on screen and the viewport is
+   * cut out and scaled locally. Given a clip, Chromium instead resizes the
+   * tab's view to clip x scale and re-renders the page into it until the
+   * capture ends (page_handler.cc CaptureScreenshot): a visible tab flashes
+   * a shrunken page in its top-left corner whenever that size differs from
+   * the view, as at scale 1 / DPR on a retina screen or in a budget-scaled
+   * capture. The surface starts at the viewport's top left (Chromium keeps
+   * the page scrollbar on the right, in RTL pages too) and has
+   * devicePixelRatio pixels per CSS pixel, as in _visionPlatformCapture.
+   *
+   * A pinch-zoomed page keeps the clip: its surface shows the magnified
+   * visual viewport, not the layout viewport these CSS sizes describe. So
+   * does a capture whose local crop fails.
+   */
+  async _captureViewportImage(tabId, probe, cssW, cssH, { format = 'png', quality, width, height } = {}) {
+    const dpr = Math.max(0.25, Number(probe?.dpr) || 1);
+    const jpeg = format === 'jpeg';
+    const capture = params => this._withIndicatorsHidden(tabId, () =>
+      cdpClient.sendCommand(tabId, 'Page.captureScreenshot', { format, fromSurface: true, ...params }));
+    const clipped = () => capture({
+      ...(jpeg ? { quality } : {}),
+      clip: this._viewportCaptureClip(probe, cssW, cssH, width ? width / cssW : dpr),
+    });
+    if (Math.abs((Number(probe?.pageScale) || 1) - 1) > 0.01) return clipped();
+    // Native device pixels are the surface itself. A scaled image is cut
+    // from a finer JPEG and encoded once more at the caller's quality.
+    const shot = await capture(jpeg ? { quality: width ? 90 : quality } : {});
+    if (!shot?.data || !width) return shot;
+    const mimeType = jpeg ? 'image/jpeg' : 'image/png';
+    try {
+      const dataUrl = await this._cropAndScaleImage(`data:${mimeType};base64,${shot.data}`,
+        { x: 0, y: 0, width: cssW * dpr, height: cssH * dpr }, width, height,
+        { mimeType, ...(jpeg ? { quality: quality / 100 } : {}) });
+      return { data: dataUrl.slice(dataUrl.indexOf(',') + 1) };
+    } catch {
+      return clipped();
+    }
+  }
+
+  /** cropImage (vision-encoder.js); tests without a canvas stand in for it. */
+  _cropAndScaleImage(dataUrl, rect, width, height, options) {
+    return cropImage(dataUrl, rect, width, height, options);
+  }
+
   async _captureAutoScreenshot(tabId, { coordAligned = false } = {}) {
     try {
       await cdpClient.attach(tabId);
       await cdpClient.sendCommand(tabId, 'Page.enable');
       await this._preparePageForCapture(tabId);
 
-      // Probe the CSS viewport first so we can either (a) clip exactly
-      // to it for pixel-accurate captures, or (b) compute a budget-aware
-      // CDP-side scale that downsizes during capture rather than after.
+      // Probe the CSS viewport first so we can either (a) capture it at
+      // exactly its CSS size for pixel-accurate captures, or (b) compute
+      // budget-aware target dims to capture it at.
       const probe = await this._captureViewportProbe(tabId);
       const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
       const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
@@ -19899,13 +19950,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // #311 review). When a side exceeds the cap, resize and report scale.
         const budget = this._budgetForCoordAlignedCapture();
         const captureOnce = async () => {
-          const shot = await this._withIndicatorsHidden(tabId, () =>
-            cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-              format: 'jpeg',
-              quality: 60,
-              clip: this._viewportCaptureClip(probe, cssW, cssH, 1),
-            })
-          );
+          const shot = await this._captureViewportImage(tabId, probe, cssW, cssH, {
+            format: 'jpeg',
+            quality: 60,
+            width: cssW,
+            height: cssH,
+          });
           if (!shot?.data) return null;
           const rawDataUrl = `data:image/jpeg;base64,${shot.data}`;
           const needsResize = cssW > budget.maxTargetPx || cssH > budget.maxTargetPx;
@@ -19936,27 +19986,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       // Non-coord-aligned mode: pre-compute target dims via the budget
-      // binary-search, then ask CDP to capture + scale in one pass. This
-      // avoids ever materializing a multi-MB native-DPR JPEG that we'd
-      // then have to decode and resize in the service worker.
+      // binary-search, then capture the viewport at them. The tab's surface
+      // is scaled to them in the service worker (_captureViewportImage):
+      // a CDP-side scale would resize the visible tab while it captures.
       const budget = this._budgetForCapture();
       const [targetW, targetH] = Agent._fitImageDimensions(cssW, cssH, budget);
-      const scale = targetW < cssW ? targetW / cssW : 1;
       const captureOnce = async () => {
-        const shot = await this._withIndicatorsHidden(tabId, () =>
-          cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-            format: 'jpeg',
-            quality: Math.round(budget.initialJpegQuality * 100),
-            fromSurface: true,
-            clip: this._viewportCaptureClip(probe, cssW, cssH, scale),
-          })
-        );
+        const shot = await this._captureViewportImage(tabId, probe, cssW, cssH, {
+          format: 'jpeg',
+          quality: Math.round(budget.initialJpegQuality * 100),
+          width: targetW,
+          height: targetH,
+        });
         if (!shot?.data) return null;
         const rawDataUrl = `data:image/jpeg;base64,${shot.data}`;
 
-        // CDP-side resize + JPEG q=75 usually fits. Iterative quality
-        // downgrade is the safety net for high-DPR screens where the
-        // captured image can still exceed the base64 ceiling.
+        // Resize + JPEG q=75 usually fits. Iterative quality downgrade is
+        // the safety net for detailed pages whose image can still exceed
+        // the base64 ceiling.
         const shrunk = await this._compressJpegToByteCeiling(rawDataUrl, budget);
         const redacted = await this._redactScreenshotDataUrl(tabId, shrunk, { coordinateSpace: 'viewport' });
         return {
@@ -20400,13 +20447,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const cssW = Math.max(1, Math.round(probe?.innerWidth || 1024));
       const cssH = Math.max(1, Math.round(probe?.innerHeight || 768));
       const captureOnce = async () => {
-        const shot = await this._withIndicatorsHidden(tabId, () =>
-          cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-            format: 'png',
-            fromSurface: true,
-            clip: this._viewportCaptureClip(probe, cssW, cssH, 1),
-          })
-        );
+        const shot = await this._captureViewportImage(tabId, probe, cssW, cssH, {
+          format: 'png',
+          width: cssW,
+          height: cssH,
+        });
         if (!shot?.data) return null;
         const cropDataUrl = `data:image/png;base64,${shot.data}`;
         // Model-facing path honors maxImageDimension (issue #311). Keep the raw
@@ -20694,9 +20739,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const value = probe?.result?.value || null;
       if (value) {
         // Browser zoom: capture clips are in CSS px x zoom (_viewportCaptureClip).
+        // Pinch zoom: the surface is not the layout viewport (_captureViewportImage).
         try {
-          const zoom = Number((await cdpClient.sendCommand(tabId, 'Page.getLayoutMetrics'))?.cssVisualViewport?.zoom);
+          const visual = (await cdpClient.sendCommand(tabId, 'Page.getLayoutMetrics'))?.cssVisualViewport;
+          const zoom = Number(visual?.zoom);
           if (zoom > 0) value.zoom = zoom;
+          const pageScale = Number(visual?.scale);
+          if (pageScale > 0) value.pageScale = pageScale;
         } catch {}
       }
       return value;
@@ -20771,6 +20820,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   //   (2) capturing at that reduced size via CDP's clip.scale — and if
   //       the resulting JPEG is still over a byte ceiling, iteratively
   //       dropping JPEG quality (0.75 → 0.1 in 0.05 steps) until it fits.
+  // WebBrain scales the tab's surface to that size itself instead
+  // (_captureViewportImage): a clip resizes the visible tab while it captures.
   //
   // Defaults below match Anthropic's exactly (pxPerToken=28, 1568/1568,
   // initial 0.75, step 0.05, min 0.1, ~1.4 MB base64 ceiling) — those
@@ -49028,13 +49079,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               // maxImageDimension (sides), not the token budget (issue #311).
               // PNG capture (lossless) so glyph edges stay sharp before re-encode.
               const budget = this._budgetForCoordAlignedCapture();
-              const screenshot = await this._withIndicatorsHidden(tabId, () =>
-                cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-                  format: 'png',
-                  fromSurface: true,
-                  clip: this._viewportCaptureClip(probe, cssW, cssH, 1),
-                })
-              );
+              const screenshot = await this._captureViewportImage(tabId, probe, cssW, cssH, {
+                format: 'png',
+                width: cssW,
+                height: cssH,
+              });
               if (!screenshot?.data) return null;
               const rawUrl = `data:image/png;base64,${screenshot.data}`;
               const needsResize = cssW > budget.maxTargetPx || cssH > budget.maxTargetPx;
@@ -49065,14 +49114,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // shrink a model-facing copy (mirrors full_page_screenshot).
             const budget = this._budgetForCapture();
             if (wantSave) {
-              const screenshot = await this._withIndicatorsHidden(tabId, () =>
-                cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-                  format: 'png',
-                  fromSurface: true,
-                  // Downloads keep native device pixels (scale 1 is CSS px x DPR).
-                  clip: { ...this._viewportCaptureClip(probe, cssW, cssH), scale: 1 },
-                })
-              );
+              // Downloads keep native device pixels: the tab's surface as it is.
+              const screenshot = await this._captureViewportImage(tabId, probe, cssW, cssH, { format: 'png' });
               if (!screenshot?.data) return null;
               const rawUrl = `data:image/png;base64,${screenshot.data}`;
               const shrunk = await this._shrinkImageForBudget(rawUrl, cssW, cssH, budget);
@@ -49086,21 +49129,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               };
             }
 
-            // No save: pick target dims via binary search, ask CDP to capture
-            // + scale in one pass, then iterative-quality fallback if needed.
+            // No save: pick target dims via binary search, capture the
+            // viewport at them, then iterative-quality fallback if needed.
             const [targetW, targetH] = Agent._fitImageDimensions(cssW, cssH, budget);
-            const scale = targetW < cssW ? targetW / cssW : 1;
-            const screenshot = await this._withIndicatorsHidden(tabId, () =>
-              cdpClient.sendCommand(tabId, 'Page.captureScreenshot', {
-                format: 'jpeg',
-                quality: Math.round(budget.initialJpegQuality * 100),
-                fromSurface: true,
-                clip: this._viewportCaptureClip(probe, cssW, cssH, scale),
-              })
-            );
+            const screenshot = await this._captureViewportImage(tabId, probe, cssW, cssH, {
+              format: 'jpeg',
+              quality: Math.round(budget.initialJpegQuality * 100),
+              width: targetW,
+              height: targetH,
+            });
             if (!screenshot?.data) return null;
             const rawUrl = `data:image/jpeg;base64,${screenshot.data}`;
-            const resized = scale < 1 ? ` (resized ${cssW}×${cssH} → ${targetW}×${targetH} for vision-token budget)` : '';
+            const resized = targetW < cssW ? ` (resized ${cssW}×${cssH} → ${targetW}×${targetH} for vision-token budget)` : '';
             return {
               dataUrl: await this._compressJpegToByteCeiling(rawUrl, budget),
               description: `Screenshot captured via CDP (${screenshot.data.length} bytes, JPEG)${resized}`,

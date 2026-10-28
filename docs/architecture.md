@@ -1399,7 +1399,7 @@ The primary page-interaction path. Produces a flat, indented text tree of the pa
 
 Wraps `chrome.debugger` API for:
 - **Trusted events** — `Input.dispatchMouseEvent`, `Input.dispatchKeyEvent` (event.isTrusted === true)
-- **Screenshots** — `Page.captureScreenshot` with clip/scale control
+- **Screenshots** — `Page.captureScreenshot` of the tab's surface as it is on screen, cropped and scaled locally (a clip would resize the visible tab while it captures); full-page tiles keep their clip
 - **DOM queries** — `Runtime.evaluate` for shadow DOM piercing, `DOM.getDocument` for closed roots
 - **WebMCP** — `WebMCP.enable` maintains a bounded live catalog and
   `WebMCP.invokeTool` executes a page-registered structured capability. WebBrain
