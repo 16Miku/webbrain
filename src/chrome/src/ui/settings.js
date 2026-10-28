@@ -879,19 +879,27 @@ async function init() {
 const PERMISSIONS_KEY = 'wb_permissions';
 const GATE_KEY = 'askBeforeConsequentialActions';
 
-async function initPermissionGateToggle() {
+// Prompts are off when the stored setting is false or the side panel's skip
+// dialog turned them off until the browser closes (storage.session).
+async function readAskBeforeConsequential() {
+  const [stored, session] = await Promise.all([
+    chrome.storage.local.get(GATE_KEY),
+    Promise.resolve().then(() => chrome.storage.session.get(PERMISSION_GATE_SESSION_OFF_KEY)).catch(() => ({})),
+  ]);
+  return (stored?.[GATE_KEY] ?? true) && session?.[PERMISSION_GATE_SESSION_OFF_KEY] !== true; // gate ON by default
+}
+
+function renderPermissionGateToggle(askBefore) {
   const toggle = document.getElementById('toggle-permission-gate');
   const warning = document.getElementById('permission-gate-warning');
-  if (!toggle) return;
-  const stored = await chrome.storage.local.get(GATE_KEY);
-  // The side panel's skip dialog can also turn prompts off until the browser
-  // closes (storage.session); the switch shows that too.
-  const session = await Promise.resolve()
-    .then(() => chrome.storage.session.get(PERMISSION_GATE_SESSION_OFF_KEY))
-    .catch(() => ({}));
-  const askBefore = (stored[GATE_KEY] ?? true) && session?.[PERMISSION_GATE_SESSION_OFF_KEY] !== true; // gate ON by default
-  toggle.checked = askBefore;
+  if (toggle) toggle.checked = askBefore;
   if (warning) warning.style.display = askBefore ? 'none' : '';
+}
+
+async function initPermissionGateToggle() {
+  const toggle = document.getElementById('toggle-permission-gate');
+  if (!toggle) return;
+  renderPermissionGateToggle(await readAskBeforeConsequential());
   toggle.addEventListener('change', async () => {
     await chrome.storage.local.set({ [GATE_KEY]: toggle.checked });
     // Turning prompts back on also ends a "this session only" skip.
@@ -900,7 +908,7 @@ async function initPermissionGateToggle() {
         .then(() => chrome.storage.session.remove(PERMISSION_GATE_SESSION_OFF_KEY))
         .catch(() => {});
     }
-    if (warning) warning.style.display = toggle.checked ? 'none' : '';
+    renderPermissionGateToggle(toggle.checked);
   });
 }
 
@@ -977,14 +985,12 @@ document.getElementById('btn-clear-all-permissions')?.addEventListener('click', 
 // shows a stale snapshot until a manual refresh.
 if (globalThis.chrome?.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return;
-    if (changes[PERMISSIONS_KEY]) renderPermissions();
-    if (changes[GATE_KEY]) {
-      const toggle = document.getElementById('toggle-permission-gate');
-      const warning = document.getElementById('permission-gate-warning');
-      const askBefore = changes[GATE_KEY].newValue ?? true;
-      if (toggle) toggle.checked = askBefore;
-      if (warning) warning.style.display = askBefore ? 'none' : '';
+    if (area === 'local' && changes[PERMISSIONS_KEY]) renderPermissions();
+    // Either switch can change prompts: the stored setting, or the side
+    // panel's "this session only" skip in storage.session.
+    if ((area === 'local' && changes[GATE_KEY])
+        || (area === 'session' && changes[PERMISSION_GATE_SESSION_OFF_KEY])) {
+      void readAskBeforeConsequential().then(renderPermissionGateToggle).catch(() => {});
     }
   });
 }

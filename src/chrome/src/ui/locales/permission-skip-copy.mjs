@@ -5,7 +5,7 @@ export const permissionSkipTranslations = Object.freeze({
   es: {
     'sp.perm.skip_all': 'Omitir todos los permisos (peligroso)',
     'sp.perm.skip_dialog.title': '¿Omitir todas las solicitudes de permiso?',
-    'sp.perm.skip_dialog.body': 'WebBrain permitirá esta solicitud y después hará clic, escribirá, navegará, ejecutará JavaScript, subirá, descargará, grabará y programará trabajos futuros en cualquier sitio sin preguntar, incluso en páginas cuyo contenido podría controlar un atacante.',
+    'sp.perm.skip_dialog.body': 'WebBrain permitirá esta solicitud y después hará clic, escribirá, navegará, ejecutará JavaScript, subirá, descargará, grabará y programará trabajos futuros en cualquier sitio sin preguntar, incluso en páginas cuyo contenido podría controlar un atacante. Sus comprobaciones de seguridad siguen deteniéndolo o preguntando antes de enviar algo a alguien que no nombraste, borrar algo, gastar dinero, usar credenciales o adjuntar un archivo que no elegiste.',
     'sp.perm.skip_dialog.session': 'Solo esta sesión',
     'sp.perm.skip_dialog.session_hint': 'Hasta que cierres el navegador',
     'sp.perm.skip_dialog.forever': 'Para siempre',
@@ -16,7 +16,7 @@ export const permissionSkipTranslations = Object.freeze({
   fr: {
     'sp.perm.skip_all': 'Ignorer toutes les autorisations (dangereux)',
     'sp.perm.skip_dialog.title': 'Ignorer toutes les demandes d’autorisation ?',
-    'sp.perm.skip_dialog.body': 'WebBrain autorisera cette demande, puis cliquera, saisira du texte, naviguera, exécutera du JavaScript, téléversera, téléchargera, enregistrera et planifiera des tâches futures sur tous les sites sans demander, y compris sur des pages dont le contenu peut être contrôlé par un attaquant.',
+    'sp.perm.skip_dialog.body': 'WebBrain autorisera cette demande, puis cliquera, saisira du texte, naviguera, exécutera du JavaScript, téléversera, téléchargera, enregistrera et planifiera des tâches futures sur tous les sites sans demander, y compris sur des pages dont le contenu peut être contrôlé par un attaquant. Ses contrôles de sécurité l’arrêtent ou vous demandent toujours avant d’envoyer à quelqu’un que vous n’avez pas nommé, de supprimer quelque chose, de dépenser de l’argent, d’utiliser des identifiants ou de joindre un fichier que vous n’avez pas choisi.',
     'sp.perm.skip_dialog.session': 'Cette session uniquement',
     'sp.perm.skip_dialog.session_hint': 'Jusqu’à la fermeture du navigateur',
     'sp.perm.skip_dialog.forever': 'Pour toujours',
@@ -27,7 +27,7 @@ export const permissionSkipTranslations = Object.freeze({
   tr: {
     'sp.perm.skip_all': 'Tüm izinleri atla (tehlikeli)',
     'sp.perm.skip_dialog.title': 'Tüm izin istemleri atlansın mı?',
-    'sp.perm.skip_dialog.body': 'WebBrain bu isteğe izin verecek, ardından her sitede sormadan tıklayacak, yazacak, gezinecek, JavaScript çalıştıracak, dosya yükleyecek, indirecek, kayıt yapacak ve gelecek işleri zamanlayacak; içeriği bir saldırganın denetiminde olabilecek sayfalarda bile.',
+    'sp.perm.skip_dialog.body': 'WebBrain bu isteğe izin verecek, ardından her sitede sormadan tıklayacak, yazacak, gezinecek, JavaScript çalıştıracak, dosya yükleyecek, indirecek, kayıt yapacak ve gelecek işleri zamanlayacak; içeriği bir saldırganın denetiminde olabilecek sayfalarda bile. Güvenlik denetimleri; adını vermediğiniz birine gönderim, bir şeyi silme, para harcama, kimlik bilgisi kullanma veya seçmediğiniz bir dosyayı ekleme öncesinde yine durdurur ya da sorar.',
     'sp.perm.skip_dialog.session': 'Yalnızca bu oturum',
     'sp.perm.skip_dialog.session_hint': 'Tarayıcıyı kapatana kadar',
     'sp.perm.skip_dialog.forever': 'Kalıcı olarak',
@@ -38,7 +38,7 @@ export const permissionSkipTranslations = Object.freeze({
   zh: {
     'sp.perm.skip_all': '跳过所有权限（危险）',
     'sp.perm.skip_dialog.title': '跳过所有权限提示？',
-    'sp.perm.skip_dialog.body': 'WebBrain 将允许此请求，然后在所有网站上不经询问地点击、输入、导航、运行 JavaScript、上传、下载、录制和安排后续任务，即使页面内容可能受攻击者控制。',
+    'sp.perm.skip_dialog.body': 'WebBrain 将允许此请求，然后在所有网站上不经询问地点击、输入、导航、运行 JavaScript、上传、下载、录制和安排后续任务，即使页面内容可能受攻击者控制。安全检查仍会在发送给你未指定的人、删除内容、花钱、使用凭据或附加你未选择的文件之前阻止或询问。',
     'sp.perm.skip_dialog.session': '仅限本次会话',
     'sp.perm.skip_dialog.session_hint': '直到关闭浏览器',
     'sp.perm.skip_dialog.forever': '永久',
@@ -49,7 +49,7 @@ export const permissionSkipTranslations = Object.freeze({
   ru: {
     'sp.perm.skip_all': 'Пропускать все разрешения (опасно)',
     'sp.perm.skip_dialog.title': 'Пропускать все запросы разрешений?',
-    'sp.perm.skip_dialog.body': 'WebBrain разрешит этот запрос, а затем будет нажимать, вводить текст, переходить, запускать JavaScript, загружать, скачивать, записывать и планировать будущие задачи на любом сайте без запроса, даже на страницах, содержимое которых может контролировать злоумышленник.',
+    'sp.perm.skip_dialog.body': 'WebBrain разрешит этот запрос, а затем будет нажимать, вводить текст, переходить, запускать JavaScript, загружать, скачивать, записывать и планировать будущие задачи на любом сайте без запроса, даже на страницах, содержимое которых может контролировать злоумышленник. Проверки безопасности по-прежнему остановят его или спросят перед отправкой тому, кого вы не называли, удалением чего-либо, тратой денег, использованием учётных данных или прикреплением файла, который вы не выбирали.',
     'sp.perm.skip_dialog.session': 'Только в этом сеансе',
     'sp.perm.skip_dialog.session_hint': 'Пока вы не закроете браузер',
     'sp.perm.skip_dialog.forever': 'Навсегда',
@@ -60,7 +60,7 @@ export const permissionSkipTranslations = Object.freeze({
   uk: {
     'sp.perm.skip_all': 'Пропускати всі дозволи (небезпечно)',
     'sp.perm.skip_dialog.title': 'Пропускати всі запити дозволів?',
-    'sp.perm.skip_dialog.body': 'WebBrain дозволить цей запит, а потім натискатиме, друкуватиме, переходитиме, запускатиме JavaScript, вивантажуватиме, завантажуватиме, записуватиме та плануватиме майбутню роботу на будь-якому сайті без запиту, навіть на сторінках, вміст яких може контролювати зловмисник.',
+    'sp.perm.skip_dialog.body': 'WebBrain дозволить цей запит, а потім натискатиме, друкуватиме, переходитиме, запускатиме JavaScript, вивантажуватиме, завантажуватиме, записуватиме та плануватиме майбутню роботу на будь-якому сайті без запиту, навіть на сторінках, вміст яких може контролювати зловмисник. Перевірки безпеки й надалі зупинять його або запитають перед надсиланням тому, кого ви не називали, видаленням чогось, витрачанням грошей, використанням облікових даних або додаванням файлу, який ви не вибирали.',
     'sp.perm.skip_dialog.session': 'Лише в цьому сеансі',
     'sp.perm.skip_dialog.session_hint': 'Доки ви не закриєте браузер',
     'sp.perm.skip_dialog.forever': 'Назавжди',
@@ -71,7 +71,7 @@ export const permissionSkipTranslations = Object.freeze({
   ar: {
     'sp.perm.skip_all': 'تخطي كل الأذونات (خطير)',
     'sp.perm.skip_dialog.title': 'تخطي كل مطالبات الأذونات؟',
-    'sp.perm.skip_dialog.body': 'سيسمح WebBrain بهذا الطلب، ثم سينقر ويكتب ويتنقل ويشغّل JavaScript ويرفع وينزّل ويسجّل ويجدول أعمالًا مستقبلية على أي موقع دون أن يسأل، حتى في الصفحات التي قد يتحكم مهاجم في محتواها.',
+    'sp.perm.skip_dialog.body': 'سيسمح WebBrain بهذا الطلب، ثم سينقر ويكتب ويتنقل ويشغّل JavaScript ويرفع وينزّل ويسجّل ويجدول أعمالًا مستقبلية على أي موقع دون أن يسأل، حتى في الصفحات التي قد يتحكم مهاجم في محتواها. تظل فحوص الأمان توقفه أو تسألك قبل الإرسال إلى شخص لم تذكره، أو حذف شيء، أو إنفاق المال، أو استخدام بيانات الاعتماد، أو إرفاق ملف لم تختره.',
     'sp.perm.skip_dialog.session': 'هذه الجلسة فقط',
     'sp.perm.skip_dialog.session_hint': 'حتى تغلق المتصفح',
     'sp.perm.skip_dialog.forever': 'دائمًا',
@@ -82,7 +82,7 @@ export const permissionSkipTranslations = Object.freeze({
   ja: {
     'sp.perm.skip_all': 'すべての権限確認をスキップ（危険）',
     'sp.perm.skip_dialog.title': 'すべての権限確認をスキップしますか？',
-    'sp.perm.skip_dialog.body': 'WebBrain はこのリクエストを許可し、その後はどのサイトでも確認なしにクリック、入力、移動、JavaScript の実行、アップロード、ダウンロード、録画、将来の作業のスケジュールを行います。攻撃者が内容を操作している可能性のあるページでも同様です。',
+    'sp.perm.skip_dialog.body': 'WebBrain はこのリクエストを許可し、その後はどのサイトでも確認なしにクリック、入力、移動、JavaScript の実行、アップロード、ダウンロード、録画、将来の作業のスケジュールを行います。攻撃者が内容を操作している可能性のあるページでも同様です。ただし、指定していない相手への送信、削除、支払い、認証情報の使用、選んでいないファイルの添付の前には、安全チェックが引き続き停止または確認します。',
     'sp.perm.skip_dialog.session': 'このセッションのみ',
     'sp.perm.skip_dialog.session_hint': 'ブラウザを閉じるまで',
     'sp.perm.skip_dialog.forever': '常に',
@@ -93,7 +93,7 @@ export const permissionSkipTranslations = Object.freeze({
   ko: {
     'sp.perm.skip_all': '모든 권한 확인 건너뛰기 (위험)',
     'sp.perm.skip_dialog.title': '모든 권한 확인을 건너뛸까요?',
-    'sp.perm.skip_dialog.body': 'WebBrain이 이 요청을 허용한 뒤, 모든 사이트에서 묻지 않고 클릭, 입력, 이동, JavaScript 실행, 업로드, 다운로드, 녹화 및 예약 작업을 수행합니다. 공격자가 내용을 조작할 수 있는 페이지에서도 마찬가지입니다.',
+    'sp.perm.skip_dialog.body': 'WebBrain이 이 요청을 허용한 뒤, 모든 사이트에서 묻지 않고 클릭, 입력, 이동, JavaScript 실행, 업로드, 다운로드, 녹화 및 예약 작업을 수행합니다. 공격자가 내용을 조작할 수 있는 페이지에서도 마찬가지입니다. 다만 지정하지 않은 사람에게 보내기, 삭제, 결제, 자격 증명 사용, 선택하지 않은 파일 첨부 전에는 안전 검사가 계속 멈추거나 확인을 요청합니다.',
     'sp.perm.skip_dialog.session': '이번 세션만',
     'sp.perm.skip_dialog.session_hint': '브라우저를 닫을 때까지',
     'sp.perm.skip_dialog.forever': '항상',
@@ -104,7 +104,7 @@ export const permissionSkipTranslations = Object.freeze({
   id: {
     'sp.perm.skip_all': 'Lewati semua izin (berbahaya)',
     'sp.perm.skip_dialog.title': 'Lewati semua permintaan izin?',
-    'sp.perm.skip_dialog.body': 'WebBrain akan mengizinkan permintaan ini, lalu mengeklik, mengetik, menavigasi, menjalankan JavaScript, mengunggah, mengunduh, merekam, dan menjadwalkan pekerjaan mendatang di situs mana pun tanpa bertanya, bahkan di halaman yang isinya mungkin dikendalikan penyerang.',
+    'sp.perm.skip_dialog.body': 'WebBrain akan mengizinkan permintaan ini, lalu mengeklik, mengetik, menavigasi, menjalankan JavaScript, mengunggah, mengunduh, merekam, dan menjadwalkan pekerjaan mendatang di situs mana pun tanpa bertanya, bahkan di halaman yang isinya mungkin dikendalikan penyerang. Pemeriksaan keamanannya tetap menghentikan atau bertanya sebelum mengirim ke orang yang tidak Anda sebut, menghapus sesuatu, mengeluarkan uang, memakai kredensial, atau melampirkan file yang tidak Anda pilih.',
     'sp.perm.skip_dialog.session': 'Hanya sesi ini',
     'sp.perm.skip_dialog.session_hint': 'Sampai Anda menutup browser',
     'sp.perm.skip_dialog.forever': 'Selamanya',
@@ -115,7 +115,7 @@ export const permissionSkipTranslations = Object.freeze({
   th: {
     'sp.perm.skip_all': 'ข้ามการถามสิทธิ์ทั้งหมด (อันตราย)',
     'sp.perm.skip_dialog.title': 'ข้ามการถามสิทธิ์ทั้งหมดหรือไม่',
-    'sp.perm.skip_dialog.body': 'WebBrain จะอนุญาตคำขอนี้ แล้วคลิก พิมพ์ นำทาง รัน JavaScript อัปโหลด ดาวน์โหลด บันทึก และตั้งเวลางานในอนาคตบนทุกเว็บไซต์โดยไม่ถาม แม้ในหน้าที่ผู้โจมตีอาจควบคุมเนื้อหาได้',
+    'sp.perm.skip_dialog.body': 'WebBrain จะอนุญาตคำขอนี้ แล้วคลิก พิมพ์ นำทาง รัน JavaScript อัปโหลด ดาวน์โหลด บันทึก และตั้งเวลางานในอนาคตบนทุกเว็บไซต์โดยไม่ถาม แม้ในหน้าที่ผู้โจมตีอาจควบคุมเนื้อหาได้ การตรวจสอบความปลอดภัยยังคงหยุดหรือถามก่อนส่งถึงคนที่คุณไม่ได้ระบุ ลบข้อมูล ใช้จ่ายเงิน ใช้ข้อมูลรับรอง หรือแนบไฟล์ที่คุณไม่ได้เลือก',
     'sp.perm.skip_dialog.session': 'เฉพาะเซสชันนี้',
     'sp.perm.skip_dialog.session_hint': 'จนกว่าคุณจะปิดเบราว์เซอร์',
     'sp.perm.skip_dialog.forever': 'ตลอดไป',
@@ -126,7 +126,7 @@ export const permissionSkipTranslations = Object.freeze({
   ms: {
     'sp.perm.skip_all': 'Langkau semua kebenaran (berbahaya)',
     'sp.perm.skip_dialog.title': 'Langkau semua gesaan kebenaran?',
-    'sp.perm.skip_dialog.body': 'WebBrain akan membenarkan permintaan ini, kemudian mengklik, menaip, menavigasi, menjalankan JavaScript, memuat naik, memuat turun, merakam, dan menjadualkan kerja masa hadapan di mana-mana laman tanpa bertanya, walaupun pada halaman yang kandungannya mungkin dikawal oleh penyerang.',
+    'sp.perm.skip_dialog.body': 'WebBrain akan membenarkan permintaan ini, kemudian mengklik, menaip, menavigasi, menjalankan JavaScript, memuat naik, memuat turun, merakam, dan menjadualkan kerja masa hadapan di mana-mana laman tanpa bertanya, walaupun pada halaman yang kandungannya mungkin dikawal oleh penyerang. Semakan keselamatannya tetap menghentikan atau bertanya sebelum menghantar kepada orang yang tidak anda namakan, memadam sesuatu, membelanjakan wang, menggunakan kelayakan atau melampirkan fail yang tidak anda pilih.',
     'sp.perm.skip_dialog.session': 'Sesi ini sahaja',
     'sp.perm.skip_dialog.session_hint': 'Sehingga anda menutup pelayar',
     'sp.perm.skip_dialog.forever': 'Selama-lamanya',
@@ -137,7 +137,7 @@ export const permissionSkipTranslations = Object.freeze({
   tl: {
     'sp.perm.skip_all': 'Laktawan ang lahat ng pahintulot (mapanganib)',
     'sp.perm.skip_dialog.title': 'Laktawan ang lahat ng prompt ng pahintulot?',
-    'sp.perm.skip_dialog.body': 'Papayagan ng WebBrain ang kahilingang ito, saka magki-click, magta-type, magna-navigate, magpapatakbo ng JavaScript, mag-a-upload, magda-download, magre-record, at mag-iiskedyul ng mga gawain sa hinaharap sa anumang site nang hindi nagtatanong, kahit sa mga pahinang maaaring kontrolado ng umaatake ang nilalaman.',
+    'sp.perm.skip_dialog.body': 'Papayagan ng WebBrain ang kahilingang ito, saka magki-click, magta-type, magna-navigate, magpapatakbo ng JavaScript, mag-a-upload, magda-download, magre-record, at mag-iiskedyul ng mga gawain sa hinaharap sa anumang site nang hindi nagtatanong, kahit sa mga pahinang maaaring kontrolado ng umaatake ang nilalaman. Hihinto o magtatanong pa rin ang mga safety check nito bago magpadala sa taong hindi mo binanggit, magbura ng anuman, gumastos ng pera, gumamit ng credentials, o mag-attach ng file na hindi mo pinili.',
     'sp.perm.skip_dialog.session': 'Sa session na ito lang',
     'sp.perm.skip_dialog.session_hint': 'Hanggang isara mo ang browser',
     'sp.perm.skip_dialog.forever': 'Palagi',
@@ -148,7 +148,7 @@ export const permissionSkipTranslations = Object.freeze({
   pl: {
     'sp.perm.skip_all': 'Pomijaj wszystkie uprawnienia (niebezpieczne)',
     'sp.perm.skip_dialog.title': 'Pomijać wszystkie pytania o uprawnienia?',
-    'sp.perm.skip_dialog.body': 'WebBrain zezwoli na to żądanie, a potem będzie klikać, pisać, nawigować, uruchamiać JavaScript, przesyłać, pobierać, nagrywać i planować przyszłe działania na każdej stronie bez pytania, także na stronach, których treść może kontrolować atakujący.',
+    'sp.perm.skip_dialog.body': 'WebBrain zezwoli na to żądanie, a potem będzie klikać, pisać, nawigować, uruchamiać JavaScript, przesyłać, pobierać, nagrywać i planować przyszłe działania na każdej stronie bez pytania, także na stronach, których treść może kontrolować atakujący. Kontrole bezpieczeństwa nadal zatrzymają go lub zapytają przed wysłaniem do kogoś, kogo nie wskazałeś, usunięciem czegoś, wydaniem pieniędzy, użyciem danych logowania lub załączeniem pliku, którego nie wybrałeś.',
     'sp.perm.skip_dialog.session': 'Tylko w tej sesji',
     'sp.perm.skip_dialog.session_hint': 'Do zamknięcia przeglądarki',
     'sp.perm.skip_dialog.forever': 'Na zawsze',
@@ -159,7 +159,7 @@ export const permissionSkipTranslations = Object.freeze({
   he: {
     'sp.perm.skip_all': 'דילוג על כל ההרשאות (מסוכן)',
     'sp.perm.skip_dialog.title': 'לדלג על כל בקשות ההרשאה?',
-    'sp.perm.skip_dialog.body': 'WebBrain יאשר את הבקשה הזו, ואחר כך ילחץ, יקליד, ינווט, יריץ JavaScript, יעלה ויוריד קבצים, יקליט ויתזמן עבודה עתידית בכל אתר בלי לשאול, גם בדפים שתוכנם עשוי להיות בשליטת תוקף.',
+    'sp.perm.skip_dialog.body': 'WebBrain יאשר את הבקשה הזו, ואחר כך ילחץ, יקליד, ינווט, יריץ JavaScript, יעלה ויוריד קבצים, יקליט ויתזמן עבודה עתידית בכל אתר בלי לשאול, גם בדפים שתוכנם עשוי להיות בשליטת תוקף. בדיקות הבטיחות עדיין יעצרו או ישאלו לפני שליחה למישהו שלא ציינתם, מחיקת משהו, הוצאת כסף, שימוש בפרטי התחברות או צירוף קובץ שלא בחרתם.',
     'sp.perm.skip_dialog.session': 'רק בהפעלה הזו',
     'sp.perm.skip_dialog.session_hint': 'עד שתסגרו את הדפדפן',
     'sp.perm.skip_dialog.forever': 'לתמיד',
@@ -170,7 +170,7 @@ export const permissionSkipTranslations = Object.freeze({
   hi: {
     'sp.perm.skip_all': 'सभी अनुमतियाँ छोड़ें (खतरनाक)',
     'sp.perm.skip_dialog.title': 'सभी अनुमति संकेत छोड़ें?',
-    'sp.perm.skip_dialog.body': 'WebBrain इस अनुरोध की अनुमति देगा, फिर किसी भी साइट पर बिना पूछे क्लिक करेगा, टाइप करेगा, नेविगेट करेगा, JavaScript चलाएगा, अपलोड करेगा, डाउनलोड करेगा, रिकॉर्ड करेगा और भविष्य के काम शेड्यूल करेगा, उन पेजों पर भी जिनकी सामग्री किसी हमलावर के नियंत्रण में हो सकती है।',
+    'sp.perm.skip_dialog.body': 'WebBrain इस अनुरोध की अनुमति देगा, फिर किसी भी साइट पर बिना पूछे क्लिक करेगा, टाइप करेगा, नेविगेट करेगा, JavaScript चलाएगा, अपलोड करेगा, डाउनलोड करेगा, रिकॉर्ड करेगा और भविष्य के काम शेड्यूल करेगा, उन पेजों पर भी जिनकी सामग्री किसी हमलावर के नियंत्रण में हो सकती है। सुरक्षा जाँचें अब भी रोकती या पूछती हैं, जब यह ऐसे व्यक्ति को भेजने वाला हो जिसका आपने नाम नहीं लिया, कुछ हटाने, पैसे खर्च करने, क्रेडेंशियल इस्तेमाल करने या ऐसी फ़ाइल जोड़ने वाला हो जिसे आपने नहीं चुना।',
     'sp.perm.skip_dialog.session': 'सिर्फ़ इस सत्र के लिए',
     'sp.perm.skip_dialog.session_hint': 'ब्राउज़र बंद करने तक',
     'sp.perm.skip_dialog.forever': 'हमेशा के लिए',
@@ -181,7 +181,7 @@ export const permissionSkipTranslations = Object.freeze({
   pt: {
     'sp.perm.skip_all': 'Ignorar todas as permissões (perigoso)',
     'sp.perm.skip_dialog.title': 'Ignorar todos os prompts de permissão?',
-    'sp.perm.skip_dialog.body': 'O WebBrain permitirá esta solicitação e depois clicará, digitará, navegará, executará JavaScript, fará upload, baixará, gravará e agendará trabalhos futuros em qualquer site sem perguntar, inclusive em páginas cujo conteúdo pode estar sob controle de um invasor.',
+    'sp.perm.skip_dialog.body': 'O WebBrain permitirá esta solicitação e depois clicará, digitará, navegará, executará JavaScript, fará upload, baixará, gravará e agendará trabalhos futuros em qualquer site sem perguntar, inclusive em páginas cujo conteúdo pode estar sob controle de um invasor. Suas verificações de segurança ainda o impedem ou perguntam antes de enviar para alguém que você não indicou, excluir algo, gastar dinheiro, usar credenciais ou anexar um arquivo que você não escolheu.',
     'sp.perm.skip_dialog.session': 'Só nesta sessão',
     'sp.perm.skip_dialog.session_hint': 'Até você fechar o navegador',
     'sp.perm.skip_dialog.forever': 'Para sempre',
@@ -192,7 +192,7 @@ export const permissionSkipTranslations = Object.freeze({
   vi: {
     'sp.perm.skip_all': 'Bỏ qua mọi quyền (nguy hiểm)',
     'sp.perm.skip_dialog.title': 'Bỏ qua mọi lời nhắc về quyền?',
-    'sp.perm.skip_dialog.body': 'WebBrain sẽ cho phép yêu cầu này, sau đó nhấp, nhập, điều hướng, chạy JavaScript, tải lên, tải xuống, ghi lại và lên lịch công việc trong tương lai trên mọi trang web mà không hỏi, kể cả trên những trang có nội dung có thể bị kẻ tấn công kiểm soát.',
+    'sp.perm.skip_dialog.body': 'WebBrain sẽ cho phép yêu cầu này, sau đó nhấp, nhập, điều hướng, chạy JavaScript, tải lên, tải xuống, ghi lại và lên lịch công việc trong tương lai trên mọi trang web mà không hỏi, kể cả trên những trang có nội dung có thể bị kẻ tấn công kiểm soát. Các bước kiểm tra an toàn vẫn dừng lại hoặc hỏi trước khi gửi cho người bạn không nêu tên, xóa thứ gì đó, chi tiền, dùng thông tin đăng nhập hoặc đính kèm tệp bạn không chọn.',
     'sp.perm.skip_dialog.session': 'Chỉ phiên này',
     'sp.perm.skip_dialog.session_hint': 'Cho đến khi bạn đóng trình duyệt',
     'sp.perm.skip_dialog.forever': 'Mãi mãi',
@@ -203,7 +203,7 @@ export const permissionSkipTranslations = Object.freeze({
   bn: {
     'sp.perm.skip_all': 'সব অনুমতি এড়িয়ে যান (বিপজ্জনক)',
     'sp.perm.skip_dialog.title': 'সব অনুমতি প্রম্পট এড়িয়ে যাবেন?',
-    'sp.perm.skip_dialog.body': 'WebBrain এই অনুরোধটি অনুমোদন করবে, তারপর যেকোনো সাইটে জিজ্ঞাসা না করেই ক্লিক করবে, টাইপ করবে, নেভিগেট করবে, JavaScript চালাবে, আপলোড করবে, ডাউনলোড করবে, রেকর্ড করবে এবং ভবিষ্যৎ কাজের সময়সূচী করবে, এমনকি সেসব পেজেও যেগুলোর বিষয়বস্তু কোনো আক্রমণকারী নিয়ন্ত্রণ করতে পারে।',
+    'sp.perm.skip_dialog.body': 'WebBrain এই অনুরোধটি অনুমোদন করবে, তারপর যেকোনো সাইটে জিজ্ঞাসা না করেই ক্লিক করবে, টাইপ করবে, নেভিগেট করবে, JavaScript চালাবে, আপলোড করবে, ডাউনলোড করবে, রেকর্ড করবে এবং ভবিষ্যৎ কাজের সময়সূচী করবে, এমনকি সেসব পেজেও যেগুলোর বিষয়বস্তু কোনো আক্রমণকারী নিয়ন্ত্রণ করতে পারে। তবুও এর নিরাপত্তা যাচাই থামাবে বা জিজ্ঞাসা করবে যখন এটি এমন কাউকে পাঠাতে যাবে যার নাম আপনি বলেননি, কিছু মুছতে, টাকা খরচ করতে, ক্রেডেনশিয়াল ব্যবহার করতে বা এমন ফাইল সংযুক্ত করতে যা আপনি বাছাই করেননি।',
     'sp.perm.skip_dialog.session': 'শুধু এই সেশনে',
     'sp.perm.skip_dialog.session_hint': 'ব্রাউজার বন্ধ না করা পর্যন্ত',
     'sp.perm.skip_dialog.forever': 'চিরতরে',
@@ -214,7 +214,7 @@ export const permissionSkipTranslations = Object.freeze({
   fa: {
     'sp.perm.skip_all': 'رد کردن همهٔ مجوزها (خطرناک)',
     'sp.perm.skip_dialog.title': 'همهٔ درخواست‌های مجوز رد شوند؟',
-    'sp.perm.skip_dialog.body': 'WebBrain این درخواست را مجاز می‌کند و سپس در هر سایتی بدون پرسیدن کلیک می‌کند، تایپ می‌کند، پیمایش می‌کند، JavaScript اجرا می‌کند، آپلود و دانلود می‌کند، ضبط می‌کند و کارهای آینده را زمان‌بندی می‌کند، حتی در صفحه‌هایی که ممکن است محتوایشان در کنترل یک مهاجم باشد.',
+    'sp.perm.skip_dialog.body': 'WebBrain این درخواست را مجاز می‌کند و سپس در هر سایتی بدون پرسیدن کلیک می‌کند، تایپ می‌کند، پیمایش می‌کند، JavaScript اجرا می‌کند، آپلود و دانلود می‌کند، ضبط می‌کند و کارهای آینده را زمان‌بندی می‌کند، حتی در صفحه‌هایی که ممکن است محتوایشان در کنترل یک مهاجم باشد. بررسی‌های ایمنی همچنان پیش از ارسال به کسی که نامش را نبرده‌اید، حذف چیزی، خرج کردن پول، استفاده از اعتبارنامه‌ها یا پیوست کردن فایلی که انتخاب نکرده‌اید، متوقف می‌کنند یا می‌پرسند.',
     'sp.perm.skip_dialog.session': 'فقط همین نشست',
     'sp.perm.skip_dialog.session_hint': 'تا وقتی مرورگر را ببندید',
     'sp.perm.skip_dialog.forever': 'برای همیشه',
@@ -225,7 +225,7 @@ export const permissionSkipTranslations = Object.freeze({
   nl: {
     'sp.perm.skip_all': 'Alle machtigingen overslaan (gevaarlijk)',
     'sp.perm.skip_dialog.title': 'Alle machtigingsvragen overslaan?',
-    'sp.perm.skip_dialog.body': 'WebBrain staat dit verzoek toe en klikt, typt, navigeert, voert JavaScript uit, uploadt, downloadt, neemt op en plant toekomstige taken daarna op elke site zonder te vragen, ook op pagina’s waarvan de inhoud door een aanvaller kan worden beheerd.',
+    'sp.perm.skip_dialog.body': 'WebBrain staat dit verzoek toe en klikt, typt, navigeert, voert JavaScript uit, uploadt, downloadt, neemt op en plant toekomstige taken daarna op elke site zonder te vragen, ook op pagina’s waarvan de inhoud door een aanvaller kan worden beheerd. De veiligheidscontroles stoppen of vragen nog steeds voordat hij iets stuurt naar iemand die je niet noemde, iets verwijdert, geld uitgeeft, inloggegevens gebruikt of een bestand bijvoegt dat je niet koos.',
     'sp.perm.skip_dialog.session': 'Alleen deze sessie',
     'sp.perm.skip_dialog.session_hint': 'Tot je de browser sluit',
     'sp.perm.skip_dialog.forever': 'Voorgoed',
@@ -236,7 +236,7 @@ export const permissionSkipTranslations = Object.freeze({
   de: {
     'sp.perm.skip_all': 'Alle Berechtigungen überspringen (gefährlich)',
     'sp.perm.skip_dialog.title': 'Alle Berechtigungsabfragen überspringen?',
-    'sp.perm.skip_dialog.body': 'WebBrain erlaubt diese Anfrage und wird danach auf jeder Website ohne Nachfrage klicken, tippen, navigieren, JavaScript ausführen, hochladen, herunterladen, aufnehmen und zukünftige Aufgaben planen – auch auf Seiten, deren Inhalt ein Angreifer kontrollieren könnte.',
+    'sp.perm.skip_dialog.body': 'WebBrain erlaubt diese Anfrage und wird danach auf jeder Website ohne Nachfrage klicken, tippen, navigieren, JavaScript ausführen, hochladen, herunterladen, aufnehmen und zukünftige Aufgaben planen – auch auf Seiten, deren Inhalt ein Angreifer kontrollieren könnte. Die Sicherheitsprüfungen stoppen oder fragen weiterhin, bevor er an jemanden sendet, den Sie nicht genannt haben, etwas löscht, Geld ausgibt, Zugangsdaten verwendet oder eine Datei anhängt, die Sie nicht ausgewählt haben.',
     'sp.perm.skip_dialog.session': 'Nur diese Sitzung',
     'sp.perm.skip_dialog.session_hint': 'Bis Sie den Browser schließen',
     'sp.perm.skip_dialog.forever': 'Dauerhaft',

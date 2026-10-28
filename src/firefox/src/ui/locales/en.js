@@ -452,7 +452,7 @@ export default {
   'sp.perm.dont_allow': "Don't allow",
   'sp.perm.skip_all': 'Dangerously skip permissions',
   'sp.perm.skip_dialog.title': 'Skip all permission prompts?',
-  'sp.perm.skip_dialog.body': 'WebBrain will allow this request, then click, type, navigate, run JavaScript, upload, download, record and schedule future work on every site without asking, even on pages whose content may be attacker-controlled.',
+  'sp.perm.skip_dialog.body': 'WebBrain will allow this request, then click, type, navigate, run JavaScript, upload, download, record and schedule future work on every site without asking, even on pages whose content may be attacker-controlled. Its safety checks still stop or ask before it sends to someone you didn\'t name, deletes something, spends money, uses credentials or attaches a file you didn\'t choose.',
   'sp.perm.skip_dialog.session': 'This session only',
   'sp.perm.skip_dialog.session_hint': 'Until you close the browser',
   'sp.perm.skip_dialog.forever': 'Forever',
