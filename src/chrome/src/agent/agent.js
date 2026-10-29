@@ -22,7 +22,7 @@ import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationCon
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, RETIRED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_LEAN_NOTE, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT, getVisionActPrompt } from './tools.js';
 import { installVisionRuntime } from './vision-runtime.js';
-import { VISION_CAPTCHA_MANUAL_NOTE, VISION_CAPTCHA_UNAPPLIED_NOTE, VISION_NATIVE_TOOLS, VISION_SITE_NOTES_PREFACE, visionCaptchaSolverNote, visionFilePickerBlockedResult, visionUniversalPreamble } from './vision-tools.js';
+import { VISION_CAPTCHA_MANUAL_NOTE, VISION_CAPTCHA_UNAPPLIED_NOTE, VISION_NATIVE_TOOLS, visionCaptchaSolverNote, visionFilePickerBlockedResult, visionSiteNotesPreface, visionUniversalPreamble } from './vision-tools.js';
 import { visionDomProbeExpression } from './vision-dom-probe.js';
 import { normalizeVisionModeSetting } from './vision-mode.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
@@ -12978,7 +12978,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const heading = adapter.category === 'finance'
           ? `[Site guidance for ${adapter.name} — FINANCE / HIGH-STAKES]`
           : `[Site guidance for ${adapter.name}]`;
-        const visionNote = this._visionRunState(tabId).active ? `${VISION_SITE_NOTES_PREFACE}\n` : '';
+        const visionNote = this._visionRunState(tabId).active ? `${visionSiteNotesPreface(adapter.notes)}\n` : '';
         contextLine += `${heading}\n${visionNote}${adapter.notes.trim()}\n\n`;
       }
       if (adapter) this._queueAdapterMatchTrace(tabId, adapter, !!shouldInjectAdapter);
@@ -13717,7 +13717,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const heading = adapter.category === 'finance'
       ? `[Site context changed → now on ${adapter.name} — FINANCE / HIGH-STAKES. Apply these rules from now on:]`
       : `[Site context changed → now on ${adapter.name}. Apply these notes from now on:]`;
-    const visionNote = this._visionRunState(tabId).active ? `${VISION_SITE_NOTES_PREFACE}\n` : '';
+    const visionNote = this._visionRunState(tabId).active ? `${visionSiteNotesPreface(adapter.notes)}\n` : '';
     messages.push({
       role: 'user',
       content: `${heading}\n${visionNote}${adapter.notes.trim()}`,

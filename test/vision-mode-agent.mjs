@@ -1001,7 +1001,43 @@ for (const build of (process.env.VISION_BUILDS || 'chrome,firefox').split(',')) 
     }
     for (const file of [`../src/${build}/src/agent/agent.js`]) {
       const source = (await import('node:fs')).readFileSync(new URL(file, import.meta.url), 'utf8');
-      assert.match(source, /const visionNote = this\._visionRunState\(tabId\)\.active \? `\$\{VISION_SITE_NOTES_PREFACE\}\\n` : '';\s*contextLine \+= `\$\{heading\}\\n\$\{visionNote\}/);
+      assert.match(source, /const visionNote = this\._visionRunState\(tabId\)\.active \? `\$\{visionSiteNotesPreface\(adapter\.notes\)\}\\n` : '';\s*contextLine \+= `\$\{heading\}\\n\$\{visionNote\}/);
+    }
+  });
+
+  test(`${build}: site notes that route uploads to upload_file tell a vision run how to get it`, async () => {
+    // The notes forbid clicking the upload control, but in a vision run that
+    // click is what hands upload_file over (_visionNoteUploadHandoff).
+    const { agent } = runAgent(() => ({ content: 'done' }));
+    const tab = nextTab++;
+    agent.conversationModes.set(tab, 'act');
+    const api = globalThis.chrome;
+    const get = api.tabs.get;
+    let url = 'https://x.com/compose/post';
+    api.tabs.get = async id => ({ id, url, title: 'Post', status: 'complete' });
+    const reinject = (...args) => Agent.prototype._maybeReinjectAdapter.apply(agent, args);
+    try {
+      agent.lastSeenAdapter.set(tab, null);
+      const x = [];
+      assert.equal(await reinject(tab, x), true);
+      assert.match(x[0].content, /never click that button/, 'fixture: the X notes forbid the click');
+      assert.match(x[0].content, /\(Uploads in this run: where these notes say to use upload_file and not to click the upload control, click that control once with click_at instead\./);
+      // Notes without uploads keep only the tool line.
+      url = 'https://mastodon.social/home';
+      agent.lastSeenAdapter.set(tab, null);
+      const mastodon = [];
+      assert.equal(await reinject(tab, mastodon), true);
+      assert.match(mastodon[0].content, /Written for WebBrain's element tools/);
+      assert.doesNotMatch(mastodon[0].content, /Uploads in this run/);
+      // The element-tool path keeps the notes as written.
+      url = 'https://x.com/compose/post';
+      agent.visionMode = 'off';
+      agent.lastSeenAdapter.set(tab, null);
+      const legacy = [];
+      assert.equal(await reinject(tab, legacy), true);
+      assert.doesNotMatch(legacy[0].content, /Uploads in this run|Written for WebBrain's element tools/);
+    } finally {
+      api.tabs.get = get;
     }
   });
 

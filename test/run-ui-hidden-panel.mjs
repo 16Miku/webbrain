@@ -183,6 +183,8 @@ async function panelFixture(build, bg) {
       reconcilePersistedStagedScreenshots: asyncNoop, newtabHandoff: { consume: asyncNoop },
       scheduleHistoryPersist: noop, refreshRenderedStepLabels: noop, syncProgressDisplayMode: noop,
       migrateLegacyEmptyStateFromRestoredChat: noop, drainQueuedContextMenuPrompts: noop, syncSendButtonState: noop,
+      // No composer message is queued in this fixture.
+      nextAutomaticQueuedComposerMessage: () => null, drainQueuedPromptsAfterRunSettles: asyncNoop,
       showActivity: noop, hideActivity: noop, startThinkingActivity: noop, clearThinkingActivityTimers: noop,
       beginThinkingActivity: noop, showInspectionBanner: noop, clearTransientAssistantTextForToolCall: noop,
       friendlyToolLabel: name => name, markLastStepDone: noop, finalizeSteps: noop, setMessageCreatedAt: noop,
