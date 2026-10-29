@@ -1,0 +1,646 @@
+{
+  "schema": "webbrain.local-comparison-run.v1",
+  "startedAt": "2026-10-29T04:12:25.424Z",
+  "model": {
+    "id": "minicpm-v-4.7-1b",
+    "name": "MiniCPM-V-4.7-1B",
+    "source": "openbmb/MiniCPM-V-4.7-1B",
+    "repo": "openbmb/MiniCPM-V-4.7-1B-gguf",
+    "revision": "345adbfa02c4a4671e61b7c75502dc9bf24fa93d",
+    "file": "MiniCPM-V-4_7-1B-Q4_K_M.gguf",
+    "bytes": 672003680,
+    "sha256": "f18f594747e5317ab490cff9c06339c9cfb89acbe2f02ebc48a4e167bc23576d"
+  },
+  "quantization": "Q4_K_M",
+  "gpu": "NVIDIA GeForce RTX 5060 Ti",
+  "runtime": "/home/emre/Documents/lfm/llama.cpp/build/bin/llama-server",
+  "args": [
+    "--model",
+    "/home/emre/models/openbmb/MiniCPM-V-4.7-1B-gguf/MiniCPM-V-4_7-1B-Q4_K_M.gguf",
+    "--alias",
+    "MiniCPM-V-4.7-1B",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18080",
+    "--device",
+    "CUDA2",
+    "--n-gpu-layers",
+    "99",
+    "--ctx-size",
+    "32768",
+    "--parallel",
+    "1",
+    "--flash-attn",
+    "on",
+    "--jinja",
+    "--reasoning",
+    "off",
+    "--seed",
+    "3407",
+    "--top-k",
+    "0",
+    "--top-p",
+    "1",
+    "--min-p",
+    "0",
+    "--repeat-penalty",
+    "1",
+    "--no-webui"
+  ],
+  "replaySha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+  "concurrency": 1,
+  "timeoutMs": 120000,
+  "thinking": false,
+  "seed": 3407,
+  "maxTokens": 4096,
+  "actionTemperature": 0.15,
+  "askTemperature": 0.3,
+  "stages": [
+    {
+      "stage": "smoke",
+      "track": "first-turn",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-llamacpp.mjs",
+        "--base",
+        "http://127.0.0.1:18080",
+        "--model",
+        "MiniCPM-V-4.7-1B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-minicpm-v-4.7-1b-compact-smoke",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+        "--only",
+        "1,16,34,68,82"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results/2026-10-29-minicpm-v-4.7-1b-compact-smoke_chrome_MiniCPM-V-4.7-1B_compact",
+      "summary": {
+        "runTag": "2026-10-29-minicpm-v-4.7-1b-compact-smoke",
+        "model": "MiniCPM-V-4.7-1B",
+        "browser": "chrome",
+        "base": "http://127.0.0.1:18080",
+        "saveRequest": true,
+        "tier": "compact",
+        "modeOverride": null,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "reasoningEffort": null,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "cases": 5,
+        "totalLatencyMs": 2854,
+        "errors": 0,
+        "withToolCall": 5,
+        "withToolCallFromContent": 0,
+        "byTool": {
+          "fetch_url": 2,
+          "get_accessibility_tree": 3
+        }
+      }
+    },
+    {
+      "stage": "smoke",
+      "track": "scenarios",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-scenarios.mjs",
+        "--base",
+        "http://127.0.0.1:18080",
+        "--model",
+        "MiniCPM-V-4.7-1B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-minicpm-v-4.7-1b-compact-smoke",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+        "--only",
+        "1,11,41,61,71,81,91"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results-scenarios/2026-10-29-minicpm-v-4.7-1b-compact-smoke_chrome_MiniCPM-V-4.7-1B_compact",
+      "summary": {
+        "runTag": "2026-10-29-minicpm-v-4.7-1b-compact-smoke",
+        "model": "MiniCPM-V-4.7-1B",
+        "base": "http://127.0.0.1:18080",
+        "browser": "chrome",
+        "tier": "compact",
+        "modeOverride": null,
+        "unprotected": false,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "scenarios": 7,
+        "skipped": 0,
+        "totalLatencyMs": 3637,
+        "byVerdict": {
+          "anti": 1,
+          "other": 3,
+          "no_tool": 1,
+          "ideal_name": 2
+        },
+        "byCategory": {
+          "loop-bad-url": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 1,
+            "other": 0,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "tool-error-pivot": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "counter-polarity": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 0,
+            "no_tool": 1,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "mode-boundary": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "cross-lingual": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 0,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection-unprotected": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 0,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          }
+        }
+      }
+    },
+    {
+      "stage": "full",
+      "track": "first-turn",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-llamacpp.mjs",
+        "--base",
+        "http://127.0.0.1:18080",
+        "--model",
+        "MiniCPM-V-4.7-1B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-minicpm-v-4.7-1b-compact-full",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results/2026-10-29-minicpm-v-4.7-1b-compact-full_chrome_MiniCPM-V-4.7-1B_compact",
+      "summary": {
+        "runTag": "2026-10-29-minicpm-v-4.7-1b-compact-full",
+        "model": "MiniCPM-V-4.7-1B",
+        "browser": "chrome",
+        "base": "http://127.0.0.1:18080",
+        "saveRequest": true,
+        "tier": "compact",
+        "modeOverride": null,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "reasoningEffort": null,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "cases": 100,
+        "totalLatencyMs": 48344,
+        "errors": 0,
+        "withToolCall": 97,
+        "withToolCallFromContent": 0,
+        "byTool": {
+          "fetch_url": 14,
+          "click": 4,
+          "navigate": 3,
+          "get_accessibility_tree": 53,
+          "read_page": 14,
+          "inspect_viewport": 6,
+          "set_field": 1,
+          "click_ax": 1,
+          "(no_tool_call)": 3,
+          "get_window_info": 1
+        }
+      }
+    },
+    {
+      "stage": "full",
+      "track": "scenarios",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-scenarios.mjs",
+        "--base",
+        "http://127.0.0.1:18080",
+        "--model",
+        "MiniCPM-V-4.7-1B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-minicpm-v-4.7-1b-compact-full",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+        "--only",
+        "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results-scenarios/2026-10-29-minicpm-v-4.7-1b-compact-full_chrome_MiniCPM-V-4.7-1B_compact",
+      "summary": {
+        "runTag": "2026-10-29-minicpm-v-4.7-1b-compact-full",
+        "model": "MiniCPM-V-4.7-1B",
+        "base": "http://127.0.0.1:18080",
+        "browser": "chrome",
+        "tier": "compact",
+        "modeOverride": null,
+        "unprotected": false,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "scenarios": 100,
+        "skipped": 11,
+        "totalLatencyMs": 34089,
+        "byVerdict": {
+          "anti": 4,
+          "other": 50,
+          "ideal": 2,
+          "ideal_name": 25,
+          "no_tool": 7,
+          "skipped": 11,
+          "error": 1
+        },
+        "byCategory": {
+          "loop-bad-url": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 1,
+            "other": 9,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "tool-error-pivot": {
+            "ideal": 1,
+            "ideal_name": 1,
+            "anti": 3,
+            "other": 3,
+            "no_tool": 1,
+            "empty": 0,
+            "error": 0,
+            "skipped": 1
+          },
+          "csp-blocked-eval": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 0,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 10
+          },
+          "truncation-cascade": {
+            "ideal": 0,
+            "ideal_name": 5,
+            "anti": 0,
+            "other": 3,
+            "no_tool": 2,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "counter-polarity": {
+            "ideal": 0,
+            "ideal_name": 2,
+            "anti": 0,
+            "other": 6,
+            "no_tool": 2,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "stale-refid": {
+            "ideal": 1,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 8,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "mode-boundary": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 8,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 1,
+            "skipped": 0
+          },
+          "cross-lingual": {
+            "ideal": 0,
+            "ideal_name": 2,
+            "anti": 0,
+            "other": 7,
+            "no_tool": 1,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection": {
+            "ideal": 0,
+            "ideal_name": 5,
+            "anti": 0,
+            "other": 2,
+            "no_tool": 1,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "injection-control": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection-unprotected": {
+            "ideal": 0,
+            "ideal_name": 6,
+            "anti": 0,
+            "other": 2,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "injection-control-unprotected": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          }
+        }
+      }
+    }
+  ],
+  "codeHashes": {
+    "test/llm/run-llamacpp.mjs": "142cf457dbff54866b7f4384685e6229d2774d7b14372bf2534dc12ee86d7328",
+    "test/llm/run-scenarios.mjs": "6cfa8307347758d42bcf788f7efd5874c40311a0c5dc4f7e91d81d7bbb4dc12e",
+    "test/llm/lib/score.mjs": "4736dc15b22415ede3cc5713e16ffd8f0a71fa2aeb90a36a471260bdbf34c68c",
+    "test/llm/lib/content-tool-call-parser.mjs": "479dba3660d7ee168001a854f7b8f871797ac152b31b1367d574b0f27661fdba",
+    "test/llm/lib/replay-payload.mjs": "abd74d418a70ce01492c43d34c56c0fd8c22c543f9ac11b68b6fce767de6611c"
+  },
+  "serverProperties": {
+    "default_generation_settings": {
+      "params": {
+        "seed": 3407,
+        "temperature": 0.800000011920929,
+        "dynatemp_range": 0,
+        "dynatemp_exponent": 1,
+        "top_k": 0,
+        "top_p": 1,
+        "min_p": 0,
+        "top_n_sigma": -1,
+        "xtc_probability": 0,
+        "xtc_threshold": 0.10000000149011612,
+        "typical_p": 1,
+        "repeat_last_n": 64,
+        "repeat_penalty": 1,
+        "presence_penalty": 0,
+        "frequency_penalty": 0,
+        "dry_multiplier": 0,
+        "dry_base": 1.75,
+        "dry_allowed_length": 2,
+        "dry_penalty_last_n": 64,
+        "mirostat": 0,
+        "mirostat_tau": 5,
+        "mirostat_eta": 0.10000000149011612,
+        "adaptive_target": -1,
+        "adaptive_decay": 0.8999999761581421,
+        "max_tokens": -1,
+        "n_predict": -1,
+        "n_keep": 0,
+        "n_discard": 0,
+        "ignore_eos": false,
+        "stream": false,
+        "n_probs": 0,
+        "min_keep": 0,
+        "chat_format": "Content-only",
+        "reasoning_format": "none",
+        "reasoning_in_content": false,
+        "generation_prompt": "",
+        "samplers": [
+          "penalties",
+          "dry",
+          "top_n_sigma",
+          "top_k",
+          "typ_p",
+          "top_p",
+          "min_p",
+          "xtc",
+          "temperature"
+        ],
+        "speculative.types": "none",
+        "timings_per_token": false,
+        "post_sampling_probs": false,
+        "backend_sampling": false,
+        "lora": []
+      },
+      "n_ctx": 32768
+    },
+    "total_slots": 1,
+    "model_alias": "MiniCPM-V-4.7-1B",
+    "model_ftype": "Q4_K - Medium",
+    "model_path": "/home/emre/models/openbmb/MiniCPM-V-4.7-1B-gguf/MiniCPM-V-4_7-1B-Q4_K_M.gguf",
+    "modalities": {
+      "vision": false,
+      "video": false,
+      "audio": false
+    },
+    "media_marker": "<__media_MRx5S737Dd1x89KkybIG2kKOZhj3zzas__>",
+    "endpoint_slots": true,
+    "endpoint_props": false,
+    "endpoint_metrics": false,
+    "ui": false,
+    "ui_settings": {},
+    "chat_template": "{%- macro render_content(content, is_system_content=false) -%}\n    {%- if content is string -%}\n        {{- content -}}\n    {%- elif content is iterable and content is not mapping -%}\n        {%- set ns = namespace(parts=[]) -%}\n        {%- for item in content -%}\n            {%- if 'image' in item or 'image_url' in item or item.type == 'image' -%}\n                {%- if is_system_content -%}\n                    {{- raise_exception('System message cannot contain images.') -}}\n                {%- endif -%}\n                {%- set ns.parts = ns.parts + ['<|image_pad|>'] -%}\n            {%- elif 'video' in item or item.type == 'video' -%}\n                {%- if is_system_content -%}\n                    {{- raise_exception('System message cannot contain videos.') -}}\n                {%- endif -%}\n                {%- set ns.parts = ns.parts + ['<|video_pad|>'] -%}\n            {%- elif 'text' in item -%}\n                {%- set ns.parts = ns.parts + [item.text] -%}\n            {%- else -%}\n                {{- raise_exception('Unexpected item type in content.') -}}\n            {%- endif -%}\n        {%- endfor -%}\n        {{- ns.parts | join('\\n') -}}\n    {%- elif content is none or content is undefined -%}\n        {{- '' -}}\n    {%- else -%}\n        {{- raise_exception('Unexpected content type.') -}}\n    {%- endif -%}\n{%- endmacro -%}\n{%- if not messages %}\n    {{- raise_exception('No messages provided.') }}\n{%- endif %}\n{%- if tools and tools is iterable and tools is not mapping %}\n    {{- '<|im_start|>system\\n' }}\n    {{- \"# Tools\\n\\nYou have access to the following functions:\\n\\n<tools>\" }}\n    {%- for tool in tools %}\n        {{- \"\\n\" }}\n        {{- tool | tojson }}\n    {%- endfor %}\n    {{- \"\\n</tools>\" }}\n    {{- '\\n\\nIf you choose to call a function ONLY reply in the following format with NO suffix:\\n\\n<tool_call>\\n<function=example_function_name>\\n<parameter=example_parameter_1>\\nvalue_1\\n</parameter>\\n<parameter=example_parameter_2>\\nThis is the value for the second parameter\\nthat can span\\nmultiple lines\\n</parameter>\\n</function>\\n</tool_call>\\n\\n<IMPORTANT>\\nReminder:\\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\\n- Required parameters MUST be specified\\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\\n</IMPORTANT>' }}\n    {%- if messages[0].role == 'system' %}\n        {%- set content = render_content(messages[0].content, true)|trim %}\n        {%- if content %}\n            {{- '\\n\\n' + content }}\n        {%- endif %}\n    {%- endif %}\n    {{- '<|im_end|>\\n' }}\n{%- else %}\n    {%- if messages[0].role == 'system' %}\n        {%- set content = render_content(messages[0].content, true)|trim %}\n        {{- '<|im_start|>system\\n' + content + '<|im_end|>\\n' }}\n    {%- endif %}\n{%- endif %}\n{%- set ns = namespace(multi_step_tool=true, last_query_index=messages|length - 1) %}\n{%- for message in messages[::-1] %}\n    {%- set index = (messages|length - 1) - loop.index0 %}\n    {%- if ns.multi_step_tool and message.role == \"user\" %}\n        {%- set content = render_content(message.content)|trim %}\n        {%- if not(content.startswith('<tool_response>') and content.endswith('</tool_response>')) %}\n            {%- set ns.multi_step_tool = false %}\n            {%- set ns.last_query_index = index %}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if ns.multi_step_tool %}\n    {{- raise_exception('No user query found in messages.') }}\n{%- endif %}\n{%- for message in messages %}\n    {%- set content = render_content(message.content)|trim %}\n    {%- if message.role == \"system\" %}\n        {%- if not loop.first %}\n            {{- raise_exception('System message must be at the beginning.') }}\n        {%- endif %}\n    {%- elif message.role == \"user\" %}\n        {{- '<|im_start|>' + message.role + '\\n' + content + '<|im_end|>' + '\\n' }}\n    {%- elif message.role == \"assistant\" %}\n        {%- set reasoning_content = '' %}\n        {%- if message.reasoning_content is string %}\n            {%- set reasoning_content = message.reasoning_content %}\n        {%- else %}\n            {%- if '</think>' in content %}\n                {%- set reasoning_content = content.split('</think>')[0].rstrip('\\n').split('<think>')[-1].lstrip('\\n') %}\n                {%- set content = content.split('</think>')[-1].lstrip('\\n') %}\n            {%- endif %}\n        {%- endif %}\n        {%- set reasoning_content = reasoning_content|trim %}\n        {%- if loop.index0 > ns.last_query_index and reasoning_content %}\n            {{- '<|im_start|>' + message.role + '\\n<think>\\n' + reasoning_content + '\\n</think>\\n\\n' + content }}\n        {%- else %}\n            {{- '<|im_start|>' + message.role + '\\n<think>\\n\\n</think>\\n\\n' + content }}\n        {%- endif %}\n        {%- if message.tool_calls and message.tool_calls is iterable and message.tool_calls is not mapping %}\n            {%- for tool_call in message.tool_calls %}\n                {%- if tool_call.function is defined %}\n                    {%- set tool_call = tool_call.function %}\n                {%- endif %}\n                {%- if loop.first %}\n                    {%- if content|trim %}\n                        {{- '\\n\\n<tool_call>\\n<function=' + tool_call.name + '>\\n' }}\n                    {%- else %}\n                        {{- '<tool_call>\\n<function=' + tool_call.name + '>\\n' }}\n                    {%- endif %}\n                {%- else %}\n                    {{- '\\n<tool_call>\\n<function=' + tool_call.name + '>\\n' }}\n                {%- endif %}\n                {%- if tool_call.arguments is defined %}\n                    {%- for args_name, args_value in tool_call.arguments|items %}\n                        {{- '<parameter=' + args_name + '>\\n' }}\n                        {%- set args_value = args_value | tojson | safe if args_value is mapping or (args_value is sequence and args_value is not string) else args_value | string %}\n                        {{- args_value }}\n                        {{- '\\n</parameter>\\n' }}\n                    {%- endfor %}\n                {%- endif %}\n                {{- '</function>\\n</tool_call>' }}\n            {%- endfor %}\n        {%- endif %}\n        {{- '<|im_end|>\\n' }}\n    {%- elif message.role == \"tool\" %}\n        {%- if loop.previtem and loop.previtem.role != \"tool\" %}\n            {{- '<|im_start|>user' }}\n        {%- endif %}\n        {{- '\\n<tool_response>\\n' }}\n        {{- content }}\n        {{- '\\n</tool_response>' }}\n        {%- if not loop.last and loop.nextitem.role != \"tool\" %}\n            {{- '<|im_end|>\\n' }}\n        {%- elif loop.last %}\n            {{- '<|im_end|>\\n' }}\n        {%- endif %}\n    {%- else %}\n        {{- raise_exception('Unexpected message role.') }}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- '<|im_start|>assistant\\n' }}\n    {#- thinking hard-disabled for llama.cpp GGUF xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx -#}\n    {{- '<think>\\n\\n</think>\\n\\n' }}\n{%- endif %}",
+    "chat_template_caps": {
+      "supports_object_arguments": true,
+      "supports_parallel_tool_calls": true,
+      "supports_preserve_reasoning": false,
+      "supports_reasoning_effort": false,
+      "supports_string_content": true,
+      "supports_system_role": true,
+      "supports_tool_calls": true,
+      "supports_tools": true,
+      "supports_typed_content": true
+    },
+    "bos_token": "<|im_start|>",
+    "eos_token": "<|im_end|>",
+    "build_info": "b0-unknown",
+    "is_sleeping": false,
+    "cors_proxy_enabled": false
+  },
+  "serverModels": {
+    "models": [
+      {
+        "name": "MiniCPM-V-4.7-1B",
+        "model": "MiniCPM-V-4.7-1B",
+        "modified_at": "",
+        "size": "",
+        "digest": "",
+        "type": "model",
+        "description": "",
+        "tags": [
+          ""
+        ],
+        "capabilities": [
+          "completion"
+        ],
+        "parameters": "",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "",
+          "families": [
+            ""
+          ],
+          "parameter_size": "",
+          "quantization_level": ""
+        }
+      }
+    ],
+    "object": "list",
+    "data": [
+      {
+        "id": "MiniCPM-V-4.7-1B",
+        "aliases": [
+          "MiniCPM-V-4.7-1B"
+        ],
+        "tags": [],
+        "object": "model",
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "created": 1793247146,
+        "owned_by": "llamacpp",
+        "meta": {
+          "vocab_type": 2,
+          "n_vocab": 248094,
+          "n_ctx": 32768,
+          "n_ctx_train": 262144,
+          "n_embd": 1024,
+          "n_params": 1006209856,
+          "size": 661048048,
+          "ftype": "Q4_K - Medium"
+        }
+      }
+    ]
+  },
+  "completedAt": "2026-10-29T04:13:56.437Z"
+}

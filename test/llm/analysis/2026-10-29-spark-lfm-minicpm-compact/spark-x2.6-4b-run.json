@@ -1,0 +1,640 @@
+{
+  "schema": "webbrain.local-comparison-run.v1",
+  "startedAt": "2026-10-29T04:14:16.525Z",
+  "model": {
+    "id": "spark-x2.6-4b",
+    "name": "Spark-X2.6-4B",
+    "source": "XHToken/Spark-X2.6-4B",
+    "repo": "XHToken/Spark-X2.6-4B-GGUF",
+    "revision": "0e8aa39a34063946ce07bbaaff392093b11b6829",
+    "file": "Spark-X2.6-4B-Q4_K_M.gguf",
+    "bytes": 3543441312,
+    "sha256": "91cb2811aebb47ac916aa619d27d4cdd7f4143106b7917accb8ead4cd7f5cbd9"
+  },
+  "quantization": "Q4_K_M",
+  "gpu": "NVIDIA GeForce RTX 5060 Ti",
+  "runtime": "/home/emre/Documents/lfm/llama.cpp/build/bin/llama-server",
+  "args": [
+    "--model",
+    "/home/emre/models/XHToken/Spark-X2.6-4B-GGUF/Spark-X2.6-4B-Q4_K_M.gguf",
+    "--alias",
+    "Spark-X2.6-4B",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18080",
+    "--device",
+    "CUDA2",
+    "--n-gpu-layers",
+    "99",
+    "--ctx-size",
+    "32768",
+    "--parallel",
+    "1",
+    "--flash-attn",
+    "on",
+    "--jinja",
+    "--reasoning",
+    "off",
+    "--seed",
+    "3407",
+    "--top-k",
+    "0",
+    "--top-p",
+    "1",
+    "--min-p",
+    "0",
+    "--repeat-penalty",
+    "1",
+    "--no-webui"
+  ],
+  "replaySha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+  "concurrency": 1,
+  "timeoutMs": 120000,
+  "thinking": false,
+  "seed": 3407,
+  "maxTokens": 4096,
+  "actionTemperature": 0.15,
+  "askTemperature": 0.3,
+  "stages": [
+    {
+      "stage": "smoke",
+      "track": "first-turn",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-llamacpp.mjs",
+        "--base",
+        "http://127.0.0.1:18080",
+        "--model",
+        "Spark-X2.6-4B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-spark-x2.6-4b-compact-smoke",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+        "--only",
+        "1,16,34,68,82"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results/2026-10-29-spark-x2.6-4b-compact-smoke_chrome_Spark-X2.6-4B_compact",
+      "summary": {
+        "runTag": "2026-10-29-spark-x2.6-4b-compact-smoke",
+        "model": "Spark-X2.6-4B",
+        "browser": "chrome",
+        "base": "http://127.0.0.1:18080",
+        "saveRequest": true,
+        "tier": "compact",
+        "modeOverride": null,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "reasoningEffort": null,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "cases": 5,
+        "totalLatencyMs": 3689,
+        "errors": 0,
+        "withToolCall": 5,
+        "withToolCallFromContent": 0,
+        "byTool": {
+          "get_accessibility_tree": 5
+        }
+      }
+    },
+    {
+      "stage": "smoke",
+      "track": "scenarios",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-scenarios.mjs",
+        "--base",
+        "http://127.0.0.1:18080",
+        "--model",
+        "Spark-X2.6-4B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-spark-x2.6-4b-compact-smoke",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+        "--only",
+        "1,11,41,61,71,81,91"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results-scenarios/2026-10-29-spark-x2.6-4b-compact-smoke_chrome_Spark-X2.6-4B_compact",
+      "summary": {
+        "runTag": "2026-10-29-spark-x2.6-4b-compact-smoke",
+        "model": "Spark-X2.6-4B",
+        "base": "http://127.0.0.1:18080",
+        "browser": "chrome",
+        "tier": "compact",
+        "modeOverride": null,
+        "unprotected": false,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "scenarios": 7,
+        "skipped": 0,
+        "totalLatencyMs": 5661,
+        "byVerdict": {
+          "other": 5,
+          "ideal": 1,
+          "ideal_name": 1
+        },
+        "byCategory": {
+          "loop-bad-url": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "tool-error-pivot": {
+            "ideal": 1,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 0,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "counter-polarity": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "mode-boundary": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "cross-lingual": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 0,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection-unprotected": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          }
+        }
+      }
+    },
+    {
+      "stage": "full",
+      "track": "first-turn",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-llamacpp.mjs",
+        "--base",
+        "http://127.0.0.1:18080",
+        "--model",
+        "Spark-X2.6-4B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-spark-x2.6-4b-compact-full",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results/2026-10-29-spark-x2.6-4b-compact-full_chrome_Spark-X2.6-4B_compact",
+      "summary": {
+        "runTag": "2026-10-29-spark-x2.6-4b-compact-full",
+        "model": "Spark-X2.6-4B",
+        "browser": "chrome",
+        "base": "http://127.0.0.1:18080",
+        "saveRequest": true,
+        "tier": "compact",
+        "modeOverride": null,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "reasoningEffort": null,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "cases": 100,
+        "totalLatencyMs": 36729,
+        "errors": 0,
+        "withToolCall": 100,
+        "withToolCallFromContent": 0,
+        "byTool": {
+          "get_accessibility_tree": 75,
+          "navigate": 12,
+          "extract_data": 1,
+          "inspect_viewport": 2,
+          "scroll": 1,
+          "get_selection": 1,
+          "get_window_info": 3,
+          "read_page": 5
+        }
+      }
+    },
+    {
+      "stage": "full",
+      "track": "scenarios",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-scenarios.mjs",
+        "--base",
+        "http://127.0.0.1:18080",
+        "--model",
+        "Spark-X2.6-4B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-spark-x2.6-4b-compact-full",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+        "--only",
+        "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results-scenarios/2026-10-29-spark-x2.6-4b-compact-full_chrome_Spark-X2.6-4B_compact",
+      "summary": {
+        "runTag": "2026-10-29-spark-x2.6-4b-compact-full",
+        "model": "Spark-X2.6-4B",
+        "base": "http://127.0.0.1:18080",
+        "browser": "chrome",
+        "tier": "compact",
+        "modeOverride": null,
+        "unprotected": false,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "scenarios": 100,
+        "skipped": 11,
+        "totalLatencyMs": 64734,
+        "byVerdict": {
+          "other": 58,
+          "ideal": 11,
+          "ideal_name": 18,
+          "skipped": 11,
+          "anti": 2
+        },
+        "byCategory": {
+          "loop-bad-url": {
+            "ideal": 1,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 9,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "tool-error-pivot": {
+            "ideal": 1,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 7,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 1
+          },
+          "csp-blocked-eval": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 0,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 10
+          },
+          "truncation-cascade": {
+            "ideal": 0,
+            "ideal_name": 3,
+            "anti": 1,
+            "other": 6,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "counter-polarity": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 1,
+            "other": 9,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "stale-refid": {
+            "ideal": 8,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 2,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "mode-boundary": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 10,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "cross-lingual": {
+            "ideal": 1,
+            "ideal_name": 2,
+            "anti": 0,
+            "other": 7,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection": {
+            "ideal": 0,
+            "ideal_name": 6,
+            "anti": 0,
+            "other": 2,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "injection-control": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection-unprotected": {
+            "ideal": 0,
+            "ideal_name": 4,
+            "anti": 0,
+            "other": 4,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "injection-control-unprotected": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          }
+        }
+      }
+    }
+  ],
+  "codeHashes": {
+    "test/llm/run-llamacpp.mjs": "142cf457dbff54866b7f4384685e6229d2774d7b14372bf2534dc12ee86d7328",
+    "test/llm/run-scenarios.mjs": "6cfa8307347758d42bcf788f7efd5874c40311a0c5dc4f7e91d81d7bbb4dc12e",
+    "test/llm/lib/score.mjs": "4736dc15b22415ede3cc5713e16ffd8f0a71fa2aeb90a36a471260bdbf34c68c",
+    "test/llm/lib/content-tool-call-parser.mjs": "479dba3660d7ee168001a854f7b8f871797ac152b31b1367d574b0f27661fdba",
+    "test/llm/lib/replay-payload.mjs": "abd74d418a70ce01492c43d34c56c0fd8c22c543f9ac11b68b6fce767de6611c"
+  },
+  "serverProperties": {
+    "default_generation_settings": {
+      "params": {
+        "seed": 3407,
+        "temperature": 1,
+        "dynatemp_range": 0,
+        "dynatemp_exponent": 1,
+        "top_k": 0,
+        "top_p": 1,
+        "min_p": 0,
+        "top_n_sigma": -1,
+        "xtc_probability": 0,
+        "xtc_threshold": 0.10000000149011612,
+        "typical_p": 1,
+        "repeat_last_n": 64,
+        "repeat_penalty": 1,
+        "presence_penalty": 0,
+        "frequency_penalty": 0,
+        "dry_multiplier": 0,
+        "dry_base": 1.75,
+        "dry_allowed_length": 2,
+        "dry_penalty_last_n": 64,
+        "mirostat": 0,
+        "mirostat_tau": 5,
+        "mirostat_eta": 0.10000000149011612,
+        "adaptive_target": -1,
+        "adaptive_decay": 0.8999999761581421,
+        "max_tokens": -1,
+        "n_predict": -1,
+        "n_keep": 0,
+        "n_discard": 0,
+        "ignore_eos": false,
+        "stream": false,
+        "n_probs": 0,
+        "min_keep": 0,
+        "chat_format": "Content-only",
+        "reasoning_format": "none",
+        "reasoning_in_content": false,
+        "generation_prompt": "",
+        "samplers": [
+          "penalties",
+          "dry",
+          "top_n_sigma",
+          "top_k",
+          "typ_p",
+          "top_p",
+          "min_p",
+          "xtc",
+          "temperature"
+        ],
+        "speculative.types": "none",
+        "timings_per_token": false,
+        "post_sampling_probs": false,
+        "backend_sampling": false,
+        "lora": []
+      },
+      "n_ctx": 32768
+    },
+    "total_slots": 1,
+    "model_alias": "Spark-X2.6-4B",
+    "model_ftype": "Q4_K - Medium",
+    "model_path": "/home/emre/models/XHToken/Spark-X2.6-4B-GGUF/Spark-X2.6-4B-Q4_K_M.gguf",
+    "modalities": {
+      "vision": false,
+      "video": false,
+      "audio": false
+    },
+    "media_marker": "<__media_vpsmZPVBpaYrAiEvQgH4lwq8B02VMAmo__>",
+    "endpoint_slots": true,
+    "endpoint_props": false,
+    "endpoint_metrics": false,
+    "ui": false,
+    "ui_settings": {},
+    "chat_template": "{%- if not messages %}{{- raise_exception('No messages provided.') }}{%- endif %}{%- set enable_thinking = enable_thinking | default(true) %}{%- set reasoning_instructions = '' %}{%- if enable_thinking is true %}{%- set resolved_reasoning_effort = reasoning_effort|default('high') %}{%- if resolved_reasoning_effort not in ('high', 'low') %}{{- raise_exception('Unexpected reasoning effort ' ~ reasoning_effort ~ '. Supported types are high (default) and low.') }}{%- endif %}{%- if resolved_reasoning_effort == 'high' %}{%- set reasoning_instructions = '\n`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low` and `high`.\nNow the system is invoked with `thinking_effort=high`.' %}{%- elif resolved_reasoning_effort == 'low' %}{%- set reasoning_instructions = '\n`thinking_effort` guides on how much to think in your thinking channel (not including the response channel), supported values include `low` and `high`.\nNow the system is invoked with `thinking_effort=low`.' %}{%- endif %}{%- endif %}{#- Render a string or a list of text blocks. -#}{%- macro render_content(content, context_name) %}{%- if content is string %}{{- content }}{%- elif content is none or content is undefined %}{{- '' }}{%- elif content is iterable and content is not mapping %}{%- for block in content %}{%- if block.type == 'text' %}{{- block.text }}{%- else %}{{- raise_exception('Unsupported ' ~ context_name ~ ' content block type: ' ~ (block.type | string)) }}{%- endif %}{%- endfor %}{%- else %}{{- raise_exception(context_name ~ ' content must be a string or a list of text blocks') }}{%- endif %}{%- endmacro %}{#- Default system prompt -#}{%- set default_system = \"you are a helpful assistant.\" + reasoning_instructions %}{#- The first message-level system is placed in the initial system block. -#}{%- set ns = namespace(initial_system='') %}{%- if messages[0].role == \"system\" %}{%- set ns.initial_system = render_content(messages[0].content, 'system') %}{%- endif %}{#- System block -#}{{- '<｜start▁of▁sentence｜><|System|>' + '\n' + default_system }}{%- if tools %}{{- '\n\n' + '## Tools' + '\n' + 'You have access to the following functions:' + '\n' + '<tools>' }}{%- for tool in tools %}{{- '\n' + (tool.function | tojson(separators=(',', ':'))) }}{%- endfor %}{{- '\n' + '</tools>' }}{%- endif %}{%- if ns.initial_system %}{{- '\n\n' + ns.initial_system }}{%- endif %}{{- '<｜end▁of▁sentence｜>'}}{#- Conversation turns -#}{%- for message in messages %}{%- if message.role == \"system\" %}{#- The first system message was consumed by the initial block. -#}{%- if not loop.first %}{{- '<｜start▁of▁sentence｜><|System|>\n' + render_content(message.content, 'system') + '<｜end▁of▁sentence｜>' }}{%- endif %}{%- elif message.role == \"user\" %}{{- '<｜start▁of▁sentence｜><|User|>' + render_content(message.content, 'user') + '<｜end▁of▁sentence｜>' }}{%- elif message.role == \"assistant\" %}{%- set assistant_content = render_content(message.content, 'assistant') %}{%- if message.reasoning_content is defined and message.reasoning_content %}{%- set reasoning_content = message.reasoning_content %}{%- else %}{%- set reasoning_content = '' %}{%- endif %}{{- '<｜start▁of▁sentence｜><|Bot|>'}}{%- if reasoning_content %}{{- '<think>' + reasoning_content + '</think>'}}{%- else %}{{- '</think>' }}{%- endif %}{%- if assistant_content %}{{- assistant_content }}{%- endif %}{%- if message.tool_calls is defined and message.tool_calls is not none %}{%- for tool_call in message.tool_calls %}{%- if tool_call.function.arguments is not mapping %}{{- raise_exception('tool_call.function.arguments must be a dictionary; normalize JSON strings before apply_chat_template') }}{%- endif %}{%- set args = tool_call.function.arguments %}{{- '<tool_call>' + tool_call.function.name }}{%- for k, v in args.items() %}{{- '<arg_key>' ~ k ~ '</arg_key><arg_value>' ~ (v if v is string else v | tojson(separators=(', ', ': '))) ~ '</arg_value>' }}{%- endfor %}{{- '</tool_call>' }}{%- endfor %}{%- endif %}{{- '<｜end▁of▁sentence｜>' }}{%- elif message.role == \"tool\" %}{%- if loop.previtem is undefined or loop.previtem.role != \"tool\" %}{{- '<｜start▁of▁sentence｜><|Tool|>' }}{%- endif %}{{- '<tool_response>' ~ message.content ~ '</tool_response>' }}{%- if loop.nextitem is undefined or loop.nextitem.role != \"tool\" %}{{- '<｜end▁of▁sentence｜>' }}{%- endif %}{%- else %}{{- raise_exception('Unsupported message role: ' ~ message.role) }}{%- endif %}{%- endfor %}{#- Generation prompt -#}{%- if add_generation_prompt %}{{- '<｜start▁of▁sentence｜><|Bot|>' }}{%- if enable_thinking is defined and enable_thinking %}{{- '<think>' }}{%- endif %}{%- if enable_thinking is defined and not enable_thinking %}{{- '</think>' }}{%- endif %}{%- endif %}",
+    "chat_template_caps": {
+      "supports_object_arguments": true,
+      "supports_parallel_tool_calls": true,
+      "supports_preserve_reasoning": true,
+      "supports_reasoning_effort": true,
+      "supports_string_content": true,
+      "supports_system_role": true,
+      "supports_tool_calls": true,
+      "supports_tools": true,
+      "supports_typed_content": true
+    },
+    "bos_token": "<｜start▁of▁sentence｜>",
+    "eos_token": "<｜end▁of▁sentence｜>",
+    "build_info": "b0-unknown",
+    "is_sleeping": false,
+    "cors_proxy_enabled": false
+  },
+  "serverModels": {
+    "models": [
+      {
+        "name": "Spark-X2.6-4B",
+        "model": "Spark-X2.6-4B",
+        "modified_at": "",
+        "size": "",
+        "digest": "",
+        "type": "model",
+        "description": "",
+        "tags": [
+          ""
+        ],
+        "capabilities": [
+          "completion"
+        ],
+        "parameters": "",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "",
+          "families": [
+            ""
+          ],
+          "parameter_size": "",
+          "quantization_level": ""
+        }
+      }
+    ],
+    "object": "list",
+    "data": [
+      {
+        "id": "Spark-X2.6-4B",
+        "aliases": [
+          "Spark-X2.6-4B"
+        ],
+        "tags": [],
+        "object": "model",
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "created": 1793247258,
+        "owned_by": "llamacpp",
+        "meta": {
+          "vocab_type": 2,
+          "n_vocab": 131072,
+          "n_ctx": 32768,
+          "n_ctx_train": 1048576,
+          "n_embd": 2560,
+          "n_params": 4447623680,
+          "size": 3538053120,
+          "ftype": "Q4_K - Medium"
+        }
+      }
+    ]
+  },
+  "completedAt": "2026-10-29T04:16:09.436Z"
+}
