@@ -6,6 +6,15 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+## [45.0.1] - 2026-10-29
+
+### Added
+- New tab Companion invitation: An invitation card under the task box on the New Tab page (occupying the slot when there is no active bulletin to display) invites users to install WebBrain Companion. The card showcases the supported plan marks (Claude Max, ChatGPT Pro, Google AI Pro, SuperGrok, Kimi), localized text across all 23 languages, and a direct link to the Companion page. It respects responsive widths down to mobile viewports, stays permanently hidden once dismissed or when a Companion provider with a configured model is present, and honors reduced motion preferences. Both builds.
+
+### Fixed
+- Side panel queued messages: Messages queued while a run was active no longer remain stranded if you switch tabs before the run finishes. Previously, the end-of-run queue drain gave up while the panel rendered another tab, leaving queued messages stuck in an un-sent state upon your return. The panel now drains the tab's queue when returning to the tab (on tab reactivation and when the panel becomes visible again), prevents queued messages from leaking into a hidden panel's composer, and requests a drain when a finishing run hands back corrections. Both builds.
+- Vision mode file attachments: The vision Act prompt now explicitly explains how file attachments work (clicking the page's file upload control once to trigger the file-chooser guard handoff to `upload_file`). Site-specific notes for X, Bluesky, GitHub, Instagram, Hugging Face, Greenhouse, and Workday now instruct vision models to click the upload control once rather than advising the user to attach files manually. Both builds.
+
 ## [45.0.0] - 2026-10-29
 
 ### Added
