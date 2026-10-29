@@ -1,0 +1,639 @@
+{
+  "schema": "webbrain.local-comparison-run.v1",
+  "startedAt": "2026-10-29T04:12:37.802Z",
+  "model": {
+    "id": "lfm3-1.7b",
+    "name": "LFM3-1.7B",
+    "source": "LiquidAI/LFM3-1.7B",
+    "repo": "LiquidAI/LFM3-1.7B-GGUF",
+    "revision": "bad5729bba61d076fff20d2548e62526665af215",
+    "file": "LFM3-1.7B-Q4_K_M.gguf",
+    "bytes": 1099627808,
+    "sha256": "3793e1e6e2266919d6e015287221b41100175a98eddaba92e111aed3b05c93c4"
+  },
+  "quantization": "Q4_K_M",
+  "gpu": "NVIDIA GeForce RTX 5060 Ti",
+  "runtime": "/home/emre/Documents/lfm/llama.cpp/build/bin/llama-server",
+  "args": [
+    "--model",
+    "/home/emre/models/LiquidAI/LFM3-1.7B-GGUF/LFM3-1.7B-Q4_K_M.gguf",
+    "--alias",
+    "LFM3-1.7B",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18081",
+    "--device",
+    "CUDA1",
+    "--n-gpu-layers",
+    "99",
+    "--ctx-size",
+    "32768",
+    "--parallel",
+    "1",
+    "--flash-attn",
+    "on",
+    "--jinja",
+    "--reasoning",
+    "off",
+    "--seed",
+    "3407",
+    "--top-k",
+    "0",
+    "--top-p",
+    "1",
+    "--min-p",
+    "0",
+    "--repeat-penalty",
+    "1",
+    "--no-webui"
+  ],
+  "replaySha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+  "concurrency": 1,
+  "timeoutMs": 120000,
+  "thinking": false,
+  "seed": 3407,
+  "maxTokens": 4096,
+  "actionTemperature": 0.15,
+  "askTemperature": 0.3,
+  "stages": [
+    {
+      "stage": "smoke",
+      "track": "first-turn",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-llamacpp.mjs",
+        "--base",
+        "http://127.0.0.1:18081",
+        "--model",
+        "LFM3-1.7B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-lfm3-1.7b-compact-smoke",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+        "--only",
+        "1,16,34,68,82"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results/2026-10-29-lfm3-1.7b-compact-smoke_chrome_LFM3-1.7B_compact",
+      "summary": {
+        "runTag": "2026-10-29-lfm3-1.7b-compact-smoke",
+        "model": "LFM3-1.7B",
+        "browser": "chrome",
+        "base": "http://127.0.0.1:18081",
+        "saveRequest": true,
+        "tier": "compact",
+        "modeOverride": null,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "reasoningEffort": null,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "cases": 5,
+        "totalLatencyMs": 1913,
+        "errors": 0,
+        "withToolCall": 5,
+        "withToolCallFromContent": 0,
+        "byTool": {
+          "navigate": 3,
+          "get_accessibility_tree": 2
+        }
+      }
+    },
+    {
+      "stage": "smoke",
+      "track": "scenarios",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-scenarios.mjs",
+        "--base",
+        "http://127.0.0.1:18081",
+        "--model",
+        "LFM3-1.7B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-lfm3-1.7b-compact-smoke",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+        "--only",
+        "1,11,41,61,71,81,91"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results-scenarios/2026-10-29-lfm3-1.7b-compact-smoke_chrome_LFM3-1.7B_compact",
+      "summary": {
+        "runTag": "2026-10-29-lfm3-1.7b-compact-smoke",
+        "model": "LFM3-1.7B",
+        "base": "http://127.0.0.1:18081",
+        "browser": "chrome",
+        "tier": "compact",
+        "modeOverride": null,
+        "unprotected": false,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "scenarios": 7,
+        "skipped": 0,
+        "totalLatencyMs": 2115,
+        "byVerdict": {
+          "other": 6,
+          "ideal": 1
+        },
+        "byCategory": {
+          "loop-bad-url": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "tool-error-pivot": {
+            "ideal": 1,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 0,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "counter-polarity": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "mode-boundary": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "cross-lingual": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection-unprotected": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          }
+        }
+      }
+    },
+    {
+      "stage": "full",
+      "track": "first-turn",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-llamacpp.mjs",
+        "--base",
+        "http://127.0.0.1:18081",
+        "--model",
+        "LFM3-1.7B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-lfm3-1.7b-compact-full",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results/2026-10-29-lfm3-1.7b-compact-full_chrome_LFM3-1.7B_compact",
+      "summary": {
+        "runTag": "2026-10-29-lfm3-1.7b-compact-full",
+        "model": "LFM3-1.7B",
+        "browser": "chrome",
+        "base": "http://127.0.0.1:18081",
+        "saveRequest": true,
+        "tier": "compact",
+        "modeOverride": null,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "reasoningEffort": null,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "cases": 100,
+        "totalLatencyMs": 24246,
+        "errors": 0,
+        "withToolCall": 100,
+        "withToolCallFromContent": 0,
+        "byTool": {
+          "navigate": 27,
+          "get_accessibility_tree": 68,
+          "read_page": 1,
+          "scroll": 1,
+          "inspect_viewport": 1,
+          "get_selection": 1,
+          "get_window_info": 1
+        }
+      }
+    },
+    {
+      "stage": "full",
+      "track": "scenarios",
+      "command": [
+        "/home/emre/.local/bin/node",
+        "test/llm/run-scenarios.mjs",
+        "--base",
+        "http://127.0.0.1:18081",
+        "--model",
+        "LFM3-1.7B",
+        "--tier",
+        "compact",
+        "--browser",
+        "chrome",
+        "--concurrency",
+        "1",
+        "--timeout",
+        "120000",
+        "--tag",
+        "2026-10-29-lfm3-1.7b-compact-full",
+        "--replay",
+        "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+        "--only",
+        "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100"
+      ],
+      "resultDir": "/home/emre/Documents/webbrain/test/llm/results-scenarios/2026-10-29-lfm3-1.7b-compact-full_chrome_LFM3-1.7B_compact",
+      "summary": {
+        "runTag": "2026-10-29-lfm3-1.7b-compact-full",
+        "model": "LFM3-1.7B",
+        "base": "http://127.0.0.1:18081",
+        "browser": "chrome",
+        "tier": "compact",
+        "modeOverride": null,
+        "unprotected": false,
+        "chatTemplateCompat": "off",
+        "structuredToolsSent": true,
+        "replay": {
+          "path": "/home/emre/Documents/webbrain/test/llm/freeze/compact-replay-2026-09-07.json",
+          "sha256": "6eccbd0284fd2f63e4888789122ff7204de8ac9d1bdcc518fd3108ffe8bee309",
+          "sourceRun": "2026-09-07-qwen3.5-4b-compact-full-v2_chrome_qwen3.5-4b_compact",
+          "askToolsSourceCommit": "5e12c0003",
+          "note": "Messages and Act tools replay the saved September 7 run. Ask tools come from the September 7 source (15 tools). The saved rubric and skipped set are retained."
+        },
+        "freeze": null,
+        "scenarios": 100,
+        "skipped": 11,
+        "totalLatencyMs": 22807,
+        "byVerdict": {
+          "other": 69,
+          "ideal": 10,
+          "ideal_name": 9,
+          "skipped": 11,
+          "anti": 1
+        },
+        "byCategory": {
+          "loop-bad-url": {
+            "ideal": 1,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 9,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "tool-error-pivot": {
+            "ideal": 2,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 6,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 1
+          },
+          "csp-blocked-eval": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 0,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 10
+          },
+          "truncation-cascade": {
+            "ideal": 0,
+            "ideal_name": 2,
+            "anti": 1,
+            "other": 7,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "counter-polarity": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 10,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "stale-refid": {
+            "ideal": 7,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 3,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "mode-boundary": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 9,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "cross-lingual": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 9,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection": {
+            "ideal": 0,
+            "ideal_name": 2,
+            "anti": 0,
+            "other": 6,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "injection-control": {
+            "ideal": 0,
+            "ideal_name": 0,
+            "anti": 0,
+            "other": 2,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "prompt-injection-unprotected": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 7,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          },
+          "injection-control-unprotected": {
+            "ideal": 0,
+            "ideal_name": 1,
+            "anti": 0,
+            "other": 1,
+            "no_tool": 0,
+            "empty": 0,
+            "error": 0,
+            "skipped": 0
+          }
+        }
+      }
+    }
+  ],
+  "codeHashes": {
+    "test/llm/run-llamacpp.mjs": "142cf457dbff54866b7f4384685e6229d2774d7b14372bf2534dc12ee86d7328",
+    "test/llm/run-scenarios.mjs": "6cfa8307347758d42bcf788f7efd5874c40311a0c5dc4f7e91d81d7bbb4dc12e",
+    "test/llm/lib/score.mjs": "4736dc15b22415ede3cc5713e16ffd8f0a71fa2aeb90a36a471260bdbf34c68c",
+    "test/llm/lib/content-tool-call-parser.mjs": "479dba3660d7ee168001a854f7b8f871797ac152b31b1367d574b0f27661fdba",
+    "test/llm/lib/replay-payload.mjs": "abd74d418a70ce01492c43d34c56c0fd8c22c543f9ac11b68b6fce767de6611c"
+  },
+  "serverProperties": {
+    "default_generation_settings": {
+      "params": {
+        "seed": 3407,
+        "temperature": 0.10000000149011612,
+        "dynatemp_range": 0,
+        "dynatemp_exponent": 1,
+        "top_k": 0,
+        "top_p": 1,
+        "min_p": 0,
+        "top_n_sigma": -1,
+        "xtc_probability": 0,
+        "xtc_threshold": 0.10000000149011612,
+        "typical_p": 1,
+        "repeat_last_n": 64,
+        "repeat_penalty": 1,
+        "presence_penalty": 0,
+        "frequency_penalty": 0,
+        "dry_multiplier": 0,
+        "dry_base": 1.75,
+        "dry_allowed_length": 2,
+        "dry_penalty_last_n": 64,
+        "mirostat": 0,
+        "mirostat_tau": 5,
+        "mirostat_eta": 0.10000000149011612,
+        "adaptive_target": -1,
+        "adaptive_decay": 0.8999999761581421,
+        "max_tokens": -1,
+        "n_predict": -1,
+        "n_keep": 0,
+        "n_discard": 0,
+        "ignore_eos": false,
+        "stream": false,
+        "n_probs": 0,
+        "min_keep": 0,
+        "chat_format": "Content-only",
+        "reasoning_format": "none",
+        "reasoning_in_content": false,
+        "generation_prompt": "",
+        "samplers": [
+          "penalties",
+          "dry",
+          "top_n_sigma",
+          "top_k",
+          "typ_p",
+          "top_p",
+          "min_p",
+          "xtc",
+          "temperature"
+        ],
+        "speculative.types": "none",
+        "timings_per_token": false,
+        "post_sampling_probs": false,
+        "backend_sampling": false,
+        "lora": []
+      },
+      "n_ctx": 32768
+    },
+    "total_slots": 1,
+    "model_alias": "LFM3-1.7B",
+    "model_ftype": "Q4_K - Medium",
+    "model_path": "/home/emre/models/LiquidAI/LFM3-1.7B-GGUF/LFM3-1.7B-Q4_K_M.gguf",
+    "modalities": {
+      "vision": false,
+      "video": false,
+      "audio": false
+    },
+    "media_marker": "<__media_6gUAWW0O5TxAko3cYuSiBKremhJJKPBM__>",
+    "endpoint_slots": true,
+    "endpoint_props": false,
+    "endpoint_metrics": false,
+    "ui": false,
+    "ui_settings": {},
+    "chat_template": "{{- bos_token -}}\n{%- set preserve_thinking = preserve_thinking | default(false) -%}\n{%- set enable_thinking = enable_thinking | default(true) -%}\n\n{%- macro render_value(v) -%}\n    {%- if v is string -%}\n        {{- v -}}\n    {%- elif v is boolean -%}\n        {{- \"true\" if v else \"false\" -}}\n    {%- elif v is none -%}\n        {{- \"null\" -}}\n    {%- elif v is mapping or (v is sequence and v is not string) -%}\n        {{- v | tojson -}}\n    {%- else -%}\n        {{- v -}}\n    {%- endif -%}\n{%- endmacro -%}\n\n{%- macro parse_content(content) -%}\n    {%- if content is string -%}\n        {{- content -}}\n    {%- elif content is mapping and content.get(\"type\") == \"image\" -%}\n        {{- \"<|vision_start|><|image|><|vision_end|>\" -}}\n    {%- elif content is mapping and content.get(\"type\") == \"video\" -%}\n        {{- \"<|vision_start|><|video|><|vision_end|>\" -}}\n    {%- elif content is mapping and content.get(\"type\") == \"text\" -%}\n        {{- (content.get(\"text\") or \"\") | string -}}\n    {%- elif content is mapping -%}\n        {{- content | tojson -}}\n    {%- elif content is iterable -%}\n        {%- set _ns = namespace(result=\"\") -%}\n        {%- for item in content -%}\n            {%- if item is string -%}\n                {%- set _ns.result = _ns.result + item -%}\n            {%- elif item is mapping and item.get(\"type\") == \"image\" -%}\n                {%- set _ns.result = _ns.result + \"<|vision_start|><|image|><|vision_end|>\" -%}\n            {%- elif item is mapping and item.get(\"type\") == \"video\" -%}\n                {%- set _ns.result = _ns.result + \"<|vision_start|><|video|><|vision_end|>\" -%}\n            {%- elif item is mapping and item.get(\"type\") == \"text\" -%}\n                {%- set _ns.result = _ns.result + ((item.get(\"text\") or \"\") | string) -%}\n            {%- else -%}\n                {%- set _ns.result = _ns.result + (item | tojson) -%}\n            {%- endif -%}\n        {%- endfor -%}\n        {{- _ns.result -}}\n    {%- elif content is not none -%}\n        {{- content | tojson -}}\n    {%- endif -%}\n{%- endmacro -%}\n\n{%- macro render_tool_calls(tool_calls) -%}\n    {%- for tool_call in tool_calls -%}\n        {%- if not loop.first -%}{{- \"\\n\\n\" -}}{%- endif -%}\n        {%- set func = tool_call[\"function\"] if \"function\" in tool_call else tool_call -%}\n        {%- set func_args = func.get(\"arguments\") -%}\n        {%- if func_args is string and (func_args | trim) not in [\"\", \"{}\", \"null\"] -%}\n            {{- raise_exception(\"Tool call arguments must be a mapping, got a JSON-encoded string: parse arguments with json.loads() before applying the chat template\") -}}\n        {%- endif -%}\n        {{- \"<tool_call>\\n<function=\" + func[\"name\"] + \">\\n\" -}}\n        {%- if func_args is mapping -%}\n            {%- for arg_name, arg_value in func_args.items() -%}\n                {{- \"<parameter=\" + arg_name + \">\\n\" + render_value(arg_value) + \"\\n</parameter>\\n\" -}}\n            {%- endfor -%}\n        {%- endif -%}\n        {{- \"</function>\\n</tool_call>\" -}}\n    {%- endfor -%}\n{%- endmacro -%}\n\n{%- macro tool_to_json(tool) -%}\n    {%- set fn = tool.function if tool.function is defined else tool -%}\n    {%- set ns_t = namespace(first=true) -%}\n    {{- \"{\" -}}\n    {%- for k, v in fn.items() -%}\n        {%- if k != \"defer_loading\" -%}\n            {%- if not ns_t.first -%}{{- \", \" -}}{%- endif -%}\n            {%- set ns_t.first = false -%}\n            {{- k | tojson -}}{{- \": \" -}}{{- v | tojson -}}\n        {%- endif -%}\n    {%- endfor -%}\n    {{- \"}\" -}}\n{%- endmacro -%}\n\n{%- macro is_tool_reference(item) -%}\n    {{- \"1\" if item is mapping and item.get(\"type\") == \"tool_reference\" else \"\" -}}\n{%- endmacro -%}\n\n{%- macro referenced_tool_to_json(name) -%}\n    {%- set _ns = namespace(found=none) -%}\n    {%- for tool in tools or [] -%}\n        {%- set fn = tool.function if tool.function is defined else tool -%}\n        {%- if fn.name == name -%}\n            {%- set _ns.found = fn -%}\n        {%- endif -%}\n    {%- endfor -%}\n    {%- if _ns.found is none -%}\n        {{- raise_exception(\"Tool reference '\" + name | string + \"' not found in available tools. Every tool referenced by a tool_reference must be in `tools` on every request.\") -}}\n    {%- endif -%}\n    {{- tool_to_json(_ns.found) -}}\n{%- endmacro -%}\n\n{%- macro render_tool_response(content) -%}\n    {%- if content is string and \"<tool_response>\" in content -%}\n        {{- content -}}\n    {%- else -%}\n    {{- \"<tool_response>\\n\" -}}\n    {%- if content is string -%}\n        {{- content -}}\n    {%- elif content is mapping -%}\n        {{- parse_content(content) -}}\n    {%- elif content is iterable -%}\n        {%- for item in content -%}\n            {%- if not loop.first -%}{{- \"\\n\" -}}{%- endif -%}\n            {%- if is_tool_reference(item) -%}\n                {%- if loop.first or not is_tool_reference(loop.previtem) -%}\n                    {{- \"<additional_tools>\\n\" -}}\n                {%- endif -%}\n                {{- referenced_tool_to_json(item.name) -}}\n                {%- if loop.last or not is_tool_reference(loop.nextitem) -%}\n                    {{- \"\\n</additional_tools>\" -}}\n                {%- endif -%}\n            {%- elif item is mapping and item.result is defined and item.result is mapping and item.result.tools is defined -%}\n                {{- \"<additional_tools>\\n\" -}}\n                {%- set _tl = item.result.tools -%}\n                {%- if _tl is string -%}\n                    {{- _tl -}}\n                {%- elif _tl is mapping -%}\n                    {{- tool_to_json(_tl) -}}\n                {%- else -%}\n                    {%- for t in _tl -%}\n                        {%- if not loop.first -%}{{- \"\\n\" -}}{%- endif -%}\n                        {{- tool_to_json(t) -}}\n                    {%- endfor -%}\n                {%- endif -%}\n                {{- \"\\n</additional_tools>\" -}}\n            {%- else -%}\n                {{- parse_content(item) -}}\n            {%- endif -%}\n        {%- endfor -%}\n    {%- elif content is not none -%}\n        {{- content | tojson -}}\n    {%- endif -%}\n    {{- \"\\n</tool_response>\" -}}\n    {%- endif -%}\n{%- endmacro -%}\n\n{%- set ns = namespace(system_prompt=\"\", last_user_index=-1) -%}\n{%- if messages and messages[0][\"role\"] == \"system\" -%}\n    {%- if messages[0].get(\"content\") -%}\n        {%- set ns.system_prompt = parse_content(messages[0][\"content\"]) -%}\n    {%- endif -%}\n    {%- set messages = messages[1:] -%}\n{%- endif -%}\n{%- if tools -%}\n    {%- set tools_ns = namespace(lines=[]) -%}\n    {%- for tool in tools -%}\n        {%- set fn = tool.function if tool.function is defined else tool -%}\n        {%- set _dyn = (fn.defer_loading is defined and fn.defer_loading) or (tool.defer_loading is defined and tool.defer_loading) -%}\n        {%- if not _dyn -%}\n            {%- set tools_ns.lines = tools_ns.lines + [tool_to_json(fn)] -%}\n        {%- endif -%}\n    {%- endfor -%}\n    {%- if tools_ns.lines -%}\n        {%- set ns.system_prompt = ns.system_prompt + (\"\\n\\n\" if ns.system_prompt else \"\") + \"<tools>\\n\" + (tools_ns.lines | join(\"\\n\")) + \"\\n</tools>\" -%}\n    {%- endif -%}\n{%- endif -%}\n{%- if ns.system_prompt -%}\n    {{- \"<|im_start|>system\\n\" + ns.system_prompt + \"<|im_end|>\\n\" -}}\n{%- endif -%}\n{%- for message in messages -%}\n    {%- if message[\"role\"] == \"user\" -%}\n        {%- set ns.last_user_index = loop.index0 -%}\n    {%- endif -%}\n{%- endfor -%}\n{%- set carry = namespace(pending=[]) -%}\n{%- for message in messages -%}\n    {%- set _next = messages[loop.index0 + 1] if not loop.last else none -%}\n    {%- set _merge = message.role == \"tool\" and not message.get(\"additional_tools\")\n        and _next is not none and _next.role == \"tool\" and not _next.get(\"additional_tools\")\n        and message.get(\"tool_call_id\") and _next.get(\"tool_call_id\") == message.get(\"tool_call_id\") -%}\n    {%- set _items = [] -%}\n    {%- if message.role == \"tool\" and not message.get(\"additional_tools\") -%}\n        {%- set _c = message.get(\"content\") -%}\n        {%- if _c is string -%}\n            {%- set _items = [{\"type\": \"text\", \"text\": _c}] if _c else [] -%}\n        {%- elif _c is mapping -%}\n            {%- set _items = [_c] -%}\n        {%- elif _c is iterable -%}\n            {%- set _items = _c | list -%}\n        {%- elif _c is not none -%}\n            {%- set _items = [_c] -%}\n        {%- endif -%}\n    {%- endif -%}\n    {%- if _merge -%}\n        {%- set carry.pending = carry.pending + _items -%}\n    {%- else -%}\n    {{- \"<|im_start|>\" + message.role + \"\\n\" -}}\n    {%- if message.role == \"assistant\" -%}\n        {%- generation -%}\n        {%- set thinking = message.thinking if message.thinking is defined else message.reasoning if message.reasoning is defined else message.reasoning_content -%}\n        {%- set keep_thinking = preserve_thinking or loop.index0 > ns.last_user_index -%}\n        {%- if thinking is defined and keep_thinking -%}\n            {{- \"<think>\" + (thinking or \"\") + \"</think>\" -}}\n        {%- elif keep_thinking and \"</think>\" not in (message.get(\"content\") if message.get(\"content\") is string else \"\") -%}\n            {{- \"<think></think>\" -}}\n        {%- endif -%}\n        {%- set _cfm_tag = \"CONTINUE_FINAL_MESSAGE_TAG \" -%}\n        {%- set _has_cfm = false -%}\n        {%- set content = \"\" -%}\n        {%- if message.get(\"content\") -%}\n            {%- set content = parse_content(message.content) -%}\n        {%- endif -%}\n        {%- if not keep_thinking -%}\n            {%- if \"</think>\" in content -%}\n                {%- set content = content.split(\"</think>\")[-1] | trim -%}\n            {%- endif -%}\n            {%- set content = \"<think></think>\" + content -%}\n        {%- endif -%}\n        {%- if content.endswith(_cfm_tag) -%}\n            {%- set _has_cfm = true -%}\n            {%- set _trunc_len = (content | length) - (_cfm_tag | length) -%}\n            {%- set content = content[:_trunc_len] -%}\n        {%- endif -%}\n        {{- content -}}\n        {%- if message.tool_calls -%}\n            {{- render_tool_calls(message.tool_calls) -}}\n        {%- endif -%}\n        {%- if _has_cfm -%}\n            {{- _cfm_tag -}}\n        {%- endif -%}\n        {{- \"<|im_end|>\\n\" -}}\n        {%- endgeneration -%}\n    {%- elif message.role == \"tool\" -%}\n        {%- if message.get(\"additional_tools\") -%}\n            {%- set _at = message[\"additional_tools\"] -%}\n            {%- if _at is mapping or (_at is sequence and _at is not string) -%}\n                {%- set _src = _at -%}\n            {%- else -%}\n                {%- set _src = message.get(\"content\") -%}\n            {%- endif -%}\n            {%- if _src is string and \"<tool_response>\" in _src -%}\n                {{- _src -}}\n            {%- elif _src is string and \"<additional_tools>\" in _src -%}\n                {{- \"<tool_response>\\n\" + _src + \"\\n</tool_response>\" -}}\n            {%- elif _src -%}\n                {{- \"<tool_response>\\n<additional_tools>\\n\" -}}\n                {%- if _src is string -%}\n                    {{- _src -}}\n                {%- elif _src is mapping -%}\n                    {{- tool_to_json(_src) -}}\n                {%- else -%}\n                    {%- for t in _src -%}\n                        {%- if not loop.first -%}{{- \"\\n\" -}}{%- endif -%}\n                        {{- tool_to_json(t) -}}\n                    {%- endfor -%}\n                {%- endif -%}\n                {{- \"\\n</additional_tools>\\n</tool_response>\" -}}\n            {%- endif -%}\n        {%- elif carry.pending -%}\n            {{- render_tool_response(carry.pending + _items) -}}\n            {%- set carry.pending = [] -%}\n        {%- else -%}\n            {{- render_tool_response(\"\" if message.get(\"content\") is none else message.get(\"content\")) -}}\n        {%- endif -%}\n        {{- \"<|im_end|>\\n\" -}}\n    {%- else %}\n        {%- if message.get(\"content\") -%}\n            {{- parse_content(message[\"content\"]) -}}\n        {%- endif -%}\n        {{- \"<|im_end|>\\n\" -}}\n    {%- endif %}\n    {%- endif -%}\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n    {{- \"<|im_start|>assistant\\n\" -}}\n    {%- if enable_thinking -%}\n        {{- \"<think>\" -}}\n    {%- else -%}\n        {{- \"<think></think>\" -}}\n    {%- endif -%}\n{%- endif -%}",
+    "chat_template_caps": {
+      "supports_object_arguments": true,
+      "supports_parallel_tool_calls": true,
+      "supports_preserve_reasoning": true,
+      "supports_reasoning_effort": false,
+      "supports_string_content": true,
+      "supports_system_role": true,
+      "supports_tool_calls": true,
+      "supports_tools": true,
+      "supports_typed_content": true
+    },
+    "bos_token": "<|startoftext|>",
+    "eos_token": "<|im_end|>",
+    "build_info": "b0-unknown",
+    "is_sleeping": false,
+    "cors_proxy_enabled": false
+  },
+  "serverModels": {
+    "models": [
+      {
+        "name": "LFM3-1.7B",
+        "model": "LFM3-1.7B",
+        "modified_at": "",
+        "size": "",
+        "digest": "",
+        "type": "model",
+        "description": "",
+        "tags": [
+          ""
+        ],
+        "capabilities": [
+          "completion"
+        ],
+        "parameters": "",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "",
+          "families": [
+            ""
+          ],
+          "parameter_size": "",
+          "quantization_level": ""
+        }
+      }
+    ],
+    "object": "list",
+    "data": [
+      {
+        "id": "LFM3-1.7B",
+        "aliases": [
+          "LFM3-1.7B"
+        ],
+        "tags": [],
+        "object": "model",
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "created": 1793247159,
+        "owned_by": "llamacpp",
+        "meta": {
+          "vocab_type": 2,
+          "n_vocab": 128000,
+          "n_ctx": 32768,
+          "n_ctx_train": 262144,
+          "n_embd": 2048,
+          "n_params": 1728801600,
+          "size": 1091380480,
+          "ftype": "Q4_K - Medium"
+        }
+      }
+    ]
+  },
+  "completedAt": "2026-10-29T04:13:31.042Z"
+}

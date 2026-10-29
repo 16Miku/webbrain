@@ -23,8 +23,9 @@ while (offset < size) {
     const requestUrl = new URL(url);
     requestUrl.searchParams.set('download', 'true');
     requestUrl.searchParams.set('range_request', `${offset}-${end}-${attempt}`);
+    const curlBin = process.platform === 'win32' ? 'curl.exe' : 'curl';
     const code = await new Promise((accept, reject) => {
-      const child = spawn('curl.exe', ['--location', '--fail', '--silent', '--show-error',
+      const child = spawn(curlBin, ['--location', '--fail', '--silent', '--show-error',
         '--speed-limit', '1024', '--speed-time', '10', '--max-time', '90',
         '--range', `${offset}-${end}`, requestUrl.href, '--output', part], { stdio: 'inherit', windowsHide: true });
       child.on('error', reject);
