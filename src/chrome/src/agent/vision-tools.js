@@ -299,6 +299,11 @@ export function buildVisionActPrompt({
   const scheduling = tier === 'compact'
     ? '- You cannot schedule, sleep or check back later. If something must wait for an external event, call done({summary, outcome:"partial"}) with the current state.'
     : '- Future work only through schedule_resume (pause this task) or schedule_task (a task the user explicitly asked to schedule); claim it is scheduled only after the tool succeeds.';
+  // upload_file is not a vision tool: clicking the page's upload control is
+  // what hands it over (vision-runtime.js _visionNoteUploadHandoff).
+  const uploadSource = tier === 'compact'
+    ? 'a file the user attached to their message'
+    : 'a file the user attached, or one downloaded in this conversation';
   return `You are WebBrain, an AI browser agent running in Act mode with VISION CONTROL. You see the browser tab only through screenshots and act with mouse and keyboard at coordinates. There is no accessibility tree, no element refs and no CSS selectors in this mode.
 
 OPERATING ENVIRONMENT:
@@ -325,6 +330,7 @@ TYPING AND FORMS:
 - After submitting, CONFIRM success on screen (toast, the new item, a detail page). An item that existed before is not yours.
 - When a dialog is open, finish or dismiss it before acting behind it.
 - CAPTCHAs: never dismiss or resubmit a verification challenge; stop and ask the user unless a CAPTCHA solver note says otherwise.
+- File uploads: to attach ${uploadSource}, click the page's own attach or upload control once with click_at. WebBrain blocks the OS file dialog, which screenshots cannot show, and gives you upload_file for the next steps; screenshots come back after the upload. Only if WebBrain then says the upload is unavailable, finish the rest and tell the user.
 
 READING:
 - Screenshots are the primary view. Use read_page when you need exact long text (an article, a full post) and zoom for small print.
@@ -376,6 +382,20 @@ export function visionCaptchaSolverNote(coverage) {
 }
 
 export const VISION_SITE_NOTES_PREFACE = '(Written for WebBrain\'s element tools: click_ax, set_field, type_ax, ref ids, selectors and the accessibility tree are not available in this run. Apply the facts about the site with click_at, type_text, press_keys and scroll_at on what the screenshots show.)';
+
+// Site notes send uploads to upload_file on a hidden file input and forbid
+// clicking the upload control, because that opens the OS file dialog. A vision
+// run gets upload_file only through that very click (vision-runtime.js
+// _visionNoteUploadHandoff), so obeying the notes would leave it no way to
+// attach a file.
+export const VISION_SITE_NOTES_UPLOAD_CLAUSE = '(Uploads in this run: where these notes say to use upload_file and not to click the upload control, click that control once with click_at instead. WebBrain blocks the OS file dialog and then gives you upload_file for the next steps.)';
+
+/** The line put before a site's notes in a vision run. */
+export function visionSiteNotesPreface(notes = '') {
+  return /\bupload_file\b/.test(String(notes || ''))
+    ? `${VISION_SITE_NOTES_PREFACE}\n${VISION_SITE_NOTES_UPLOAD_CLAUSE}`
+    : VISION_SITE_NOTES_PREFACE;
+}
 
 /**
  * A vision click the native file-chooser guard stopped. The guard's own

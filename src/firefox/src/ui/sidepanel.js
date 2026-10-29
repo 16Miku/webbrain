@@ -3623,6 +3623,11 @@ function queuedComposerSubmissionIsCurrent(item) {
 
 function drainQueuedComposerMessageForCurrentTab() {
   if (isProcessing || currentTabId == null || renderedTabId !== currentTabId) return false;
+  // A hidden panel cannot start the run (sendMessage needs the tab on screen),
+  // and moving the message into its composer would strand it there: the
+  // composer is no longer empty when the panel is shown again. Becoming
+  // visible drains it instead (requestVisibleSidePanelStateRefresh).
+  if (document.visibilityState === 'hidden') return false;
   if (inputEl.value !== '') return false;
   if (steeringRequestsByTab.has(Number(currentTabId))) return false;
   const tabId = currentTabId;
@@ -5688,6 +5693,7 @@ async function switchToTab(newTabId) {
   // to the already-rendered tab must also invalidate an older pending switch.
   const switchGeneration = ++tabSwitchGeneration;
   const interruptedTransition = tabSwitchTransitionId != null;
+  let stayedOnRenderedTab = false;
   tabSwitchTransitionId = newTabId;
   queuedTabSwitchMessages = queuedTabSwitchMessages.filter(msg => msg?.tabId === newTabId);
   syncSendButtonState();
@@ -5697,6 +5703,7 @@ async function switchToTab(newTabId) {
     historyPopover?.hidePopover();
     if (newTabId === currentTabId && renderedTabId === newTabId) {
       if (interruptedTransition) await restoreActiveRunState(newTabId);
+      stayedOnRenderedTab = true;
       return;
     }
     let state = null;
@@ -5795,6 +5802,13 @@ async function switchToTab(newTabId) {
       tabSwitchTransitionId = null;
       if (currentTabId === renderedTabId) drainQueuedAgentUpdatesForTab(currentTabId);
       if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
+      // Only a full switch reaches the drain after this block. A run of this
+      // tab may have ended while the panel showed another tab, when its own
+      // drain had to give up; an activation for the tab already rendered (a
+      // second event while switching back, the window regaining focus) is
+      // then the landing that starts the tab's queued messages. A run this
+      // panel still follows drains them itself when it ends.
+      if (stayedOnRenderedTab && !isTabProcessing(newTabId)) void drainQueuedPromptsAfterRunSettles(newTabId);
     }
     syncSendButtonState();
   }
@@ -5866,7 +5880,16 @@ function requestVisibleSidePanelStateRefresh() {
   }).catch(() => {});
   refreshPromise.then((refreshed) => {
     if (!refreshed || refreshPromise !== visibleStateRefreshPromise) return;
-    consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+    const refreshedTabId = currentTabId;
+    consumePendingContextMenuPrompt().then(() => {
+      // Queued composer messages come first, as after a run. One whose run
+      // ended while this panel was hidden or showed another tab is still
+      // waiting for its tab to be on screen.
+      if (nextAutomaticQueuedComposerMessage(refreshedTabId) && !isTabProcessing(refreshedTabId)) {
+        return drainQueuedPromptsAfterRunSettles(refreshedTabId);
+      }
+      drainQueuedContextMenuPrompts();
+    }).catch(() => {});
     newtabHandoff.consume().catch(() => {});
   }).catch(() => {});
   return refreshPromise;
@@ -10878,9 +10901,15 @@ function handleAgentUpdateMessage(msg) {
   // Fallback queues belong to their source tab even while another tab is visible.
   if (msg.type === 'steering_queued') {
     if (isConversationClearInProgress(msg.tabId)) return;
-    queueUnconsumedSteeringMessages(msg.tabId, msg.data?.messages, {
-      held: msg.data?.stopped === true || isTabAbortRequested(msg.tabId),
-    });
+    const held = msg.data?.stopped === true || isTabAbortRequested(msg.tabId);
+    queueUnconsumedSteeringMessages(msg.tabId, msg.data?.messages, { held });
+    // A finishing run hands back the corrections it did not apply. This update
+    // can arrive after the run's own end-of-run drain, so it asks for one too;
+    // the drain waits until the background reports the tab idle. Before then,
+    // a run this panel follows drains them itself when it ends.
+    if (!held && sameTabId(currentTabId, msg.tabId) && !isTabProcessing(msg.tabId)) {
+      void drainQueuedPromptsAfterRunSettles(msg.tabId);
+    }
   }
   // A run stopped outside this panel (page Stop button) also holds its queue.
   if (msg.type === 'run_complete' && ['stopped', 'cancelled'].includes(msg.data?.status)) {
