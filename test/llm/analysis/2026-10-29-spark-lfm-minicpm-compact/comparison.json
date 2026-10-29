@@ -354,6 +354,115 @@
         "first-turn": "test/llm/results/2026-10-29-minicpm-v-4.7-1b-compact-full_chrome_MiniCPM-V-4.7-1B_compact",
         "scenarios": "test/llm/results-scenarios/2026-10-29-minicpm-v-4.7-1b-compact-full_chrome_MiniCPM-V-4.7-1B_compact"
       }
+    },
+    {
+      "model": "webbrain-compass-vld-tiny-v5",
+      "parameters": "1B",
+      "new": true,
+      "quantization": "Q4_K_M",
+      "parametersTotal": 1006209856,
+      "modelArtifact": {
+        "id": "webbrain-compass-vld-tiny-v5",
+        "name": "webbrain-compass-vld-tiny-v5",
+        "source": "webbrain-one/webbrain-compass-vld-tiny-v5",
+        "repo": "webbrain-one/webbrain-compass-vld-tiny-v5-gguf",
+        "revision": "5e51ae116a813baa3b39763864e6a26e0ff36fb5",
+        "file": "webbrain-compass-vld-tiny-v5-Q4_K_M.gguf",
+        "bytes": 672005856,
+        "sha256": "0c86a9d444fd65b241b5daacb2f8e877637d5d8f6f3645ebcb6eba250027a8f6"
+      },
+      "runtimeBuild": "b0-unknown",
+      "runtimeChatTemplateSha256": "2b831237943885e8fa64d3cd08c7e4567eec40d6976d5fee5e362771be5a46c4",
+      "calls": 97,
+      "strict": 7,
+      "loose": 32,
+      "firstTurnExact": 8,
+      "firstTurnNameOnly": 12,
+      "treeCalls": 50,
+      "firstTurnErrors": 0,
+      "scenarioErrors": 1,
+      "anti": 8,
+      "empty": 0,
+      "lengthLimited": 0,
+      "proseCredits": 0,
+      "byCategory": {
+        "loop-bad-url": {
+          "scored": 10,
+          "strict": 2,
+          "loose": 2,
+          "anti": 3
+        },
+        "tool-error-pivot": {
+          "scored": 9,
+          "strict": 0,
+          "loose": 3,
+          "anti": 1
+        },
+        "csp-blocked-eval": {
+          "scored": 0,
+          "strict": 0,
+          "loose": 0,
+          "anti": 0
+        },
+        "truncation-cascade": {
+          "scored": 10,
+          "strict": 0,
+          "loose": 2,
+          "anti": 1
+        },
+        "counter-polarity": {
+          "scored": 10,
+          "strict": 0,
+          "loose": 1,
+          "anti": 0
+        },
+        "stale-refid": {
+          "scored": 10,
+          "strict": 0,
+          "loose": 4,
+          "anti": 3
+        },
+        "mode-boundary": {
+          "scored": 10,
+          "strict": 0,
+          "loose": 2,
+          "anti": 0
+        },
+        "cross-lingual": {
+          "scored": 10,
+          "strict": 1,
+          "loose": 3,
+          "anti": 0
+        },
+        "prompt-injection": {
+          "scored": 8,
+          "strict": 1,
+          "loose": 5,
+          "anti": 0
+        },
+        "injection-control": {
+          "scored": 2,
+          "strict": 1,
+          "loose": 2,
+          "anti": 0
+        },
+        "prompt-injection-unprotected": {
+          "scored": 8,
+          "strict": 1,
+          "loose": 6,
+          "anti": 0
+        },
+        "injection-control-unprotected": {
+          "scored": 2,
+          "strict": 1,
+          "loose": 2,
+          "anti": 0
+        }
+      },
+      "sources": {
+        "first-turn": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact",
+        "scenarios": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact"
+      }
     }
   ],
   "completeTable": [
@@ -670,6 +779,115 @@
       "strict": 8,
       "loose": 45,
       "source": "/blog/compact-tool-routing-models-compared"
+    },
+    {
+      "model": "webbrain-compass-vld-tiny-v5",
+      "parameters": "1B",
+      "new": true,
+      "quantization": "Q4_K_M",
+      "parametersTotal": 1006209856,
+      "modelArtifact": {
+        "id": "webbrain-compass-vld-tiny-v5",
+        "name": "webbrain-compass-vld-tiny-v5",
+        "source": "webbrain-one/webbrain-compass-vld-tiny-v5",
+        "repo": "webbrain-one/webbrain-compass-vld-tiny-v5-gguf",
+        "revision": "5e51ae116a813baa3b39763864e6a26e0ff36fb5",
+        "file": "webbrain-compass-vld-tiny-v5-Q4_K_M.gguf",
+        "bytes": 672005856,
+        "sha256": "0c86a9d444fd65b241b5daacb2f8e877637d5d8f6f3645ebcb6eba250027a8f6"
+      },
+      "runtimeBuild": "b0-unknown",
+      "runtimeChatTemplateSha256": "2b831237943885e8fa64d3cd08c7e4567eec40d6976d5fee5e362771be5a46c4",
+      "calls": 97,
+      "strict": 7,
+      "loose": 32,
+      "firstTurnExact": 8,
+      "firstTurnNameOnly": 12,
+      "treeCalls": 50,
+      "firstTurnErrors": 0,
+      "scenarioErrors": 1,
+      "anti": 8,
+      "empty": 0,
+      "lengthLimited": 0,
+      "proseCredits": 0,
+      "byCategory": {
+        "loop-bad-url": {
+          "scored": 10,
+          "strict": 2,
+          "loose": 2,
+          "anti": 3
+        },
+        "tool-error-pivot": {
+          "scored": 9,
+          "strict": 0,
+          "loose": 3,
+          "anti": 1
+        },
+        "csp-blocked-eval": {
+          "scored": 0,
+          "strict": 0,
+          "loose": 0,
+          "anti": 0
+        },
+        "truncation-cascade": {
+          "scored": 10,
+          "strict": 0,
+          "loose": 2,
+          "anti": 1
+        },
+        "counter-polarity": {
+          "scored": 10,
+          "strict": 0,
+          "loose": 1,
+          "anti": 0
+        },
+        "stale-refid": {
+          "scored": 10,
+          "strict": 0,
+          "loose": 4,
+          "anti": 3
+        },
+        "mode-boundary": {
+          "scored": 10,
+          "strict": 0,
+          "loose": 2,
+          "anti": 0
+        },
+        "cross-lingual": {
+          "scored": 10,
+          "strict": 1,
+          "loose": 3,
+          "anti": 0
+        },
+        "prompt-injection": {
+          "scored": 8,
+          "strict": 1,
+          "loose": 5,
+          "anti": 0
+        },
+        "injection-control": {
+          "scored": 2,
+          "strict": 1,
+          "loose": 2,
+          "anti": 0
+        },
+        "prompt-injection-unprotected": {
+          "scored": 8,
+          "strict": 1,
+          "loose": 6,
+          "anti": 0
+        },
+        "injection-control-unprotected": {
+          "scored": 2,
+          "strict": 1,
+          "loose": 2,
+          "anti": 0
+        }
+      },
+      "sources": {
+        "first-turn": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact",
+        "scenarios": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact"
+      }
     },
     {
       "model": "WebBrain Compass Tiny v1",

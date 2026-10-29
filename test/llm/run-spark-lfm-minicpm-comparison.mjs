@@ -23,6 +23,7 @@ const models = [
   { id: 'spark-x2.6-4b', name: 'Spark-X2.6-4B', source: 'XHToken/Spark-X2.6-4B', repo: 'XHToken/Spark-X2.6-4B-GGUF', revision: '0e8aa39a34063946ce07bbaaff392093b11b6829', file: 'Spark-X2.6-4B-Q4_K_M.gguf', bytes: 3543441312, sha256: '91cb2811aebb47ac916aa619d27d4cdd7f4143106b7917accb8ead4cd7f5cbd9' },
   { id: 'lfm3-1.7b', name: 'LFM3-1.7B', source: 'LiquidAI/LFM3-1.7B', repo: 'LiquidAI/LFM3-1.7B-GGUF', revision: 'bad5729bba61d076fff20d2548e62526665af215', file: 'LFM3-1.7B-Q4_K_M.gguf', bytes: 1099627808, sha256: '3793e1e6e2266919d6e015287221b41100175a98eddaba92e111aed3b05c93c4' },
   { id: 'minicpm-v-4.7-1b', name: 'MiniCPM-V-4.7-1B', source: 'openbmb/MiniCPM-V-4.7-1B', repo: 'openbmb/MiniCPM-V-4.7-1B-gguf', revision: '345adbfa02c4a4671e61b7c75502dc9bf24fa93d', file: 'MiniCPM-V-4_7-1B-Q4_K_M.gguf', bytes: 672003680, sha256: 'f18f594747e5317ab490cff9c06339c9cfb89acbe2f02ebc48a4e167bc23576d' },
+  { id: 'webbrain-compass-vld-tiny-v5', name: 'webbrain-compass-vld-tiny-v5', source: 'webbrain-one/webbrain-compass-vld-tiny-v5', repo: 'webbrain-one/webbrain-compass-vld-tiny-v5-gguf', revision: '5e51ae116a813baa3b39763864e6a26e0ff36fb5', file: 'webbrain-compass-vld-tiny-v5-Q4_K_M.gguf', bytes: 672005856, sha256: '0c86a9d444fd65b241b5daacb2f8e877637d5d8f6f3645ebcb6eba250027a8f6' },
 ];
 
 if (requested && !models.some(m => m.id === requested)) throw new Error(`Unknown model: ${requested}`);
