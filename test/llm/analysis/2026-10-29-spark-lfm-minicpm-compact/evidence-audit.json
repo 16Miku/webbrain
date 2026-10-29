@@ -4228,6 +4228,1413 @@
           "requestSha256": "779236b9484dc55792343fd93a14b0390d8765b4f856bda16cea5f16040fa674"
         }
       ]
+    },
+    {
+      "model": "webbrain-compass-vld-tiny-v5",
+      "metadata": "test/llm/analysis/2026-10-29-spark-lfm-minicpm-compact/webbrain-compass-vld-tiny-v5-run.json",
+      "metadataSha256": "230de0e10cf6e81994dba136c95f206fd6d24fb5ce0eb4ddd01a351f0fd7104b",
+      "records": [
+        {
+          "track": "first-turn",
+          "id": "001",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/001.json",
+          "sha256": "c3b9fd48b905d3b15ac42a96dc0d7e897aaef9341efe9b6337e6ea293ad815f0",
+          "requestSha256": "9a44dbb72e238cfa8ae57d845c2a72126d6a7f85410a6d7ad4150d3def8a2e7d"
+        },
+        {
+          "track": "first-turn",
+          "id": "002",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/002.json",
+          "sha256": "e7eb4ac7c750b85929a067d44de8375b0d7b52a951352f468e6220fb77889d13",
+          "requestSha256": "9a08a3a043eabc3dc8f7e89e58cf1554d3e183a8c3dbf803b2f5831c95a55299"
+        },
+        {
+          "track": "first-turn",
+          "id": "003",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/003.json",
+          "sha256": "7f69a9081a3d7889e846edb18320d453fd440ac81aecf31e82509e4d0dd7d387",
+          "requestSha256": "dabef745d0fbf4f9159ae49989e998d2a82783b38438add916e8453b2492fee3"
+        },
+        {
+          "track": "first-turn",
+          "id": "004",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/004.json",
+          "sha256": "419d1ed8ae03c2f4466e6d5e656b80cfa6c5aa30d7774f8dea6a926a3dd19614",
+          "requestSha256": "c1443fdc2623b76cc11c679628457bafec8df09656a9bacf6c312ad64d6fedef"
+        },
+        {
+          "track": "first-turn",
+          "id": "005",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/005.json",
+          "sha256": "72c2936544ad28c9d3f396dc38203ab8f4832dd07d6f0a9c4071c65637282274",
+          "requestSha256": "93c44f3d05818b444d849ae1d49b7bfdeeec14bd53349af953ae4929534a8566"
+        },
+        {
+          "track": "first-turn",
+          "id": "006",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/006.json",
+          "sha256": "3956b2caa4cdbcb31b6461f5744313e44b5f9c76ee100d41b040ceee781bc231",
+          "requestSha256": "0ce9482a2530e612845680c56d01b12041227004c6271b6a1e71c2aac3a79a07"
+        },
+        {
+          "track": "first-turn",
+          "id": "007",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/007.json",
+          "sha256": "b3e4621ec846fa35df1e155b0dfcbe793d930ec6142ade39501159821e5263d2",
+          "requestSha256": "253a07c173702657966ce5e44348feca28919eceed4efa396258c14d2a01d4c5"
+        },
+        {
+          "track": "first-turn",
+          "id": "008",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/008.json",
+          "sha256": "94571b52cb107dfd0b064fe915d5447567b848ac3fb7c45bc71a185865ae7ad7",
+          "requestSha256": "8b52c997cb5377be175ff80f82df330515479abf701653ab240214c25b53928c"
+        },
+        {
+          "track": "first-turn",
+          "id": "009",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/009.json",
+          "sha256": "d713883e482fd5d37211c242f5ad85ef581c8046a1db1f303f2e2e5ac024b309",
+          "requestSha256": "36117693661cadb2fcca183da05e40f649e71c00bb43b3ea5b93989b878c98ba"
+        },
+        {
+          "track": "first-turn",
+          "id": "010",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/010.json",
+          "sha256": "6332aaf1a9f260ce85793015e06fa86183e4079b50393aa799d1146a39a3fbdc",
+          "requestSha256": "cffac423fb9adf7e9e794098c896319f6cb7dab0602fb35f442fa5425c42bce1"
+        },
+        {
+          "track": "first-turn",
+          "id": "011",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/011.json",
+          "sha256": "9a9dd49df777e6e096c5ee3fd05f59681242ec3ec4a9b9a2aa5d6dce6f0842a5",
+          "requestSha256": "e698e85928aa206ef83324853f3dbb64e7fc03ee28a5701784a1d55e305407cb"
+        },
+        {
+          "track": "first-turn",
+          "id": "012",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/012.json",
+          "sha256": "c44fd3345a3b0dd22dc4a0834fa3a89af9d0966ae85d6684cd1ba371a8bb0d36",
+          "requestSha256": "dd12198f005671dc03e3a90f423c7511ffe538966312f82b877a17968c644c32"
+        },
+        {
+          "track": "first-turn",
+          "id": "013",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/013.json",
+          "sha256": "84aee8760a203370dbe1943a442ced628b33ac1b6bbeabeac2d59ecbcb561867",
+          "requestSha256": "16174f6ca5b2baba1b13e3f1a6ddbd1c2c38d720d09210b074813b715ea3f0b7"
+        },
+        {
+          "track": "first-turn",
+          "id": "014",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/014.json",
+          "sha256": "e8ac0f4ac209a784925c71820e4959ca5566a5b93c5168e4b4b3059d67a02b15",
+          "requestSha256": "a14be4053c54b2656f25937acf2be4c2391383632c169885ea5725e0b0c5a741"
+        },
+        {
+          "track": "first-turn",
+          "id": "015",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/015.json",
+          "sha256": "b74f4b54dc10c0485a2a467966481134f3f899a38b36a6064f71a52879d91d2a",
+          "requestSha256": "422cb0300da1d2aeed2e3e5cf3e4bd5a14cc1c145c3d10334d79a5b930edac9a"
+        },
+        {
+          "track": "first-turn",
+          "id": "016",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/016.json",
+          "sha256": "b77209207a39ae9607bc7502905c078dfba98f5dc337d6cb82949e0edd8bf24f",
+          "requestSha256": "bf5d1e5c3050613e93332808f6f8e1615eee16997ac41ade10d2923c48686f87"
+        },
+        {
+          "track": "first-turn",
+          "id": "017",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/017.json",
+          "sha256": "0c19f04f0771eb5f2581b998ecae53444ade5f61fc92b1dedd4310c862e7b8ef",
+          "requestSha256": "d96db8f8fd6559a7e1e394bfde57f005cdacf7ab1e134f0a5884959f57221a94"
+        },
+        {
+          "track": "first-turn",
+          "id": "018",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/018.json",
+          "sha256": "e22478a3c3f8f6696db7a60542cb4827ccf4b0a460961e81fb86e20e055618f5",
+          "requestSha256": "20cc77fcbcf9a23c2e8570152b2d91b4562ac6fe65b3b90383ceff02d3644e76"
+        },
+        {
+          "track": "first-turn",
+          "id": "019",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/019.json",
+          "sha256": "777addbebf8f4daba2eea1dbf88fbedbfac5ea1d450af36338bc39f3bb6613c2",
+          "requestSha256": "748b00820f81acae43a702acd3e95567d08299f9e0e1328ebfa0d5d5c2288236"
+        },
+        {
+          "track": "first-turn",
+          "id": "020",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/020.json",
+          "sha256": "33d980ba4a0a1b91673258417b015446986594ba5d9cdf2536e70be6f62ea58c",
+          "requestSha256": "bb6a64a701cfd94c49a758a63c68e16dc9b5e7e630ff87d4e49f161c3d569e3c"
+        },
+        {
+          "track": "first-turn",
+          "id": "021",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/021.json",
+          "sha256": "12e529956d7035a1ac678535af9cfa8f01d6a89284ce1c3da30f27cd60eb1439",
+          "requestSha256": "d9f74b973106259b903a0a06578d5e87607447dfd441553de4a090eec635f4f5"
+        },
+        {
+          "track": "first-turn",
+          "id": "022",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/022.json",
+          "sha256": "29e51bb9b9c93576a37068c5bba828ff3f1c597ee90e06331fb0f78bb482ae07",
+          "requestSha256": "8835c7463f7f39d1c2d12cbefec68b22af1e9f6a366515071253dbd7551ecd57"
+        },
+        {
+          "track": "first-turn",
+          "id": "023",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/023.json",
+          "sha256": "dd62b4c583d5e00d37eacd555158581ecce1203612412ccfa24ce0e5282a43eb",
+          "requestSha256": "6c8ec34203583eddb270e0a19dd502d50ec33485bca0ad7c0ba47e4914fe9e55"
+        },
+        {
+          "track": "first-turn",
+          "id": "024",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/024.json",
+          "sha256": "e383c44f2b0e35fc8f95c600ca97642281d5b6fa3fa839176d8afd31dcf01564",
+          "requestSha256": "056d2ee833b6c5164794b1fd4a872f92d474142815971f1d333101bc6c756652"
+        },
+        {
+          "track": "first-turn",
+          "id": "025",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/025.json",
+          "sha256": "412d8e646f9a76cf8799bfb847ee797114836c3710771093dab2a38554691fa3",
+          "requestSha256": "ff5cc73aa627029da9cb12b6634e57118966acd2e461cc53839c2966c236c7f2"
+        },
+        {
+          "track": "first-turn",
+          "id": "026",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/026.json",
+          "sha256": "7b5e3e6e99427e15922d0d8dcae6554fc1532a8218b4fb004233d610fbbcb6e3",
+          "requestSha256": "db0ca2b0ac7c3de0531d01c393adaf054d30b10f78650ad5db457662f0732f8b"
+        },
+        {
+          "track": "first-turn",
+          "id": "027",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/027.json",
+          "sha256": "ad1fb7d9bdda82b412e6e2f9a3bae5dd08abdb2c4d253381ac7ccf326d1eb251",
+          "requestSha256": "36f99e8556e7a691022ba4c2671f4eae477fc5fe2835f62f6826d6f1fb9d3884"
+        },
+        {
+          "track": "first-turn",
+          "id": "028",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/028.json",
+          "sha256": "c927906ccc58128289bddd227e89ed6101378e4ee08c0be20784816747aaa214",
+          "requestSha256": "962e232880cfaf0f99b802467a17091080af09b63dbaefdbbf06b4d80cc0c847"
+        },
+        {
+          "track": "first-turn",
+          "id": "029",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/029.json",
+          "sha256": "4030b8329cdeecf66855c1a1af6024de2503763dd31cf8d781400c9ec502caeb",
+          "requestSha256": "fa1a652a53a3d4abf7769f846f2253160d0fa756881dc183ada866443ef8af58"
+        },
+        {
+          "track": "first-turn",
+          "id": "030",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/030.json",
+          "sha256": "77d7a80cfa5067b4f34c2822faf885239f49fae0b1b7eaa47618fa14355d8638",
+          "requestSha256": "cfd146639ac43bcfe1c3f36c06bf2a995156ce0ba0d1aa3f47bbbd3bbffbb1f6"
+        },
+        {
+          "track": "first-turn",
+          "id": "031",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/031.json",
+          "sha256": "e068a37b1fa2c16fd0f1d867d89c811d4e05c20e04c18b97c0a2bf1a427e8227",
+          "requestSha256": "c921f25136cf99705b2422cdf2f5dfe7f7fa825237af9e64c5159fbb2e3aadc1"
+        },
+        {
+          "track": "first-turn",
+          "id": "032",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/032.json",
+          "sha256": "a1f06c364cbb869d08ba761bcf478b8c33c74028e0d2ed9e7e478b33edec1b20",
+          "requestSha256": "d5318d1ddd0c7b901b510a0016f453e5f26b6619d865b7d7b76f708069d5426c"
+        },
+        {
+          "track": "first-turn",
+          "id": "033",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/033.json",
+          "sha256": "7866d66b2c2628b3e9be4da03a772ede7154cbc74ae893a818ce0f27335c7b31",
+          "requestSha256": "c1ead03fdb03ac6000b3ce97faa2d1bfac98cf928f3392b7531e38d24e3a7e47"
+        },
+        {
+          "track": "first-turn",
+          "id": "034",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/034.json",
+          "sha256": "fac8e8c5947cbd223a31d3d413940ab447bdaa00ea01c0d800278a5a02c13164",
+          "requestSha256": "530b07ce2d8d1069a1fd87e605f7d589d71e707ff024536dc96008e6ed05e4d3"
+        },
+        {
+          "track": "first-turn",
+          "id": "035",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/035.json",
+          "sha256": "23547552358ffaa40f6b064c714e31a81ff5030979c17d056b165d2ecc339bd1",
+          "requestSha256": "93a79d15ca41335e2042a26e4fdd119c4653f3e47048b18fefe47dd310849a04"
+        },
+        {
+          "track": "first-turn",
+          "id": "036",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/036.json",
+          "sha256": "9ee933e928fc084bc34f7046a62c664436f232a4f9a83c23ab86f62b72ed2ee9",
+          "requestSha256": "0248cd8a9c1cc4fce050baa582c2e91debb8e2bb89c113e984dbf45e5ddd235d"
+        },
+        {
+          "track": "first-turn",
+          "id": "037",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/037.json",
+          "sha256": "ebf3541e8df542af42c4d464a88653d20be2154b73b6e627e78e1f3c973a3587",
+          "requestSha256": "7367e9d4c549a935def92f7368e8993916822cfbde00ac4fe9830cd86eecc56f"
+        },
+        {
+          "track": "first-turn",
+          "id": "038",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/038.json",
+          "sha256": "28fd2b674e4f7e12aace5709c7c3c978ef8bb62ffde0ad60105f678caef566fe",
+          "requestSha256": "00b56646fa7db4d15a25d729239a18b9b61a3e9a52ea34f161522b4445635930"
+        },
+        {
+          "track": "first-turn",
+          "id": "039",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/039.json",
+          "sha256": "643e0cc2877015b1d8211c59d6905ee4fb995b3bf4a9182657eb9667b46b31fe",
+          "requestSha256": "e056d19770f03de285a728ba35029932f6dced058f8fe57e441cd1758d70f7a9"
+        },
+        {
+          "track": "first-turn",
+          "id": "040",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/040.json",
+          "sha256": "9e18c0be25efee261b8c14acdbe1f0c163f44f6f589fe2e16f95363c6a31d8c9",
+          "requestSha256": "77a4a21a832a38eb192c8606b3b5145bf535081a5e4072fe0bac1b042f97bc19"
+        },
+        {
+          "track": "first-turn",
+          "id": "041",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/041.json",
+          "sha256": "08aa83aa92c1846ca3c325ae1e630db55d0863e4eb79cfff7f32d74ba59c085e",
+          "requestSha256": "fb2b33dc3dc07b41e91988a2ad3be52eefea8345a3493e7c11e141f3a51e49a2"
+        },
+        {
+          "track": "first-turn",
+          "id": "042",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/042.json",
+          "sha256": "1c39fd8cd52ab2155253a7371d0ef16064565f99517a7f2e950dce0ad4189d38",
+          "requestSha256": "33771fca862111d91b82c903f2b777892ee9be684ca03991c5d51a2e891f5d9f"
+        },
+        {
+          "track": "first-turn",
+          "id": "043",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/043.json",
+          "sha256": "24d87a7e83758cf34da03a2b10c321d8d3f9c659f22121df32e9aab37cad7607",
+          "requestSha256": "4b7a3a1317bb15b3b95a26a39a2c09457e079694f17dd1240564ae4b012b17f2"
+        },
+        {
+          "track": "first-turn",
+          "id": "044",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/044.json",
+          "sha256": "68d6b50c23337d47a508b74346038fd7f8214a5e12d446defcd47e74c82d0225",
+          "requestSha256": "3626f4cb8d975a83345c34432f899a1e0cf0ee5086d0b9741bdccdbc1e6eb790"
+        },
+        {
+          "track": "first-turn",
+          "id": "045",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/045.json",
+          "sha256": "59c4236828549af9b7f131ab94dafae32673da2d7b9c009b39adaf1f7e425ecd",
+          "requestSha256": "80a75318f190a51af8c031a35606f790a538f5183688e48008b4050cb613dc23"
+        },
+        {
+          "track": "first-turn",
+          "id": "046",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/046.json",
+          "sha256": "4ac258376522ff150d032197eff9fbcf146745d46ec4ea42010a5121b9f4da75",
+          "requestSha256": "ad52e88b612d68802b6ea9db39b5213b692a4ac7bd6f0cff98c12c71c5d916d8"
+        },
+        {
+          "track": "first-turn",
+          "id": "047",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/047.json",
+          "sha256": "2fe826cd02bd6fdca107f1162508cf2704d968fe97266ba1cebb9c39457bad7c",
+          "requestSha256": "074ea8bce25b6aef131677292c86db6de657573c22afdd8c04bfc2f6d661645d"
+        },
+        {
+          "track": "first-turn",
+          "id": "048",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/048.json",
+          "sha256": "5aadfc81c54d1fe097cdeab2f61aee55b43e122ad278c0904b4ca7b791f04572",
+          "requestSha256": "294dba54dc97ee2e49c30354b9ee0b3bc319b71d881ce58cdcec59018a966002"
+        },
+        {
+          "track": "first-turn",
+          "id": "049",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/049.json",
+          "sha256": "6585fb3f3432a32c8436648c11ebaa22c1ea0afba19708dd62619fd3e2e6b99f",
+          "requestSha256": "60679c57b58e382ef059160a0fbec7f5bd2e6d6c5d10ea4a5645ffc52b40fece"
+        },
+        {
+          "track": "first-turn",
+          "id": "050",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/050.json",
+          "sha256": "79fa7ea462c2b6d4ed2f01fcb7ffdba872dbedf482572dd00889ca0b85bbbdc0",
+          "requestSha256": "5ebfb0b31b3769117f4786264ce4fc6772d37294f80b85b5b977b8e1902e9be7"
+        },
+        {
+          "track": "first-turn",
+          "id": "051",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/051.json",
+          "sha256": "269736341fb7e23363956d6169673079a410b2a8aadb16e25c8739731e8bd12e",
+          "requestSha256": "7b05b1c26e21ec10a96c2cf5f27a0ba4376be5ee07317da279f05661dc7f0f61"
+        },
+        {
+          "track": "first-turn",
+          "id": "052",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/052.json",
+          "sha256": "b045330d48ea880a693f2989942d43762088c16bd58053a3bc6e5a78df503158",
+          "requestSha256": "cc6bce9b25d829fe5810ff5d36cd4d0d689d21e96d8f838239e5a69cb44c3c64"
+        },
+        {
+          "track": "first-turn",
+          "id": "053",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/053.json",
+          "sha256": "76bee5ad20064b1b76ffa08e14c41a5d53bc1054759d39af360bae3cd6b1a475",
+          "requestSha256": "9031bc796b6ea0c08247dcd1e50dfbd45efcbd49c2b7d4f57750f7dc400546f3"
+        },
+        {
+          "track": "first-turn",
+          "id": "054",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/054.json",
+          "sha256": "e93963ebf993c106d52c7c3e418f84d93e2ee2db33fc64ee539a4d3539500ef1",
+          "requestSha256": "a3f2120944eb1e8be4ec982cc6e1633740b04ed84651f1fe791eb962e35464ff"
+        },
+        {
+          "track": "first-turn",
+          "id": "055",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/055.json",
+          "sha256": "35d4e0c67dd568f523903748cc7e030d637d787198a5a88262985a7e837aaa24",
+          "requestSha256": "0158b8cb8bcf058a4d0688268f1b4dfb05b2ba4682cb6e9e236b0b87d93deb03"
+        },
+        {
+          "track": "first-turn",
+          "id": "056",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/056.json",
+          "sha256": "9a6a74b7d55eb67493559d018675af169bb92bcb96229f784da3066c6bd13b97",
+          "requestSha256": "358cc82496e5f606d4095d967174c0641d5fe1537dc40821e60baf593c2eb507"
+        },
+        {
+          "track": "first-turn",
+          "id": "057",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/057.json",
+          "sha256": "c27f05f95ff39727628c8969d0b39ee815d0e3f1ba6bc52edec127bf78296049",
+          "requestSha256": "ae9acc9dcf1e88c5766ac71651384d8fa25e0164dd945d4441feeec2fcdf064b"
+        },
+        {
+          "track": "first-turn",
+          "id": "058",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/058.json",
+          "sha256": "c1b0ae8886089c3a91cc1dd892c9991c1b8a4ecbbb4495b161a06d5511155884",
+          "requestSha256": "3077f04007868f44813c0e7b24e563209927df27aec40fc994f1be0c4fda555a"
+        },
+        {
+          "track": "first-turn",
+          "id": "059",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/059.json",
+          "sha256": "fe5253b9e0b652505ccedea006190cdb81f9254286b4ed12723be0786ac7f087",
+          "requestSha256": "0ca655e024b9bc21279a7fff9829056e1ad15b11a91ca211498c19d449ec293a"
+        },
+        {
+          "track": "first-turn",
+          "id": "060",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/060.json",
+          "sha256": "4f2975464a90044f64b9049b27c8abf5db9307b980bb33ca37b39ec70e868a2d",
+          "requestSha256": "64a04c14c016357e85655a5e7c9b47134ac9c0a85ce146280046fcd95ee0e882"
+        },
+        {
+          "track": "first-turn",
+          "id": "061",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/061.json",
+          "sha256": "01f4ce4b32c42ec90dfd688d3a86666631ec472acc2a74b9bad1e93c68c9afb1",
+          "requestSha256": "544e661edb5a6cb8880c5711d4d9e1663ba579ef68b13fe6a3b797744af72a08"
+        },
+        {
+          "track": "first-turn",
+          "id": "062",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/062.json",
+          "sha256": "f122ee53228ec398d735ea41c078a5d84d2ca7536b9d8b1b4635f783a58575ec",
+          "requestSha256": "a370d43936a65214e3ee2aad077063670864776cbdf998abf9bc3df70e5f483b"
+        },
+        {
+          "track": "first-turn",
+          "id": "063",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/063.json",
+          "sha256": "372edf87b0ee9b1dfb4c46f9d8ba28a0a7067868264a99bc5145559a1fc00477",
+          "requestSha256": "be4908f135fb844a24d6ebc60fd7215b03632ed9c28f15b779603ab5eaaeb66f"
+        },
+        {
+          "track": "first-turn",
+          "id": "064",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/064.json",
+          "sha256": "fb897e1f237687d7cff9b5cf7867aa3d708ff0e0c38decd7ab51e85c1e198d6c",
+          "requestSha256": "be909a1a00b2d4a192770489ea7f5b841974c3aeea034cc286a16b37b782c821"
+        },
+        {
+          "track": "first-turn",
+          "id": "065",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/065.json",
+          "sha256": "67eb9d407cf44357ec4a815234884f89effd53afa5b011987259da94bb5cd4aa",
+          "requestSha256": "25da5bc9d3e7f8e07e4cdfc86e31c28c9c32bce8107cf0bd11ff94474574fd9d"
+        },
+        {
+          "track": "first-turn",
+          "id": "066",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/066.json",
+          "sha256": "a5b3fe54447734e9038e92f3382bcd8b53173d40b07ed14c173565cf9e00ba24",
+          "requestSha256": "9d84d70a9d7954631a8bb9383b2fadbf0c3052a2e0763336427bbbf5667dd8ee"
+        },
+        {
+          "track": "first-turn",
+          "id": "067",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/067.json",
+          "sha256": "9ca1a75489e65c1d4639616368702c07409d61d0acdfb21addf7326089951ceb",
+          "requestSha256": "addd91999460c3eb825310d05ae096924debabac87ca1460fd4ab279a72dc508"
+        },
+        {
+          "track": "first-turn",
+          "id": "068",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/068.json",
+          "sha256": "08ff4bb0bf9ac48a43ffdabf97a3e455f16066bc95d143b1bea04daa1fa8098c",
+          "requestSha256": "f5572a2a215a2592f1f31474a00400c74d79d3781d5de2a9527c06f39c974a8a"
+        },
+        {
+          "track": "first-turn",
+          "id": "069",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/069.json",
+          "sha256": "0260b5899dd8601d92b32f71612df100ad0e9b2b2109f895724663f2f767972a",
+          "requestSha256": "1574dad5d1e4084c63b94df20d27235f01a513f5a170d193ef7608aeda5dfa7a"
+        },
+        {
+          "track": "first-turn",
+          "id": "070",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/070.json",
+          "sha256": "405fcd34c3918b4a72309437a6d2161db9f03577c5b5410ec8e0efa259748d42",
+          "requestSha256": "f09bace0a1d87f65dd88cd16e86a4dd3f3a34648cc60d576ac0196f08fb9774b"
+        },
+        {
+          "track": "first-turn",
+          "id": "071",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/071.json",
+          "sha256": "092b0b6c439ee1f59aee460106635b0977cf00f771f3f19b168315ff38d42a9d",
+          "requestSha256": "8e8d63d4af407d715ac8f6c3ed4a560d40c591d5286fe5e69826d138e8c0fc39"
+        },
+        {
+          "track": "first-turn",
+          "id": "072",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/072.json",
+          "sha256": "a69f7dce5389922c67cd582415e4e07d7aecd24b7d561f205e2e052a7ac4d41b",
+          "requestSha256": "5ab6cc54e0375bfc88a3b4d6717d38a4fb1d844e3541de45a4182aa45cb1bc46"
+        },
+        {
+          "track": "first-turn",
+          "id": "073",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/073.json",
+          "sha256": "fee18062634a40707b0677bb6b48ef871c9fce667bb512698cda6c7f4dc05fae",
+          "requestSha256": "1d70daee75ff6437b90bee70150b851d8bd4948c18e61742cfb71ddeae73dd34"
+        },
+        {
+          "track": "first-turn",
+          "id": "074",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/074.json",
+          "sha256": "d8557617213fdfe152b7e4f9cda1d785f8d8f85b59bab177e3be8f4dbd6fd29b",
+          "requestSha256": "49630b57e4ccab735509c19f48dc21712c7e927b6707f831cac838df19e834a0"
+        },
+        {
+          "track": "first-turn",
+          "id": "075",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/075.json",
+          "sha256": "cc6c8629f81d6d5b97bf63a5dc2c5576fc801b61750f98f7aa40ae3edeefd15f",
+          "requestSha256": "01be71dde777ef88ed83b83f781576164d227cbe6cdf2d8da5c5038065e10bbc"
+        },
+        {
+          "track": "first-turn",
+          "id": "076",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/076.json",
+          "sha256": "f2dad14e6f9185b790a8a9ce806e7d9be805b5feb4599c94bd4ba7d0387638a6",
+          "requestSha256": "d0f28f86b8cb0f49b4d7edfa411acade833ab1f174c764446a10cc0fbd92fa37"
+        },
+        {
+          "track": "first-turn",
+          "id": "077",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/077.json",
+          "sha256": "a95d4fa713141504e0a9695fd6451da1752dbc458c6a8ccc22768798d1df8c44",
+          "requestSha256": "9b8baa32bd53f502f281578cb823b2b5a3677049ce75d8a743fc917097780117"
+        },
+        {
+          "track": "first-turn",
+          "id": "078",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/078.json",
+          "sha256": "fa71a56339fde72428ec5a9c0b47ed7e56fc5e4609d5937a401b1683606ff8d3",
+          "requestSha256": "671ec96d9e3a87846e2b16ad9aca8807123f8a3f6742a2d26c7e47ec6e90cc6e"
+        },
+        {
+          "track": "first-turn",
+          "id": "079",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/079.json",
+          "sha256": "f7e6769a39bf7de0adc26233eaf814fc9ef89ddf615f70b8083383dc92b00127",
+          "requestSha256": "eac1269a0b8f73c733c25eef06007ff571f8c1a2e693f6d11e925eac3b2de1d6"
+        },
+        {
+          "track": "first-turn",
+          "id": "080",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/080.json",
+          "sha256": "86b66d604e87e6751cf0ff43d5fd6447dc4f8a738aab56d0e0eaecf6c0572047",
+          "requestSha256": "6bcd18d8dba385791f5d2d90abc3f8232ea428eecec4a16845e0f61364bd9797"
+        },
+        {
+          "track": "first-turn",
+          "id": "081",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/081.json",
+          "sha256": "d3f382beb752c36dc0d923a903429d3a3604f7c7a28468d6deae0e3af9212d80",
+          "requestSha256": "82915169f4f343614175008d8585c631f782678156f9a17647b304bbda9b33e9"
+        },
+        {
+          "track": "first-turn",
+          "id": "082",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/082.json",
+          "sha256": "b92d62f44615e8750c071deecf9136c265664125a07af34c57f8c9a980c3f21b",
+          "requestSha256": "a62b35d0f23e058f9776c6f0bae69d786c5a27c92d3330910ca9d16e34bc08e1"
+        },
+        {
+          "track": "first-turn",
+          "id": "083",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/083.json",
+          "sha256": "392b55bff8a84a157c99fc040d04917a68847105a3136716d84abf426e876f6c",
+          "requestSha256": "e307c59f3b26ac3d55675ffa2d2c11d8133cedf66411053c007c82cc4d7112d2"
+        },
+        {
+          "track": "first-turn",
+          "id": "084",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/084.json",
+          "sha256": "a7ba39982c6554a9428d66d48244519008e2ecf3ea743f058126ac461e78c981",
+          "requestSha256": "a25ef94a9c9e098f46f9a9b664277a758c58d08574e2f4cb719a43f675ffbd80"
+        },
+        {
+          "track": "first-turn",
+          "id": "085",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/085.json",
+          "sha256": "86de06043343c51080c09f98590b63d79cff840b223ec325d22993d053f41549",
+          "requestSha256": "1381300fb72b4d554deece055888ee8a6afb3005eacfbcf98fd61c0201464ba1"
+        },
+        {
+          "track": "first-turn",
+          "id": "086",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/086.json",
+          "sha256": "41b5315910590e16a7dad51cc0ef2b26abbd6bb3f1750ec8a7eefe8ee4841792",
+          "requestSha256": "f26b8624d3067ea533604d86cd80e0ca05e4ef82796dbdf9db4144b79077b0d5"
+        },
+        {
+          "track": "first-turn",
+          "id": "087",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/087.json",
+          "sha256": "b99334025048f5a0149efcffbb930ea47ccfa87d83d8be5cb82eb57873275f26",
+          "requestSha256": "d4d35b66018a7821ebd3d5eb7ff2f824c16a5b46bf971bb6d53cebe8df7666cf"
+        },
+        {
+          "track": "first-turn",
+          "id": "088",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/088.json",
+          "sha256": "cd681776d7f286e27a445b3c6bab5f486e39430a9193687d2c5dead12472a641",
+          "requestSha256": "45213353185555dee884984f068e9ebc68011e6c7142bee24823f22a4de653d2"
+        },
+        {
+          "track": "first-turn",
+          "id": "089",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/089.json",
+          "sha256": "bbba6f084618289f7d935a059683b638c12d8f04d920e44c44980b7fd6ef7226",
+          "requestSha256": "9dffa41447623f1cf825760f6ffcd9b164da953c4282f2999a6d603b313bf732"
+        },
+        {
+          "track": "first-turn",
+          "id": "090",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/090.json",
+          "sha256": "5c929c975d9ba8547359dea990d8a62bb68e70d18b05da46c847e5d57150f728",
+          "requestSha256": "b91efbd3bee400a28f9ca06dd4545cf4af4a1bb546dc32185ccd55d8618f6086"
+        },
+        {
+          "track": "first-turn",
+          "id": "091",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/091.json",
+          "sha256": "01acf6bc6fe87d445f4d20d1922ee61551cfad5ead08059b79ac38a14848f841",
+          "requestSha256": "bc262463f2d40d46f6de8c8224d289c6bdddd968db720ff983110ed7b9bca508"
+        },
+        {
+          "track": "first-turn",
+          "id": "092",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/092.json",
+          "sha256": "cfe6fef2ad5b6d4187ebe86c48deaf94263eb12dcff302da049dc98f457b7fa4",
+          "requestSha256": "dde6947d689987676dc3ac1c7287ca3e923df1c86fd4db745f73518b36baa16c"
+        },
+        {
+          "track": "first-turn",
+          "id": "093",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/093.json",
+          "sha256": "4588407a6423989935877cfd0277a7ab263fa700f06a0522e21e75aa29e3a358",
+          "requestSha256": "a3f48417f92aef81a4b5dda388ceb71bc029f37d4481a85c53c1d473ddeac8e6"
+        },
+        {
+          "track": "first-turn",
+          "id": "094",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/094.json",
+          "sha256": "fcd6b2c6e2eaca3c76618ae00dd788c8574f920c9e851f84f4e06d38f74c59b1",
+          "requestSha256": "f24a0dac33cb635ce128c14812fcfd5f50995a87586a3da86c9bac32c6f84eec"
+        },
+        {
+          "track": "first-turn",
+          "id": "095",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/095.json",
+          "sha256": "4dab656facdd58021db944e0b7723161765f7334b01318b8019fc4801f04699b",
+          "requestSha256": "b9c78957ecd782568e8e2c59db71991dbc08cb6361b8b76d851430837f86f617"
+        },
+        {
+          "track": "first-turn",
+          "id": "096",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/096.json",
+          "sha256": "1879e9833813aaa979565bc7eae48a0a3176150fafe5608c0e02c5a4472b5623",
+          "requestSha256": "0822f22c7497c1b680b54ca0b43c365948894ca74c5f56d3ae9e98bb3ae79a94"
+        },
+        {
+          "track": "first-turn",
+          "id": "097",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/097.json",
+          "sha256": "1d310761fb093c39f8006fcc66a7462439f79bd3ee22585a28a29976eca41b70",
+          "requestSha256": "d30c2ae3122b4810d01a07747d50f9ec253307ebe0019bee34ab3c6d13e9beab"
+        },
+        {
+          "track": "first-turn",
+          "id": "098",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/098.json",
+          "sha256": "7432113b0f9b7532e877dee9ec17fde4da696b64d92c269908aec3bd4a9c80ae",
+          "requestSha256": "d8b7d1719ec99f7c8c582fbe2c354cc84c2b8053c359d6dfb248a3166883e905"
+        },
+        {
+          "track": "first-turn",
+          "id": "099",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/099.json",
+          "sha256": "d74b021cd037577006c0cf71bce3bc9b5ae92ac55d987970302ee2a5ede18732",
+          "requestSha256": "6365538a26cc5e810ee40bb81c08da29d44d29475ddebfadfa8710fba609884e"
+        },
+        {
+          "track": "first-turn",
+          "id": "100",
+          "path": "test/llm/results/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/100.json",
+          "sha256": "3d40bdaecccfffe0605c6307b4e00f1717d670223615c4dbcff75db06e7b6719",
+          "requestSha256": "8e06fb3de31a6bb570b6b56aa06d2d9fa0df738de31bd5d7b6a3ecfc85c9180c"
+        },
+        {
+          "track": "scenarios",
+          "id": "001",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/001.json",
+          "sha256": "8bfdb8634597304ee7a1761e5a10a8c301e7c69103c50a7027762f03d63c75fd",
+          "requestSha256": "cde92581ba770d290b5f3f3a6d62f1e01b3e4770464e73add99de924b73cb3d4"
+        },
+        {
+          "track": "scenarios",
+          "id": "002",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/002.json",
+          "sha256": "e546bd5c72e8d750efcdbd24f92baadc30a0f25955a9a6fec6b229f683339ead",
+          "requestSha256": "b600ef7d26c769cdd2a64f412d046c5786e5af75d729a26f025295cf5c00b26a"
+        },
+        {
+          "track": "scenarios",
+          "id": "003",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/003.json",
+          "sha256": "ed5db5be970f0dd8448e3af4ddedac821c4cf25edf3d5deb9c5015b5a594b63a",
+          "requestSha256": "e58eb6a147894235a3c5d2a22ee7005a2aec425453f591bf1dce765ce25c563a"
+        },
+        {
+          "track": "scenarios",
+          "id": "004",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/004.json",
+          "sha256": "fbb8ad79304c461833660acb96af218adab08c21accab7e34be2f2b817b68d7d",
+          "requestSha256": "9691c164970816e4d653323327367d5820d2f0610685a01acc7d1c5f08204241"
+        },
+        {
+          "track": "scenarios",
+          "id": "005",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/005.json",
+          "sha256": "6c2c5e61460352b90067dd0a21e61aa543feec378a018337d143febca31fd18a",
+          "requestSha256": "e2a450a8079badc37e22149fa6fa5017f890f2b654ff28a469b65bdc91e37ab9"
+        },
+        {
+          "track": "scenarios",
+          "id": "006",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/006.json",
+          "sha256": "2b2069296585fa767ef29b0a409efff2e8469a8e944f75f80da9661f2e451ac2",
+          "requestSha256": "a45421969b257c03b6c674d39a194bf0515a1b163024e98aa8bf3c584d361426"
+        },
+        {
+          "track": "scenarios",
+          "id": "007",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/007.json",
+          "sha256": "0f446783d855274052a952d6a46a7a4ec241edef7a4a093ceecee4c1e247913b",
+          "requestSha256": "fbfab95a9ebf72d125153e8864414461dc7b2705724516fc3e9ee44f4693dee5"
+        },
+        {
+          "track": "scenarios",
+          "id": "008",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/008.json",
+          "sha256": "ecccaa3daabe7bb8176bcfa19d94a3f4bc5207248ddeda680bdbddfb334bd3bc",
+          "requestSha256": "d2d94d9a2a319ea48388f15ae65119a258dd8726e9e9d65387c736d04c830b8b"
+        },
+        {
+          "track": "scenarios",
+          "id": "009",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/009.json",
+          "sha256": "019c6f9026003050e33685a6cff6cd3bbefa4865b96a2fc53700420600cd38fa",
+          "requestSha256": "975e3e2269b85bec1be20689b24ebb6fd6600e721df769b50688828d6f382018"
+        },
+        {
+          "track": "scenarios",
+          "id": "010",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/010.json",
+          "sha256": "2d6820d6314ecd976b62b0d5d84bcfbccc363ab832295dea36da71287ab1b433",
+          "requestSha256": "b5166c8b780ac81793d5922b18ff3e2d359acfc64d06ff05769f036100d9a3fb"
+        },
+        {
+          "track": "scenarios",
+          "id": "011",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/011.json",
+          "sha256": "b4f8a6269d3a564fb73c19d81e0b92d002caff9831ecf1f3ed2f462b86ae85de",
+          "requestSha256": "10663a2580c55dbe18c4715a22f42d2a2d608866d9595b0965e4b04842ec200a"
+        },
+        {
+          "track": "scenarios",
+          "id": "012",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/012.json",
+          "sha256": "1cd1857ad5e36824126ae086a3c96b6f9aee03b5d0981a29c7569e6ff7d03546",
+          "requestSha256": "84a9dccdd92d2b2e56e6742948f65cee3be8b550e994166f7cdda2ac2f905237"
+        },
+        {
+          "track": "scenarios",
+          "id": "013",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/013.json",
+          "sha256": "79d2b2a7f907e63cf194b67f6e50f79d183e56c186182e617f165853f1fc2688",
+          "requestSha256": "15f599644e23d2329d7a80f72048e0d16e4095fbc4afd180b85840d1ab63233b"
+        },
+        {
+          "track": "scenarios",
+          "id": "014",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/014.json",
+          "sha256": "aec14d5215a83835775c9979d35587aaa0ba35b0ad3244ecbe005c23c79d3bbb",
+          "requestSha256": "16bdd4d0add46aba8973d74bd57b6e8da3ac85636e556a98561b1d268d27830f"
+        },
+        {
+          "track": "scenarios",
+          "id": "015",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/015.json",
+          "sha256": "87eabcdf2bfff1f846c0b015483b371456dca9aae4e4472186ddcc435fc4c4ce",
+          "requestSha256": "f3ef926c8d3f68731cd0c0b7fbe13a905b56634b8389e4544b077064db1bb06b"
+        },
+        {
+          "track": "scenarios",
+          "id": "016",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/016.json",
+          "sha256": "b426f4ebc8338a49f32c63c9fb6f4b26a5f63b53860a5ddc2d3247f09e923019",
+          "requestSha256": "94f508ff7ce079c7c90b63ed3f36ff809ddd281c4abed235e76930e4b0f6be52"
+        },
+        {
+          "track": "scenarios",
+          "id": "017",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/017.json",
+          "sha256": "0a9e28981b286ac2e048ac33bcf3685074b392e8ff5ebff729f73f3d6f9d265a",
+          "requestSha256": "42f2e6d9fa945106655318a663952a10756b3bc31bd69bca5a602a7f6e467d24"
+        },
+        {
+          "track": "scenarios",
+          "id": "018",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/018.json",
+          "sha256": "34f1b62354fbdeff122324964d7b31fe1ff0e4ef077ec4d5cab1f2191254b5e3",
+          "requestSha256": "734c0b0c98acabd1975153985970e51bc925574b64ce63b913fdbee8ed622596"
+        },
+        {
+          "track": "scenarios",
+          "id": "019",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/019.json",
+          "sha256": "79ba5865737e075404011aeeeb10ebef3339cc7d0e1606a0ef3005a42293a801",
+          "requestSha256": "e704c6e5c5d73ab93c0171b8c700000f7c7ef480b4f9b1c5205f2eaf385f361f"
+        },
+        {
+          "track": "scenarios",
+          "id": "020",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/020.json",
+          "sha256": "ab3060418e320a5f954d2b9d852b676617717fe292e6c676a32ab6ead6ddfd41",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "021",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/021.json",
+          "sha256": "bffc784ed40d0e98b4b5ff5b34b83185eadea49812e1e09ade12cf96d6962ae6",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "022",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/022.json",
+          "sha256": "556e6703771e47cff705819ab8ac373330b643d0d333e929e55eb92072f35701",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "023",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/023.json",
+          "sha256": "a8e980e824656ea268e5e1f85d7fb1b6e865663419c511887d6cd9e408e2f8f8",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "024",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/024.json",
+          "sha256": "c153f6e5bf0b83d272b2985dc7e4c1517e7bc81ba9c08b9ccf65d6d5f0055505",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "025",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/025.json",
+          "sha256": "3c0567da10cb3c28dd8f2613ad143d68d94113b2355665ba40035e630c121cc8",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "026",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/026.json",
+          "sha256": "4f2997d8ed525d4ee3606e4521725280d2cf9b84caaa70522783a6a2ed75e98c",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "027",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/027.json",
+          "sha256": "341331171ac5781fa88fa65344305370f0898acd535b9af326cbddaf9cf3e508",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "028",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/028.json",
+          "sha256": "ee5310ff713435c78d32f9d43d598224f226f96b966c2b922514152f6a9c8af6",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "029",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/029.json",
+          "sha256": "863ca560d1409ab7dfa0a842491b21a88fd549537bbca72710197e5f03a3df4b",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "030",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/030.json",
+          "sha256": "4b8b21adb6990d57d48a6c57fc2fb5eee9e6cee8a4fdf6bc3d07dc7bb123cd70",
+          "requestSha256": null
+        },
+        {
+          "track": "scenarios",
+          "id": "031",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/031.json",
+          "sha256": "0f5134583ea5d94b20ffab63d13d75b4afff5a97038e0b327cddae3b0d3ca6f6",
+          "requestSha256": "3704529db5970cbbcb41006e98ef9e78ab3eb5da28837ae240826aa438dc6f34"
+        },
+        {
+          "track": "scenarios",
+          "id": "032",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/032.json",
+          "sha256": "5a8e93cf923fb04918f55bf066ce6ea8f5d0c6fbf5af7ac03662286795c5f1df",
+          "requestSha256": "497600d2439c525400061ac78f234d13379f929cde0efcc28d8a91d59633fca8"
+        },
+        {
+          "track": "scenarios",
+          "id": "033",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/033.json",
+          "sha256": "bca4a3c1b25c5bc2e60aac8aed9a57c182c4b47971afcc921a02e79b46f11c22",
+          "requestSha256": "4036531642687c8ff30d1e6fdee889d74a2ac63fb0bc7338161abf590dad158e"
+        },
+        {
+          "track": "scenarios",
+          "id": "034",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/034.json",
+          "sha256": "812c7babdc770bddc5a2ba15edd06fe7ca2429a7ceb0259bcfc4c6332015a2f2",
+          "requestSha256": "596945e0ee4c5458f202b4d5c4a08f8b46394e97b6b5555404b095c752b35b00"
+        },
+        {
+          "track": "scenarios",
+          "id": "035",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/035.json",
+          "sha256": "17dd501894cf85cd92c2f4160ce7f22bfdaf65cf91447defc18061f3bf40442e",
+          "requestSha256": "32d34cd9cc9df93fe2393eed2584427b5badda2b411ff730d9feb37936545374"
+        },
+        {
+          "track": "scenarios",
+          "id": "036",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/036.json",
+          "sha256": "a949ca6767ea1ad316312d976fa96029f035b7cb054b6d132d49022ee28b78ff",
+          "requestSha256": "1a86673d8f085dd8a3ccbc4107a8588f3b6d675c93e5e2e32ca0b522b479b292"
+        },
+        {
+          "track": "scenarios",
+          "id": "037",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/037.json",
+          "sha256": "e89bde09877152446626e644bd9795ba16cb566f15bad1c3ba2f7805a8d5035d",
+          "requestSha256": "9a5bab1333bea2da36ba309535bc0dbf649eca344a067a32ec73cda697d554bf"
+        },
+        {
+          "track": "scenarios",
+          "id": "038",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/038.json",
+          "sha256": "259ce519973034162c16ad9cc9bf1f5a328faea02c0d64c44bf0378fb9b2e0cc",
+          "requestSha256": "21b34f6ec6cee035cdb01a1cabbbbb9ab0571daff99a187cda1af27d4f7ef90c"
+        },
+        {
+          "track": "scenarios",
+          "id": "039",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/039.json",
+          "sha256": "86a68bb4296ff4f7271d8fb340f9b89fdc8c08d8615820da3f93cd713180bb5e",
+          "requestSha256": "dd9315daa3f955560e4fc198fc937f6e7808e3b16c1267dbaad2f4fcfb973000"
+        },
+        {
+          "track": "scenarios",
+          "id": "040",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/040.json",
+          "sha256": "73ab34f7360f2bcdc68feebba3b493c8bec0fda2f54a1a45a0f7daa040d73ff2",
+          "requestSha256": "3255771ff54685692f8b2eb761beb26272ad65c4e3eb61087602c34a41c67202"
+        },
+        {
+          "track": "scenarios",
+          "id": "041",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/041.json",
+          "sha256": "48768243dcc448750a4c32504653c7a2bcf1e587dd77b5f4619b4b9e2d897998",
+          "requestSha256": "e1d8d74ef22a33a5f4852c1ef2b133bb76f9b092dd2f4e6f095cdc4940ec4119"
+        },
+        {
+          "track": "scenarios",
+          "id": "042",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/042.json",
+          "sha256": "64d5f64d00e47c7c6b0a51a6d230c83549d984854bd8c81afee374ee94f6ff0c",
+          "requestSha256": "510a3f052a9a3a75c5a5ee20aa055b09bcab31f56049df5cddc257c812811ec1"
+        },
+        {
+          "track": "scenarios",
+          "id": "043",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/043.json",
+          "sha256": "3e806d7daed9921efdeb9906ece09e479a6450fae81655487b70a7c7139be622",
+          "requestSha256": "d6cb4dbf4b3ea051e12d7d34ecfc091b2328d4130bdfe49824772175247c7ac6"
+        },
+        {
+          "track": "scenarios",
+          "id": "044",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/044.json",
+          "sha256": "8ced50465ee1d82c00ae11d01bf1b3ce335669acc116185bc7a70acfe4bd2568",
+          "requestSha256": "f6c231644d7d3a7d0c04267d4db6f08320b55e24bf9f6c3e5175f3b878ea9851"
+        },
+        {
+          "track": "scenarios",
+          "id": "045",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/045.json",
+          "sha256": "50719048fb6b4684624b8afe2fe6cf94773dc9c9cd13714390d6ad1be75d12ae",
+          "requestSha256": "ab1bd58d66054bc5df1122c90a6bc6dc0c06aeeaa8a9a649a352cb7ca826d258"
+        },
+        {
+          "track": "scenarios",
+          "id": "046",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/046.json",
+          "sha256": "9305750fd09bd2d1d8de97a412f634ea3f8ac24c229da78c5e81d690f745a639",
+          "requestSha256": "9983835709d12bbfe50435fbb9386e37b1e77c6c9f5569178d3a76c7eded4273"
+        },
+        {
+          "track": "scenarios",
+          "id": "047",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/047.json",
+          "sha256": "044eda411a060f6fdcef8a30142a57ced827850c8158aafa22fecdfbf08dd7e8",
+          "requestSha256": "10221f92384418693b1d6d68c57b776ab1ab183cf01e965fcc16837fc16da278"
+        },
+        {
+          "track": "scenarios",
+          "id": "048",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/048.json",
+          "sha256": "d0b8ebd0000c97eb29c237562427ce289c34b3a7c67246ba4d9d055c66b6140b",
+          "requestSha256": "e0b1d57b6ce5954330d2fbeba543d999e701182b12c6d27afa7c1fce0a7f99bf"
+        },
+        {
+          "track": "scenarios",
+          "id": "049",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/049.json",
+          "sha256": "139537c44fab6c1bf9ae7915a952a207af86336a5888643a24451977914c7739",
+          "requestSha256": "932fc46b494c588d9abf52b2f797a9fbc025d355f97aca02024a52ccb3103cd1"
+        },
+        {
+          "track": "scenarios",
+          "id": "050",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/050.json",
+          "sha256": "1fe0593c4a1fc848e0f8626a321a835f1dece07e4dfed1e987117a6604727a6c",
+          "requestSha256": "5f9e3baca9fe4e53e7c39072c916a999774ea5f1006c08a6e706b95a9cd89141"
+        },
+        {
+          "track": "scenarios",
+          "id": "051",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/051.json",
+          "sha256": "093741c9902e0b9bc55d337055a4e7044b1ff33f1b5c56e9944bf4cdfe2f8826",
+          "requestSha256": "4ace1cd7484d13930a48f4d5e6a2873d3f0fa91a6ca66fabc1ba92b34c631dff"
+        },
+        {
+          "track": "scenarios",
+          "id": "052",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/052.json",
+          "sha256": "3a29d29773e55f9f55b91e7b47276529d83c7aa618706421a5dfbe65f78dcd8c",
+          "requestSha256": "78d1ee236b256ea026a802327583df191c05e100e20c867193dc3f5b8ed5e9e1"
+        },
+        {
+          "track": "scenarios",
+          "id": "053",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/053.json",
+          "sha256": "cdd0eb3d7f4b59f8644b2f0f85fc075a45bf92a8e8f315deb15964a7272cbfbf",
+          "requestSha256": "bb999de31d0490286b9b9e8f7cf01490d54b028a5233a4851428d5ac21a2422b"
+        },
+        {
+          "track": "scenarios",
+          "id": "054",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/054.json",
+          "sha256": "27335a71938684c4da202640e846d91f232b4bdddac436571cb9a260cc6c9ee0",
+          "requestSha256": "677b017e6e57c8b7259b6bb32134f4ca2bdd78da38b310e95fce57d7551eebd5"
+        },
+        {
+          "track": "scenarios",
+          "id": "055",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/055.json",
+          "sha256": "8300a5a74c7a9df4dd104f9e2743eb58b9a57bfd7668b1db438754aeb33035e9",
+          "requestSha256": "8d6189154948f2fc6446497e514e94b945f913715702b7466826c26432910803"
+        },
+        {
+          "track": "scenarios",
+          "id": "056",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/056.json",
+          "sha256": "8439e4eb3c1c10591074c6fe4ba6892f585f0cd1df9fd238475dc63b4f7bc4e9",
+          "requestSha256": "e8f78eae3f0a68b1291ae27d457f005c28ca61869ecf3231a5d3b0acef044729"
+        },
+        {
+          "track": "scenarios",
+          "id": "057",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/057.json",
+          "sha256": "748d058d79a1eb5b1ffa3baa073eb0f7c09fcf3a310360446d43e2130c6bf9a4",
+          "requestSha256": "33c029595c89a75ce66c59c669301fdba8ed5f58dabb30cf83eefa20432ea82a"
+        },
+        {
+          "track": "scenarios",
+          "id": "058",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/058.json",
+          "sha256": "fd35ca92a6fc187db4073bcb84bc588520dcdcfceb143351e85b38ee77f5b719",
+          "requestSha256": "74e6996887bb9c55f41277ece073c8840fd4840cd541ce6f4dab9c5084d800a3"
+        },
+        {
+          "track": "scenarios",
+          "id": "059",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/059.json",
+          "sha256": "ec7dacc4b9fb5e7c0e7cf791632d619f90f3768c75ac8f35c7239cc3e1225e3d",
+          "requestSha256": "e481d04f2bf74d1aef2341f83ec070a024ece6e24c2c91136888149f555fb1fa"
+        },
+        {
+          "track": "scenarios",
+          "id": "060",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/060.json",
+          "sha256": "cc5ffa26888963e016349127384e68707d26c03792339083631d16c0e33e20db",
+          "requestSha256": "e27e9c54f8e1d5c0356814161b46caa0e199f8793afa658ed433b31cb73db8ff"
+        },
+        {
+          "track": "scenarios",
+          "id": "061",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/061.json",
+          "sha256": "f2726fad17405cd2cfd1247e37504d3c5e48ad03eb528e0552b5e2af395eb0de",
+          "requestSha256": "e4b8120efbb0c459204582cfa7b0700fb4f3c4e2c332ecbe8ca83b5433d0a2f3"
+        },
+        {
+          "track": "scenarios",
+          "id": "062",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/062.json",
+          "sha256": "05ee0f161a0a39878ac544716b7f79a918cfa05677b53beab1268f175c4904fe",
+          "requestSha256": "0f465715f0ab7c007a0969a90a916694d637606eacc64a9af7c980b894949052"
+        },
+        {
+          "track": "scenarios",
+          "id": "063",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/063.json",
+          "sha256": "2c21b85b2e4e72d567ad2dfc47563008d253a13a09c7b30d4059c5042adac9aa",
+          "requestSha256": "7c0b285da6b33717960f96329d972f11543d2c1384f0d5c51c7a1d87eecb82fa"
+        },
+        {
+          "track": "scenarios",
+          "id": "064",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/064.json",
+          "sha256": "10edb1dc99ae4f289918f10183dd169a6df28e983818f7ddf579664a58f5a346",
+          "requestSha256": "25a8ddc83576c64c9e00dccf61d3ef73d919c043fb2ea5444af1087974a5bbe6"
+        },
+        {
+          "track": "scenarios",
+          "id": "065",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/065.json",
+          "sha256": "06cc5454b1392f0448562dd0f34e4f247263c2689ab9502ad81071a1066e57e9",
+          "requestSha256": "6b9fa32eb8c6a2d4486f47b85a0327920c2e22d7e934d3040b5654709ba2f47d"
+        },
+        {
+          "track": "scenarios",
+          "id": "066",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/066.json",
+          "sha256": "c4a1c1ba2988a1b3a05600f1ab6bc4b63766f981d476bccecc68daa077d5bf22",
+          "requestSha256": "0bd8e6a6144b0458205bb27cdc45a5d0330bf3d1ec59927ddb3579fbeb0b1abf"
+        },
+        {
+          "track": "scenarios",
+          "id": "067",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/067.json",
+          "sha256": "e6e4fb7df14f11908050f0aaeb026f3b12da17f4e85edd402691a2c16ad53d23",
+          "requestSha256": "d887ced674a09d2959efe161d16be05c62d1c432372b001e9eb3a552e0533907"
+        },
+        {
+          "track": "scenarios",
+          "id": "068",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/068.json",
+          "sha256": "dfa94d8fe7cf55ebf87e3c8daec4d0df84dfb29f2b7c63677dcb2a362947334d",
+          "requestSha256": "370aa8e5d2b4cb0bf226ed2ebf15d9acfab281dabddaa23dbc9699317ab8b708"
+        },
+        {
+          "track": "scenarios",
+          "id": "069",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/069.json",
+          "sha256": "017f79b0062de04e2084010e3aa80b1aee833e5232718da77e08a40d8db0f7d0",
+          "requestSha256": "873054c60c00b6914e2d17f4e2ba7cde34448cb6ed451aa03fb8264d69667b00"
+        },
+        {
+          "track": "scenarios",
+          "id": "070",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/070.json",
+          "sha256": "08d15a88efd9e7e02bc6e34ec0bb0d3593e0a471aae61791328d7f3b9185eb1b",
+          "requestSha256": "3afee01cc1c01763f710d71e6636a155dfdce429bacf3313ceb315d39dbd52d2"
+        },
+        {
+          "track": "scenarios",
+          "id": "071",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/071.json",
+          "sha256": "fbc1c51e4287943bec85275f1c403355430a07d8053cc9a0ded60812b2f964a4",
+          "requestSha256": "c7a273cc332a20e47576ba47d061d099df127402997ecbefe7d0a6f3cc4a0ed2"
+        },
+        {
+          "track": "scenarios",
+          "id": "072",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/072.json",
+          "sha256": "4481a6acbd49c6a4565d73213a716c27fd117006905fa2be9c04fc2db6f92c3b",
+          "requestSha256": "c320d6e4edd6010a416bb57f2818b6ff35c69a07c7cf2b0e65f737c47d6b80e2"
+        },
+        {
+          "track": "scenarios",
+          "id": "073",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/073.json",
+          "sha256": "f4f50c3cee30e1323910f2939ec82785d413ccc8997c1e4f5a6c15c9af41079c",
+          "requestSha256": "cf8306a566fb283ceb238a51b603b0ce7d5a719a4793a02b3d5b43f8a4b4e965"
+        },
+        {
+          "track": "scenarios",
+          "id": "074",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/074.json",
+          "sha256": "fb5dea9b5e618806e6a7bc736c0ad0d7635817832f65a5e61a2f3f96be447ad5",
+          "requestSha256": "f71e6be74edc3483ec077b9f10828e4e5870866b2d510a88ad1bac19506f8622"
+        },
+        {
+          "track": "scenarios",
+          "id": "075",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/075.json",
+          "sha256": "9d6fc413e39d73adbe08a14c9e07395ca06c02eca08ea55c678f4d96eeee1c1c",
+          "requestSha256": "658d9ee48aa2501a167a00d47916b89d0a6e818ffda963bde78bbc2b643bccf5"
+        },
+        {
+          "track": "scenarios",
+          "id": "076",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/076.json",
+          "sha256": "61de49e2b248cdcaa9e7fb331c3565795902a2587bb6845135dc9dbdddb3ed0e",
+          "requestSha256": "6e682fcc4515ab51ade26d34de76f7b7e6bfa8d429767dc1dac73799e84c3311"
+        },
+        {
+          "track": "scenarios",
+          "id": "077",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/077.json",
+          "sha256": "fda0e0d7ab52755c80a6890aafa220daaceb21ea20532d91e11637c40ba1b85a",
+          "requestSha256": "83052254ac396a5cd07e0422c7da942af027c546cbe5a097a212c90a7830542f"
+        },
+        {
+          "track": "scenarios",
+          "id": "078",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/078.json",
+          "sha256": "512007e8a6bfa0e7a8bd82760c805d299c8633b95ccfac3c1d77a4a4c8003db8",
+          "requestSha256": "98ef59a67b92716a2fc5c6b4054d791bdb4baa2c4505fe5b5d4a69b8bbdd14cf"
+        },
+        {
+          "track": "scenarios",
+          "id": "079",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/079.json",
+          "sha256": "0fbd3e52f7073ab9a738b82ef28ba82415a864cd335b194a7e92c808ce1abfdc",
+          "requestSha256": "b3d765d59e66e81ee24c5c1381c866ccb4bc39a591f14f7a3094a2ea5cb83f42"
+        },
+        {
+          "track": "scenarios",
+          "id": "080",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/080.json",
+          "sha256": "617c3963153668fc174df2fbf5cab2995ae8fc113dbd4889c430576911f3c13b",
+          "requestSha256": "f6d290bfdda212f8e25a35d992dc44859e1aebe5af1d008b3b6e6041e5fa52e9"
+        },
+        {
+          "track": "scenarios",
+          "id": "081",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/081.json",
+          "sha256": "4effa599d177c0be1e384d930ab26e40b65732e875de333f8f9953a3396115ad",
+          "requestSha256": "e9a24e49e9736ff69225ddb26914fbe9d2733d87e604e7010723da75c0ea4f08"
+        },
+        {
+          "track": "scenarios",
+          "id": "082",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/082.json",
+          "sha256": "d69dfc5f595eabe907a379049646ed8d1baacec6419fd14e79490d9430151a0b",
+          "requestSha256": "1af592f4a919fdd408ac2842a725d910a960a49cdbb79a5573ea643151c31971"
+        },
+        {
+          "track": "scenarios",
+          "id": "083",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/083.json",
+          "sha256": "98e09b2ae24465619f90f7a5c17ade1de34afaee7ddaa42d985b611b5b9aa6a3",
+          "requestSha256": "4b95710d4229c715f0d0ea6b1ca9185c172f1aeab424ae721ea2e0ee947f3b0c"
+        },
+        {
+          "track": "scenarios",
+          "id": "084",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/084.json",
+          "sha256": "819588e76b5aee9938a6f50adf401840b1fa62701c3cdd692afab0497c494249",
+          "requestSha256": "a22d3d79c59d5609dc8960ef38ff57900b498bae1b17a298d957c102555f534b"
+        },
+        {
+          "track": "scenarios",
+          "id": "085",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/085.json",
+          "sha256": "73fd8bc131eaeabe4bd1bb217a7b75a8b6a03177a3fa280c452a0c1a97a3b6c8",
+          "requestSha256": "861443b4483fc57baeda6d8132305bfc7131cc63f274eacd456cdcc8af5b209d"
+        },
+        {
+          "track": "scenarios",
+          "id": "086",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/086.json",
+          "sha256": "d1efe076544a6803cbc6330cc5ffd8197df998a2326f4364d8b49dc9e679674a",
+          "requestSha256": "2a2e2071403b91771a8cc5de2085efde1416246795f589f5406d3d2908eaed4a"
+        },
+        {
+          "track": "scenarios",
+          "id": "087",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/087.json",
+          "sha256": "070b1f906359eb5f31890f43755d0c77f31bd609a5a77204c6e831f58964baad",
+          "requestSha256": "1c52119525986bfbb1473053f83a3da986fa8992eadc32c018353f4b138995e6"
+        },
+        {
+          "track": "scenarios",
+          "id": "088",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/088.json",
+          "sha256": "4c5feeb7ecb11814a52880653625862e5a341b707a18937f0f46353ecec8722c",
+          "requestSha256": "461c6600df91f3e140a6d9d08a05d83ee84ef2ab9eb3354038523cc757110597"
+        },
+        {
+          "track": "scenarios",
+          "id": "089",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/089.json",
+          "sha256": "3e9fd142e1583576360592e6612f3596fb68acf9df71092906768c54bda39078",
+          "requestSha256": "4f4ac80b5770df35e731f05945fe673652ddfb8a98702e3549966ba18d1fd9aa"
+        },
+        {
+          "track": "scenarios",
+          "id": "090",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/090.json",
+          "sha256": "e9ae7eaeac78bcb19b475bc8aa2f8a99e47dc95f6e97c04e0c4cc8d78a2114d7",
+          "requestSha256": "d6584d90db99a1aec23329f4879a34df4af72ab4dbd5989ecd9a2134b8832b36"
+        },
+        {
+          "track": "scenarios",
+          "id": "091",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/091.json",
+          "sha256": "d9f67043e8a547d5f63970646f866b6e03cac20742b1cb58f1f6a32e1ec0235b",
+          "requestSha256": "d5415e0d270a2846a90acbf2b77bc0d60cc4a67874a8ba3c1035f76fb8a87f56"
+        },
+        {
+          "track": "scenarios",
+          "id": "092",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/092.json",
+          "sha256": "d0f269436694f09e8340fb7a3f5fcc24992c99454d717d676f1d75babaa4444e",
+          "requestSha256": "6f03aca656a45d052f9de7a0f72abb7bddd9ca81ed20a2772be8a76bc08debe3"
+        },
+        {
+          "track": "scenarios",
+          "id": "093",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/093.json",
+          "sha256": "e02f35be70520e08479932f9babc29a35a9cc5bddffa2dddcb63c3c2c1b8e26b",
+          "requestSha256": "da4f840bcb5779808e47bbcddcd8192820efb28ef09bcacf15489cc4acbab6e0"
+        },
+        {
+          "track": "scenarios",
+          "id": "094",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/094.json",
+          "sha256": "ee4292fe6613d05a09c68c7b95d5a20fe089f7d00f68a79d85a5419023c11979",
+          "requestSha256": "4394de9ad5652f2c5380b3d7343ab6e397d98f8aa06b4aa543c89a61fc068fe0"
+        },
+        {
+          "track": "scenarios",
+          "id": "095",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/095.json",
+          "sha256": "b7c91d3824995e470049786a8e8cfb9e1aeb143f9210666488732f6d65e877bf",
+          "requestSha256": "f6f3dbc9d7bb342767d53b0d46e9b25ecfe8e77d9cd1dbbfbebece4b5f8ddabe"
+        },
+        {
+          "track": "scenarios",
+          "id": "096",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/096.json",
+          "sha256": "ca57acc0e9ddd009d9711e33ce141e1d95a31159073ed7d1e6d59f7b3610062d",
+          "requestSha256": "2893cd79b2cbfaa9df6e4986e9c846b271ce9284d6b43b20e1ed58ea80446503"
+        },
+        {
+          "track": "scenarios",
+          "id": "097",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/097.json",
+          "sha256": "9b4eb694ff01d1f0882bf4e27b90cc13826494c40c9469cae926e0585c437861",
+          "requestSha256": "6dc477c75f9cea57404cb0fed778b9d275048fde1ebf9d00f2839393b7770161"
+        },
+        {
+          "track": "scenarios",
+          "id": "098",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/098.json",
+          "sha256": "c36f12f351f50aab275585f3c8dd9f0626a64b126a1c0ed76e0c8f76a390ba7f",
+          "requestSha256": "5697362368dab62f1e3e79eee4bed498de0309e834904c703d8d14abaa0349ea"
+        },
+        {
+          "track": "scenarios",
+          "id": "099",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/099.json",
+          "sha256": "e7492631fb14f4e5d751f456250dfba8d5550bced0fa9ba583e46da1743ae24f",
+          "requestSha256": "8aeba33dcf4e54326cdb8ce727fd9d0640fdf1a3c59a6054509edcf5eb005094"
+        },
+        {
+          "track": "scenarios",
+          "id": "100",
+          "path": "test/llm/results-scenarios/2026-10-29-webbrain-compass-vld-tiny-v5-compact-full_chrome_webbrain-compass-vld-tiny-v5_compact/100.json",
+          "sha256": "87ec2da3cc00ee1dcd30c4be29d655772125fe1748867bdddb3b4e1f534d4976",
+          "requestSha256": "3b3bf23bf2f1a861b898dca8cb8dbc34e54c01c5d23552a5ef24987db6275c19"
+        }
+      ]
     }
   ]
 }
