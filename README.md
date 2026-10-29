@@ -42,7 +42,7 @@ Install from the [Chrome Web Store](https://chromewebstore.google.com/detail/web
 <summary><b>Or load it from source</b></summary>
 
 ```bash
-git clone https://github.com/webbrain-one/webbrain.git
+git clone --filter=blob:none https://github.com/webbrain-one/webbrain.git
 ```
 
 **Chrome** — open `chrome://extensions/`, enable **Developer mode** (top
